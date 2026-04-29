@@ -467,6 +467,102 @@ tr.row-click.ticket-row:hover td {
   white-space: nowrap;
 }
 
+.message-attachments {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.attachment-block {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.56);
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+  font: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+.attachment-block:hover {
+  transform: translateY(-1px);
+}
+
+.attachment-image {
+  max-width: 320px;
+}
+
+.attachment-image img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.attachment-name {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.attachment-meta {
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.image-preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  background: rgba(8, 15, 26, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+}
+
+.image-preview-dialog {
+  position: relative;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.image-preview-img {
+  display: block;
+  max-width: 88vw;
+  max-height: 84vh;
+  object-fit: contain;
+  transform-origin: center center;
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
 .card-actions {
   border-top: 1px solid var(--border);
   padding: 12px;
@@ -1477,6 +1573,21 @@ body[data-theme="dark"] .message.internal {
 body[data-theme="dark"] .message.system {
   background: rgba(37, 84, 116, 0.74);
   color: #e8f6ff;
+}
+
+body[data-theme="dark"] .attachment-block {
+  background: rgba(17, 31, 52, 0.58);
+  border-color: rgba(187, 222, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+body[data-theme="dark"] .message.client .attachment-block {
+  background: rgba(255, 255, 255, 0.58);
+  color: #102033;
+}
+
+body[data-theme="dark"] .attachment-image img {
+  background: rgba(7, 17, 31, 0.34);
 }
 
 body[data-theme="dark"] tr.ticket-row td {

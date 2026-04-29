@@ -144,6 +144,23 @@ class TicketMessage(Base):
     ticket: Mapped[Ticket] = relationship(back_populates="messages")
 
 
+class TicketAttachment(Base):
+    __tablename__ = "ticket_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"))
+    message_id: Mapped[str] = mapped_column(ForeignKey("ticket_messages.id"))
+    source: Mapped[str] = mapped_column(String(40))
+    telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_file_unique_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(nullable=True)
+    local_path: Mapped[str] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class TicketView(Base):
     __tablename__ = "ticket_views"
 

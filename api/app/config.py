@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     telegram_polling_enabled: bool = False
     telegram_polling_timeout: int = 25
     telegram_default_agent_id: str = "00000000-0000-0000-0000-000000000001"
+    attachment_storage_dir: str = "/app/storage/attachments"
 
 
 settings = Settings()

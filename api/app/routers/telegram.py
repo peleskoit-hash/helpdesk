@@ -1,6 +1,8 @@
-﻿import json
+import json
 import uuid
 from datetime import datetime, timedelta
+from mimetypes import guess_extension
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, desc, or_, select
@@ -15,6 +17,7 @@ from ..models import (
     TelegramContact,
     TelegramUpdate,
     Ticket,
+    TicketAttachment,
     TicketIntakeState,
     TicketMessage,
     TicketStatus,
@@ -27,6 +30,8 @@ from ..config import settings
 from ..services.telegram_bot import (
     answer_callback_query,
     client_close_markup,
+    download_file,
+    get_file,
     remove_inline_keyboard,
     send_message,
     send_problem_menu,
@@ -71,6 +76,78 @@ AUTO_REQUEST_TEXT = (
     "Система обработает её автоматически."
 )
 AUTO_DONE_TEXT = "Для создания другой нажмите /start"
+FORBIDDEN_ATTACHMENT_TEXT = (
+    "Голосовые и видеосообщения не принимаются. "
+    "Пожалуйста, опишите проблему текстом или прикрепите файл/скриншот."
+)
+ALLOWED_ATTACHMENT_TYPES = {"document", "photo", "audio", "video", "animation", "sticker"}
+FORBIDDEN_ATTACHMENT_TYPES = {"voice", "video_note"}
+IMAGE_PREVIEW_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def _safe_filename(value: str | None, fallback: str) -> str:
+    name = (value or fallback).strip() or fallback
+    forbidden = '<>:"/\\|?*'
+    for char in forbidden:
+        name = name.replace(char, "_")
+    return name[:180]
+
+
+def _attachment_extension(mime_type: str | None, telegram_file_path: str | None) -> str:
+    if telegram_file_path and "." in telegram_file_path:
+        suffix = Path(telegram_file_path).suffix
+        if suffix:
+            return suffix
+    if mime_type:
+        guessed = guess_extension(mime_type)
+        if guessed:
+            return guessed
+    return ".bin"
+
+
+def _extract_attachment(message: dict) -> dict | None:
+    if "document" in message:
+        item = message["document"]
+        return {
+            "source": "document",
+            "file_id": item.get("file_id"),
+            "file_unique_id": item.get("file_unique_id"),
+            "file_size": item.get("file_size"),
+            "mime_type": item.get("mime_type"),
+            "original_filename": item.get("file_name"),
+        }
+    if "photo" in message:
+        photos = message.get("photo") or []
+        if not photos:
+            return None
+        item = max(photos, key=lambda p: p.get("file_size") or (p.get("width") or 0) * (p.get("height") or 0))
+        return {
+            "source": "photo",
+            "file_id": item.get("file_id"),
+            "file_unique_id": item.get("file_unique_id"),
+            "file_size": item.get("file_size"),
+            "mime_type": "image/jpeg",
+            "original_filename": "photo.jpg",
+        }
+    for source in ("audio", "video", "animation", "sticker"):
+        if source in message:
+            item = message[source]
+            return {
+                "source": source,
+                "file_id": item.get("file_id"),
+                "file_unique_id": item.get("file_unique_id"),
+                "file_size": item.get("file_size"),
+                "mime_type": item.get("mime_type") or ("image/webp" if source == "sticker" else None),
+                "original_filename": item.get("file_name") or f"{source}",
+            }
+    return None
+
+
+def _forbidden_attachment_type(message: dict) -> str | None:
+    for source in FORBIDDEN_ATTACHMENT_TYPES:
+        if source in message:
+            return source
+    return None
 
 
 def _response_message_id(response: dict) -> str | None:
@@ -387,7 +464,7 @@ def _append_client_message(
     replaced_message_id: str | None = None,
 ):
     has_messages = db.execute(select(TicketMessage.id).where(TicketMessage.ticket_id == ticket.id).limit(1)).first()
-    if has_messages is None and ticket.subject == "Новое обращение":
+    if has_messages is None and ticket.subject == "Новое обращение" and body.strip():
         ticket.subject = (body or "Новое обращение").strip()[:120] or "Новое обращение"
 
     msg = TicketMessage(
@@ -402,6 +479,55 @@ def _append_client_message(
     )
     db.add(msg)
     ticket.updated_at = datetime.utcnow()
+    db.flush()
+    return msg
+
+
+def _store_telegram_attachment(
+    db: Session,
+    ticket: Ticket,
+    message: TicketMessage,
+    attachment_data: dict,
+    external_chat_id: str,
+) -> TicketAttachment | None:
+    file_id = attachment_data.get("file_id")
+    if not file_id:
+        return None
+
+    file_response = get_file(file_id, chat_id=external_chat_id)
+    result = file_response.get("result") or {}
+    telegram_file_path = result.get("file_path")
+    extension = _attachment_extension(attachment_data.get("mime_type"), telegram_file_path)
+    attachment_id = str(uuid.uuid4())
+    stored_name = f"{attachment_id}{extension}"
+    local_path = Path(settings.attachment_storage_dir) / ticket.id / stored_name
+    if telegram_file_path:
+        download_file(telegram_file_path, local_path, chat_id=external_chat_id)
+    else:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"")
+
+    original_filename = _safe_filename(
+        attachment_data.get("original_filename"),
+        f"{attachment_data.get('source') or 'file'}{extension}",
+    )
+    attachment = TicketAttachment(
+        id=attachment_id,
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source=attachment_data.get("source") or "telegram",
+        telegram_file_id=file_id,
+        telegram_file_unique_id=attachment_data.get("file_unique_id") or result.get("file_unique_id"),
+        telegram_file_path=telegram_file_path,
+        original_filename=original_filename,
+        mime_type=attachment_data.get("mime_type"),
+        file_size=attachment_data.get("file_size"),
+        local_path=str(local_path),
+        created_at=datetime.utcnow(),
+    )
+    db.add(attachment)
+    ticket.updated_at = datetime.utcnow()
+    return attachment
 
 
 def _handle_edited_client_message(
@@ -884,8 +1010,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     chat = message.get("chat") or {}
     from_user = message.get("from") or {}
-    text = (message.get("text") or "").strip()
+    text = (message.get("text") or message.get("caption") or "").strip()
     telegram_message_id = str(message.get("message_id")) if message.get("message_id") is not None else None
+    attachment_data = None if is_edited_message else _extract_attachment(message)
+    forbidden_attachment_type = None if is_edited_message else _forbidden_attachment_type(message)
 
     external_chat_id = str(chat.get("id", ""))
     db.add(
@@ -917,6 +1045,24 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         if edited_ticket is not None:
             return {"ok": True, "edited": True, "ticket_id": edited_ticket.id}
         return {"ok": True, "edited": True, "ignored": "original_message_not_found"}
+
+    if forbidden_attachment_type is not None:
+        ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id) or _collecting_ticket_for_client(
+            db,
+            contact.company_id,
+            contact.client_id,
+        )
+        if ticket is not None:
+            append_system_message(
+                db,
+                ticket,
+                f"Клиент отправил запрещённый тип сообщения: {forbidden_attachment_type}",
+                agent_visible=True,
+            )
+        db.commit()
+        if notify_client:
+            send_message(external_chat_id, FORBIDDEN_ATTACHMENT_TEXT)
+        return {"ok": True, "forbidden_attachment": forbidden_attachment_type}
 
     if text.startswith("/close"):
         closed = _close_active_ticket_for_contact(db, contact)
@@ -968,8 +1114,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 _send_problem_menu_for_contact(db, contact)
             return {"ok": True, "task_pending_expired": True, "ticket_id": collecting_ticket.id}
 
-        client_body = text or "(\u043f\u0443\u0441\u0442\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435)"
-        _append_client_message(db, collecting_ticket, client_body, telegram_message_id)
+        client_body = text
+        client_message = _append_client_message(db, collecting_ticket, client_body, telegram_message_id)
+        if attachment_data is not None:
+            _store_telegram_attachment(db, collecting_ticket, client_message, attachment_data, external_chat_id)
         button = find_button(collecting_ticket.button_config_key or "")
 
         if collecting_ticket.task_kind == TicketTaskKind.GROUP_PARENT.value and button is not None:
@@ -1009,7 +1157,9 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         return {"ok": True, "ignored": "problem_type_required"}
 
     ticket = active_ticket
-    _append_client_message(db, ticket, text or "(пустое сообщение)", telegram_message_id)
+    client_message = _append_client_message(db, ticket, text, telegram_message_id)
+    if attachment_data is not None:
+        _store_telegram_attachment(db, ticket, client_message, attachment_data, external_chat_id)
     db.commit()
 
     return {"ok": True, "ticket_id": ticket.id}

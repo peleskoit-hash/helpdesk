@@ -113,6 +113,9 @@ const el = {
   ticketAssigneeBox: document.getElementById("ticketAssigneeBox"),
   ticketAssigneeSelect: document.getElementById("ticketAssigneeSelect"),
   messageContextMenu: null,
+  imagePreviewModal: null,
+  imagePreviewImg: null,
+  imagePreviewClose: null,
   tabLinks: [...document.querySelectorAll("[data-tab-link]")],
   statusButtons: [...document.querySelectorAll("[data-availability-status]")],
   adminOnly: [...document.querySelectorAll(".admin-only")],
@@ -120,6 +123,7 @@ const el = {
 };
 
 let editMessageResolve = null;
+let imagePreviewScale = 1;
 
 function setStatus(text) {
   el.statusText.textContent = text;
@@ -335,6 +339,114 @@ function messageStatusNote(message) {
     return `${messageAuthorLabel(message)} удалил сообщение`;
   }
   return message.status_note || "";
+}
+
+function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return "";
+  const value = Number(bytes);
+  if (!Number.isFinite(value)) return "";
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`;
+  return `${(value / 1024 / 1024).toFixed(1)} МБ`;
+}
+
+function attachmentMeta(attachment) {
+  return [attachment.mime_type, formatFileSize(attachment.file_size)].filter(Boolean).join(" | ");
+}
+
+function ensureImagePreviewModal() {
+  if (el.imagePreviewModal) return;
+
+  const modal = document.createElement("div");
+  modal.className = "image-preview-modal hidden";
+  const dialog = document.createElement("div");
+  dialog.className = "image-preview-dialog";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "image-preview-close";
+  close.textContent = "×";
+  close.title = "Закрыть";
+  const img = document.createElement("img");
+  img.className = "image-preview-img";
+  img.alt = "";
+  dialog.append(close, img);
+  modal.appendChild(dialog);
+  document.body.appendChild(modal);
+
+  function closePreview() {
+    modal.classList.add("hidden");
+    img.removeAttribute("src");
+  }
+
+  close.addEventListener("click", closePreview);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closePreview();
+  });
+  modal.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    imagePreviewScale += event.deltaY < 0 ? 0.12 : -0.12;
+    imagePreviewScale = Math.min(4, Math.max(0.25, imagePreviewScale));
+    img.style.transform = `scale(${imagePreviewScale})`;
+  }, { passive: false });
+
+  el.imagePreviewModal = modal;
+  el.imagePreviewImg = img;
+  el.imagePreviewClose = close;
+}
+
+function openImagePreview(attachment) {
+  ensureImagePreviewModal();
+  imagePreviewScale = 1;
+  el.imagePreviewImg.src = attachment.download_url;
+  el.imagePreviewImg.alt = attachment.original_filename || "";
+  el.imagePreviewImg.style.transform = "scale(1)";
+  el.imagePreviewModal.classList.remove("hidden");
+}
+
+function closeImagePreview() {
+  if (!el.imagePreviewModal) return;
+  el.imagePreviewModal.classList.add("hidden");
+  el.imagePreviewImg.removeAttribute("src");
+}
+
+function renderAttachments(message, container) {
+  const attachments = message.attachments || [];
+  if (!attachments.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "message-attachments";
+  for (const attachment of attachments) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `attachment-block ${attachment.is_image ? "attachment-image" : "attachment-file"}`;
+    const name = document.createElement("div");
+    name.className = "attachment-name";
+    name.textContent = attachment.original_filename || "Файл";
+    const meta = document.createElement("div");
+    meta.className = "attachment-meta";
+    meta.textContent = attachmentMeta(attachment);
+
+    if (attachment.is_image) {
+      const img = document.createElement("img");
+      img.src = attachment.download_url;
+      img.alt = attachment.original_filename || "";
+      img.loading = "lazy";
+      img.addEventListener("error", () => {
+        item.classList.remove("attachment-image");
+        item.classList.add("attachment-file");
+        img.remove();
+      }, { once: true });
+      item.append(img, name, meta);
+      item.addEventListener("click", () => openImagePreview(attachment));
+    } else {
+      item.append(name, meta);
+      item.addEventListener("click", () => {
+        window.location.href = attachment.download_url;
+      });
+    }
+    wrap.appendChild(item);
+  }
+  container.appendChild(wrap);
 }
 
 function canEditAgentMessage(message) {
@@ -865,7 +977,11 @@ function renderCard() {
     const bodyEl = document.createElement("div");
     bodyEl.className = "message-body";
     bodyEl.textContent = m.body || "";
-    div.append(headerEl, bodyEl);
+    div.appendChild(headerEl);
+    if ((m.body || "").trim()) {
+      div.appendChild(bodyEl);
+    }
+    renderAttachments(m, div);
     const note = messageStatusNote(m);
     if (note) {
       const noteEl = document.createElement("div");
@@ -1158,6 +1274,7 @@ function init() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       hideMessageContextMenu();
+      closeImagePreview();
     }
     if (e.key === "Escape" && !el.errorModal.classList.contains("hidden")) {
       closeError();

@@ -17,6 +17,7 @@ api/helpdesk.db
 *.sqlite
 *.sqlite3
 logs/
+storage/
 
 # OS/editor noise
 .DS_Store

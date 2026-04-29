@@ -213,6 +213,54 @@ def _ensure_ticket_message_columns():
         conn.execute(text("UPDATE ticket_messages SET message_status = 'normal' WHERE message_status IS NULL"))
 
 
+def _ensure_ticket_attachment_table():
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS ticket_attachments (
+                        id VARCHAR(36) PRIMARY KEY,
+                        ticket_id VARCHAR(36) NOT NULL,
+                        message_id VARCHAR(36) NOT NULL,
+                        source VARCHAR(40) NOT NULL,
+                        telegram_file_id VARCHAR(255),
+                        telegram_file_unique_id VARCHAR(255),
+                        telegram_file_path VARCHAR(500),
+                        original_filename VARCHAR(255),
+                        mime_type VARCHAR(255),
+                        file_size INTEGER,
+                        local_path VARCHAR(1000) NOT NULL,
+                        created_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            return
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS ticket_attachments (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    message_id VARCHAR(36) NOT NULL REFERENCES ticket_messages(id),
+                    source VARCHAR(40) NOT NULL,
+                    telegram_file_id VARCHAR(255),
+                    telegram_file_unique_id VARCHAR(255),
+                    telegram_file_path VARCHAR(500),
+                    original_filename VARCHAR(255),
+                    mime_type VARCHAR(255),
+                    file_size INTEGER,
+                    local_path VARCHAR(1000) NOT NULL,
+                    created_at TIMESTAMP
+                )
+                """
+            )
+        )
+
+
 def _ensure_test_agents():
     agent_specs = [
         ("00000000-0000-0000-0000-000000000001", "agent1@test.local", "Агент 1"),
@@ -264,6 +312,7 @@ async def on_startup():
             _ensure_user_columns()
             _ensure_ticket_columns()
             _ensure_ticket_message_columns()
+            _ensure_ticket_attachment_table()
             _ensure_test_agents()
             last_error = None
             break

@@ -29,6 +29,16 @@ class TicketListResponse(BaseModel):
     limit: int
 
 
+class TicketAttachmentOut(BaseModel):
+    id: str
+    original_filename: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = None
+    download_url: str
+    is_image: bool = False
+    created_at: datetime
+
+
 class TicketMessageOut(BaseModel):
     id: str
     message_type: str
@@ -40,6 +50,7 @@ class TicketMessageOut(BaseModel):
     status_note: str | None = None
     replaced_message_id: str | None = None
     created_at: datetime
+    attachments: list[TicketAttachmentOut] = []
 
 
 class ClientProfileOut(BaseModel):

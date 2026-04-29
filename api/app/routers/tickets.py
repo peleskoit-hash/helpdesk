@@ -1,15 +1,17 @@
-﻿from datetime import datetime, time
+from datetime import datetime, time
+from pathlib import Path
 from zoneinfo import ZoneInfo
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import Select, and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user
 from ..config import settings
 from ..db import get_db
-from ..models import ClientProfile, MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
+from ..models import ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
 from ..schemas import AssignTicketsPayload, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketCard, TicketListItem, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee
 from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_text, remove_inline_keyboard, send_message, send_problem_menu
@@ -300,6 +302,26 @@ def _profile_out(
     )
 
 
+def _attachment_is_image(attachment: TicketAttachment) -> bool:
+    mime_type = (attachment.mime_type or "").lower()
+    filename = (attachment.original_filename or "").lower()
+    return mime_type in {"image/jpeg", "image/png", "image/webp", "image/gif"} or filename.endswith(
+        (".jpg", ".jpeg", ".png", ".webp", ".gif")
+    )
+
+
+def _attachment_out(ticket_id: str, attachment: TicketAttachment) -> dict:
+    return {
+        "id": attachment.id,
+        "original_filename": attachment.original_filename,
+        "mime_type": attachment.mime_type,
+        "file_size": attachment.file_size,
+        "download_url": f"/api/v1/tickets/{ticket_id}/attachments/{attachment.id}/download",
+        "is_image": _attachment_is_image(attachment),
+        "created_at": attachment.created_at,
+    }
+
+
 @router.get("/active", response_model=TicketListResponse)
 def list_active(
     sort: str = Query(default="created_at", pattern="^(created_at|updated_at)$"),
@@ -426,6 +448,16 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             author.id: author.full_name
             for author in db.execute(select(User).where(User.id.in_(author_ids))).scalars().all()
         }
+    message_ids = [m.id for m in messages]
+    attachments_by_message: dict[str, list[TicketAttachment]] = {message_id: [] for message_id in message_ids}
+    if message_ids:
+        attachments = db.execute(
+            select(TicketAttachment)
+            .where(TicketAttachment.message_id.in_(message_ids))
+            .order_by(asc(TicketAttachment.created_at))
+        ).scalars().all()
+        for attachment in attachments:
+            attachments_by_message.setdefault(attachment.message_id, []).append(attachment)
 
     return TicketCard(
         id=t.id,
@@ -456,9 +488,31 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
                 "status_note": m.status_note,
                 "replaced_message_id": m.replaced_message_id,
                 "created_at": m.created_at,
+                "attachments": [_attachment_out(t.id, attachment) for attachment in attachments_by_message.get(m.id, [])],
             }
             for m in messages
         ],
+    )
+
+
+@router.get("/{ticket_id}/attachments/{attachment_id}/download")
+def download_attachment(
+    ticket_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _get_ticket_or_404(db, ticket_id, user)
+    attachment = db.get(TicketAttachment, attachment_id)
+    if attachment is None or attachment.ticket_id != ticket_id:
+        _error(404, "attachment_not_found", "Файл не найден")
+    path = Path(attachment.local_path)
+    if not path.exists() or not path.is_file():
+        _error(404, "attachment_file_missing", "Файл отсутствует в локальном хранилище")
+    return FileResponse(
+        path,
+        media_type=attachment.mime_type or "application/octet-stream",
+        filename=attachment.original_filename or path.name,
     )
 
 

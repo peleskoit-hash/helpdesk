@@ -1,4 +1,5 @@
-﻿import json
+import json
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -27,6 +28,11 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
     }
     if method == "sendMessage":
         result["message_id"] = 1
+    if method == "getFile":
+        file_id = (payload or {}).get("file_id") or "test-file"
+        result["file_id"] = file_id
+        result["file_unique_id"] = f"{file_id}-unique"
+        result["file_path"] = f"test/{file_id}.bin"
     return {
         "ok": True,
         "result": result,
@@ -182,6 +188,33 @@ def delete_message(chat_id: str, message_id: str | int) -> dict:
         return fake_telegram_response("deleteMessage", payload)
     return telegram_request("deleteMessage", payload=payload)
 
+
+def get_file(file_id: str, chat_id: str | int | None = None) -> dict:
+    payload = {"file_id": file_id}
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("getFile", payload)
+    return telegram_request("getFile", payload=payload)
+
+
+def download_file(file_path: str, destination_path: str | Path, chat_id: str | int | None = None) -> None:
+    destination = Path(destination_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if is_test_chat_id(chat_id):
+        destination.write_bytes(f"fake telegram file: {file_path}\n".encode("utf-8"))
+        return
+
+    if not settings.telegram_bot_token:
+        raise TelegramApiError("Telegram bot token is not configured")
+    url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
+    request = Request(url, method="GET")
+    try:
+        with urlopen(request, timeout=60) as response:
+            destination.write_bytes(response.read())
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise TelegramApiError(raw or str(exc)) from exc
+    except URLError as exc:
+        raise TelegramApiError(str(exc)) from exc
 
 def remove_reply_keyboard(chat_id: str) -> dict:
     return fake_telegram_response("removeReplyKeyboardSkipped", {"chat_id": chat_id})

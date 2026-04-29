@@ -28,6 +28,7 @@
       DATABASE_URL: postgresql+psycopg2://helpdesk:helpdesk@db:5432/helpdesk
       APP_TIMEZONE: Europe/Moscow
       BUTTON_CONFIG_DIR: /button-config
+      ATTACHMENT_STORAGE_DIR: /app/storage/attachments
     ports:
       - "8000:8000"
     depends_on:
@@ -36,6 +37,7 @@
     volumes:
       - ./api:/app
       - "./TG buttons:/button-config:ro"
+      - ./storage:/app/storage
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
