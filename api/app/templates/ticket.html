@@ -1,0 +1,296 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Helpdesk MVP - Карточка заявки</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES HELPDESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn admin-only" data-tab-link="unassigned" href="/tickets?tab=unassigned">Нераспределённые</a>
+        <a class="tab-btn" data-tab-link="active" href="/tickets?tab=active">Активные</a>
+        <a class="tab-btn" data-tab-link="frozen" href="/tickets?tab=frozen">Замороженные</a>
+        <a class="tab-btn" data-tab-link="closed" href="/tickets?tab=closed">Закрытые</a>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="status-panel">
+          <div class="status-panel-title">Статус</div>
+          <button class="agent-status-btn status-offline" data-availability-status="offline">Не в сети</button>
+          <button class="agent-status-btn status-online" data-availability-status="online">В сети</button>
+          <button class="agent-status-btn status-on-ticket" data-availability-status="on_ticket">На заявке</button>
+          <button class="agent-status-btn status-waiting" data-availability-status="waiting">В ожидании</button>
+          <button class="agent-status-btn status-lunch" data-availability-status="lunch">Обед</button>
+        </div>
+        <div class="agent-avatar" title="Текущий пользователь">A</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <button id="backToListBtn" type="button" class="action back-btn">Назад</button>
+        <label>Роль
+          <select id="roleSelect">
+            <option value="agent" selected>agent</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label>Пользователь
+          <select id="agentSelect"></select>
+        </label>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span class="status" id="statusText">Готово</span>
+      </div>
+
+      <section class="content ticket-layout">
+        <aside class="panel ticket-side">
+          <div class="card-head">
+            <div class="client-headline">
+              <span style="font-weight:700;">Клиент</span>
+              <button id="editClientBtn" type="button" class="action edit-client-btn" title="Редактировать клиента">✎</button>
+            </div>
+          </div>
+          <div class="ticket-client-info">
+            <div id="clientSectionTg" class="client-section client-section-tg">
+              <div id="clientRowUsername" class="client-row">
+                <div class="client-label">@username</div>
+                <div id="clientUsernameText"></div>
+              </div>
+              <div id="clientRowTelegramName" class="client-row">
+                <div class="client-label">Имя в TG</div>
+                <div id="clientTelegramNameText"></div>
+              </div>
+            </div>
+
+            <div id="clientSectionProfile" class="client-section client-section-profile">
+              <div id="clientRowFullName" class="client-row hidden">
+                <div class="client-label">Полное имя</div>
+                <div id="clientFullNameText"></div>
+              </div>
+              <div id="clientRowDepartmentBlock" class="client-row hidden client-department-block">
+                <div class="client-label">Отдел</div>
+                <div id="clientDepartmentLine1"></div>
+                <div id="clientDepartmentLine2"></div>
+                <div id="clientDepartmentLine3"></div>
+              </div>
+              <div id="clientRowLocation" class="client-row hidden">
+                <div class="client-label">Расположение</div>
+                <div id="clientLocationText"></div>
+              </div>
+              <div id="clientRowAnydesk" class="client-row hidden">
+                <div class="client-label">Anydesk</div>
+                <div id="clientAnydeskText"></div>
+              </div>
+            </div>
+
+            <div id="clientSectionWork" class="client-section client-section-work">
+              <div id="clientRowInternalNumber" class="client-row hidden">
+                <div class="client-label">Внутренний номер</div>
+                <div id="clientInternalNumberText"></div>
+              </div>
+              <div id="clientRowBitrixLogin" class="client-row hidden">
+                <div class="client-label">Логин Bitrix</div>
+                <div id="clientBitrixLoginText"></div>
+              </div>
+              <div id="clientRowBitrixPassword" class="client-row hidden">
+                <div class="client-label">Пароль Bitrix</div>
+                <div id="clientBitrixPasswordText"></div>
+              </div>
+              <div id="clientRowBitrixId" class="client-row hidden">
+                <div class="client-label">ID в Bitrix</div>
+                <div id="clientBitrixIdText"></div>
+              </div>
+            </div>
+
+            <div id="clientSectionVerification" class="client-section client-section-verification">
+              <div id="clientRowVerification" class="client-row client-verification-row">
+                <div class="client-label">Верификация</div>
+                <div id="clientVerificationText"></div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="panel ticket-card">
+          <div id="cardWrap" class="ticket-card-wrap">
+            <div class="card-head">
+              <div id="ticketSubject" style="font-weight: 700; margin-bottom: 8px;"></div>
+              <div id="ticketMeta" class="meta"></div>
+            </div>
+
+            <div id="messages" class="messages"></div>
+
+            <div class="card-actions fixed-composer">
+              <div id="quotePreview" class="quote-preview hidden">
+                <div class="quote-preview-content">
+                  <div id="quotePreviewAuthor" class="quote-preview-author"></div>
+                  <div id="quotePreviewText" class="quote-preview-text"></div>
+                </div>
+                <button id="clearQuoteBtn" type="button" class="quote-clear" title="Отменить цитирование">×</button>
+              </div>
+              <textarea id="messageInput" placeholder="Текст ответа/комментария"></textarea>
+              <div class="btn-row">
+                <button id="modeReplyBtn" class="action primary">Ответ</button>
+                <button id="modeCommentBtn" class="action">Комментарий</button>
+                <span class="status">Отправка: Ctrl+Enter</span>
+                <button id="sendNowBtn" class="action send-now">Отправка</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="panel ticket-side">
+          <div class="card-head">
+            <div style="font-weight:700;">Управление заявкой</div>
+          </div>
+          <div class="ticket-control-wrap">
+            <div id="ticketAssigneeBox" class="assignee-box admin-only hidden">
+              <div class="status-panel-title">Ответственный</div>
+              <select id="ticketAssigneeSelect"></select>
+            </div>
+            <div class="freeze-box">
+              <button id="freezeToggleBtn" class="action" style="margin-bottom:8px;">Заморозить</button>
+              <div class="status">Авторазморозка<br />(дата/время)</div>
+              <input id="freezeUntil" type="datetime-local" style="margin-top:6px;" />
+            </div>
+            <div class="ticket-right-actions greeting-wrap">
+              <button id="greetingBtn" class="action">Приветствие</button>
+            </div>
+            <div class="ticket-right-actions wrong-problem-wrap">
+              <button id="wrongProblemBtn" class="action">Неверная проблема</button>
+            </div>
+            <div class="ticket-right-actions close-wrap">
+              <button id="restoreBtn" class="action">Вернуть в работу</button>
+              <button id="closeBtn" class="action">Закрыть заявку</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div id="clientModal" class="modal hidden">
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Редактирование клиента</div>
+        <button id="closeClientModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>Имя<input id="fContactName" autocomplete="off" /></label>
+          <label>Фамилия<input id="fLastName" autocomplete="off" /></label>
+        </div>
+
+        <div class="modal-field-section modal-field-section-department">
+          <label>
+            <span class="modal-label-title">
+              Куда..?
+              <img
+                class="emoji-mark-img"
+                src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1faf4.png"
+                alt="🫴"
+                loading="lazy"
+                decoding="async"
+              />
+            </span>
+            <select id="fDestination">
+              <option value="">Не выбрано</option>
+              <option value="Песок">Песок</option>
+              <option value="Отдел Продаж">Отдел Продаж</option>
+              <option value="Колл Центр">Колл Центр</option>
+              <option value="HR">HR</option>
+              <option value="Руководство">Руководство</option>
+              <option value="Отдел Коучей">Отдел Коучей</option>
+              <option value="Контроль Качества">Контроль Качества</option>
+            </select>
+          </label>
+          <label id="fSandOwnerWrap" class="hidden">Чей песок:
+            <select id="fSandOwner">
+              <option value="">Не выбрано</option>
+              <option value="песок Власова">песок Власова</option>
+              <option value="песок Шабурова">песок Шабурова</option>
+              <option value="песок Сайдаралиева">песок Сайдаралиева</option>
+              <option value="песок Макаренко">песок Макаренко</option>
+              <option value="песок Шахалиевой">песок Шахалиевой</option>
+              <option value="песок Кочуры">песок Кочуры</option>
+              <option value="песок Москвиченко">песок Москвиченко</option>
+            </select>
+          </label>
+          <label id="fSalesGroupWrap" class="hidden">Выберите группу
+            <select id="fSalesGroup">
+              <option value="">Не выбрано</option>
+              <option value="группа Власова">группа Власова</option>
+              <option value="группа Шабурова">группа Шабурова</option>
+              <option value="группа Сайдаралиева">группа Сайдаралиева</option>
+              <option value="группа Макаренко">группа Макаренко</option>
+              <option value="группа Шахалиевой">группа Шахалиевой</option>
+              <option value="группа Кочуры">группа Кочуры</option>
+              <option value="группа Москвиченко">группа Москвиченко</option>
+            </select>
+          </label>
+          <label>Расположение
+            <select id="fLocationType">
+              <option value="">Не выбрано</option>
+              <option value="Офисный">Офисный</option>
+              <option value="Удалённый">Удалённый</option>
+            </select>
+          </label>
+          <label id="fAnydeskWrap" class="hidden">Anydesk<input id="fAnydesk" autocomplete="off" /></label>
+        </div>
+
+        <div class="modal-field-section modal-field-section-work">
+          <label>Внутренний номер<input id="fInternalNumber" autocomplete="off" /></label>
+          <label>Логин Bitrix<input id="fBitrixLogin" autocomplete="off" /></label>
+          <label>Пароль Bitrix<input id="fBitrixPassword" autocomplete="new-password" /></label>
+          <label>ID в Bitrix<input id="fBitrixId" autocomplete="off" /></label>
+        </div>
+
+        <div class="modal-field-section modal-field-section-verification">
+          <label class="checkbox-label">
+            Верификация пройдена
+            <input id="fIsVerified" type="checkbox" />
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveClientBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="wrongProblemModal" class="modal hidden">
+    <div class="modal-dialog wrong-problem-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Выберите правильный пункт меню</div>
+        <button id="closeWrongProblemModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <div id="wrongProblemMenu" class="wrong-problem-menu"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="errorModal" class="modal hidden">
+    <div class="modal-dialog error-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Ошибка</div>
+        <button id="closeErrorModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="errorText" class="error-textarea" readonly></textarea>
+      </div>
+      <div class="modal-foot">
+        <button id="copyErrorBtn" type="button" class="action">Скопировать</button>
+        <button id="okErrorBtn" type="button" class="action primary">Понятно</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/ticket.js"></script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+﻿import json
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from ..config import settings
+from .button_config import load_button_config
+
+
+TEST_TELEGRAM_CHAT_ID = "test-chat"
+TEST_TELEGRAM_CALLBACK_PREFIX = "test-callback"
+
+
+def is_test_chat_id(chat_id: str | int | None) -> bool:
+    return str(chat_id or "") == TEST_TELEGRAM_CHAT_ID
+
+
+def is_test_callback_query_id(callback_query_id: str | None) -> bool:
+    return str(callback_query_id or "").startswith(TEST_TELEGRAM_CALLBACK_PREFIX)
+
+
+def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
+    result = {
+        "fake": True,
+        "method": method,
+        "payload": payload or {},
+    }
+    if method == "sendMessage":
+        result["message_id"] = 1
+    return {
+        "ok": True,
+        "result": result,
+    }
+
+
+class TelegramApiError(RuntimeError):
+    pass
+
+
+def _api_url(method: str) -> str:
+    if not settings.telegram_bot_token:
+        raise TelegramApiError("Telegram bot token is not configured")
+    return f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
+
+
+def telegram_request(method: str, payload: dict | None = None, timeout: int = 30) -> dict:
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+
+    request = Request(_api_url(method), data=data, headers=headers, method="POST" if payload is not None else "GET")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            details = json.loads(raw)
+            description = details.get("description") or raw
+        except json.JSONDecodeError:
+            description = raw or str(exc)
+        raise TelegramApiError(description) from exc
+    except URLError as exc:
+        raise TelegramApiError(str(exc)) from exc
+
+
+def get_updates(offset: int | None, timeout: int) -> list[dict]:
+    query = {
+        "timeout": timeout,
+        "allowed_updates": json.dumps(["message", "edited_message", "callback_query"], ensure_ascii=False),
+    }
+    if offset is not None:
+        query["offset"] = offset
+
+    url = f"{_api_url('getUpdates')}?{urlencode(query)}"
+    request = Request(url, method="GET")
+    with urlopen(request, timeout=timeout + 10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if not payload.get("ok"):
+        return []
+    return payload.get("result", [])
+
+
+def set_bot_commands() -> dict:
+    return telegram_request(
+        "setMyCommands",
+        payload={
+            "commands": [
+                {"command": "start", "description": "Новая заявка"},
+                {"command": "close", "description": "Закрыть заявку"},
+            ],
+            "scope": {"type": "default"},
+        },
+    )
+
+
+def problem_menu_markup(menu_name: str | None = None, menu_key: str | None = None) -> dict:
+    return load_button_config(menu_name or "Руководство").menu_markup(menu_key)
+
+
+def client_close_markup() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "Закрыть обращение", "callback_data": "client_close"}],
+        ],
+    }
+
+
+def remove_inline_keyboard(chat_id: str, message_id: int) -> dict:
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": {"inline_keyboard": []},
+            },
+        )
+    return telegram_request(
+        "editMessageReplyMarkup",
+        payload={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reply_markup": {"inline_keyboard": []},
+        },
+    )
+
+
+def answer_callback_query(callback_query_id: str, text: str | None = None) -> dict:
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+    if is_test_callback_query_id(callback_query_id):
+        return fake_telegram_response("answerCallbackQuery", payload)
+    return telegram_request("answerCallbackQuery", payload=payload)
+
+
+def send_message(
+    chat_id: str,
+    text: str,
+    parse_mode: str | None = None,
+    reply_markup: dict | None = None,
+    remove_keyboard: bool = False,
+    reply_to_message_id: str | int | None = None,
+) -> dict:
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+    if remove_keyboard:
+        payload["reply_markup"] = {"remove_keyboard": True}
+    elif reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("sendMessage", payload)
+    return telegram_request("sendMessage", payload=payload)
+
+
+def edit_message_text(chat_id: str, message_id: str | int, text: str) -> dict:
+    payload = {
+        "chat_id": chat_id,
+        "message_id": int(message_id),
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("editMessageText", payload)
+    return telegram_request("editMessageText", payload=payload)
+
+
+def delete_message(chat_id: str, message_id: str | int) -> dict:
+    payload = {"chat_id": chat_id, "message_id": int(message_id)}
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("deleteMessage", payload)
+    return telegram_request("deleteMessage", payload=payload)
+
+
+def remove_reply_keyboard(chat_id: str) -> dict:
+    return fake_telegram_response("removeReplyKeyboardSkipped", {"chat_id": chat_id})
+
+
+def send_problem_menu(
+    chat_id: str,
+    menu_key: str | None = None,
+    text: str | None = None,
+    menu_name: str | None = None,
+) -> dict:
+    config = load_button_config(menu_name or "Руководство")
+    menu = config.menus[menu_key or config.root_menu_key]
+    return send_message(chat_id, text or menu.text or "Выберите тип проблемы", reply_markup=config.menu_markup(menu.key))

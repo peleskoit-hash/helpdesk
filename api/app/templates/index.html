@@ -1,0 +1,102 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Helpdesk MVP</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Заявки</h2>
+      <div class="tab-list">
+        <button class="tab-btn active" data-tab="active">Активные</button>
+        <button class="tab-btn" data-tab="frozen">Замороженные</button>
+        <button class="tab-btn" data-tab="closed">Закрытые</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <label>Роль
+          <select id="roleSelect">
+            <option value="agent" selected>agent</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+
+        <label>Сортировка
+          <select id="sortSelect">
+            <option value="created_at" selected>Дата создания</option>
+            <option value="updated_at">Последняя активность</option>
+          </select>
+        </label>
+
+        <label>Порядок
+          <select id="orderSelect">
+            <option value="desc" selected>Новые сверху</option>
+            <option value="asc">Старые сверху</option>
+          </select>
+        </label>
+
+        <input id="searchInput" placeholder="Поиск по теме/клиенту" />
+        <span class="status" id="statusText">Готово</span>
+      </div>
+
+      <section class="content">
+        <div class="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Тема</th>
+                <th>Заявка от</th>
+                <th>Дата создания</th>
+                <th>С создания</th>
+                <th>Последняя активность</th>
+              </tr>
+            </thead>
+            <tbody id="ticketsTableBody"></tbody>
+          </table>
+          <div id="emptyText" class="status" style="padding:12px;">Список пуст</div>
+          <div class="status" style="padding: 0 12px 12px;">Всего: <span id="ticketCount">0</span></div>
+        </div>
+
+        <div class="panel ticket-card">
+          <div id="cardEmpty" style="padding: 12px;" class="status">Выбери тикет из списка</div>
+
+          <div id="cardWrap" class="hidden" style="display: flex; flex-direction: column; height: 100%;">
+            <div class="card-head">
+              <div id="ticketSubject" style="font-weight: 700; margin-bottom: 8px;"></div>
+              <div id="ticketMeta" class="meta"></div>
+            </div>
+
+            <div id="messages" class="messages"></div>
+
+            <div class="card-actions">
+              <textarea id="messageInput" placeholder="Текст ответа/комментария"></textarea>
+              <div class="btn-row">
+                <button id="sendReplyBtn" class="action primary">Ответ</button>
+                <button id="sendCommentBtn" class="action">Комментарий</button>
+                <button id="greetingBtn" class="action">Приветствие</button>
+              </div>
+
+              <label class="status">Авторазморозка (дата/время)
+                <input id="freezeUntil" type="datetime-local" />
+              </label>
+
+              <div class="btn-row">
+                <button id="freezeBtn" class="action">Заморозить</button>
+                <button id="unfreezeBtn" class="action">Разморозить</button>
+                <button id="closeBtn" class="action">Закрыть заявку</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

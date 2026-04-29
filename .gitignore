@@ -1,0 +1,30 @@
+﻿# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases and runtime files
+api/helpdesk.db
+*.sqlite
+*.sqlite3
+logs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Archives/backups
+*.zip
+*.7z
+*.rar
