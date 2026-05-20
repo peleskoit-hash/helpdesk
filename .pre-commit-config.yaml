@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mojibake-check
+        name: mojibake-check
+        entry: python tools/check_mojibake.py api/app TG\ buttons README.md PROJECT_CONTEXT.md functional-contract-v1.md
+        language: system
+        pass_filenames: false
+

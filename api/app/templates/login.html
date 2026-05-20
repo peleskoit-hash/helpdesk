@@ -1,0 +1,45 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES DESK — Вход</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="login-page">
+  <main class="login-wrap">
+    <section class="login-card">
+      <h1 class="login-title">ES DESK</h1>
+      <p class="login-subtitle">Вход в Helpdesk</p>
+      <form method="post" action="/login" class="login-form" autocomplete="on">
+        <input type="hidden" name="next" value="{{NEXT_VALUE}}" />
+        <label class="login-field">Login
+          <input
+            id="loginInput"
+            name="username"
+            type="text"
+            value="{{LOGIN_VALUE}}"
+            autocomplete="username"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            required
+          />
+        </label>
+        <label class="login-field">Password
+          <input
+            id="passwordInput"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </label>
+        <div class="login-error">{{LOGIN_ERROR}}</div>
+        <button type="submit" class="action primary">Войти</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
+

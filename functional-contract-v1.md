@@ -1,55 +1,52 @@
-﻿# Functional Contract v1 (updated)
+﻿# Functional Contract v1 (current)
 
 ## 1) Channel
-- One active channel for v1: Telegram.
+- Основной канал v1: Telegram Bot API (long polling).
 
 ## 2) Roles
-- `agent` sees only tickets assigned to them.
-- `admin` sees all tickets and manages assignment.
+- `admin` — полный доступ.
+- `agent` — рабочий доступ сотрудника.
+- `trainee` — как `agent`, но не участвует в автоназначении.
+- `chiki_piki` — read-only наблюдатель только по направлению "Колл Центр".
 
-## 3) Ticket statuses
-- `unassigned` (admin-only visibility in work queues; incoming ticket not distributed yet)
-- `new` (no agent message yet)
-- `pending` (ticket in active work; at least one agent action/message exists)
-- `closed` (final)
+## 3) Workflow types
+- `ticket` — обычная заявка.
+- `task` — задача с ответом клиенту при завершении.
+- `auto` — автоматический сценарий.
+- `group_task` / `group_child` — групповая задача.
 
-Notes:
-- `open` is removed.
-- Reopen is not used in v1.
+## 4) Queues / tabs
+- Нераспределённые
+- Активные
+- Особые (только admin)
+- Замороженные
+- Закрытые
 
-## 4) Lists
-- Active: `new`, `pending` with `is_frozen=false`
-- Frozen: `new`, `pending` with `is_frozen=true`
-- Closed: `closed`
-- `unassigned` is visible to admin only.
+## 5) Visibility rules
+- Агенты/стажёры видят свои активные/замороженные.
+- Агенты видят все закрытые заявки.
+- Агенты могут вернуть в работу только те заявки, которые закрыли сами.
+- `chiki_piki` видит только заявки, где `ClientProfile.destination == "Колл Центр"`, и только read-only.
+- `chiki_piki` видит: Нераспределённые, Активные, Замороженные, Закрытые; не видит Особые.
 
-## 5) Default sorting
-- Default in lists: newest first (`created_at desc`).
-- Column click sorting is supported.
+## 6) Special queue
+- `is_special=true` — админская очередь.
+- Открытые special не входят в обычные active/frozen/unassigned.
+- Закрытые special отображаются в закрытых.
 
-## 6) Close rules
-- Ticket can be closed only if there is at least one `agent` message.
-- Client command `/close` closes active ticket.
+## 7) Restore rules
+- Обычный `ticket` можно вернуть в работу по текущим ограничениям прав.
+- `task` и `auto` возвращать в работу нельзя.
 
-## 7) Message types
-- `client`
-- `agent`
-- `internal` (green, not sent to Telegram)
-- `system` (blue, not sent to Telegram)
+## 8) Auto-close timer
+- Работает только для обычных non-special `ticket`.
+- Не работает для `task/auto/group_task`, frozen, collecting, closed.
 
-## 8) Greeting button
-- Time windows (Europe/Moscow):
-  - 05:00-11:59 -> "Доброе утро"
-  - 12:00-16:59 -> "Добрый день"
-  - 17:00-19:30 -> "Добрый вечер"
-- After 19:30 button is disabled.
+## 9) Telegram menu lifecycle
+- После выбора конечной кнопки inline-меню убирается.
+- Если конечный пункт не выбран, предсоздание отменяется через 10 минут.
+- После закрытия обращений меню автоматически не отправляется; клиент использует `/start`.
 
-## 9) Freeze block
-- `is_frozen` boolean
-- optional `freeze_until`
-- if datetime invalid/empty -> no auto-unfreeze
-
-## 10) Final stage (before production)
-- Rotate Telegram bot token in BotFather (old test token must be revoked).
-- Update `.env` with new production token.
-- Verify webhook/long-poll settings with the new token.
+## 10) Message/attachment baseline
+- Поддерживаются client/agent/internal/system сообщения.
+- Attachments и stickers поддерживаются в карточке и доставке по текущим правилам.

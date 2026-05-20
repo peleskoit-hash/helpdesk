@@ -1,7 +1,7 @@
 ﻿from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -53,12 +53,17 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
-    email: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    login: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     availability_status: Mapped[str] = mapped_column(String(40), default="online")
+    legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 class Client(Base):
@@ -94,6 +99,7 @@ class ClientProfile(Base):
     bitrix_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bitrix_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bitrix_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    custom_fields: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -102,9 +108,13 @@ class Ticket(Base):
     __tablename__ = "tickets"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_number: Mapped[int | None] = mapped_column(nullable=True, unique=True)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
     client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"))
     assignee_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    closed_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    completed_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    completed_counted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     subject: Mapped[str] = mapped_column(String(255))
     workflow_type: Mapped[str] = mapped_column(String(20), default=TicketWorkflowType.TICKET.value)
     intake_state: Mapped[str] = mapped_column(String(20), default=TicketIntakeState.READY.value)
@@ -113,8 +123,23 @@ class Ticket(Base):
     agent_visible: Mapped[bool] = mapped_column(Boolean, default=True)
     load_counted: Mapped[bool] = mapped_column(Boolean, default=True)
     button_config_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    instruction_button_key: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    instruction_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    instruction_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     wrong_problem_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    wrong_problem_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    wrong_problem_button_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    wrong_problem_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    onsite_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
     client_close_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    menu_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_special: Mapped[bool] = mapped_column(Boolean, default=False)
+    special_assignee_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    special_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_close_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_close_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_close_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=TicketStatus.NEW.value)
     is_frozen: Mapped[bool] = mapped_column(Boolean, default=False)
     freeze_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -142,6 +167,10 @@ class TicketMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     ticket: Mapped[Ticket] = relationship(back_populates="messages")
+    attachments: Mapped[list["TicketAttachment"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
 
 
 class TicketAttachment(Base):
@@ -159,6 +188,7 @@ class TicketAttachment(Base):
     file_size: Mapped[int | None] = mapped_column(nullable=True)
     local_path: Mapped[str] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    message: Mapped[TicketMessage] = relationship(back_populates="attachments")
 
 
 class TicketView(Base):
@@ -205,3 +235,110 @@ class PendingTaskIntent(Base):
     subject: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ClientCardBlockConfig(Base):
+    __tablename__ = "client_card_block_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    title: Mapped[str] = mapped_column(String(200))
+    color_scheme: Mapped[str] = mapped_column(String(40), default="gray")
+    sort_order: Mapped[int] = mapped_column(default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ClientCardFieldConfig(Base):
+    __tablename__ = "client_card_field_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True)
+    label: Mapped[str] = mapped_column(String(200))
+    field_type: Mapped[str] = mapped_column(String(40), default="text")
+    block_key: Mapped[str] = mapped_column(String(100))
+    sort_order: Mapped[int] = mapped_column(default=0)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_editable: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=True)
+    options_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BotButtonSetting(Base):
+    __tablename__ = "bot_button_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    stable_button_id: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
+    button_key: Mapped[str] = mapped_column(String(500), unique=True)
+    legacy_button_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    menu_type: Mapped[str] = mapped_column(String(200))
+    workflow_type: Mapped[str] = mapped_column(String(50))
+    button_path: Mapped[str] = mapped_column(String(1000))
+    button_label: Mapped[str] = mapped_column(String(255))
+    label_override: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    label_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    currently_present: Mapped[bool] = mapped_column(Boolean, default=True)
+    instruction_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_text_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    system_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_text_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    fixed_assignee_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    fixed_assignee_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    freeze_on_create: Mapped[bool] = mapped_column(Boolean, default=False)
+    confirmation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    confirmation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmation_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    files_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    files_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    conditional_files_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    conditional_files_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    automation_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    automation_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    visibility_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_db_created: Mapped[bool] = mapped_column(Boolean, default=False)
+    button_kind: Mapped[str] = mapped_column(String(30), default="terminal")
+    parent_path: Mapped[str] = mapped_column(String(1000), default="")
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BotMenuLevelLayout(Base):
+    __tablename__ = "bot_menu_level_layouts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    menu_type: Mapped[str] = mapped_column(String(200), index=True)
+    level_key: Mapped[str] = mapped_column(String(600), unique=True, index=True)
+    layout_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BotMenuProfile(Base):
+    __tablename__ = "bot_menu_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    menu_type: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BotMenuDestinationBinding(Base):
+    __tablename__ = "bot_menu_destination_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    destination_value: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    menu_type: Mapped[str] = mapped_column(String(200), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

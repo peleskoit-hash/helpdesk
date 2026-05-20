@@ -1,4 +1,4 @@
-﻿import html
+import html
 import uuid
 from datetime import datetime
 
@@ -107,6 +107,56 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     if notify_client:
         notify_client_about_assignee(db, ticket, agent)
     return True
+
+
+def resolve_forced_assignee(db: Session, forced_assignee_type: str, forced_assignee_value: str) -> tuple[User | None, str | None, User | None]:
+    value = (forced_assignee_value or "").strip()
+    if not value:
+        return None, "not_found", None
+
+    user: User | None = None
+    if forced_assignee_type == "login":
+        user = db.execute(select(User).where(User.login == value)).scalar_one_or_none()
+    elif forced_assignee_type == "user_id":
+        user = db.execute(select(User).where(User.id == value)).scalar_one_or_none()
+    else:
+        return None, "not_found", None
+
+    if user is None:
+        return None, "not_found", None
+    if not user.is_active:
+        return None, "inactive", user
+    if user.role not in {"agent", "trainee"}:
+        return None, "invalid_role", user
+    return user, None, user
+
+
+def assign_ticket_to_forced_user(
+    db: Session,
+    ticket: Ticket,
+    forced_assignee_type: str,
+    forced_assignee_value: str,
+) -> tuple[User | None, str | None, User | None]:
+    if ticket.workflow_type == TicketWorkflowType.AUTO.value:
+        return None, "unsupported", None
+
+    assignee, error, candidate = resolve_forced_assignee(db, forced_assignee_type, forced_assignee_value)
+    if assignee is None:
+        return None, error or "not_found", candidate
+
+    ticket.assignee_id = assignee.id
+    ticket.intake_state = TicketIntakeState.READY.value
+    if ticket.status != TicketStatus.CLOSED.value:
+        ticket.status = TicketStatus.NEW.value
+    ticket.updated_at = datetime.utcnow()
+    assignee.last_assigned_at = datetime.utcnow()
+    append_system_message(
+        db,
+        ticket,
+        f"Заявка назначена на сотрудника из настройки кнопки: {assignee_label(assignee)}",
+        agent_visible=True,
+    )
+    return assignee, None, assignee
 
 
 def assign_unassigned_to_agent(db: Session, agent: User, notify_client: bool = True) -> int:

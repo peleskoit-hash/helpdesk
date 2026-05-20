@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     telegram_polling_timeout: int = 25
     telegram_default_agent_id: str = "00000000-0000-0000-0000-000000000001"
     attachment_storage_dir: str = "/app/storage/attachments"
+    bitrix_webhook_base: str | None = None
+    session_secret_key: str = "change-this-session-secret"
+    session_cookie_name: str = "esdesk_session"
+    use_db_buttons: bool = False
 
 
 settings = Settings()

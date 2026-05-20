@@ -1,0 +1,193 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Карточка Клиент</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link active admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Пользователь">A</div>
+          <form action="/logout" method="post">
+            <button type="submit" class="action sidebar-logout-btn">Выход</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <button id="backToSettingsBtn" class="action" type="button">Назад</button>
+        <div class="settings-title">Карточка Клиент</div>
+        <button id="addClientCardBlockBtn" class="action" type="button">+ Добавить блок</button>
+        <button id="addClientCardFieldBtn" class="action" type="button">+ Добавить поле</button>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span id="statusText" class="status">Готово</span>
+      </div>
+
+      <section class="content" style="grid-template-columns: 1fr;">
+        <div class="panel settings-panel">
+          <div class="client-card-settings" id="clientCardSettings"></div>
+          <div id="emptyClientCardText" class="status settings-empty hidden">Блоки карточки не найдены</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="createClientCardFieldModal" class="modal hidden">
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Новое поле карточки клиента</div>
+        <button id="closeCreateClientCardFieldModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>Название поля<input id="newClientCardFieldLabel" autocomplete="off" /></label>
+          <label>Тип поля
+            <select id="newClientCardFieldType">
+              <option value="text">text</option>
+              <option value="textarea">textarea</option>
+              <option value="number">number</option>
+              <option value="date">date</option>
+              <option value="checkbox">checkbox</option>
+              <option value="select">select</option>
+              <option value="phone">phone</option>
+              <option value="url">url</option>
+              <option value="password">password</option>
+            </select>
+          </label>
+          <label>Блок
+            <select id="newClientCardFieldBlock"></select>
+          </label>
+          <label class="checkbox-label">Показывать в карточке <input id="newClientCardFieldVisible" type="checkbox" checked /></label>
+          <label class="checkbox-label">Показывать в редактировании <input id="newClientCardFieldEditable" type="checkbox" checked /></label>
+          <label class="checkbox-label">Обязательное <input id="newClientCardFieldRequired" type="checkbox" /></label>
+          <label id="newClientCardFieldOptionsWrap" class="hidden">Варианты select (по одному в строке)
+            <textarea id="newClientCardFieldOptions" rows="5"></textarea>
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveCreateClientCardFieldBtn" type="button" class="action primary">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="createClientCardBlockModal" class="modal hidden">
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Новый блок карточки клиента</div>
+        <button id="closeCreateClientCardBlockModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>Название блока<input id="newClientCardBlockTitle" autocomplete="off" /></label>
+          <label>Цветовая схема
+            <select id="newClientCardBlockColor">
+              <option value="blue">Голубой</option>
+              <option value="green">Зелёный</option>
+              <option value="yellow">Жёлтый</option>
+              <option value="red">Красный</option>
+              <option value="gray" selected>Серый</option>
+              <option value="purple">Фиолетовый</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveCreateClientCardBlockBtn" type="button" class="action primary">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editClientCardFieldModal" class="modal hidden">
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Редактирование поля</div>
+        <button id="closeEditClientCardFieldModalBtn" type="button" class="action">Отмена</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>Название поля<input id="editFieldLabel" autocomplete="off" /></label>
+          <label>Видимость <input id="editFieldVisible" type="checkbox" /></label>
+          <label>Редактируемое <input id="editFieldEditable" type="checkbox" /></label>
+          <label>Обязательное <input id="editFieldRequired" type="checkbox" /></label>
+          <label>Порядок <input id="editFieldSortOrder" type="number" /></label>
+          <label>Блок
+            <select id="editFieldBlockKey"></select>
+          </label>
+          <label>Key <input id="editFieldKey" readonly /></label>
+          <label>Type
+            <select id="editFieldType"></select>
+          </label>
+          <label id="editFieldOptionsWrap" class="hidden">Варианты select (по одному в строке)
+            <textarea id="editFieldOptions" rows="5"></textarea>
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveEditClientCardFieldBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="errorModal" class="modal hidden">
+    <div class="modal-dialog error-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Ошибка</div>
+        <button id="closeErrorModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="errorText" class="error-textarea" readonly></textarea>
+      </div>
+      <div class="modal-foot">
+        <button id="copyErrorBtn" type="button" class="action">Скопировать</button>
+        <button id="okErrorBtn" type="button" class="action primary">Понятно</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js"></script>
+  <script src="/static/settings_client_card.js"></script>
+</body>
+</html>
+
+
+
+
+
+

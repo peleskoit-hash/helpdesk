@@ -9,17 +9,64 @@
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="sidebar-brand">ES HELPDESK</div>
+      <div class="sidebar-brand">ES DESK</div>
       <h2 class="sidebar-title">Заявки</h2>
       <div class="tab-list">
-        <button class="tab-btn admin-only" data-tab="unassigned">Нераспределённые</button>
-        <button class="tab-btn active" data-tab="active">Активные</button>
-        <button class="tab-btn" data-tab="frozen">Замороженные</button>
-        <button class="tab-btn" data-tab="closed">Закрытые</button>
+        <button class="tab-btn admin-only" data-tab="unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></button>
+        <button class="tab-btn active" data-tab="active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></button>
+        <button class="tab-btn" data-tab="frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></button>
+        <button class="tab-btn" data-tab="closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></button>
+        <button class="tab-btn admin-only" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></button>
       </div>
       <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
-        <div class="status-panel-title">Показать заявки агентов</div>
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
         <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div class="sidebar-user-name-row">
+          <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
+          <button id="completionToggleBtn" type="button" class="completion-toggle-icon hidden" aria-label="Показать статистику">
+            <span id="completionSummaryArrow" class="completion-arrow">▼</span>
+          </button>
+        </div>
+        <div id="completionDetails" class="completion-details hidden">
+          <div class="completion-heading">
+            <span class="completion-title-text">Выполнено:</span>
+          </div>
+          <table class="completion-table">
+            <thead>
+              <tr>
+                <th>Текущий:</th>
+                <th class="tickets">Заявки</th>
+                <th class="tasks">Задачи</th>
+                <th class="total">Итого</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Год</td><td class="tickets" id="completionYearTickets">0</td><td class="tasks" id="completionYearTasks">0</td><td class="total" id="completionYearTotal">0</td></tr>
+              <tr><td>Месяц</td><td class="tickets" id="completionMonthTickets">0</td><td class="tasks" id="completionMonthTasks">0</td><td class="total" id="completionMonthTotal">0</td></tr>
+              <tr><td>Неделя</td><td class="tickets" id="completionWeekTickets">0</td><td class="tasks" id="completionWeekTasks">0</td><td class="total" id="completionWeekTotal">0</td></tr>
+              <tr><td>День</td><td class="tickets" id="completionDayTickets">0</td><td class="tasks" id="completionDayTasks">0</td><td class="total" id="completionDayTotal">0</td></tr>
+              <tr><td>Всё время</td><td class="tickets" id="completionAllTimeTickets">0</td><td class="tasks" id="completionAllTimeTasks">0</td><td class="total" id="completionAllTimeTotalRow">0</td></tr>
+            </tbody>
+          </table>
+          <div class="completion-footer">
+            <span class="completion-chip legacy">Legacy:&nbsp;&nbsp;<b id="completionLegacy">0</b></span>
+          </div>
+        </div>
       </div>
       <div class="sidebar-bottom">
         <div class="status-panel">
@@ -30,39 +77,34 @@
           <button class="agent-status-btn status-waiting" data-availability-status="waiting">В ожидании</button>
           <button class="agent-status-btn status-lunch" data-availability-status="lunch">Обед</button>
         </div>
-        <div class="agent-avatar" title="Текущий пользователь">A</div>
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Текущий пользователь">A</div>
+          <form action="/logout" method="post">
+            <button type="submit" class="action sidebar-logout-btn">Выход</button>
+          </form>
+        </div>
       </div>
     </aside>
 
     <main class="main">
       <div class="toolbar">
-        <label>Роль
+        <label id="roleControl" class="hidden">Роль
           <select id="roleSelect">
-            <option value="agent" selected>agent</option>
-            <option value="admin">admin</option>
+            <option value="agent" selected>Сотрудник</option>
+            <option value="admin">Администратор</option>
+            <option value="trainee">Стажёр</option>
+            <option value="chiki_piki">Чики-пики</option>
           </select>
         </label>
 
-        <label id="agentSelectWrap">Пользователь
+        <label id="agentSelectWrap" class="hidden">Пользователь
           <select id="agentSelect"></select>
-        </label>
-
-        <label>Сортировка
-          <select id="sortSelect">
-            <option value="created_at" selected>Дата создания</option>
-            <option value="updated_at">Последняя активность</option>
-          </select>
-        </label>
-
-        <label>Порядок
-          <select id="orderSelect">
-            <option value="desc" selected>Новые сверху</option>
-            <option value="asc">Старые сверху</option>
-          </select>
         </label>
 
         <input id="searchInput" placeholder="Поиск по теме/клиенту" />
         <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button">Назначить ответственно</button>
+        <button id="bulkCloseBtn" class="action admin-only hidden" type="button" disabled>Завершить</button>
+        <button id="bulkDeleteBtn" class="action admin-only hidden danger" type="button" disabled>Удалить</button>
         <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
         <span class="status" id="statusText">Готово</span>
       </div>
@@ -73,13 +115,13 @@
             <thead>
               <tr>
                 <th class="admin-select-col hidden"><button id="selectAllTicketsBtn" class="mini-check-btn" type="button">✓</button></th>
-                <th>Тема</th>
-                <th>Заявка от</th>
-                <th class="admin-assignee-col hidden">Исполнитель</th>
-                <th>Последний ответ</th>
-                <th>Дата создания</th>
-                <th>С создания</th>
-                <th>Последняя активность</th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="subject">Тема</button></th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="client_name">Заявка от</button></th>
+                <th class="admin-assignee-col hidden"><button type="button" class="table-sort-btn" data-sort-key="assignee_name">Исполнитель</button></th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="last_reply_at">Последний ответ</button></th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="created_at">Дата создания</button></th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="age_created">С создания</button></th>
+                <th><button type="button" class="table-sort-btn" data-sort-key="updated_at">Последняя активность</button></th>
               </tr>
             </thead>
             <tbody id="ticketsTableBody"></tbody>
@@ -112,6 +154,20 @@
     </div>
   </div>
 
+  <div id="bulkActionModal" class="modal hidden">
+    <div class="modal-dialog assign-dialog">
+      <div class="modal-head">
+        <div id="bulkActionModalTitle" style="font-weight:700;">Подтверждение</div>
+        <button id="closeBulkActionModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div id="bulkActionModalText" class="modal-body"></div>
+      <div class="modal-foot">
+        <button id="cancelBulkActionBtn" type="button" class="action">Отмена</button>
+        <button id="confirmBulkActionBtn" type="button" class="action primary">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
   <div id="errorModal" class="modal hidden">
     <div class="modal-dialog error-dialog">
       <div class="modal-head">
@@ -129,6 +185,8 @@
   </div>
 
   <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js"></script>
   <script src="/static/list.js"></script>
 </body>
 </html>
+

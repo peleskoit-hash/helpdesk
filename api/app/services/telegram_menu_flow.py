@@ -1,0 +1,86 @@
+﻿from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models import TelegramContact, Ticket
+from .telegram_bot import delete_message, remove_inline_keyboard
+
+
+def _response_message_id(response: dict) -> str | None:
+    message_id = (response.get("result") or {}).get("message_id")
+    return str(message_id) if message_id is not None else None
+
+
+def _store_menu_message_id(ticket: Ticket, response: dict):
+    message_id = _response_message_id(response)
+    if message_id is not None:
+        ticket.menu_message_id = message_id
+
+
+def _remove_menu_keyboard(db: Session, ticket: Ticket, fallback_chat_id: str | None = None, fallback_message_id: int | None = None):
+    chat_id = fallback_chat_id
+    if chat_id is None:
+        contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
+        chat_id = contact.external_chat_id if contact is not None else None
+    message_id_str = ticket.menu_message_id
+    message_id = int(message_id_str) if message_id_str and message_id_str.isdigit() else fallback_message_id
+    if chat_id and message_id is not None:
+        try:
+            delete_message(chat_id, message_id)
+        except Exception:
+            try:
+                remove_inline_keyboard(chat_id, message_id)
+            except Exception:
+                pass
+    ticket.menu_message_id = None
+
+
+def _safe_remove_inline_keyboard(chat_id: str, message_id: int | None):
+    if message_id is None:
+        return
+    try:
+        remove_inline_keyboard(chat_id, message_id)
+    except Exception:
+        pass
+
+
+def _safe_delete_message(chat_id: str, message_id: int | None):
+    if message_id is None:
+        return
+    try:
+        delete_message(chat_id, message_id)
+    except Exception:
+        _safe_remove_inline_keyboard(chat_id, message_id)
+
+
+def _confirm_callback_data(button_ref: str, decision: str) -> str:
+    return f"confirm:{decision}:{button_ref}"
+
+
+def _parse_confirm_callback_data(data: str) -> tuple[str, str] | None:
+    prefix = "confirm:"
+    if not data.startswith(prefix):
+        return None
+    payload = data.removeprefix(prefix)
+    parts = payload.split(":", 1)
+    if len(parts) != 2:
+        return None
+    decision, button_ref = parts
+    if decision not in {"yes", "no"}:
+        legacy_parts = payload.rsplit(":", 1)
+        if len(legacy_parts) != 2:
+            return None
+        button_ref, decision = legacy_parts
+        if decision not in {"yes", "no"}:
+            return None
+    return button_ref, decision
+
+
+def _confirmation_markup(button_ref: str) -> dict:
+    return {
+        "inline_keyboard": [[
+            {"text": "Да", "callback_data": _confirm_callback_data(button_ref, "yes")},
+            {"text": "Нет", "callback_data": _confirm_callback_data(button_ref, "no")},
+        ]]
+    }

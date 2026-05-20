@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -26,7 +27,7 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
         "method": method,
         "payload": payload or {},
     }
-    if method == "sendMessage":
+    if method in {"sendMessage", "sendDocument", "sendPhoto"}:
         result["message_id"] = 1
     if method == "getFile":
         file_id = (payload or {}).get("file_id") or "test-file"
@@ -57,6 +58,54 @@ def telegram_request(method: str, payload: dict | None = None, timeout: int = 30
         headers["Content-Type"] = "application/json; charset=utf-8"
 
     request = Request(_api_url(method), data=data, headers=headers, method="POST" if payload is not None else "GET")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            details = json.loads(raw)
+            description = details.get("description") or raw
+        except json.JSONDecodeError:
+            description = raw or str(exc)
+        raise TelegramApiError(description) from exc
+    except URLError as exc:
+        raise TelegramApiError(str(exc)) from exc
+
+
+def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: int = 60) -> dict:
+    boundary = f"----helpdesk-{uuid.uuid4().hex}"
+    body = bytearray()
+
+    def add_part(name: str, value: str) -> None:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    for key, value in fields.items():
+        if value is not None:
+            add_part(key, str(value))
+
+    for key, file_info in files.items():
+        filename = file_info["filename"]
+        content_type = file_info.get("content_type") or "application/octet-stream"
+        content = file_info["content"]
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(
+            f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode("utf-8")
+        )
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        body.extend(content)
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    request = Request(
+        _api_url(method),
+        data=bytes(body),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
     try:
         with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -187,6 +236,76 @@ def delete_message(chat_id: str, message_id: str | int) -> dict:
     if is_test_chat_id(chat_id):
         return fake_telegram_response("deleteMessage", payload)
     return telegram_request("deleteMessage", payload=payload)
+
+
+def send_document(
+    chat_id: str,
+    file_path: str | Path | bytes,
+    filename: str | None = None,
+    caption: str | None = None,
+    mime_type: str | None = None,
+) -> dict:
+    binary_content: bytes | None = None
+    if isinstance(file_path, (bytes, bytearray)):
+        binary_content = bytes(file_path)
+        path = Path(filename or "attachment")
+    else:
+        path = Path(file_path)
+    payload = {"chat_id": chat_id}
+    if caption:
+        payload["caption"] = caption
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response(
+            "sendDocument",
+            {
+                **payload,
+                "filename": filename or path.name,
+                "mime_type": mime_type or "application/octet-stream",
+            },
+        )
+    return telegram_multipart_request(
+        "sendDocument",
+        payload,
+        {
+            "document": {
+                "filename": filename or path.name,
+                "content_type": mime_type or "application/octet-stream",
+                "content": binary_content if binary_content is not None else path.read_bytes(),
+            }
+        },
+    )
+
+
+def send_photo(
+    chat_id: str,
+    content: bytes,
+    filename: str = "image.jpg",
+    caption: str | None = None,
+    mime_type: str | None = None,
+) -> dict:
+    payload = {"chat_id": chat_id}
+    if caption:
+        payload["caption"] = caption
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response(
+            "sendPhoto",
+            {
+                **payload,
+                "filename": filename,
+                "mime_type": mime_type or "image/jpeg",
+            },
+        )
+    return telegram_multipart_request(
+        "sendPhoto",
+        payload,
+        {
+            "photo": {
+                "filename": filename,
+                "content_type": mime_type or "image/jpeg",
+                "content": content,
+            }
+        },
+    )
 
 
 def get_file(file_id: str, chat_id: str | int | None = None) -> dict:

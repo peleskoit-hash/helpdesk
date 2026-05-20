@@ -23,6 +23,15 @@ function initThemeToggle() {
     const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
     applyTheme(nextTheme);
   });
+
+  const logoutForms = document.querySelectorAll("form[action='/logout']");
+  logoutForms.forEach((form) => {
+    form.addEventListener("submit", () => {
+      localStorage.removeItem("hd_role");
+      localStorage.removeItem("hd_user_id");
+      localStorage.removeItem("hd_admin_assignee_ids");
+    });
+  });
 }
 
 if (document.readyState === "loading") {

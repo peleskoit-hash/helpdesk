@@ -1,0 +1,142 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Настройка пользователей</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link active admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Пользователь">A</div>
+          <form action="/logout" method="post">
+            <button type="submit" class="action sidebar-logout-btn">Выход</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <button id="backToSettingsBtn" class="action" type="button">Назад</button>
+        <div class="settings-title">Настройка пользователей</div>
+        <button id="createUserBtn" class="action primary" type="button">Создать пользователя</button>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span id="statusText" class="status">Готово</span>
+      </div>
+
+      <section class="content" style="grid-template-columns: 1fr;">
+        <div class="panel table-wrap settings-panel">
+          <table class="settings-table">
+            <thead>
+              <tr>
+                <th>ФИО</th>
+                <th>Login</th>
+                <th>Роль</th>
+                <th>Активен</th>
+                <th>Статус</th>
+                <th>Legacy</th>
+                <th>Создан</th>
+                <th>Обновлён</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+          <div id="emptyUsersText" class="status settings-empty">Пользователей пока нет</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="userModal" class="modal hidden">
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head">
+        <div id="userModalTitle" style="font-weight:700;">Пользователь</div>
+        <button id="closeUserModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>ФИО<input id="fFullName" autocomplete="off" /></label>
+          <label>Login<input id="fLogin" autocomplete="off" /></label>
+          <label>Password<input id="fPassword" type="password" autocomplete="new-password" /></label>
+          <label>Роль
+            <select id="fRole">
+              <option value="admin">Администратор</option>
+              <option value="agent">Сотрудник</option>
+              <option value="trainee">Стажёр</option>
+              <option value="chiki_piki">Чики-пики</option>
+            </select>
+          </label>
+          <label class="checkbox-label settings-checkbox-label">
+            Активен
+            <input id="fIsActive" type="checkbox" />
+          </label>
+          <label>Количество заявок из старого Helpdesk<input id="fLegacyTicketCount" type="number" min="0" step="1" autocomplete="off" /></label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveUserBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="errorModal" class="modal hidden">
+    <div class="modal-dialog error-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Ошибка</div>
+        <button id="closeErrorModalBtn" type="button" class="action">Закрыть</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="errorText" class="error-textarea" readonly></textarea>
+      </div>
+      <div class="modal-foot">
+        <button id="copyErrorBtn" type="button" class="action">Скопировать</button>
+        <button id="okErrorBtn" type="button" class="action primary">Понятно</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js"></script>
+  <script src="/static/settings_users.js"></script>
+</body>
+</html>
+
+
+
+
+
+

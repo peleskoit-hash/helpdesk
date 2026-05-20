@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class TicketListItem(BaseModel):
     id: str
+    ticket_number: int | None = None
     subject: str
     workflow_type: str = "ticket"
     intake_state: str = "ready"
@@ -15,6 +16,9 @@ class TicketListItem(BaseModel):
     client_name: str
     assignee_id: str | None = None
     assignee_name: str | None = None
+    is_special: bool = False
+    special_assignee_id: str | None = None
+    special_assignee_name: str | None = None
     last_reply_by: str | None
     last_reply_at: datetime | None
     created_at: datetime
@@ -29,6 +33,14 @@ class TicketListResponse(BaseModel):
     limit: int
 
 
+class TicketCountsOut(BaseModel):
+    unassigned: int
+    active: int
+    frozen: int
+    closed: int
+    special: int = 0
+
+
 class TicketAttachmentOut(BaseModel):
     id: str
     original_filename: str | None = None
@@ -36,6 +48,8 @@ class TicketAttachmentOut(BaseModel):
     file_size: int | None = None
     download_url: str
     is_image: bool = False
+    is_unsupported_preview: bool = False
+    unsupported_preview_text: str | None = None
     created_at: datetime
 
 
@@ -50,7 +64,7 @@ class TicketMessageOut(BaseModel):
     status_note: str | None = None
     replaced_message_id: str | None = None
     created_at: datetime
-    attachments: list[TicketAttachmentOut] = []
+    attachments: list[TicketAttachmentOut] = Field(default_factory=list)
 
 
 class ClientProfileOut(BaseModel):
@@ -76,6 +90,7 @@ class ClientProfileOut(BaseModel):
     bitrix_login: str | None = None
     bitrix_password: str | None = None
     bitrix_id: str | None = None
+    custom_fields: dict = Field(default_factory=dict)
 
 
 class ClientProfileUpdate(BaseModel):
@@ -99,10 +114,12 @@ class ClientProfileUpdate(BaseModel):
     bitrix_login: str | None = None
     bitrix_password: str | None = None
     bitrix_id: str | None = None
+    custom_fields: dict | None = None
 
 
 class TicketCard(BaseModel):
     id: str
+    ticket_number: int | None = None
     subject: str
     workflow_type: str = "ticket"
     intake_state: str = "ready"
@@ -112,6 +129,20 @@ class TicketCard(BaseModel):
     closed_at: datetime | None
     assignee_id: str | None = None
     assignee_name: str | None = None
+    is_special: bool = False
+    special_assignee_id: str | None = None
+    special_assignee_name: str | None = None
+    instruction_title: str | None = None
+    instruction_text: str | None = None
+    wrong_problem_used: bool = False
+    wrong_problem_used_at: datetime | None = None
+    wrong_problem_label: str | None = None
+    auto_close_disabled: bool = False
+    auto_close_started_at: datetime | None = None
+    auto_close_due_at: datetime | None = None
+    auto_closed_at: datetime | None = None
+    closed_by_user_id: str | None = None
+    onsite_triggered: bool = False
     client_name: str
     client_profile: ClientProfileOut
     messages: list[TicketMessageOut]
@@ -126,9 +157,31 @@ class FreezePayload(BaseModel):
     freeze_until: datetime | None = None
 
 
+class TicketAutoClosePayload(BaseModel):
+    auto_close_disabled: bool
+
+
 class AssignTicketsPayload(BaseModel):
     ticket_ids: list[str] = Field(min_length=1)
     assignee_id: str | None = None
+
+
+class AdminBulkTicketsPayload(BaseModel):
+    ticket_ids: list[str] = Field(min_length=1)
+
+
+class AdminCloseResult(BaseModel):
+    ok: bool = True
+    closed: int = 0
+    already_closed: int = 0
+    not_found: list[str] = Field(default_factory=list)
+
+
+class AdminDeleteResult(BaseModel):
+    ok: bool = True
+    deleted: int = 0
+    not_found: list[str] = Field(default_factory=list)
+    file_delete_warnings: list[str] = Field(default_factory=list)
 
 
 class WrongProblemPayload(BaseModel):
@@ -144,11 +197,13 @@ SortOrder = Literal["asc", "desc"]
 
 
 AvailabilityStatus = Literal["offline", "online", "on_ticket", "waiting", "lunch"]
+UserRole = Literal["admin", "agent", "trainee", "chiki_piki"]
 
 
 class UserStatusOut(BaseModel):
     id: str
     role: str
+    role_label: str | None = None
     full_name: str
     availability_status: AvailabilityStatus
 
@@ -160,4 +215,243 @@ class UserStatusUpdate(BaseModel):
 class AgentOut(BaseModel):
     id: str
     full_name: str
+    role: str = "agent"
+    role_label: str | None = None
     availability_status: AvailabilityStatus
+    updated_at: datetime | None = None
+
+
+class SettingsUserOut(BaseModel):
+    id: str
+    full_name: str
+    login: str | None = None
+    role: str
+    role_label: str
+    is_active: bool
+    availability_status: AvailabilityStatus
+    legacy_ticket_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SettingsUserCreate(BaseModel):
+    full_name: str = Field(min_length=1)
+    login: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+    role: UserRole
+    is_active: bool = True
+    availability_status: AvailabilityStatus = "offline"
+    legacy_ticket_count: int = 0
+
+
+class SettingsUserUpdate(BaseModel):
+    full_name: str | None = None
+    login: str | None = None
+    password: str | None = None
+    role: UserRole | None = None
+    is_active: bool | None = None
+    availability_status: AvailabilityStatus | None = None
+    legacy_ticket_count: int | None = None
+
+
+class CompletionPeriodStats(BaseModel):
+    total: int = 0
+    tasks: int = 0
+    tickets: int = 0
+
+
+class CompletionStatsOut(BaseModel):
+    display_name: str
+    role: str
+    total: CompletionPeriodStats | None = None
+    calendar: dict[str, CompletionPeriodStats] | None = None
+    legacy: int | None = None
+
+
+ClientCardColorScheme = Literal["blue", "green", "yellow", "red", "gray", "purple"]
+
+
+class ClientCardFieldConfigOut(BaseModel):
+    id: str
+    key: str
+    label: str
+    field_type: str
+    block_key: str
+    sort_order: int
+    is_visible: bool
+    is_editable: bool
+    is_required: bool = False
+    is_system: bool
+    options: list[str] | None = None
+
+
+class ClientCardBlockConfigOut(BaseModel):
+    id: str
+    key: str
+    title: str
+    color_scheme: str
+    sort_order: int
+    is_active: bool
+    fields: list[ClientCardFieldConfigOut] = Field(default_factory=list)
+
+
+class ClientCardConfigResponse(BaseModel):
+    blocks: list[ClientCardBlockConfigOut] = Field(default_factory=list)
+
+
+class ClientCardBlockUpdate(BaseModel):
+    title: str | None = None
+    color_scheme: ClientCardColorScheme | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class ClientCardFieldUpdate(BaseModel):
+    label: str | None = None
+    field_type: str | None = None
+    block_key: str | None = None
+    sort_order: int | None = None
+    is_visible: bool | None = None
+    is_editable: bool | None = None
+    is_required: bool | None = None
+    options: list[str] | None = None
+
+
+class ClientCardBlockCreate(BaseModel):
+    title: str = Field(min_length=1)
+    color_scheme: ClientCardColorScheme = "gray"
+
+
+class ClientCardFieldCreate(BaseModel):
+    label: str = Field(min_length=1)
+    field_type: Literal["text", "textarea", "number", "date", "checkbox", "select", "phone", "url", "password"]
+    block_key: str = Field(min_length=1)
+    is_visible: bool = True
+    is_editable: bool = True
+    is_required: bool = False
+    options: list[str] | None = None
+
+
+class MassNotificationRecipientOut(BaseModel):
+    client_id: str
+    client_name: str
+    chat_id: str
+    destination: str | None = None
+    telegram_username: str | None = None
+    telegram_display_name: str | None = None
+
+
+class MassNotificationPayload(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    destination: str | None = None
+
+
+class MassNotificationSendResult(BaseModel):
+    ok: bool = True
+    total: int = 0
+    sent: int = 0
+    failed: int = 0
+    failed_recipients: list[str] = Field(default_factory=list)
+
+
+class BotButtonMenuTypeOut(BaseModel):
+    menu_name: str
+    display_name: str | None = None
+    destinations: list[str] = Field(default_factory=list)
+    source_file: str
+    ok: bool = True
+    error: str | None = None
+    buttons_count: int = 0
+    menus_count: int = 0
+
+
+class BotMenuCreatePayload(BaseModel):
+    display_name: str = Field(min_length=1)
+    destinations: list[str] = Field(default_factory=list)
+
+
+class BotMenuDestinationPayload(BaseModel):
+    destination: str = Field(min_length=1)
+
+
+class BotButtonStructureLeafOut(BaseModel):
+    label: str
+    workflow_type: Literal["ticket", "task", "auto", "group_task_child"]
+    full_path: str
+    technical_key: str
+    source_button_key: str
+    has_instruction: bool = False
+    removed: bool = False
+    is_enabled: bool = True
+    stable_button_id: str | None = None
+    is_db_created: bool = False
+    is_archived: bool = False
+    status: Literal["actual", "removed_changed"] = "actual"
+
+
+class BotButtonGroupOut(BaseModel):
+    label: str
+    full_path: str
+    technical_key: str
+    children: list[BotButtonStructureLeafOut] = Field(default_factory=list)
+
+
+class BotButtonMenuStructureOut(BaseModel):
+    menu_name: str
+    ok: bool = True
+    error: str | None = None
+    root_level_key: str | None = None
+    tickets: list[BotButtonStructureLeafOut] = Field(default_factory=list)
+    tasks: list[BotButtonStructureLeafOut] = Field(default_factory=list)
+    autos: list[BotButtonStructureLeafOut] = Field(default_factory=list)
+    group_tasks: list[BotButtonGroupOut] = Field(default_factory=list)
+    removed_items: list[BotButtonStructureLeafOut] = Field(default_factory=list)
+    tree_rows: list[dict] = Field(default_factory=list)
+
+
+class BotButtonItemOut(BaseModel):
+    button_key: str
+    stable_button_id: str | None = None
+    legacy_button_key: str | None = None
+    menu_type: str
+    workflow_type: str
+    button_path: str
+    button_label: str
+    label_override: str | None = None
+    label_overridden: bool = False
+    button_label_effective: str | None = None
+    button_label_from: Literal["txt", "db"] = "txt"
+    instruction_text: str | None = None
+    removed: bool = False
+    currently_present: bool = True
+
+
+class BotButtonItemsResponse(BaseModel):
+    items: list[BotButtonItemOut] = Field(default_factory=list)
+
+
+class BotButtonInstructionUpdate(BaseModel):
+    instruction_text: str | None = None
+    client_text: str | None = None
+    client_text_overridden: bool | None = None
+    system_text: str | None = None
+    system_text_overridden: bool | None = None
+    fixed_assignee_enabled: bool | None = None
+    fixed_assignee_user_id: str | None = None
+    freeze_on_create: bool | None = None
+    confirmation_enabled: bool | None = None
+    confirmation_text: str | None = None
+    confirmation_overridden: bool | None = None
+    files_overridden: bool | None = None
+    files: list[str] | None = None
+    conditional_files_overridden: bool | None = None
+    conditional_files: list[dict] | None = None
+    automation_key: str | None = None
+    automation_overridden: bool | None = None
+    is_enabled: bool | None = None
+    visibility_overridden: bool | None = None
+    label_override: str | None = None
+    label_overridden: bool | None = None
+
+
+

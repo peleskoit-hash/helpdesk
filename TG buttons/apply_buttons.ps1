@@ -18,7 +18,34 @@ try {
 
     Write-Host ""
     Write-Host "Применяем кнопки..."
-    $result = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/button-config/reload"
+    $loginValue = Read-Host "Логин администратора"
+    if ([string]::IsNullOrWhiteSpace($loginValue)) {
+        throw "Логин не указан"
+    }
+    $securePassword = Read-Host "Пароль администратора" -AsSecureString
+    $plainPassword = [System.Net.NetworkCredential]::new("", $securePassword).Password
+    if ([string]::IsNullOrWhiteSpace($plainPassword)) {
+        throw "Пароль не указан"
+    }
+
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    Invoke-WebRequest `
+        -Method Post `
+        -Uri "http://127.0.0.1:8000/login" `
+        -WebSession $session `
+        -Body @{
+            login = $loginValue
+            password = $plainPassword
+            next = "/tickets"
+        } `
+        -ContentType "application/x-www-form-urlencoded" | Out-Null
+
+    $sessionInfo = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/api/v1/auth/session" -WebSession $session
+    if (-not $sessionInfo.is_real_admin) {
+        throw "Текущая учётная запись не является администратором"
+    }
+
+    $result = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/button-config/reload" -WebSession $session
     if (-not $result.ok) {
         throw "API вернул ошибку"
     }

@@ -15,6 +15,7 @@ ALLOWED_KINDS_RU = {
     "Задача",
     "Заявка",
     "Автоматическая заявка",
+    "Автоматическая задача",
     "Подменю",
     "групповая задача",
 }
@@ -32,9 +33,26 @@ class ButtonSpec:
     label: str
     kind: str
     text: str | None = None
+    confirmation_text: str | None = None
     system_text: str | None = None
+    instruction_text: str | None = None
+    automation_key: str | None = None
+    forced_assignee_type: str | None = None
+    forced_assignee_value: str | None = None
+    file_path: str | None = None
+    file_rules: tuple[dict[str, str], ...] = ()
     submenu_key: str | None = None
     subtasks: tuple["ButtonSpec", ...] = ()
+
+
+@dataclass(frozen=True)
+class TerminalButtonRef:
+    source_button_key: str
+    label: str
+    workflow_type: str
+    full_path: str
+    technical_key: str
+    instruction_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,19 +122,97 @@ def _extract_quoted(segment: str, marker: str) -> str | None:
     return after_marker[start + 1:]
 
 
+def _extract_line_value(segment: str, marker: str) -> str | None:
+    pattern = re.compile(rf"(?mi)^\s*{re.escape(marker)}\s*(.+?)\s*$")
+    match = pattern.search(segment)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
 def _normalize_kind(raw_kind: str) -> str:
     value = raw_kind.strip().lower()
     if value == "задача":
         return "task"
     if value == "заявка":
         return "ticket"
-    if value == "автоматическая заявка":
+    if value in {"автоматическая заявка", "автоматическая задача"}:
         return "auto"
     if value == "подменю":
         return "submenu"
     if value == "групповая задача":
         return "group_task"
     return value
+
+
+def _parse_button_segment(
+    segment: str,
+    *,
+    menu_name: str,
+    label: str,
+    raw_kind: str,
+    parent_label: str | None = None,
+) -> ButtonSpec:
+    kind = _normalize_kind(raw_kind)
+    key_parts = [menu_name, label] if parent_label is None else [menu_name, parent_label, label]
+    key = _key(*key_parts)
+    text = _extract_quoted(segment, "текст:")
+    confirmation_text = _extract_quoted(segment, "Подтверждение:") or _extract_quoted(segment, "подтверждение:")
+    system_text = _extract_quoted(segment, "Текст системный:") or _extract_quoted(segment, "текст системный:")
+    instruction_text = _extract_quoted(segment, "Инструкция:") or _extract_quoted(segment, "инструкция:")
+    automation_key = _extract_line_value(segment, "Автоматизация:")
+    forced_assignee_type = None
+    forced_assignee_value = None
+    forced_raw = _extract_line_value(segment, "Ответственный:")
+    if forced_raw:
+        forced_match = re.match(r"^(login|user_id)\s*:\s*(.+)$", forced_raw.strip(), flags=re.IGNORECASE)
+        if forced_match is None:
+            raise ValueError(f"Некорректный формат 'Ответственный:' для кнопки [{label}]")
+        forced_assignee_type = forced_match.group(1).lower()
+        forced_assignee_value = forced_match.group(2).strip()
+        if not forced_assignee_value:
+            raise ValueError(f"Пустое значение 'Ответственный:' для кнопки [{label}]")
+    direct_file = None
+    for raw_line in segment.splitlines():
+        line = raw_line.strip()
+        direct_file_match = re.match(r'^(?:фаил|файл)\s*:\s*"([^"]+)"\s*$', line, flags=re.IGNORECASE)
+        if direct_file_match:
+            direct_file = direct_file_match.group(1).strip()
+            break
+    file_rules: list[dict[str, str]] = []
+    for raw_line in segment.splitlines():
+        line = raw_line.strip()
+        match = re.match(
+            r'^если\s+\{\{([a-zA-Z0-9_]+)\}\}\s*=\s*([^,]+)\s*,\s*(?:фаил|файл)\s*:\s*"([^"]+)"\s*$',
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        field_name, expected_value, file_name = match.groups()
+        file_rules.append(
+            {
+                "field": field_name.strip(),
+                "equals": expected_value.strip(),
+                "file": file_name.strip(),
+            }
+        )
+
+    return ButtonSpec(
+        key=key,
+        label=label,
+        kind=kind,
+        text=text,
+        confirmation_text=confirmation_text,
+        system_text=system_text,
+        instruction_text=instruction_text,
+        automation_key=automation_key,
+        forced_assignee_type=forced_assignee_type,
+        forced_assignee_value=forced_assignee_value,
+        file_path=direct_file,
+        file_rules=tuple(file_rules),
+    )
 
 
 def _top_menu_rows(raw: str, button_keys_by_label: dict[str, str]) -> tuple[tuple[str, ...], ...]:
@@ -134,18 +230,21 @@ def _parse_submenu_items(segment: str, menu_name: str, parent_label: str) -> tup
     if "Кнопки подменю:" not in segment:
         return ()
     sub_segment = segment.split("Кнопки подменю:", 1)[1]
+    header_pattern = re.compile(r"(?m)^\s*\[([^\]]+)\]\s*-\s*тип\s*([^,\n]+)(?:,\s*текст\s*:|\s*,?\s*)")
+    matches = list(header_pattern.finditer(sub_segment))
     specs: list[ButtonSpec] = []
-    for line in sub_segment.splitlines():
-        match = re.match(r"\s*\[([^\]]+)\]\s*-\s*тип\s*([^,\n]+),\s*текст\s*:\s*(.*)$", line)
-        if not match:
-            continue
-        label, raw_kind, tail = match.groups()
+    for index, match in enumerate(matches):
+        label, raw_kind = match.groups()
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(sub_segment)
+        child_segment = sub_segment[start:end]
         specs.append(
-            ButtonSpec(
-                key=_key(menu_name, parent_label, label),
+            _parse_button_segment(
+                child_segment,
+                menu_name=menu_name,
                 label=label,
-                kind=_normalize_kind(raw_kind),
-                text=_strip_quotes(tail),
+                raw_kind=raw_kind,
+                parent_label=parent_label,
             )
         )
     return tuple(specs)
@@ -158,19 +257,39 @@ def _parse_group_subtasks(segment: str, menu_name: str, parent_label: str) -> tu
     if "Конец подзадач" in sub_segment:
         sub_segment = sub_segment.split("Конец подзадач", 1)[0]
 
-    header_pattern = re.compile(r"(?m)^\s+\[([^\]]+)\]\s*-\s*тип\s*([^,\n]+),\s*текст системный\s*:")
+    header_pattern = re.compile(r"(?m)^\s+\[([^\]]+)\]\s*-\s*тип\s*([^,\n]+)(?:,\s*(?:инструкция|текст системный)\s*:|\s*,?\s*)", flags=re.IGNORECASE)
     matches = list(header_pattern.finditer(sub_segment))
     specs: list[ButtonSpec] = []
     for index, match in enumerate(matches):
         next_start = matches[index + 1].start() if index + 1 < len(matches) else len(sub_segment)
         child_segment = sub_segment[match.start():next_start]
         label, raw_kind = match.groups()
+        forced_assignee_type = None
+        forced_assignee_value = None
+        forced_raw = _extract_line_value(child_segment, "Ответственный:")
+        if forced_raw:
+            forced_match = re.match(r"^(login|user_id)\s*:\s*(.+)$", forced_raw.strip(), flags=re.IGNORECASE)
+            if forced_match is None:
+                raise ValueError(f"Некорректный формат 'Ответственный:' для подзадачи [{label}]")
+            forced_assignee_type = forced_match.group(1).lower()
+            forced_assignee_value = forced_match.group(2).strip()
+            if not forced_assignee_value:
+                raise ValueError(f"Пустое значение 'Ответственный:' для подзадачи [{label}]")
         specs.append(
             ButtonSpec(
                 key=_key(menu_name, parent_label, label),
                 label=label,
                 kind=_normalize_kind(raw_kind),
-                system_text=_extract_quoted(child_segment, "текст системный:"),
+                system_text=(
+                    _extract_quoted(child_segment, "Текст системный:")
+                    or _extract_quoted(child_segment, "текст системный:")
+                ),
+                instruction_text=(
+                    _extract_quoted(child_segment, "Инструкция:")
+                    or _extract_quoted(child_segment, "инструкция:")
+                ),
+                forced_assignee_type=forced_assignee_type,
+                forced_assignee_value=forced_assignee_value,
             )
         )
     return tuple(specs)
@@ -188,10 +307,14 @@ def _parse_buttons(raw: str, menu_name: str) -> tuple[dict[str, ButtonSpec], dic
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
         segment = raw[start:end]
-        kind = _normalize_kind(raw_kind)
-        key = _key(menu_name, label)
-        text = _extract_quoted(segment, "текст:")
-        system_text = _extract_quoted(segment, "Текст системный:") or _extract_quoted(segment, "текст системный:")
+        parsed = _parse_button_segment(
+            segment,
+            menu_name=menu_name,
+            label=label,
+            raw_kind=raw_kind,
+        )
+        kind = parsed.kind
+        key = parsed.key
         submenu_key = None
         subtasks: tuple[ButtonSpec, ...] = ()
 
@@ -205,7 +328,7 @@ def _parse_buttons(raw: str, menu_name: str) -> tuple[dict[str, ButtonSpec], dic
             menus[submenu_key] = MenuSpec(
                 key=submenu_key,
                 title=label,
-                text=text,
+                text=parsed.text,
                 rows=tuple((item.key,) for item in submenu_items),
             )
         elif kind == "group_task":
@@ -215,8 +338,15 @@ def _parse_buttons(raw: str, menu_name: str) -> tuple[dict[str, ButtonSpec], dic
             key=key,
             label=label,
             kind=kind,
-            text=text,
-            system_text=system_text,
+            text=parsed.text,
+            confirmation_text=parsed.confirmation_text,
+            system_text=parsed.system_text,
+            instruction_text=parsed.instruction_text,
+            automation_key=parsed.automation_key,
+            forced_assignee_type=parsed.forced_assignee_type,
+            forced_assignee_value=parsed.forced_assignee_value,
+            file_path=parsed.file_path,
+            file_rules=parsed.file_rules,
             submenu_key=submenu_key,
             subtasks=subtasks,
         )
@@ -266,8 +396,20 @@ def load_button_config(menu_name: str = DEFAULT_MENU_NAME) -> ButtonConfig:
     return ButtonConfig(menus=menus, buttons=buttons, root_menu_key="root")
 
 
+def available_menu_names() -> tuple[str, ...]:
+    names: list[str] = [DEFAULT_MENU_NAME, BASIC_MENU_NAME]
+    if BUTTON_CONFIG_DIR.exists():
+        for path in BUTTON_CONFIG_DIR.glob("*.txt"):
+            if not path.is_file() or path.parent != BUTTON_CONFIG_DIR:
+                continue
+            menu_name = path.stem.strip()
+            if menu_name and menu_name not in names:
+                names.append(menu_name)
+    return tuple(names)
+
+
 def find_button(button_key: str) -> ButtonSpec | None:
-    for menu_name in (DEFAULT_MENU_NAME, BASIC_MENU_NAME):
+    for menu_name in available_menu_names():
         config = load_button_config(menu_name)
         button = config.buttons.get(button_key)
         if button is not None:
@@ -276,7 +418,7 @@ def find_button(button_key: str) -> ButtonSpec | None:
 
 
 def find_menu(menu_key: str) -> tuple[str, MenuSpec] | None:
-    for menu_name in (DEFAULT_MENU_NAME, BASIC_MENU_NAME):
+    for menu_name in available_menu_names():
         config = load_button_config(menu_name)
         menu = config.menus.get(menu_key)
         if menu is not None:
@@ -286,3 +428,72 @@ def find_menu(menu_key: str) -> tuple[str, MenuSpec] | None:
 
 def clear_button_config_cache() -> None:
     load_button_config.cache_clear()
+
+
+def build_terminal_button_key(menu_name: str, workflow_type: str, full_path: str) -> str:
+    return f"{menu_name}|{workflow_type}|{full_path}"
+
+
+def build_visibility_button_key(menu_name: str, node_kind: str, full_path: str) -> str:
+    return f"{menu_name}|{node_kind}|{full_path}"
+
+
+def build_level_layout_key(menu_name: str, full_path: str | None = None) -> str:
+    normalized = (full_path or "").strip() or "__root__"
+    return f"{menu_name}|level|{normalized}"
+
+
+def list_terminal_buttons(menu_name: str) -> tuple[TerminalButtonRef, ...]:
+    config = load_button_config(menu_name)
+    root = config.menus.get(config.root_menu_key)
+    if root is None:
+        return ()
+    result: list[TerminalButtonRef] = []
+    for row in root.rows:
+        for button_key in row:
+            button = config.buttons.get(button_key)
+            if button is None:
+                continue
+            if button.kind == "submenu":
+                for child in button.subtasks:
+                    if child.kind not in {"ticket", "task", "auto"}:
+                        continue
+                    full_path = f"{button.label}/{child.label}"
+                    result.append(
+                        TerminalButtonRef(
+                            source_button_key=child.key,
+                            label=child.label,
+                            workflow_type=child.kind,
+                            full_path=full_path,
+                            technical_key=build_terminal_button_key(menu_name, child.kind, full_path),
+                            instruction_text=child.instruction_text,
+                        )
+                    )
+                continue
+            if button.kind == "group_task":
+                for child in button.subtasks:
+                    full_path = f"{button.label}/{child.label}"
+                    result.append(
+                        TerminalButtonRef(
+                            source_button_key=child.key,
+                            label=child.label,
+                            workflow_type="group_task_child",
+                            full_path=full_path,
+                            technical_key=build_terminal_button_key(menu_name, "group_task_child", full_path),
+                            instruction_text=child.instruction_text,
+                        )
+                    )
+                continue
+            if button.kind in {"ticket", "task", "auto"}:
+                result.append(
+                    TerminalButtonRef(
+                        source_button_key=button.key,
+                        label=button.label,
+                        workflow_type=button.kind,
+                        full_path=button.label,
+                        technical_key=build_terminal_button_key(menu_name, button.kind, button.label),
+                        instruction_text=button.instruction_text,
+                    )
+                )
+    return tuple(result)
+

@@ -1,86 +1,70 @@
-﻿# Local run
+﻿# Helpdesk (local MVP)
+
+Локальный helpdesk с Telegram-ботом и web-интерфейсом для обработки заявок.
+
+## Запуск
 
 ```bash
 docker compose up --build
 ```
 
-API: `http://localhost:8000`
-Docs (Swagger): `http://localhost:8000/docs`
+- API: `http://localhost:8000`
+- Swagger: `http://localhost:8000/docs`
 
-Web UI:
-- List page: `http://localhost:8000/tickets`
-- Ticket page: `http://localhost:8000/tickets/{ticket_id}`
+## Страницы
 
-## Implemented endpoints
+- `/tickets` — список заявок
+- `/tickets/{id}` — карточка заявки
+- `/settings` — главная настроек (admin)
+- `/settings/users` — настройка пользователей (admin)
+- `/settings/client-card` — настройка карточки клиента (admin)
+- `/statuses` — быстрое управление статусами сотрудников (admin)
 
-- `GET /health`
-- `GET /api/v1/tickets/active?page=1&limit=20`
-- `GET /api/v1/tickets/frozen?page=1&limit=20`
-- `GET /api/v1/tickets/closed?page=1&limit=20`
-- `GET /api/v1/tickets/{id}`
-- `POST /api/v1/tickets/{id}/reply`
-- `POST /api/v1/tickets/{id}/comment`
-- `POST /api/v1/tickets/{id}/greeting`
-- `POST /api/v1/tickets/{id}/freeze`
-- `POST /api/v1/tickets/{id}/unfreeze`
-- `POST /api/v1/tickets/{id}/close`
-- `POST /api/v1/messenger/webhook/telegram`
+## Роли
 
-## Web behavior
+- `admin` — полный доступ
+- `agent` (`Сотрудник`) — рабочий доступ
+- `trainee` (`Стажёр`) — как сотрудник, но без автоназначения
+- `chiki_piki` — read-only наблюдатель по "Колл Центру"
 
-- Separate pages:
-  - `/tickets` for queue/list
-  - `/tickets/{id}` for ticket card
-- Tabs: `Активные`, `Замороженные`, `Закрытые`
-- Default sorting: newest first (`created_at desc`)
-- Pagination: 20 tickets per page + `Назад/Вперёд`
-- Column `Последний ответ` is shown in list
-- Role switch in UI: `agent` or `admin`
-- Soft auto-refresh:
-  - `/tickets` refreshes the list every 5 seconds
-  - `/tickets/{id}` refreshes the ticket card every 3 seconds
-  - the page is not reloaded, and the reply/comment draft is preserved
-- Later upgrade candidate: replace timer refresh with SSE or WebSocket when the infrastructure is ready for server-pushed events.
+## Очереди (вкладки)
 
-## Encoding policy (UTF-8)
+- Нераспределённые
+- Активные
+- Особые (только admin)
+- Замороженные
+- Закрытые
 
-- All source files and templates must be saved in UTF-8.
-- Do not paste Cyrillic directly into PowerShell heredocs for DB seed/update scripts.
-- For shell-driven DB updates, use Unicode escape sequences (`\uXXXX`) or UTF-8 files.
-- After any Cyrillic data change, verify via API response decoded as UTF-8.
-- If broken text like `????` is detected, fix immediately before continuing feature work.
+## Ключевые функции
 
-## Notes
+- Работа с обращениями `ticket`, задачами `task`, автообращениями `auto`, group-task.
+- Attachments (входящие из Telegram и исходящие из helpdesk), предпросмотр изображений.
+- Поддержка стикеров (static/video/animated с fallback).
+- Bitrix automation (`bitrix_deal_phone_lookup`).
+- Forced assignee через TG buttons (`Ответственный: login:/user_id:`).
+- Special queue (`Особые`) для admin.
+- Админские принудительные действия: завершение/удаление.
+- Автотаймер закрытия для обычных non-special ticket.
+- Настраиваемая карточка клиента (системные + custom поля).
 
-- Statuses: `unassigned`, `new`, `pending`, `closed`
-- `close` allowed only if ticket has at least one `agent` message
-- Greeting time restriction is disabled for local testing.
+## Telegram (кратко)
 
-## Telegram bot
+- `/start` открывает меню проблем.
+- После выбора конечной кнопки меню-клавиатура убирается.
+- Если конечная проблема не выбрана за 10 минут — предсоздание отменяется.
+- `/close` закрывает активное обращение без автопоказа меню.
 
-- Endpoint: `POST /api/v1/messenger/webhook/telegram`
-- Local real-bot mode uses Telegram long polling (`TELEGRAM_POLLING_ENABLED=true`).
-- No public HTTPS webhook URL is required for local testing.
-- Idempotency: duplicate `update_id` is ignored (`{"duplicate": true}`).
-- Incoming text message:
-  - finds/creates Telegram contact by `chat.id`
-  - stores Telegram `username` and display name for the client card
-  - finds active ticket for client (`status != closed`) or creates new one
-  - assigns new ticket to `TELEGRAM_DEFAULT_AGENT_ID` if that agent is active
-  - appends message as `message_type=client`
-- Agent `reply` and `greeting` messages are sent back to Telegram via `sendMessage`.
-- Command `/close`:
-  - closes active ticket for this chat
-  - adds system message `Заявка закрыта клиентом через /close`
-- Command `/start`:
-  - if there is no active ticket, shows the problem type menu
-  - if there is an active ticket, keeps the client in the current ticket
-- Problem type menu:
-  - `Проблема со сделкой`
-  - `Проблема с техникой`
-  - `Проблема с доступами`
-  - `Проблема с раздачей`
-  - `Иная проблема`
-  - shown as inline buttons under the bot message
-  - a new ticket is created only after the client presses an inline button
-  - inline buttons are removed after selection and appear again after ticket close
+## Важно
+
+- Все файлы проекта в UTF-8.
+- Секреты и токены в документацию не добавлять.
+
+## Для Codex / локальной разработки
+
+- Перед любой задачей перейти в корень проекта:
+  `Set-Location "C:\Users\ES\Downloads\Source\helpdesk"`
+- Проверить корень:
+  `Test-Path .\api\app\main.py`
+- Все относительные пути в задачах считать от `PROJECT_ROOT`.
+- Перед завершением изменений запускать проверку битой кириллицы:
+  `python tools/check_mojibake.py api/app "TG buttons" README.md PROJECT_CONTEXT.md functional-contract-v1.md`

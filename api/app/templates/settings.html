@@ -1,0 +1,77 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Настройки</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link active admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Пользователь">A</div>
+          <form action="/logout" method="post">
+            <button type="submit" class="action sidebar-logout-btn">Выход</button>
+          </form>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <div class="settings-title">Настройки</div>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span id="statusText" class="status">Выберите раздел</span>
+      </div>
+
+      <section class="content" style="grid-template-columns: 1fr;">
+        <div class="panel settings-panel settings-home-panel">
+          <div class="settings-home-links">
+            <a class="settings-home-link" href="/settings/users">Настройка пользователей</a>
+            <a class="settings-home-link" href="/settings/client-card">Карточка Клиент</a>
+            <a class="settings-home-link" href="/settings/bot-buttons">Кнопки бота</a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js"></script>
+  <script src="/static/settings_home.js"></script>
+</body>
+</html>
+
+
+
