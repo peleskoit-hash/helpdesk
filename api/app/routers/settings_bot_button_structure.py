@@ -470,6 +470,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
 
     tree_rows = build_rows_from_menu(config.root_menu_key if config is not None else None, "")
     removed_items: list[BotButtonStructureLeafOut] = []
+    allowed_removed_workflows = {"ticket", "task", "auto", "group_task_child"}
     saved_rows = db.execute(select(BotButtonSetting).where(BotButtonSetting.menu_type == menu_name)).scalars().all()
     for row in saved_rows:
         if not row.stable_button_id:
@@ -499,6 +500,9 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
             ]
         )
         if not has_any_settings and not (bool(row.is_db_created) and bool(row.is_archived)):
+            continue
+        if (row.workflow_type or "").strip() not in allowed_removed_workflows:
+            # Sections/group parents are not terminal buttons; skip them in removed leaf list.
             continue
         removed_leaf = BotButtonStructureLeafOut(
             label=_effective_label(row, row.button_label),

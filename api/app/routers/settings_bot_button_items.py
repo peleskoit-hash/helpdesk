@@ -342,7 +342,7 @@ def _distinct_profile_values(db: Session, field_name: str) -> list[str]:
 
 
 def _field_options(db: Session, field: ClientCardFieldConfig) -> list[str]:
-    options = field.select_options if isinstance(field.select_options, list) else []
+    options = field.options_json if isinstance(field.options_json, list) else []
     normalized: list[str] = []
     for value in options:
         text = str(value or "").strip()
@@ -359,24 +359,9 @@ def _build_conditional_field_catalog(db: Session, menu_type: str | None = None) 
     }
     allow_keys = allow_map.get((menu_type or "").strip(), set(CONDITIONAL_COMMON_KEYS))
 
-    from ..models import ClientCardBlockConfig
-
-    blocks = db.execute(
-        select(ClientCardBlockConfig).where(
-            ClientCardBlockConfig.scope_type == "telegram_menu",
-            ClientCardBlockConfig.scope_value.in_([menu_type or "", "*"]),
-            ClientCardBlockConfig.is_active.is_(True),
-        )
+    fields: list[ClientCardFieldConfig] = db.execute(
+        select(ClientCardFieldConfig).where(ClientCardFieldConfig.is_visible.is_(True))
     ).scalars().all()
-    block_ids = [b.id for b in blocks]
-    fields: list[ClientCardFieldConfig] = []
-    if block_ids:
-        fields = db.execute(
-            select(ClientCardFieldConfig).where(
-                ClientCardFieldConfig.block_id.in_(block_ids),
-                ClientCardFieldConfig.is_active.is_(True),
-            )
-        ).scalars().all()
     for field in fields:
         key = (field.key or "").strip()
         if not key:
@@ -904,4 +889,3 @@ def restore_bot_button_setting(
             child.updated_at = now
     db.commit()
     return {"ok": True, "restored": True}
-
