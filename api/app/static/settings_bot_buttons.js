@@ -120,6 +120,17 @@ const {
   nodeKindLabel,
   renderInfoRow,
 } = window.BotButtonsApi || {};
+const BotButtonsFiles = window.BotButtonsFiles || {};
+
+function botFilesCtx() {
+  return {
+    state,
+    escapeHtml,
+    FIELD_LABELS,
+    OPERATOR_OPTIONS,
+    renderEditor,
+  };
+}
 
 function hasUnsavedChanges() {
   return (state.editorText || "") !== (state.savedText || "")
@@ -851,228 +862,39 @@ function renderAssigneeOptions() {
 }
 
 function renderSelectedFiles() {
-  const files = state.selectedFiles || [];
-  if (!files.length) {
-    return '<div class="status">Файлы не выбраны</div>';
-  }
-  return `
-    <ul class="bot-file-list">
-      ${files.map((file) => `<li><label><input type="checkbox" class="bot-file-selected" value="${escapeHtml(file)}" /> ${escapeHtml(file)}</label></li>`).join("")}
-    </ul>
-  `;
+  return BotButtonsFiles.renderSelectedFiles(botFilesCtx());
 }
 
 function openFilePickerModal() {
-  const available = state.availableFiles || [];
-  if (!available.length) {
-    alert("В папке TG buttons/files нет доступных файлов.");
-    return;
-  }
-  const items = available.map((file) => `
-    <label class="bot-file-picker-item">
-      <span>${escapeHtml(file)}</span>
-      <input type="checkbox" value="${escapeHtml(file)}" ${state.selectedFiles.includes(file) ? "checked" : ""} />
-    </label>
-  `).join("");
-  const html = `
-    <div class="modal-overlay">
-      <div class="modal-dialog bot-file-picker-dialog">
-        <div class="modal-header"><h3>Выбор файла</h3></div>
-        <div class="modal-body">
-          <div class="bot-file-picker-list">${items}</div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="action" id="cancelFilePickerBtn">Отмена</button>
-          <button type="button" class="action action-primary" id="applyFilePickerBtn">Добавить</button>
-        </div>
-      </div>
-    </div>
-  `;
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = html;
-  const overlay = wrapper.firstElementChild;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#cancelFilePickerBtn")?.addEventListener("click", () => overlay.remove());
-  overlay.querySelector("#applyFilePickerBtn")?.addEventListener("click", () => {
-    const checked = Array.from(overlay.querySelectorAll(".bot-file-picker-item input:checked"))
-      .map((input) => input.value);
-    const merged = Array.from(new Set([...(state.selectedFiles || []), ...checked]));
-    state.selectedFiles = merged;
-    state.filesOverridden = true;
-    renderEditor();
-    overlay.remove();
-  });
+  return BotButtonsFiles.openFilePickerModal(botFilesCtx());
 }
 
 function fieldType(field) {
-  const found = (state.conditionalFields || []).find((item) => item.field === field);
-  return found?.type || "text";
+  return BotButtonsFiles.fieldType(botFilesCtx(), field);
 }
 
 function fieldMeta(field) {
-  return (state.conditionalFields || []).find((item) => item.field === field) || null;
+  return BotButtonsFiles.fieldMeta(botFilesCtx(), field);
 }
 
 function fieldLabel(field) {
-  return fieldMeta(field)?.label || FIELD_LABELS[field] || field;
+  return BotButtonsFiles.fieldLabel(botFilesCtx(), field);
 }
 
 function operatorLabel(type, value) {
-  const options = OPERATOR_OPTIONS[type] || OPERATOR_OPTIONS.text;
-  return options.find((o) => o.value === value)?.label || value;
+  return BotButtonsFiles.operatorLabel(botFilesCtx(), type, value);
 }
 
 function normalizeConditionalRuleForState(rawRule) {
-  const base = { conditions: [], files: [] };
-  if (!rawRule || typeof rawRule !== "object") return base;
-  const conditions = Array.isArray(rawRule.conditions) ? rawRule.conditions : [];
-  const files = Array.isArray(rawRule.files) ? rawRule.files : [];
-  return {
-    conditions: conditions
-      .filter((c) => c && typeof c === "object")
-      .map((c) => {
-        const field = String(c.field || "");
-        const type = fieldType(field);
-        let operator = String(c.operator || "");
-        let value = c.value == null ? "" : String(c.value);
-        if (type === "bool") {
-          if (operator === "is_true") {
-            operator = "eq";
-            value = "true";
-          } else if (operator === "is_false") {
-            operator = "eq";
-            value = "false";
-          } else if (!operator) {
-            operator = "eq";
-          }
-        }
-        return { field, operator, value };
-      }),
-    files: files.map((f) => String(f || "")).filter(Boolean),
-  };
+  return BotButtonsFiles.normalizeConditionalRuleForState(botFilesCtx(), rawRule);
 }
 
 function renderConditionalRules() {
-  const rules = state.conditionalRules || [];
-  if (!rules.length) {
-    return '<div class="status">Условные правила не добавлены</div>';
-  }
-  return rules.map((rule, ruleIndex) => `
-    <div class="bot-conditional-rule">
-      <div class="bot-conditional-rule-head">
-        <strong>Правило ${ruleIndex + 1}</strong>
-        <button type="button" class="action action-danger" data-remove-rule="${ruleIndex}">Удалить условие</button>
-      </div>
-      <div class="bot-conditional-conditions">
-        ${(rule.conditions || []).map((condition, cidx) => {
-          const meta = fieldMeta(condition.field);
-          const isUnavailableField = !!condition.field && !meta;
-          const type = meta?.type || "text";
-          const availableOps = Array.isArray(meta?.operators) && meta.operators.length
-            ? meta.operators
-            : (OPERATOR_OPTIONS[type] || OPERATOR_OPTIONS.text).map((o) => o.value);
-          const selectedOp = condition.operator || "";
-          const needsValue = !!condition.field
-            && !!selectedOp
-            && !["empty", "not_empty"].includes(selectedOp);
-          const showOperator = !!condition.field && type !== "bool";
-          const selectValues = Array.isArray(meta?.values) ? meta.values : [];
-          const hasSelectValues = type === "select" && selectValues.length > 0;
-          const boolValues = type === "bool" ? [{ value: "true", label: "Да" }, { value: "false", label: "Нет" }] : [];
-          const isValueDropdown = (type === "bool" || hasSelectValues) && needsValue;
-          const fieldOptions = (state.conditionalFields || [])
-            .map((f) => `<option value="${escapeHtml(f.field)}" ${f.field === condition.field ? "selected" : ""}>${escapeHtml(fieldLabel(f.field))}</option>`)
-            .join("");
-          const unavailableFieldOption = isUnavailableField
-            ? `<option value="${escapeHtml(condition.field)}" selected>${escapeHtml(`${condition.field} (поле недоступно)`)}</option>`
-            : "";
-          const opOptions = availableOps
-            .map((op) => {
-              const label = operatorLabel(type, op);
-              return `<option value="${escapeHtml(op)}" ${op === selectedOp ? "selected" : ""}>${escapeHtml(label)}</option>`;
-            })
-            .join("");
-          const valueOptions = (type === "bool" ? boolValues : selectValues)
-            .map((v) => {
-              const optionValue = typeof v === "string" ? v : String(v.value ?? "");
-              const optionLabel = typeof v === "string" ? v : String(v.label ?? v.value ?? "");
-              return `<option value="${escapeHtml(optionValue)}" ${optionValue === (condition.value || "") ? "selected" : ""}>${escapeHtml(optionLabel)}</option>`;
-            })
-            .join("");
-          const noValuesOption = (type === "select" && !selectValues.length)
-            ? '<option value="" selected>Нет доступных значений</option>'
-            : '<option value="" selected>Не выбрано</option>';
-          return `
-            <div class="bot-conditional-condition-row">
-              <span>Если</span>
-              <select class="input" data-cond-field="${ruleIndex}:${cidx}">
-                <option value="" ${condition.field ? "" : "selected"}>Не выбрано</option>
-                ${unavailableFieldOption}
-                ${fieldOptions}
-              </select>
-              ${!condition.field
-                ? '<select class="input" disabled><option>Сначала выберите поле</option></select>'
-                : (showOperator ? `
-              <select class="input" data-cond-op="${ruleIndex}:${cidx}">
-                <option value="" ${selectedOp ? "" : "selected"}>Не выбрано</option>
-                ${opOptions}
-              </select>` : '<span class="status">равно</span>')
-              }
-              ${!needsValue ? "" : (isValueDropdown
-                ? `<select class="input" data-cond-value="${ruleIndex}:${cidx}">${(condition.value || "") ? '<option value="">Не выбрано</option>' : noValuesOption}${valueOptions}</select>`
-                : `<input class="input" data-cond-value="${ruleIndex}:${cidx}" value="${escapeHtml(condition.value || "")}" />`
-              )}
-            </div>
-          `;
-        }).join("")}
-      </div>
-      <div class="bot-conditional-files">
-        <div class="status">Файлы: ${(rule.files || []).map((f) => escapeHtml(f)).join(", ") || "не выбраны"}</div>
-        <div class="bot-file-actions">
-          <button type="button" class="action" data-edit-rule-files="${ruleIndex}">Выбрать файлы</button>
-        </div>
-      </div>
-    </div>
-  `).join("");
+  return BotButtonsFiles.renderConditionalRules(botFilesCtx());
 }
 
 function openConditionalRuleFilesModal(ruleIndex) {
-  const rule = state.conditionalRules?.[ruleIndex];
-  if (!rule) return;
-  const available = state.availableFiles || [];
-  if (!available.length) {
-    alert("В папке TG buttons/files нет доступных файлов.");
-    return;
-  }
-  const items = available.map((file) => `
-    <label class="bot-file-picker-item">
-      <span>${escapeHtml(file)}</span>
-      <input type="checkbox" value="${escapeHtml(file)}" ${rule.files.includes(file) ? "checked" : ""} />
-    </label>
-  `).join("");
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = `
-    <div class="modal-overlay">
-      <div class="modal-dialog bot-file-picker-dialog">
-        <div class="modal-header"><h3>Файлы для правила</h3></div>
-        <div class="modal-body"><div class="bot-file-picker-list">${items}</div></div>
-        <div class="modal-footer">
-          <button type="button" class="action" id="cancelRuleFilesBtn">Отмена</button>
-          <button type="button" class="action action-primary" id="applyRuleFilesBtn">Применить</button>
-        </div>
-      </div>
-    </div>
-  `;
-  const overlay = wrapper.firstElementChild;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#cancelRuleFilesBtn")?.addEventListener("click", () => overlay.remove());
-  overlay.querySelector("#applyRuleFilesBtn")?.addEventListener("click", () => {
-    const checked = Array.from(overlay.querySelectorAll(".bot-file-picker-item input:checked")).map((input) => input.value);
-    state.conditionalRules[ruleIndex].files = Array.from(new Set(checked));
-    state.conditionalFilesOverridden = true;
-    renderEditor();
-    overlay.remove();
-  });
+  return BotButtonsFiles.openConditionalRuleFilesModal(botFilesCtx(), ruleIndex);
 }
 
 function renderEditor() {
