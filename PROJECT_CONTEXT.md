@@ -89,3 +89,7 @@ node --check api\app\static\sidebar.js
 - Перед любой задачей перейти в `PROJECT_ROOT`: `C:\Users\ES\Downloads\Source\helpdesk`.
 - Проверить наличие корня проекта командой: `Test-Path .\api\app\main.py`.
 - Все относительные пути в промтах считать от `PROJECT_ROOT`.
+- При баг-репортах сначала делать диагностику (UI -> JS -> API -> backend -> DB/response), и только потом фикс.
+- При рефакторинге выносить код без дублей: перенесённые функции должны исчезать из исходного файла.
+- Соблюдать принцип: одна задача = один технический шаг.
+- Перед commit: `git status`, исключить `.env`, `logs/**`, `storage/attachments/**`, `api/helpdesk.db`, `__pycache__`, `*.pyc`.
