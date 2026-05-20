@@ -121,6 +121,7 @@ const {
   renderInfoRow,
 } = window.BotButtonsApi || {};
 const BotButtonsFiles = window.BotButtonsFiles || {};
+const BotButtonsLevelView = window.BotButtonsLevelView || {};
 
 function botFilesCtx() {
   return {
@@ -174,31 +175,19 @@ function discardEditorChanges() {
 }
 
 function nodeClass(node) {
-  if (state.layoutEditMode) return "bot-buttons-level-item";
-  const disabledClass = node.is_enabled === false ? " bot-button-disabled" : "";
-  if (node.kind === "terminal") {
-    if (node.removed) return "bot-buttons-level-item bot-button-leaf-removed";
-    return node.has_instruction
-      ? `bot-buttons-level-item bot-button-leaf-has${disabledClass}`
-      : `bot-buttons-level-item bot-button-leaf-empty${disabledClass}`;
-  }
-  return `bot-buttons-level-item${disabledClass}`;
+  return BotButtonsLevelView.nodeClass(levelViewCtx(), node);
 }
 
 function cloneRows(rows) {
-  return JSON.parse(JSON.stringify(rows || []));
+  return BotButtonsLevelView.cloneRows(levelViewCtx(), rows);
 }
 
 function currentLevel() {
-  return state.levelStack[state.levelStack.length - 1] || null;
+  return BotButtonsLevelView.currentLevel(levelViewCtx());
 }
 
 function isLayoutEditableLevel(level) {
-  if (!level) return false;
-  if (state.view !== "level") return false;
-  if (!state.selectedMenu) return false;
-  if (!level.levelKey) return false;
-  return !String(level.levelKey).includes("|level|__removed__");
+  return BotButtonsLevelView.isLayoutEditableLevel(levelViewCtx(), level);
 }
 
 function buildPreviewFromNode(node) {
@@ -448,348 +437,35 @@ function renderMenuBindingsPanel() {
   `;
 }
 
+function levelViewCtx() {
+  return {
+    state,
+    el,
+    api,
+    escapeHtml,
+    setStatus,
+    render,
+    renderEditor,
+    renderRightPanel,
+    renderMenuBindingsPanel,
+    buildPreviewFromNode,
+    loadPreviewItem,
+    confirmDiscard,
+    discardEditorChanges,
+    openEditor,
+    createLevelItem,
+    refreshMenuStructure,
+    reloadMenuMeta,
+    loadMenuTypes,
+    saveLabelOverrideForNode,
+    currentLevel,
+    isLayoutEditableLevel,
+    cloneRows,
+  };
+}
+
 function renderLevel() {
-  const current = state.levelStack[state.levelStack.length - 1];
-  const isArchiveLevel = String(current?.levelKey || "").includes("|level|__removed__");
-  const rows = current?.rows || [];
-  const visibleRows = rows
-    .filter((row) => !((row?.buttons || [])[0]?.kind === "removed_folder"))
-    .map((row) => {
-      const buttons = (row?.buttons || []).filter((node) => isArchiveLevel || !node?.removed);
-      return { ...row, buttons };
-    })
-    .filter((row) => (row.buttons || []).length > 0);
-  const removedCount = Array.isArray(state.menuStructure?.removed_items) ? state.menuStructure.removed_items.length : 0;
-  const canEditLayout = isLayoutEditableLevel(current);
-  const addButtonLabel = String(current?.kind || "") === "group_task_parent" ? "Добавить child task" : "Добавить";
-  const toolbarHtml = canEditLayout
-    ? `
-      <div class="bot-layout-toolbar">
-        ${state.layoutEditMode
-          ? `<button type="button" id="saveLayoutBtn" class="action action-primary">Сохранить раскладку</button>
-             <button type="button" id="cancelLayoutBtn" class="action">Отмена</button>`
-          : `<button type="button" id="editLayoutBtn" class="action">Изменить порядок</button>
-             <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>`}
-      </div>
-    `
-    : `<div class="bot-layout-toolbar"><button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button></div>`;
-
-  const rowsForRender = state.layoutEditMode ? (state.layoutDraftRows || []) : visibleRows;
-
-  el.content.innerHTML = `
-    <div class="bot-buttons-split-layout">
-      <div class="bot-buttons-split-left">
-        ${renderMenuBindingsPanel()}
-        ${toolbarHtml}
-        <div class="bot-buttons-level-list">
-          ${rowsForRender.length ? rowsForRender.map((row, rowIndex) => `
-            <div class="bot-buttons-row ${state.layoutEditMode ? "bot-layout-row-edit" : ""}">
-              ${state.layoutEditMode ? `
-                <div class="bot-layout-row-head">
-                  <label>Ряд ${rowIndex + 1}</label>
-                  <select class="input bot-layout-cols" data-layout-row="${rowIndex}">
-                    <option value="1" ${Number(row.columns || 1) === 1 ? "selected" : ""}>1 кнопка в ряду</option>
-                    <option value="2" ${Number(row.columns || 1) === 2 ? "selected" : ""}>2 кнопки в ряду</option>
-                  </select>
-                  <button type="button" class="action" data-layout-add-row="${rowIndex}">+ Ряд ниже</button>
-                  <button type="button" class="action" data-layout-del-row="${rowIndex}">Удалить ряд</button>
-                </div>
-              ` : ""}
-              ${(row.buttons || []).map((node, nodeIndex) => `
-                <button
-                  type="button"
-                  class="${nodeClass(node)}"
-                  data-row-index="${rowIndex}"
-                  data-node-index="${nodeIndex}"
-                >
-                  ${escapeHtml(node.label)}
-                </button>
-                ${state.layoutEditMode ? `
-                <div class="bot-layout-item-actions">
-                  <button type="button" class="action" data-move-left="${rowIndex}:${nodeIndex}">←</button>
-                  <button type="button" class="action" data-move-right="${rowIndex}:${nodeIndex}">→</button>
-                  <button type="button" class="action" data-move-up="${rowIndex}:${nodeIndex}">↑ ряд</button>
-                  <button type="button" class="action" data-move-down="${rowIndex}:${nodeIndex}">↓ ряд</button>
-                </div>` : ""}
-              `).join("")}
-            </div>
-          `).join("") : `<div class="status">Пусто</div>`}
-        </div>
-        ${!state.layoutEditMode && !isArchiveLevel && removedCount > 0 ? `
-          <div class="bot-buttons-archive-bottom">
-            <button type="button" id="openRemovedArchiveBtn" class="bot-buttons-level-item bot-button-leaf-removed bot-button-archive-main">
-              Архив удалённых (${removedCount})
-            </button>
-          </div>
-        ` : ""}
-      </div>
-      <div class="bot-buttons-split-right" id="botButtonsRightPanel">
-        ${renderRightPanel()}
-      </div>
-    </div>
-  `;
-
-  el.content.querySelectorAll("[data-row-index][data-node-index]").forEach((btn) => {
-    btn.addEventListener("mouseenter", () => {
-      if (state.layoutEditMode) return;
-      const row = rows[Number(btn.dataset.rowIndex)];
-      const mappedRow = visibleRows[Number(btn.dataset.rowIndex)];
-      const sourceRow = mappedRow || row;
-      const node = sourceRow?.buttons?.[Number(btn.dataset.nodeIndex)];
-      if (!node) return;
-      state.preview = buildPreviewFromNode(node);
-      const panel = document.getElementById("botButtonsRightPanel");
-      if (panel) panel.innerHTML = renderRightPanel();
-      loadPreviewItem(node);
-    });
-    btn.addEventListener("click", async () => {
-      if (state.layoutEditMode) return;
-      if (!confirmDiscard()) return;
-      discardEditorChanges();
-      const row = rows[Number(btn.dataset.rowIndex)];
-      const node = row?.buttons?.[Number(btn.dataset.nodeIndex)];
-      if (!node) return;
-      state.preview = buildPreviewFromNode(node);
-      {
-        const panel = document.getElementById("botButtonsRightPanel");
-        if (panel) panel.innerHTML = renderRightPanel();
-      }
-      loadPreviewItem(node);
-      const nextRows = Array.isArray(node.children_rows) ? node.children_rows : [];
-      if (nextRows.length > 0) {
-        state.levelStack.push({ label: node.label, rows: nextRows, levelKey: node.level_key || null, fullPath: node.full_path || "", kind: node.kind || "" });
-        render();
-        return;
-      }
-      if (node.kind === "terminal") {
-        await openEditor(node);
-        return;
-      }
-    });
-  });
-
-  const editLayoutBtn = document.getElementById("editLayoutBtn");
-  const addLevelItemBtn = document.getElementById("addLevelItemBtn");
-  const cancelLayoutBtn = document.getElementById("cancelLayoutBtn");
-  const saveLayoutBtn = document.getElementById("saveLayoutBtn");
-  editLayoutBtn?.addEventListener("click", () => {
-    state.layoutEditMode = true;
-    state.layoutDraftRows = cloneRows(
-      visibleRows.map((r) => ({ columns: Number(r.columns || 1) === 2 ? 2 : 1, buttons: r.buttons || [] })),
-    );
-    render();
-  });
-  addLevelItemBtn?.addEventListener("click", async () => {
-    await createLevelItem();
-  });
-  cancelLayoutBtn?.addEventListener("click", () => {
-    state.layoutEditMode = false;
-    state.layoutDraftRows = [];
-    render();
-  });
-  saveLayoutBtn?.addEventListener("click", async () => {
-    const level = currentLevel();
-    if (!level?.levelKey || !state.selectedMenu) return;
-    for (const row of state.layoutDraftRows || []) {
-      if ((row.buttons || []).length > 2) {
-        alert("В одном ряду нельзя сохранить больше 2 кнопок.");
-        return;
-      }
-    }
-    const serializedRows = [];
-    for (const row of state.layoutDraftRows || []) {
-      const cols = Number(row.columns || 1) === 2 ? 2 : 1;
-      const keys = (row.buttons || []).map((n) => n.technical_key).filter(Boolean);
-      if (!keys.length) {
-        continue;
-      }
-      if (cols === 1) {
-        for (const key of keys) {
-          serializedRows.push({ columns: 1, button_keys: [key] });
-        }
-      } else {
-        for (let i = 0; i < keys.length; i += 2) {
-          serializedRows.push({ columns: 2, button_keys: keys.slice(i, i + 2) });
-        }
-      }
-    }
-    const payload = { rows: serializedRows };
-    setStatus("Сохранение раскладки...");
-    await api(`/api/v1/settings/bot-buttons/layout?menu_type=${encodeURIComponent(state.selectedMenu)}&level_key=${encodeURIComponent(level.levelKey)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    state.layoutEditMode = false;
-    state.layoutDraftRows = [];
-    await refreshMenuStructure();
-    render();
-    setStatus("Раскладка сохранена");
-  });
-
-  document.getElementById("addDestinationBtn")?.addEventListener("click", async () => {
-    const select = document.getElementById("addDestinationSelect");
-    const value = String(select?.value || "").trim();
-    if (!value || !state.selectedMenu) return;
-    await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(state.selectedMenu)}/destinations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ destination: value }),
-    });
-    await reloadMenuMeta();
-    render();
-  });
-  document.getElementById("deleteMenuTypeBtn")?.addEventListener("click", async () => {
-    if (!state.selectedMenu) return;
-    if (!window.confirm("Вы уверены что хотите удалить меню кнопок?")) return;
-    if (!window.confirm("Вы ТОЧНО уверены что хотите удалить меню кнопок?")) return;
-    setStatus("Удаление меню...");
-    await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(state.selectedMenu)}`, {
-      method: "DELETE",
-    });
-    await loadMenuTypes();
-    setStatus("Меню удалено");
-  });
-  el.content.querySelectorAll("[data-remove-destination]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const value = btn.dataset.removeDestination || "";
-      if (!value || !state.selectedMenu) return;
-      await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(state.selectedMenu)}/destinations/${encodeURIComponent(value)}`, {
-        method: "DELETE",
-      });
-      await reloadMenuMeta();
-      render();
-    });
-  });
-
-  if (state.layoutEditMode) {
-    const draft = state.layoutDraftRows || [];
-    el.content.querySelectorAll("[data-layout-row]").forEach((input) => {
-      input.addEventListener("change", () => {
-        const idx = Number(input.dataset.layoutRow);
-        if (Number.isNaN(idx) || !draft[idx]) return;
-        draft[idx].columns = Number(input.value) === 2 ? 2 : 1;
-      });
-    });
-    el.content.querySelectorAll("[data-layout-add-row]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const idx = Number(btn.dataset.layoutAddRow);
-        const at = Number.isNaN(idx) ? draft.length - 1 : idx;
-        draft.splice(at + 1, 0, { columns: 1, buttons: [] });
-        render();
-      });
-    });
-    el.content.querySelectorAll("[data-layout-del-row]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const idx = Number(btn.dataset.layoutDelRow);
-        if (Number.isNaN(idx) || !draft[idx]) return;
-        if ((draft[idx].buttons || []).length > 0) {
-          alert("Можно удалить только пустой ряд.");
-          return;
-        }
-        draft.splice(idx, 1);
-        if (!draft.length) draft.push({ columns: 1, buttons: [] });
-        render();
-      });
-    });
-    const cleanupEmptyRows = () => {
-      for (let idx = draft.length - 1; idx >= 0; idx -= 1) {
-        if ((draft[idx]?.buttons || []).length === 0) {
-          draft.splice(idx, 1);
-        }
-      }
-      if (!draft.length) draft.push({ columns: 1, buttons: [] });
-    };
-    const moveBetweenRows = (fromRow, fromIndex, toRow) => {
-      if (!draft[fromRow] || !draft[toRow] || !draft[fromRow].buttons?.[fromIndex]) return;
-      if ((draft[toRow].buttons || []).length >= 2) {
-        alert("В целевом ряду уже 2 кнопки.");
-        return;
-      }
-      const [item] = draft[fromRow].buttons.splice(fromIndex, 1);
-      draft[toRow].buttons.push(item);
-      cleanupEmptyRows();
-      render();
-    };
-    const moveToOwnRow = (fromRow, fromIndex, direction) => {
-      if (!draft[fromRow] || !draft[fromRow].buttons?.[fromIndex]) return;
-      const [item] = draft[fromRow].buttons.splice(fromIndex, 1);
-      const baseIndex = direction === "up" ? fromRow : fromRow + 1;
-      const insertIndex = Math.max(0, Math.min(baseIndex, draft.length));
-      draft.splice(insertIndex, 0, { columns: 1, buttons: [item] });
-      cleanupEmptyRows();
-      render();
-    };
-    const moveUpOrDown = (fromRow, fromIndex, direction) => {
-      if (!draft[fromRow] || !draft[fromRow].buttons?.[fromIndex]) return;
-      const targetRow = direction === "up" ? fromRow - 1 : fromRow + 1;
-      if (targetRow >= 0 && targetRow < draft.length) {
-        const target = draft[targetRow];
-        const targetCols = Number(target?.columns || 1) === 2 ? 2 : 1;
-        const targetLen = (target?.buttons || []).length;
-        if (targetCols === 2 && targetLen < 2) {
-          moveBetweenRows(fromRow, fromIndex, targetRow);
-          return;
-        }
-      }
-      moveToOwnRow(fromRow, fromIndex, direction);
-    };
-    el.content.querySelectorAll("[data-move-left]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const [r, i] = String(btn.dataset.moveLeft || "").split(":").map(Number);
-        if (!draft[r] || Number.isNaN(i)) return;
-        if (i <= 0) return;
-        const arr = draft[r].buttons || [];
-        [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
-        render();
-      });
-    });
-    el.content.querySelectorAll("[data-move-right]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const [r, i] = String(btn.dataset.moveRight || "").split(":").map(Number);
-        const arr = draft[r]?.buttons || [];
-        if (i < 0 || i >= arr.length - 1) return;
-        [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
-        render();
-      });
-    });
-    el.content.querySelectorAll("[data-move-up]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const [r, i] = String(btn.dataset.moveUp || "").split(":").map(Number);
-        if (!draft[r] || Number.isNaN(i)) return;
-        moveUpOrDown(r, i, "up");
-      });
-    });
-    el.content.querySelectorAll("[data-move-down]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const [r, i] = String(btn.dataset.moveDown || "").split(":").map(Number);
-        if (!draft[r] || Number.isNaN(i)) return;
-        moveUpOrDown(r, i, "down");
-      });
-    });
-  }
-
-  const archiveBtn = document.getElementById("openRemovedArchiveBtn");
-  archiveBtn?.addEventListener("click", () => {
-    const rowsForArchive = buildArchiveRowsFromStructure();
-    state.levelStack.push({ label: "Архив удалённых", rows: rowsForArchive, levelKey: `${state.selectedMenu}|level|__removed__` });
-    render();
-  });
-
-  const renameSectionBtn = document.getElementById("renameSectionBtn");
-  const resetSectionLabelBtn = document.getElementById("resetSectionLabelBtn");
-  renameSectionBtn?.addEventListener("click", async () => {
-    const current = state.preview || {};
-    const initial = (current.item?.button_label_effective || current.label || "").trim();
-    const next = window.prompt("Название в боте", initial);
-    if (next === null) return;
-    await saveLabelOverrideForNode(current, next, true);
-  });
-  resetSectionLabelBtn?.addEventListener("click", async () => {
-    const current = state.preview || {};
-    if (!window.confirm("Сбросить переопределённое название и вернуть название из txt?")) return;
-    await saveLabelOverrideForNode(current, "", false);
-  });
+  return BotButtonsLevelView.renderLevel(levelViewCtx());
 }
 
 function buildMoveCandidates() {
@@ -816,22 +492,7 @@ function buildMoveCandidates() {
 }
 
 function buildArchiveRowsFromStructure() {
-  const removedItems = Array.isArray(state.menuStructure?.removed_items) ? state.menuStructure.removed_items : [];
-  return removedItems.map((leaf) => ({
-    buttons: [{
-      label: leaf.label,
-      kind: "terminal",
-      technical_key: leaf.technical_key,
-      workflow_type: leaf.workflow_type,
-      full_path: leaf.full_path,
-      has_instruction: !!leaf.has_instruction,
-      removed: true,
-      is_enabled: true,
-      is_db_created: !!leaf.is_db_created,
-      is_archived: !!leaf.is_archived,
-      children_rows: [],
-    }],
-  }));
+  return BotButtonsLevelView.buildArchiveRowsFromStructure(levelViewCtx());
 }
 
 function hasAnyStoredSettings(item) {
