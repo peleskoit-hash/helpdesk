@@ -27,7 +27,7 @@ def _current_user_model(db: Session, current_user: CurrentUser) -> User:
             select(User).where(User.role == "admin", User.is_active.is_(True)).order_by(User.created_at.asc()).limit(1)
         ).scalar_one_or_none()
     if user is None:
-        _error(404, "user_not_found", "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ")
+        _error(404, "user_not_found", "???????????? ?? ??????")
     return user
 
 
@@ -35,7 +35,7 @@ def _status_out(user: User) -> UserStatusOut:
     return UserStatusOut(
         id=user.id,
         role=user.role,
-        role_label={"admin": "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ", "agent": "РЎРѕС‚СЂСѓРґРЅРёРє", "trainee": "РЎС‚Р°Р¶С‘СЂ", "chiki_piki": "Р§РёРєРё-РїРёРєРё"}.get(user.role, user.role),
+        role_label={"admin": "Администратор", "agent": "Сотрудник", "trainee": "Стажёр", "chiki_piki": "Чики-пики"}.get(user.role, user.role),
         full_name=user.full_name,
         availability_status=user.availability_status or "offline",
     )
@@ -142,7 +142,7 @@ def list_agents(db: Session = Depends(get_db), current_user: CurrentUser = Depen
             id=agent.id,
             full_name=agent.full_name,
             role=agent.role,
-            role_label={"agent": "РЎРѕС‚СЂСѓРґРЅРёРє", "trainee": "РЎС‚Р°Р¶С‘СЂ"}.get(agent.role, agent.role),
+            role_label={"agent": "Сотрудник", "trainee": "Стажёр"}.get(agent.role, agent.role),
             availability_status=agent.availability_status or "offline",
             updated_at=agent.updated_at,
         )
@@ -162,10 +162,10 @@ def list_users_by_role(
         .order_by(User.full_name.asc())
     ).scalars().all()
     role_label_map = {
-        "admin": "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
-        "agent": "РЎРѕС‚СЂСѓРґРЅРёРє",
-        "trainee": "РЎС‚Р°Р¶С‘СЂ",
-        "chiki_piki": "Р§РёРєРё-РїРёРєРё",
+        "admin": "Администратор",
+        "agent": "Сотрудник",
+        "trainee": "Стажёр",
+        "chiki_piki": "Чики-пики",
     }
     return [
         AgentOut(
@@ -183,7 +183,7 @@ def list_users_by_role(
 @router.get("/status-board", response_model=list[AgentOut])
 def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     if not is_admin(current_user):
-        _error(403, "forbidden", "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ РїСЂРѕСЃРјР°С‚СЂРёРІР°С‚СЊ РґРѕСЃРєСѓ СЃС‚Р°С‚СѓСЃРѕРІ")
+        _error(403, "forbidden", "Только администратор может просматривать доску статусов")
     users = db.execute(
         select(User)
         .where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True))
@@ -195,7 +195,7 @@ def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depe
             id=user.id,
             full_name=user.full_name,
             role=user.role,
-            role_label={"agent": "РЎРѕС‚СЂСѓРґРЅРёРє", "trainee": "РЎС‚Р°Р¶С‘СЂ"}.get(user.role, user.role),
+            role_label={"agent": "Сотрудник", "trainee": "Стажёр"}.get(user.role, user.role),
             availability_status=user.availability_status or "offline",
             updated_at=user.updated_at,
         )
@@ -211,7 +211,7 @@ def update_my_status(
 ):
     user = _current_user_model(db, current_user)
     if is_readonly_chiki_piki(current_user):
-        _error(403, "readonly_role", "Р РѕР»СЊ Р§РёРєРё-РїРёРєРё РЅРµ РјРѕР¶РµС‚ РјРµРЅСЏС‚СЊ СЃС‚Р°С‚СѓСЃ")
+        _error(403, "readonly_role", "???? ????-???? ?? ????? ?????? ??????")
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
     if user.role == "agent" and payload.availability_status == "online":
@@ -229,14 +229,14 @@ def update_user_status(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     if not is_admin(current_user):
-        _error(403, "forbidden", "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ РјРµРЅСЏС‚СЊ СЃС‚Р°С‚СѓСЃС‹ СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ")
+        _error(403, "forbidden", "Только администратор может менять статусы сотрудников")
     user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if user is None:
-        _error(404, "user_not_found", "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ")
+        _error(404, "user_not_found", "???????????? ?? ??????")
     if not user.is_active:
-        _error(400, "user_inactive", "РќРµР»СЊР·СЏ РёР·РјРµРЅРёС‚СЊ СЃС‚Р°С‚СѓСЃ РЅРµР°РєС‚РёРІРЅРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ")
+        _error(400, "user_inactive", "?????? ???????? ?????? ??????????? ????????????")
     if user.role not in {"agent", "trainee"}:
-        _error(400, "invalid_role", "РЎС‚Р°С‚СѓСЃ РјРѕР¶РЅРѕ РјРµРЅСЏС‚СЊ С‚РѕР»СЊРєРѕ СЃРѕС‚СЂСѓРґРЅРёРєР°Рј РїРѕРґРґРµСЂР¶РєРё")
+        _error(400, "invalid_role", "?????? ????? ?????? ?????? ??????????? ?????????")
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
     db.commit()

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, hash_password, is_admin
 from ..db import get_db
-from ..models import BotButtonSetting, BotMenuDestinationBinding, BotMenuLevelLayout, BotMenuProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientProfile, Company, User
+from ..models import BotButtonSetting, BotMenuDestinationBinding, BotMenuLevelLayout, BotMenuProfile, ClientCardFieldConfig, ClientProfile, User
 from ..schemas import (
     BotButtonGroupOut,
     BotButtonInstructionUpdate,
@@ -21,29 +21,13 @@ from ..schemas import (
     BotButtonStructureLeafOut,
     BotMenuCreatePayload,
     BotMenuDestinationPayload,
-    ClientCardBlockConfigOut,
-    ClientCardBlockCreate,
-    ClientCardBlockUpdate,
-    ClientCardConfigResponse,
     ClientCardFieldConfigOut,
-    ClientCardFieldCreate,
-    ClientCardFieldUpdate,
-    SettingsUserCreate,
-    SettingsUserOut,
-    SettingsUserUpdate,
 )
 from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, available_menu_names, build_level_layout_key, build_terminal_button_key, build_visibility_button_key, find_button, list_terminal_buttons, load_button_config
 from ..services.telegram_automation import get_automation_registry
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
-
-ROLE_LABELS = {
-    "admin": "Администратор",
-    "agent": "Сотрудник",
-    "trainee": "Стажёр",
-    "chiki_piki": "Чики-пики",
-}
 
 # Keep aligned with client card destination selector defaults in ticket UI.
 DEFAULT_DESTINATION_VALUES = [
@@ -112,13 +96,6 @@ SELECT_OPERATORS = {"eq", "ne", "empty", "not_empty"}
 NUMBER_OPERATORS = {"eq", "ne", "gt", "lt", "gte", "lte", "empty", "not_empty"}
 BOOL_OPERATORS = {"eq", "is_true", "is_false"}
 
-CYRILLIC_TO_LATIN = {
-    "Р°": "a", "Р±": "b", "РІ": "v", "Рі": "g", "Рґ": "d", "Рµ": "e", "С‘": "e", "Р¶": "zh", "Р·": "z", "Рё": "i",
-    "Р№": "y", "Рє": "k", "Р»": "l", "Рј": "m", "РЅ": "n", "Рѕ": "o", "Рї": "p", "СЂ": "r", "СЃ": "s", "С‚": "t",
-    "Сѓ": "u", "С„": "f", "С…": "h", "С†": "ts", "С‡": "ch", "С€": "sh", "С‰": "sch", "СЉ": "", "С‹": "y", "СЊ": "",
-    "СЌ": "e", "СЋ": "yu", "СЏ": "ya",
-}
-
 
 
 def _error(status_code: int, code: str, message: str):
@@ -128,7 +105,7 @@ def _error(status_code: int, code: str, message: str):
 
 def _require_admin(user: CurrentUser) -> None:
     if not is_admin(user):
-        _error(403, "admin_only", "РќР°СЃС‚СЂРѕР№РєРё РґРѕСЃС‚СѓРїРЅС‹ С‚РѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ")
+        _error(403, "admin_only", "Настройки доступны только администратору")
 
 
 def _destination_options(db: Session) -> list[str]:
@@ -235,10 +212,6 @@ def _unique_menu_type(db: Session, display_name: str) -> str:
 
 
 
-def role_label(role: str) -> str:
-    return ROLE_LABELS.get(role, role)
-
-
 def _normalize_level_layout(raw: object) -> list[dict]:
     if not isinstance(raw, list):
         return []
@@ -315,388 +288,6 @@ def _apply_level_layout(rows: list[dict], layout_rows: list[dict] | None) -> lis
             result.append({"columns": 1, "buttons": [node]})
     return result
 
-def _company_id(db: Session) -> str:
-    company_id = db.execute(select(Company.id).order_by(Company.created_at.asc()).limit(1)).scalar_one_or_none()
-    if company_id is None:
-        _error(500, "company_not_found", "РљРѕРјРїР°РЅРёСЏ РЅРµ РЅР°Р№РґРµРЅР°")
-    return company_id
-
-
-
-def _user_out(user: User) -> SettingsUserOut:
-    return SettingsUserOut(
-        id=user.id,
-        full_name=user.full_name,
-        login=user.login,
-        role=user.role,
-        role_label=role_label(user.role),
-        is_active=bool(user.is_active),
-        availability_status=user.availability_status or "offline",
-        legacy_ticket_count=int(user.legacy_ticket_count or 0),
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-    )
-
-
-
-def _ensure_unique_login(db: Session, login: str, exclude_user_id: str | None = None) -> None:
-    stmt = select(User.id).where(User.login == login)
-    if exclude_user_id:
-        stmt = stmt.where(User.id != exclude_user_id)
-    if db.execute(stmt).first() is not None:
-        _error(409, "login_already_exists", "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј login СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚")
-
-
-
-def _slugify_title(value: str) -> str:
-    lowered = value.strip().lower()
-    transliterated = "".join(CYRILLIC_TO_LATIN.get(ch, ch) for ch in lowered)
-    transliterated = unicodedata.normalize("NFKD", transliterated)
-    transliterated = transliterated.encode("ascii", "ignore").decode("ascii")
-    transliterated = re.sub(r"[^a-z0-9]+", "_", transliterated).strip("_")
-    return transliterated or "block"
-
-
-def _generate_custom_field_key(db: Session, label: str) -> str:
-    base_slug = _slugify_title(label)
-    if not base_slug:
-        base_slug = "field"
-    base_key = f"custom_{base_slug}"
-    key = base_key
-    index = 2
-    while db.execute(select(ClientCardFieldConfig.id).where(ClientCardFieldConfig.key == key)).first() is not None:
-        key = f"{base_key}_{index}"
-        index += 1
-    return key
-
-
-
-def _serialize_client_card_config(db: Session) -> ClientCardConfigResponse:
-    blocks = db.execute(
-        select(ClientCardBlockConfig).order_by(ClientCardBlockConfig.sort_order.asc(), ClientCardBlockConfig.created_at.asc())
-    ).scalars().all()
-    fields = db.execute(
-        select(ClientCardFieldConfig).order_by(ClientCardFieldConfig.sort_order.asc(), ClientCardFieldConfig.created_at.asc())
-    ).scalars().all()
-    fields_by_block: dict[str, list[ClientCardFieldConfigOut]] = {}
-    for field in fields:
-        fields_by_block.setdefault(field.block_key, []).append(
-            ClientCardFieldConfigOut(
-                id=field.id,
-                key=field.key,
-                label=field.label,
-                field_type=field.field_type,
-                block_key=field.block_key,
-                sort_order=field.sort_order,
-                is_visible=bool(field.is_visible),
-                is_editable=bool(field.is_editable),
-                is_required=bool(field.is_required),
-                is_system=bool(field.is_system),
-                options=field.options_json or None,
-            )
-        )
-    return ClientCardConfigResponse(
-        blocks=[
-            ClientCardBlockConfigOut(
-                id=block.id,
-                key=block.key,
-                title=block.title,
-                color_scheme=block.color_scheme,
-                sort_order=block.sort_order,
-                is_active=bool(block.is_active),
-                fields=fields_by_block.get(block.key, []),
-            )
-            for block in blocks
-        ]
-    )
-
-
-@router.get("/users", response_model=list[SettingsUserOut])
-def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    _require_admin(user)
-    users = db.execute(select(User).order_by(User.full_name.asc())).scalars().all()
-    return [_user_out(item) for item in users]
-
-
-@router.post("/users", response_model=SettingsUserOut)
-def create_user(payload: SettingsUserCreate, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    _require_admin(user)
-    login = payload.login.strip()
-    full_name = payload.full_name.strip()
-    if not login:
-        _error(422, "login_required", "Login РѕР±СЏР·Р°С‚РµР»РµРЅ")
-    if not full_name:
-        _error(422, "full_name_required", "Р¤РРћ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-    _ensure_unique_login(db, login)
-
-    now = datetime.utcnow()
-    new_user = User(
-        id=str(uuid.uuid4()),
-        company_id=_company_id(db),
-        email=f"{login}@local.helpdesk",
-        login=login,
-        password_hash=hash_password(payload.password),
-        full_name=full_name,
-        role=payload.role,
-        is_active=payload.is_active,
-        availability_status=payload.availability_status,
-        legacy_ticket_count=max(0, int(payload.legacy_ticket_count or 0)),
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return _user_out(new_user)
-
-
-@router.patch("/users/{user_id}", response_model=SettingsUserOut)
-def update_user(
-    user_id: str,
-    payload: SettingsUserUpdate,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    target = db.get(User, user_id)
-    if target is None:
-        _error(404, "user_not_found", "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ")
-
-    if payload.full_name is not None:
-        full_name = payload.full_name.strip()
-        if not full_name:
-            _error(422, "full_name_required", "Р¤РРћ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-        target.full_name = full_name
-    if payload.login is not None:
-        login = payload.login.strip()
-        if not login:
-            _error(422, "login_required", "Login РѕР±СЏР·Р°С‚РµР»РµРЅ")
-        _ensure_unique_login(db, login, exclude_user_id=target.id)
-        target.login = login
-        target.email = f"{login}@local.helpdesk"
-    if payload.password is not None and payload.password.strip():
-        target.password_hash = hash_password(payload.password)
-    if payload.role is not None:
-        target.role = payload.role
-    if payload.is_active is not None:
-        target.is_active = payload.is_active
-    if payload.availability_status is not None:
-        target.availability_status = payload.availability_status
-    if payload.legacy_ticket_count is not None:
-        target.legacy_ticket_count = max(0, int(payload.legacy_ticket_count))
-    target.updated_at = datetime.utcnow()
-
-    db.commit()
-    db.refresh(target)
-    return _user_out(target)
-
-
-@router.get("/client-card", response_model=ClientCardConfigResponse)
-def get_client_card_config(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    _require_admin(user)
-    return _serialize_client_card_config(db)
-
-
-@router.patch("/client-card/blocks/{block_id}", response_model=ClientCardBlockConfigOut)
-def update_client_card_block(
-    block_id: str,
-    payload: ClientCardBlockUpdate,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    block = db.get(ClientCardBlockConfig, block_id)
-    if block is None:
-        _error(404, "block_not_found", "Р‘Р»РѕРє РЅРµ РЅР°Р№РґРµРЅ")
-    if payload.title is not None:
-        title = payload.title.strip()
-        if not title:
-            _error(422, "title_required", "РќР°Р·РІР°РЅРёРµ Р±Р»РѕРєР° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-        block.title = title
-    if payload.color_scheme is not None:
-        block.color_scheme = payload.color_scheme
-    if payload.sort_order is not None:
-        block.sort_order = payload.sort_order
-    if payload.is_active is not None:
-        block.is_active = payload.is_active
-    block.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(block)
-    return ClientCardBlockConfigOut(
-        id=block.id,
-        key=block.key,
-        title=block.title,
-        color_scheme=block.color_scheme,
-        sort_order=block.sort_order,
-        is_active=bool(block.is_active),
-        fields=[],
-    )
-
-
-@router.patch("/client-card/fields/{field_id}", response_model=ClientCardFieldConfigOut)
-def update_client_card_field(
-    field_id: str,
-    payload: ClientCardFieldUpdate,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    field = db.get(ClientCardFieldConfig, field_id)
-    if field is None:
-        _error(404, "field_not_found", "РџРѕР»Рµ РЅРµ РЅР°Р№РґРµРЅРѕ")
-    if field.is_system:
-        if payload.field_type is not None and payload.field_type != field.field_type:
-            _error(403, "readonly_system_field_type", "РўРёРї СЃРёСЃС‚РµРјРЅРѕРіРѕ РїРѕР»СЏ РЅРµР»СЊР·СЏ РёР·РјРµРЅСЏС‚СЊ")
-    if payload.label is not None:
-        label = payload.label.strip()
-        if not label:
-            _error(422, "label_required", "РќР°Р·РІР°РЅРёРµ РїРѕР»СЏ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-        field.label = label
-    if payload.field_type is not None and not field.is_system:
-        field.field_type = payload.field_type
-    if payload.block_key is not None:
-        block = db.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == payload.block_key)).scalar_one_or_none()
-        if block is None:
-            _error(422, "block_not_found", "РЈРєР°Р·Р°РЅРЅС‹Р№ Р±Р»РѕРє РЅРµ РЅР°Р№РґРµРЅ")
-        field.block_key = payload.block_key
-    if payload.sort_order is not None:
-        field.sort_order = payload.sort_order
-    if payload.is_visible is not None:
-        field.is_visible = payload.is_visible
-    if payload.is_editable is not None:
-        field.is_editable = payload.is_editable
-    if payload.is_required is not None:
-        field.is_required = payload.is_required
-    if payload.options is not None:
-        options = [item.strip() for item in payload.options if item and item.strip()]
-        field.options_json = options or None
-    if field.field_type == "select" and not field.options_json:
-        _error(422, "select_options_required", "Р”Р»СЏ РїРѕР»СЏ select СѓРєР°Р¶РёС‚Рµ РІР°СЂРёР°РЅС‚С‹")
-    field.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(field)
-    return ClientCardFieldConfigOut(
-        id=field.id,
-        key=field.key,
-        label=field.label,
-        field_type=field.field_type,
-        block_key=field.block_key,
-        sort_order=field.sort_order,
-        is_visible=bool(field.is_visible),
-        is_editable=bool(field.is_editable),
-        is_required=bool(field.is_required),
-        is_system=bool(field.is_system),
-        options=field.options_json or None,
-    )
-
-
-@router.post("/client-card/blocks", response_model=ClientCardBlockConfigOut)
-def create_client_card_block(
-    payload: ClientCardBlockCreate,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    title = payload.title.strip()
-    if not title:
-        _error(422, "title_required", "РќР°Р·РІР°РЅРёРµ Р±Р»РѕРєР° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-
-    base = f"custom_block_{_slugify_title(title)}"
-    key = base
-    index = 2
-    while db.execute(select(ClientCardBlockConfig.id).where(ClientCardBlockConfig.key == key)).first() is not None:
-        key = f"{base}_{index}"
-        index += 1
-
-    now = datetime.utcnow()
-    block = ClientCardBlockConfig(
-        id=str(uuid.uuid4()),
-        key=key,
-        title=title,
-        color_scheme=payload.color_scheme,
-        sort_order=1000,
-        is_active=True,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(block)
-    db.commit()
-    db.refresh(block)
-    return ClientCardBlockConfigOut(
-        id=block.id,
-        key=block.key,
-        title=block.title,
-        color_scheme=block.color_scheme,
-        sort_order=block.sort_order,
-        is_active=bool(block.is_active),
-        fields=[],
-    )
-
-
-@router.post("/client-card/fields", response_model=ClientCardFieldConfigOut)
-def create_client_card_field(
-    payload: ClientCardFieldCreate,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    block = db.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == payload.block_key)).scalar_one_or_none()
-    if block is None:
-        _error(422, "block_not_found", "РЈРєР°Р·Р°РЅРЅС‹Р№ Р±Р»РѕРє РЅРµ РЅР°Р№РґРµРЅ")
-
-    label = payload.label.strip()
-    if not label:
-        _error(422, "label_required", "РќР°Р·РІР°РЅРёРµ РїРѕР»СЏ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ")
-
-    options = None
-    if payload.options is not None:
-        normalized_options = [item.strip() for item in payload.options if item and item.strip()]
-        options = normalized_options or None
-    if payload.field_type == "select" and not options:
-        _error(422, "select_options_required", "Р”Р»СЏ РїРѕР»СЏ select СѓРєР°Р¶РёС‚Рµ РІР°СЂРёР°РЅС‚С‹")
-
-    max_order = db.execute(
-        select(ClientCardFieldConfig.sort_order)
-        .where(ClientCardFieldConfig.block_key == payload.block_key)
-        .order_by(ClientCardFieldConfig.sort_order.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    sort_order = (max_order or 0) + 10
-
-    now = datetime.utcnow()
-    field = ClientCardFieldConfig(
-        id=str(uuid.uuid4()),
-        key=_generate_custom_field_key(db, label),
-        label=label,
-        field_type=payload.field_type,
-        block_key=payload.block_key,
-        sort_order=sort_order,
-        is_visible=payload.is_visible,
-        is_editable=payload.is_editable,
-        is_required=payload.is_required,
-        is_system=False,
-        options_json=options,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(field)
-    db.commit()
-    db.refresh(field)
-    return ClientCardFieldConfigOut(
-        id=field.id,
-        key=field.key,
-        label=field.label,
-        field_type=field.field_type,
-        block_key=field.block_key,
-        sort_order=field.sort_order,
-        is_visible=bool(field.is_visible),
-        is_editable=bool(field.is_editable),
-        is_required=bool(field.is_required),
-        is_system=bool(field.is_system),
-        options=field.options_json or None,
-    )
-
-
 @router.get("/bot-buttons/menu-types", response_model=list[BotButtonMenuTypeOut])
 def list_bot_button_menu_types(
     db: Session = Depends(get_db),
@@ -765,7 +356,7 @@ def list_bot_button_menu_types(
                     destinations=bindings.get(menu_name, []),
                     source_file=source_file,
                     ok=False,
-                    error=f"Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ: {BUTTON_CONFIG_DIR / source_file}",
+                    error=f"Файл не найден: {BUTTON_CONFIG_DIR / source_file}",
                 )
             )
         except Exception as exc:  # pragma: no cover
@@ -776,7 +367,7 @@ def list_bot_button_menu_types(
                     destinations=bindings.get(menu_name, []),
                     source_file=source_file,
                     ok=False,
-                    error=f"РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР°: {exc}",
+                    error=f"Ошибка парсинга: {exc}",
                 )
             )
     return result
@@ -1383,14 +974,14 @@ def get_bot_button_menu_structure(
             menu_name=menu_name,
             ok=False,
             root_level_key=build_level_layout_key(menu_name, ""),
-            error=f"Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ: {BUTTON_CONFIG_DIR / f'{menu_name}.txt'}",
+            error=f"Файл не найден: {BUTTON_CONFIG_DIR / f'{menu_name}.txt'}",
         )
     except Exception as exc:  # pragma: no cover
         return BotButtonMenuStructureOut(
             menu_name=menu_name,
             ok=False,
             root_level_key=build_level_layout_key(menu_name, ""),
-            error=f"РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР°: {exc}",
+            error=f"Ошибка парсинга: {exc}",
         )
 
 
@@ -2554,7 +2145,7 @@ def create_bot_button_item(
     if not menu_type:
         _error(422, "menu_type_required", "Не указан тип меню")
     if not label:
-        _error(422, "label_required", "Укажите название кнопки")
+        _error(422, "label_required", "???????? ???? ???????????")
     if kind not in {"section", "ticket", "task", "auto", "group_task", "group_task_child"}:
         _error(422, "invalid_button_kind", "Недопустимый тип элемента")
     if kind == "section":
