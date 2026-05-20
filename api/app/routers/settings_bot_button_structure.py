@@ -639,6 +639,7 @@ def _flatten_rows_for_compare(rows: list[dict]) -> tuple[list[str], dict[str, in
     return flat, counters
 
 
+@router.post("/bot-buttons/db-only-readiness")
 def check_db_only_readiness(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -695,6 +696,7 @@ def check_db_only_readiness(
     }
 
 
+@router.get("/bot-buttons/menu-types/{menu_name}/structure", response_model=BotButtonMenuStructureOut)
 def get_bot_button_menu_structure(
     menu_name: str,
     db: Session = Depends(get_db),
@@ -719,6 +721,7 @@ def get_bot_button_menu_structure(
         )
 
 
+@router.post("/bot-buttons/item/create")
 def create_bot_button_item(
     payload: dict,
     db: Session = Depends(get_db),
@@ -812,6 +815,7 @@ def create_bot_button_item(
     }
 
 
+@router.get("/bot-buttons/layout")
 def get_bot_button_level_layout(
     menu_type: str,
     level_key: str,
@@ -833,6 +837,7 @@ def get_bot_button_level_layout(
     }
 
 
+@router.put("/bot-buttons/layout")
 def save_bot_button_level_layout(
     menu_type: str,
     level_key: str,
@@ -1358,6 +1363,7 @@ def _sync_bot_buttons_from_txt(
     }
 
 
+@router.post("/bot-buttons/import-from-txt")
 def import_bot_buttons_from_txt(
     dry_run: bool = True,
     db: Session = Depends(get_db),
@@ -1366,6 +1372,7 @@ def import_bot_buttons_from_txt(
     return _sync_bot_buttons_from_txt(dry_run=dry_run, db=db, user=user)
 
 
+@router.post("/bot-buttons/sync-from-txt")
 def sync_bot_buttons_from_txt(
     dry_run: bool = True,
     db: Session = Depends(get_db),

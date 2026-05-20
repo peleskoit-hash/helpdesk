@@ -26,6 +26,13 @@ from ..services.telegram_automation import get_automation_registry
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
+ROLE_LABELS = {
+    "admin": "Администратор",
+    "agent": "Сотрудник",
+    "trainee": "Стажёр",
+    "chiki_piki": "Наблюдатель",
+}
+
 CONDITIONAL_COMMON_KEYS: list[str] = [
     "employee_type",
     "location_type",
@@ -224,15 +231,6 @@ def list_bot_button_assignees(
         }
         for u in users
     ]
-
-
-@router.post("/bot-buttons/item/create")
-
-
-@router.get("/bot-buttons/layout")
-
-
-@router.put("/bot-buttons/layout")
 
 
 @router.post("/bot-buttons/migrate-instructions")
