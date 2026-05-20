@@ -24,6 +24,7 @@ from .routers.mass_notifications import router as mass_notifications_router
 from .routers.settings import router as settings_router
 from .routers.settings_bot_button_items import router as settings_bot_button_items_router
 from .routers.settings_bot_menu_profiles import router as settings_bot_menu_profiles_router
+from .routers.settings_bot_button_structure import router as settings_bot_button_structure_router
 from .routers.settings_client_card import router as settings_client_card_router
 from .routers.settings_users import router as settings_users_router
 from .routers.telegram import router as telegram_router
@@ -63,6 +64,7 @@ app.include_router(users_router)
 app.include_router(settings_router)
 app.include_router(settings_bot_button_items_router)
 app.include_router(settings_bot_menu_profiles_router)
+app.include_router(settings_bot_button_structure_router)
 app.include_router(settings_users_router)
 app.include_router(settings_client_card_router)
 app.include_router(mass_notifications_router)
