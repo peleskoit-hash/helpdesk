@@ -173,6 +173,19 @@ const stickerAnimationDataCache = new Map();
 const stickerVideoElements = new Map();
 state.lastMessagesSignature = null;
 let pendingAdminAction = null;
+const {
+  api,
+  apiPost,
+  apiPatch,
+  headers,
+  escapeHtml,
+  fmtDate,
+  fmtMessageStamp,
+  formatFileSize,
+  linkifyText,
+  renderTextWithLinks,
+  minutesLeftToDue,
+} = window.TicketApi || {};
 
 // ===== modals =====
 function setStatus(text) {
@@ -225,91 +238,10 @@ function closeOnBackdropClick(modal, closeHandler) {
   });
 }
 
-// ===== API helpers =====
-function headers(extra = {}) {
-  return { accept: "application/json", ...extra };
-}
-
 function isOnsitePhraseJs(text) {
   let normalized = String(text || "").trim().toLowerCase();
   if (normalized.endsWith(".")) normalized = normalized.slice(0, -1).trim();
   return normalized === "иду к вам";
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: headers(options.headers || {}),
-  });
-  if (response.status === 401) {
-    window.location.href = "/login";
-    throw new Error("Требуется авторизация");
-  }
-  const raw = await response.text();
-  let payload = null;
-  if (raw) {
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      payload = null;
-    }
-  }
-  if (!response.ok) {
-    const detail = payload?.detail?.error?.message || raw || "Ошибка запроса";
-    throw new Error(detail);
-  }
-  return payload;
-}
-
-async function apiPatch(path, body) {
-  return api(path, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-async function apiPost(path, body = null) {
-  const options = { method: "POST" };
-  if (body !== null) {
-    options.headers = { "content-type": "application/json" };
-    options.body = JSON.stringify(body);
-  }
-  return api(path, options);
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function renderTextWithLinks(container, text) {
-  if (!container) return;
-  container.textContent = "";
-  const source = String(text || "");
-  const urlRegex = /(https?:\/\/[^\s<>"']+)/gi;
-  let cursor = 0;
-  let match;
-  while ((match = urlRegex.exec(source)) !== null) {
-    if (match.index > cursor) {
-      container.appendChild(document.createTextNode(source.slice(cursor, match.index)));
-    }
-    const url = match[0];
-    const link = document.createElement("a");
-    link.href = url;
-    link.textContent = url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    container.appendChild(link);
-    cursor = match.index + url.length;
-  }
-  if (cursor < source.length) {
-    container.appendChild(document.createTextNode(source.slice(cursor)));
-  }
 }
 
 function renderAgentSelect() {
@@ -607,28 +539,6 @@ async function loadTabCounts(options = {}) {
   }
 }
 
-function fmtDate(dateIso) {
-  const d = new Date(dateIso);
-  return d.toLocaleString("ru-RU", { hour12: false });
-}
-
-function minutesLeftToDue(dueAtIso) {
-  if (!dueAtIso) return null;
-  const raw = String(dueAtIso).trim();
-  const hasTz = /[zZ]|[+\-]\d{2}:\d{2}$/.test(raw);
-  const normalized = hasTz ? raw : `${raw}Z`;
-  const due = Date.parse(normalized);
-  if (Number.isNaN(due)) return null;
-  const diffMs = due - Date.now();
-  return Math.max(0, Math.ceil(diffMs / 60000));
-}
-
-function fmtMessageStamp(dateIso) {
-  const d = new Date(dateIso);
-  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-  const date = d.toLocaleDateString("ru-RU");
-  return `${time} ${date}`;
-}
 
 function clientDisplayName() {
   const profile = state.card?.client_profile || {};
@@ -643,15 +553,6 @@ function normalizeAgentLabel(name) {
   return name;
 }
 
-function linkifyText(value) {
-  const escaped = escapeHtml(value || "");
-  const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/gim, (url) => {
-    const safeUrl = url.replace(/&quot;|&#39;|[),.;!?]+$/g, "");
-    const tail = url.slice(safeUrl.length);
-    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>${tail}`;
-  });
-  return withLinks.replace(/\n/g, "<br>");
-}
 
 function messageAuthorLabel(message) {
   const messageType = typeof message === "string" ? message : message?.message_type;
@@ -679,15 +580,6 @@ function messageStatusNote(message) {
     return `${messageAuthorLabel(message)} удалил сообщение`;
   }
   return message.status_note || "";
-}
-
-function formatFileSize(bytes) {
-  if (!bytes && bytes !== 0) return "";
-  const value = Number(bytes);
-  if (!Number.isFinite(value)) return "";
-  if (value < 1024) return `${value} Б`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`;
-  return `${(value / 1024 / 1024).toFixed(1)} МБ`;
 }
 
 function selectedFileKey(file, index) {
