@@ -1342,6 +1342,7 @@ def _close_group_child_if_ready(db: Session, child: Ticket, last_agent_message: 
                 telegram_file_id=attachment.telegram_file_id,
                 telegram_file_unique_id=attachment.telegram_file_unique_id,
                 telegram_file_path=attachment.telegram_file_path,
+                telegram_message_id=attachment.telegram_message_id,
                 original_filename=attachment.original_filename,
                 mime_type=attachment.mime_type,
                 file_size=attachment.file_size,
@@ -1783,7 +1784,8 @@ def edit_ticket_message(
 
     message.body = payload.text
     message.message_status = "edited"
-    message.status_note = f"{user.full_name} исправил сообщение"
+    actor_name = _actor_display_name(db, user)
+    message.status_note = f"{actor_name} исправил сообщение"
     ticket.updated_at = datetime.utcnow()
     db.commit()
     return {"ok": True}
@@ -1808,18 +1810,31 @@ def delete_ticket_message(
         _error(409, "only_agent_message_delete", "Удалять можно только сообщения сотрудника")
     if message.message_status == "deleted":
         return {"ok": True}
-    if not message.telegram_message_id:
-        _error(409, "telegram_message_id_missing", "У этого сообщения нет Telegram ID. Его нельзя удалить в Telegram, потому что оно было отправлено до включения синхронизации сообщений.")
-
+    attachments = db.execute(
+        select(TicketAttachment)
+        .where(TicketAttachment.message_id == message.id)
+        .order_by(asc(TicketAttachment.created_at))
+    ).scalars().all()
     contact = _telegram_contact_for_client(db, ticket.client_id)
-    if contact is not None:
+    if contact is not None and message.telegram_message_id:
         try:
             delete_message(contact.external_chat_id, message.telegram_message_id)
         except TelegramApiError as exc:
             _error(502, "telegram_delete_failed", f"Telegram не принял удаление: {exc}")
+    if contact is not None:
+        for attachment in attachments:
+            telegram_attachment_message_id = (attachment.telegram_message_id or "").strip()
+            if not telegram_attachment_message_id:
+                continue
+            try:
+                delete_message(contact.external_chat_id, telegram_attachment_message_id)
+            except TelegramApiError:
+                # Attachment message may already be gone; local deletion should still complete.
+                pass
 
     message.message_status = "deleted"
-    message.status_note = f"{user.full_name} удалил сообщение"
+    actor_name = _actor_display_name(db, user)
+    message.status_note = f"{actor_name} удалил сообщение"
     ticket.updated_at = datetime.utcnow()
     db.commit()
     return {"ok": True}

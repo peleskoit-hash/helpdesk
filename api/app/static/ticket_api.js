@@ -61,7 +61,10 @@
 
   function minutesLeftToDue(dueAtIso) {
     if (!dueAtIso) return null;
-    const dueMs = new Date(dueAtIso).getTime();
+    const raw = String(dueAtIso).trim();
+    const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(raw);
+    const normalized = hasZone ? raw : `${raw}Z`;
+    const dueMs = new Date(normalized).getTime();
     if (!Number.isFinite(dueMs)) return null;
     const diffMs = dueMs - Date.now();
     if (diffMs <= 0) return 0;
@@ -132,4 +135,3 @@
     minutesLeftToDue,
   };
 })(window);
-

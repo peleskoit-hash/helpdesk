@@ -649,6 +649,7 @@ def ensure_ticket_attachment_table() -> None:
                         telegram_file_id VARCHAR(255),
                         telegram_file_unique_id VARCHAR(255),
                         telegram_file_path VARCHAR(500),
+                        telegram_message_id VARCHAR(100),
                         original_filename VARCHAR(255),
                         mime_type VARCHAR(255),
                         file_size INTEGER,
@@ -658,6 +659,10 @@ def ensure_ticket_attachment_table() -> None:
                     """
                 )
             )
+            rows = conn.execute(text("PRAGMA table_info(ticket_attachments)")).mappings().all()
+            existing = {row["name"] for row in rows}
+            if "telegram_message_id" not in existing:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))
             return
 
         conn.execute(
@@ -671,6 +676,7 @@ def ensure_ticket_attachment_table() -> None:
                     telegram_file_id VARCHAR(255),
                     telegram_file_unique_id VARCHAR(255),
                     telegram_file_path VARCHAR(500),
+                    telegram_message_id VARCHAR(100),
                     original_filename VARCHAR(255),
                     mime_type VARCHAR(255),
                     file_size INTEGER,
@@ -680,3 +686,15 @@ def ensure_ticket_attachment_table() -> None:
                 """
             )
         )
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'ticket_attachments'
+                """
+            )
+        ).fetchall()
+        existing = {row[0] for row in rows}
+        if "telegram_message_id" not in existing:
+            conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))

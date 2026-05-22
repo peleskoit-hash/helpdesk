@@ -75,6 +75,7 @@ def _save_upload_attachment(
         telegram_file_id=None,
         telegram_file_unique_id=None,
         telegram_file_path=None,
+        telegram_message_id=None,
         original_filename=_safe_filename(upload.filename, fallback=f"file{ext}"),
         mime_type=(upload.content_type or "application/octet-stream"),
         file_size=len(content) if content is not None else None,
@@ -103,12 +104,15 @@ def _send_attachment_to_telegram_client(
             _error(404, "attachment_file_missing", f"Файл отсутствует: {attachment.original_filename or attachment.id}")
         return None
     try:
-        return send_document(
+        response = send_document(
             contact.external_chat_id,
             path,
             filename=attachment.original_filename or path.name,
             mime_type=attachment.mime_type or "application/octet-stream",
         )
+        message_id = ((response or {}).get("result") or {}).get("message_id")
+        attachment.telegram_message_id = str(message_id) if message_id is not None else None
+        return response
     except TelegramApiError as exc:
         if required:
             _error(502, "telegram_send_failed", f"Telegram не принял файл {attachment.original_filename or path.name}: {exc}")

@@ -183,6 +183,7 @@ class TicketAttachment(Base):
     telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_file_unique_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    telegram_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_size: Mapped[int | None] = mapped_column(nullable=True)

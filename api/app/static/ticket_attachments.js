@@ -282,6 +282,7 @@
   }
 
   function renderAttachments(ctx, message, container) {
+    if ((message?.message_status || "") === "deleted") return;
     const attachments = message.attachments || [];
     if (!attachments.length) return;
 
@@ -421,4 +422,3 @@
     destroyAllAttachmentResources,
   };
 })(window);
-
