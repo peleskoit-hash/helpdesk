@@ -182,6 +182,7 @@ const {
   minutesLeftToDue,
 } = window.TicketApi || {};
 const TicketAttachments = window.TicketAttachments || {};
+const TicketClientCard = window.TicketClientCard || {};
 
 function attachmentsCtx() {
   return {
@@ -189,6 +190,20 @@ function attachmentsCtx() {
     showError,
     closeOnBackdropClick,
     api,
+  };
+}
+
+function clientCardCtx() {
+  return {
+    state,
+    el,
+    api,
+    setStatus,
+    showError,
+    isBlank,
+    setControlValue,
+    SALES_FIRST_DEPARTMENT,
+    SALES_SECOND_DEPARTMENT,
   };
 }
 
@@ -951,426 +966,44 @@ function applyComposeModeUi() {
   }
 }
 
-function setRowValue(rowEl, valueEl, value) {
-  const show = !isBlank(value);
-  rowEl.classList.toggle("hidden", !show);
-  if (show) {
-    valueEl.textContent = String(value).trim();
-  } else {
-    valueEl.textContent = "";
-  }
-}
-
-// ===== client card =====
 function defaultClientCardViewConfig() {
-  return {
-    blocks: [
-      {
-        key: "tg",
-        title: "Telegram",
-        color_scheme: "blue",
-        sort_order: 10,
-        is_active: true,
-        fields: [
-          { key: "telegram_username", label: "@username", field_type: "readonly", sort_order: 10, is_visible: true, is_editable: false, is_system: true },
-          { key: "telegram_display_name", label: "Имя в TG", field_type: "readonly", sort_order: 20, is_visible: true, is_editable: false, is_system: true },
-        ],
-      },
-      {
-        key: "profile",
-        title: "Профиль",
-        color_scheme: "green",
-        sort_order: 20,
-        is_active: true,
-        fields: [
-          { key: "last_name", label: "Фамилия", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-          { key: "contact_name", label: "Имя", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
-        ],
-      },
-      {
-        key: "department",
-        title: "Отдел",
-        color_scheme: "blue",
-        sort_order: 30,
-        is_active: true,
-        fields: [
-          { key: "destination", label: "Куда..?", field_type: "select", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-          { key: "sand_owner", label: "Чей песок", field_type: "select", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
-          { key: "sales_group", label: "Группа отдела продаж", field_type: "select", sort_order: 30, is_visible: true, is_editable: true, is_system: true },
-          { key: "department", label: "Отдел", field_type: "text", sort_order: 40, is_visible: true, is_editable: true, is_system: true },
-          { key: "first_department", label: "Департамент", field_type: "text", sort_order: 50, is_visible: true, is_editable: true, is_system: true },
-          { key: "group_name", label: "Группа", field_type: "text", sort_order: 60, is_visible: true, is_editable: true, is_system: true },
-          { key: "location_type", label: "Расположение", field_type: "select", sort_order: 70, is_visible: true, is_editable: true, is_system: true },
-          { key: "anydesk", label: "Anydesk", field_type: "text", sort_order: 80, is_visible: true, is_editable: true, is_system: true },
-        ],
-      },
-      {
-        key: "work",
-        title: "Рабочие данные",
-        color_scheme: "yellow",
-        sort_order: 40,
-        is_active: true,
-        fields: [
-          { key: "internal_number", label: "Внутренний номер", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-          { key: "bitrix_login", label: "Логин Bitrix", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
-          { key: "bitrix_password", label: "Пароль Bitrix", field_type: "password", sort_order: 30, is_visible: true, is_editable: true, is_system: true },
-          { key: "bitrix_id", label: "ID в Bitrix", field_type: "text", sort_order: 40, is_visible: true, is_editable: true, is_system: true },
-        ],
-      },
-      {
-        key: "verification",
-        title: "Верификация",
-        color_scheme: "red",
-        sort_order: 50,
-        is_active: true,
-        fields: [
-          { key: "is_verified", label: "Верификация", field_type: "checkbox", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-        ],
-      },
-    ],
-  };
-}
-
-function clientCardColorClass(colorScheme) {
-  const value = String(colorScheme || "gray").trim().toLowerCase();
-  const known = new Set(["blue", "green", "yellow", "red", "gray", "purple"]);
-  return `client-card-block-${known.has(value) ? value : "gray"}`;
-}
-
-function getClientFieldValue(profile, key) {
-  if (!profile || !key) return null;
-  if (key === "telegram_username") return profile.telegram_username || null;
-  if (key === "telegram_display_name") return profile.telegram_display_name || null;
-  if (key === "is_verified") return Boolean(profile.is_verified);
-  if (String(key).startsWith("custom_")) {
-    return (profile.custom_fields || {})[key] ?? null;
-  }
-  return profile[key] ?? null;
-}
-
-function shouldRenderClientField(field, value) {
-  const key = field?.key || "";
-  const fieldType = String(field?.field_type || "").toLowerCase();
-  if (key === "is_verified") return true;
-  if (key === "telegram_username" || key === "telegram_display_name") return true;
-  if (fieldType === "checkbox") return true;
-  return !isBlank(value);
-}
-
-function renderClientFieldValue(field, value) {
-  const fieldKey = field?.key || "";
-  const fieldType = String(field?.field_type || "").toLowerCase();
-  const valueEl = document.createElement("div");
-  valueEl.className = "client-card-field-value";
-
-  if (fieldKey === "telegram_username") {
-    const usernameRaw = String(value || "").trim();
-    if (!usernameRaw) {
-      valueEl.textContent = "нет";
-      return valueEl;
-    }
-    const username = usernameRaw.replace(/^@/, "");
-    const link = document.createElement("a");
-    link.href = `tg://resolve?domain=${encodeURIComponent(username)}`;
-    link.textContent = `@${username}`;
-    valueEl.appendChild(link);
-    return valueEl;
-  }
-
-  if (fieldKey === "telegram_display_name") {
-    valueEl.textContent = isBlank(value) ? "нет" : String(value).trim();
-    return valueEl;
-  }
-
-  if (fieldKey === "is_verified") {
-    valueEl.textContent = value ? "✓" : "✕";
-    valueEl.classList.add(value ? "verified-ok" : "verified-no");
-    return valueEl;
-  }
-
-  if (fieldType === "checkbox") {
-    valueEl.textContent = value ? "✓" : "✕";
-    valueEl.classList.add(value ? "verified-ok" : "verified-no");
-    return valueEl;
-  }
-
-  if (fieldType === "url") {
-    const urlText = String(value ?? "").trim();
-    if (!urlText) return valueEl;
-    const link = document.createElement("a");
-    link.href = urlText;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = urlText;
-    valueEl.appendChild(link);
-    return valueEl;
-  }
-
-  valueEl.textContent = String(value ?? "").trim();
-  if (fieldKey === "bitrix_password" || fieldType === "password") {
-    valueEl.classList.add("client-card-password");
-  }
-  return valueEl;
+  return TicketClientCard.defaultClientCardViewConfig();
 }
 
 function renderClientDynamicCard(profile, config) {
-  if (!el.clientDynamicCard) return;
-  el.clientDynamicCard.innerHTML = "";
-  const blocks = (config?.blocks || [])
-    .filter((block) => block && block.is_active !== false)
-    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-
-  for (const block of blocks) {
-    const fields = (block.fields || [])
-      .filter((field) => field && field.is_visible !== false)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-    const blockEl = document.createElement("div");
-    blockEl.className = `client-card-block ${clientCardColorClass(block.color_scheme)}`;
-
-    let renderedFields = 0;
-    for (const field of fields) {
-      const value = getClientFieldValue(profile, field.key);
-      if (!shouldRenderClientField(field, value)) continue;
-
-      const rowEl = document.createElement("div");
-      rowEl.className = "client-card-field";
-
-      if (field.key === "is_verified") {
-        rowEl.classList.add("client-card-field-verification");
-      } else {
-        const labelEl = document.createElement("div");
-        labelEl.className = "client-card-field-label";
-        labelEl.textContent = field.label || field.key;
-        rowEl.appendChild(labelEl);
-      }
-
-      rowEl.appendChild(renderClientFieldValue(field, value));
-      blockEl.appendChild(rowEl);
-      renderedFields += 1;
-    }
-
-    if (renderedFields > 0 || block.key === "verification") {
-      el.clientDynamicCard.appendChild(blockEl);
-    }
-  }
+  return TicketClientCard.renderClientDynamicCard(clientCardCtx(), profile, config);
 }
 
 function fillClientPanel(profile) {
-  const effectiveConfig = state.clientCardViewConfig || defaultClientCardViewConfig();
-  renderClientDynamicCard(profile, effectiveConfig);
+  return TicketClientCard.fillClientPanel(clientCardCtx(), profile);
 }
 
 function syncDynamicModalFields() {
-  const destination = el.fDestination.value;
-  const isSand = destination === "Песок";
-  const isSales = destination === "Отдел Продаж";
-
-  el.fSandOwnerWrap.classList.toggle("hidden", !isSand);
-  el.fSalesGroupWrap.classList.toggle("hidden", !isSales);
-
-  if (!isSand) el.fSandOwner.value = "";
-  if (!isSales) el.fSalesGroup.value = "";
-
-  const isRemote = el.fLocationType.value === "Удалённый";
-  el.fAnydeskWrap.classList.toggle("hidden", !isRemote);
-  if (!isRemote) el.fAnydesk.value = "";
+  return TicketClientCard.syncDynamicModalFields(clientCardCtx());
 }
 
 function fillModal(profile) {
-  setControlValue(el.fContactName, profile.contact_name);
-  setControlValue(el.fLastName, profile.last_name);
-  setControlValue(el.fDestination, profile.destination);
-  setControlValue(el.fSandOwner, profile.sand_owner);
-  setControlValue(el.fSalesGroup, profile.sales_group);
-  setControlValue(el.fLocationType, profile.location_type);
-  setControlValue(el.fAnydesk, profile.anydesk);
-  setControlValue(el.fInternalNumber, profile.internal_number);
-  setControlValue(el.fBitrixLogin, profile.bitrix_login);
-  setControlValue(el.fBitrixPassword, profile.bitrix_password);
-  setControlValue(el.fBitrixId, profile.bitrix_id);
-  el.fIsVerified.checked = Boolean(profile.is_verified);
-  renderCustomFieldsEditor(profile);
-  syncDynamicModalFields();
-}
-
-function _parseCustomFieldValueForPayload(fieldType, rawValue) {
-  const type = String(fieldType || "text").toLowerCase();
-  if (type === "checkbox") return Boolean(rawValue);
-  if (type === "number") {
-    if (rawValue === "" || rawValue === null || rawValue === undefined) return null;
-    const parsed = Number(rawValue);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return (rawValue ?? "").toString().trim() || null;
+  return TicketClientCard.fillModal(clientCardCtx(), profile);
 }
 
 function renderCustomFieldsEditor(profile) {
-  if (!el.customFieldsContainer || !el.customFieldsSection) return;
-  el.customFieldsContainer.innerHTML = "";
-  const blocks = (state.clientCardViewConfig?.blocks || [])
-    .filter((block) => block && block.is_active !== false)
-    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-  const editableFields = [];
-  for (const block of blocks) {
-    for (const field of block.fields || []) {
-      if (!field || field.is_system || field.is_editable === false) continue;
-      editableFields.push(field);
-    }
-  }
-  el.customFieldsSection.classList.toggle("hidden", editableFields.length === 0);
-  const customValues = profile?.custom_fields || {};
-  for (const field of editableFields) {
-    const wrap = document.createElement("label");
-    wrap.className = "custom-field-editor";
-    const title = document.createElement("span");
-    title.textContent = field.label || field.key;
-    wrap.appendChild(title);
-    const fieldType = String(field.field_type || "text").toLowerCase();
-    const currentValue = customValues[field.key];
-    let inputEl = null;
-    if (fieldType === "textarea") {
-      inputEl = document.createElement("textarea");
-      inputEl.rows = 3;
-      inputEl.value = currentValue ?? "";
-    } else if (fieldType === "select") {
-      inputEl = document.createElement("select");
-      const emptyOption = document.createElement("option");
-      emptyOption.value = "";
-      emptyOption.textContent = "Не выбрано";
-      inputEl.appendChild(emptyOption);
-      const options = Array.isArray(field.options) ? field.options : [];
-      for (const optionValue of options) {
-        const option = document.createElement("option");
-        option.value = optionValue;
-        option.textContent = optionValue;
-        inputEl.appendChild(option);
-      }
-      inputEl.value = currentValue ?? "";
-    } else if (fieldType === "checkbox") {
-      inputEl = document.createElement("input");
-      inputEl.type = "checkbox";
-      inputEl.checked = Boolean(currentValue);
-    } else {
-      inputEl = document.createElement("input");
-      if (fieldType === "number") inputEl.type = "number";
-      else if (fieldType === "date") inputEl.type = "date";
-      else if (fieldType === "url") inputEl.type = "url";
-      else if (fieldType === "phone") inputEl.type = "tel";
-      else if (fieldType === "password") inputEl.type = "password";
-      else inputEl.type = "text";
-      inputEl.value = currentValue ?? "";
-    }
-    inputEl.dataset.customFieldKey = field.key;
-    inputEl.dataset.customFieldType = fieldType;
-    wrap.appendChild(inputEl);
-    el.customFieldsContainer.appendChild(wrap);
-  }
-}
-
-function buildDepartmentMetaPayload() {
-  const destination = el.fDestination.value.trim() || null;
-  const sandOwner = el.fSandOwner.value.trim() || null;
-  const salesGroup = el.fSalesGroup.value.trim() || null;
-
-  if (destination === "Песок") {
-    return {
-      department: "Стажировка",
-      first_department: null,
-      group_name: sandOwner,
-    };
-  }
-
-  if (destination === "Отдел Продаж") {
-    let firstDepartment = null;
-    if (salesGroup) {
-      if (SALES_FIRST_DEPARTMENT.has(salesGroup)) firstDepartment = "Первый департамент";
-      else if (SALES_SECOND_DEPARTMENT.has(salesGroup)) firstDepartment = "Второй отдел";
-      else if (salesGroup === "группа Москвиченко") firstDepartment = "Третий отдел";
-    }
-
-    return {
-      department: "Отдел продаж",
-      first_department: firstDepartment,
-      group_name: salesGroup,
-    };
-  }
-
-  return {
-    department: destination,
-    first_department: null,
-    group_name: null,
-  };
+  return TicketClientCard.renderCustomFieldsEditor(clientCardCtx(), profile);
 }
 
 function getModalPayload() {
-  const locationType = el.fLocationType.value.trim() || null;
-  const anydesk = locationType === "Удалённый" ? (el.fAnydesk.value.trim() || null) : null;
-  const departmentMeta = buildDepartmentMetaPayload();
-
-  const custom_fields = {};
-  if (el.customFieldsContainer) {
-    const customInputs = el.customFieldsContainer.querySelectorAll("[data-custom-field-key]");
-    customInputs.forEach((input) => {
-      const key = input.dataset.customFieldKey;
-      const fieldType = input.dataset.customFieldType || "text";
-      let rawValue = null;
-      if (input.type === "checkbox") rawValue = input.checked;
-      else rawValue = input.value;
-      custom_fields[key] = _parseCustomFieldValueForPayload(fieldType, rawValue);
-    });
-  }
-
-  return {
-    contact_name: el.fContactName.value.trim() || null,
-    last_name: el.fLastName.value.trim() || null,
-    email: null,
-    phone: null,
-    verification_status: null,
-    is_verified: el.fIsVerified.checked,
-    destination: el.fDestination.value.trim() || null,
-    sand_owner: el.fSandOwner.value.trim() || null,
-    sales_group: el.fSalesGroup.value.trim() || null,
-    department: departmentMeta.department,
-    first_department: departmentMeta.first_department,
-    group_name: departmentMeta.group_name,
-    employee_type: null,
-    location_type: locationType,
-    anydesk,
-    internal_number: el.fInternalNumber.value.trim() || null,
-    external_user_id: null,
-    bitrix_login: el.fBitrixLogin.value.trim() || null,
-    bitrix_password: el.fBitrixPassword.value.trim() || null,
-    bitrix_id: el.fBitrixId.value.trim() || null,
-    custom_fields,
-  };
+  return TicketClientCard.getModalPayload(clientCardCtx());
 }
 
 function openClientModal() {
-  if (!state.card) return;
-  fillModal(state.card.client_profile || {});
-  el.clientModal.classList.remove("hidden");
+  return TicketClientCard.openClientModal(clientCardCtx());
 }
 
 function closeClientModal() {
-  el.clientModal.classList.add("hidden");
+  return TicketClientCard.closeClientModal(clientCardCtx());
 }
 
 async function saveClientProfile() {
-  try {
-    setStatus("Сохраняю профиль клиента...");
-    const payload = getModalPayload();
-    const profile = await api(`/api/v1/tickets/${state.ticketId}/client-profile`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    state.card.client_profile = profile;
-    fillClientPanel(profile);
-    closeClientModal();
-    setStatus("Профиль клиента сохранён");
-  } catch (e) {
-    showError(e.message);
-  }
+  return TicketClientCard.saveClientProfile(clientCardCtx());
 }
 
 function hideMessageContextMenu() {
@@ -2079,3 +1712,4 @@ document.querySelectorAll("input, textarea").forEach((field) => {
   field.setAttribute("autocapitalize", "off");
   field.setAttribute("spellcheck", "false");
 });
+
