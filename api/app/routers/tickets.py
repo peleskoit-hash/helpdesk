@@ -7,7 +7,7 @@ from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import (
@@ -22,8 +22,8 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardConfigResponse, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListItem, TicketListResponse, WrongProblemPayload
-from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardConfigResponse, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
+from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
 from ..services.button_config import BASIC_MENU_NAME, DEFAULT_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
@@ -39,6 +39,7 @@ from ..services.client_card import _client_card_view_config, _custom_field_map, 
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, reply_to_ticket
+from ..services.ticket_list import build_ticket_counts, list_special_tickets, list_tickets_paginated
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -72,50 +73,6 @@ def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
 
-def _apply_role_filter(stmt: Select, user: CurrentUser):
-    if is_support_user(user):
-        return stmt.where(and_(Ticket.assignee_id == user.id, Ticket.agent_visible.is_(True)))
-    if is_readonly_chiki_piki(user):
-        return stmt.join(ClientProfile, ClientProfile.client_id == Ticket.client_id).where(
-            ClientProfile.destination == "Колл Центр"
-        )
-    return stmt
-
-
-def _apply_role_filter_for_statuses(
-    stmt: Select,
-    user: CurrentUser,
-    statuses: list[str],
-    include_support_special_closed: bool = False,
-    include_support_all_closed: bool = False,
-):
-    if is_support_user(user):
-        assigned_clause = and_(Ticket.assignee_id == user.id, Ticket.agent_visible.is_(True))
-        if include_support_all_closed and TicketStatus.CLOSED.value in statuses:
-            return stmt
-        if include_support_special_closed and TicketStatus.CLOSED.value in statuses:
-            return stmt.where(or_(assigned_clause, and_(Ticket.status == TicketStatus.CLOSED.value, Ticket.is_special.is_(True))))
-        return stmt.where(assigned_clause)
-    return _apply_role_filter(stmt, user)
-
-
-def _apply_admin_assignee_filter(stmt: Select, user: CurrentUser, assignee_ids: list[str] | None):
-    if not is_admin(user):
-        return stmt
-    if not assignee_ids:
-        return stmt.where(False)
-    return stmt.where(Ticket.assignee_id.in_(assignee_ids))
-
-
-def _base_tickets_stmt_for_counts(user: CurrentUser) -> Select:
-    return _apply_role_filter(select(Ticket), user)
-
-
-def _sort_clause(sort: str, order: str):
-    field = Ticket.created_at if sort == "created_at" else Ticket.updated_at
-    return asc(field) if order == "asc" else desc(field)
-
-
 def _ensure_ticket_number(db: Session, ticket: Ticket) -> int:
     if ticket.ticket_number is not None:
         return ticket.ticket_number
@@ -123,119 +80,6 @@ def _ensure_ticket_number(db: Session, ticket: Ticket) -> int:
     ticket.ticket_number = int(max_number) + 1
     db.flush()
     return ticket.ticket_number
-
-
-def _last_reply_meta(db: Session, ticket_id: str):
-    stmt = (
-        select(TicketMessage.message_type, TicketMessage.created_at)
-        .where(TicketMessage.ticket_id == ticket_id)
-        .order_by(desc(TicketMessage.created_at))
-        .limit(1)
-    )
-    row = db.execute(stmt).first()
-    if not row:
-        return None, None
-    labels = {
-        MessageType.CLIENT.value: "Клиент",
-        MessageType.AGENT.value: "Сотрудник",
-        MessageType.INTERNAL.value: "Комментарий",
-        MessageType.SYSTEM.value: "Система",
-    }
-    by = labels.get(row.message_type, "Система")
-    return by, row.created_at
-
-
-def _seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
-    if not is_support_user(user):
-        return False
-    stmt = select(TicketView.id).where(
-        and_(TicketView.ticket_id == ticket_id, TicketView.user_id == user.id)
-    ).limit(1)
-    return db.execute(stmt).first() is not None
-
-
-def _list_tickets_paginated(
-    db: Session,
-    user: CurrentUser,
-    statuses: list[str],
-    is_frozen: bool | None,
-    sort: str,
-    order: str,
-    page: int,
-    limit: int,
-    admin_assignee_ids: list[str] | None = None,
-    filter_admin_assignees: bool = True,
-    include_special_open: bool = False,
-    include_support_special_closed: bool = False,
-    include_support_all_closed: bool = False,
-):
-    conditions = [Ticket.status.in_(statuses)]
-    if not include_special_open and not is_readonly_chiki_piki(user) and TicketStatus.CLOSED.value not in statuses:
-        conditions.append(Ticket.is_special.is_(False))
-    if is_frozen is not None:
-        conditions.append(Ticket.is_frozen.is_(is_frozen))
-
-    base_stmt = select(Ticket).where(and_(*conditions))
-    base_stmt = _apply_role_filter_for_statuses(
-        base_stmt,
-        user,
-        statuses,
-        include_support_special_closed,
-        include_support_all_closed,
-    )
-    if filter_admin_assignees:
-        base_stmt = _apply_admin_assignee_filter(base_stmt, user, admin_assignee_ids)
-
-    total_stmt = select(func.count()).select_from(base_stmt.subquery())
-    total = db.execute(total_stmt).scalar_one()
-
-    pages = max(1, (total + limit - 1) // limit)
-    if page > pages:
-        page = pages
-
-    offset = (page - 1) * limit
-    stmt = base_stmt.order_by(_sort_clause(sort, order)).offset(offset).limit(limit)
-    tickets = db.execute(stmt).scalars().all()
-
-    items: list[TicketListItem] = []
-    has_new_numbers = False
-    for t in tickets:
-        if t.ticket_number is None:
-            has_new_numbers = True
-        ticket_number = _ensure_ticket_number(db, t)
-        last_reply_by, last_reply_at = _last_reply_meta(db, t.id)
-        seen_by_agent = _seen_by_agent(db, t.id, user)
-        assignee = db.get(User, t.assignee_id) if t.assignee_id else None
-        special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
-        display_assignee_name = (
-            _display_assignee_name(t, assignee, special_assignee)
-        )
-        items.append(
-            TicketListItem(
-                id=t.id,
-                ticket_number=ticket_number,
-                subject=t.subject,
-                workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
-                intake_state=t.intake_state or TicketIntakeState.READY.value,
-                status=t.status,
-                is_frozen=t.is_frozen,
-                seen_by_agent=seen_by_agent,
-                client_name=t.client.display_name if t.client else "",
-                assignee_id=t.assignee_id,
-                assignee_name=display_assignee_name,
-                is_special=bool(t.is_special),
-                special_assignee_id=t.special_assignee_id,
-                special_assignee_name=special_assignee.full_name if special_assignee else None,
-                last_reply_by=last_reply_by,
-                last_reply_at=last_reply_at,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-            )
-        )
-    if has_new_numbers:
-        db.commit()
-
-    return TicketListResponse(items=items, total=total, page=page, pages=pages, limit=limit)
 
 
 def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket:
@@ -254,7 +98,15 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
             _error(403, "forbidden_ticket_access", "Нет доступа к заявке")
     if is_readonly_chiki_piki(user):
         profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
-        if profile is None or profile.destination != "Колл Центр":
+        destination = (profile.destination or "").strip().lower() if profile is not None else ""
+        key = (ticket.button_config_key or "").strip()
+        instruction_key = (ticket.instruction_button_key or "").strip()
+        is_call_center_ticket = (
+            destination == "колл центр"
+            or key.startswith("Колл Центр|")
+            or instruction_key.startswith("Колл Центр|")
+        )
+        if not is_call_center_ticket:
             _error(403, "forbidden_ticket_access", "Нет доступа к заявке")
     return ticket
 
@@ -329,6 +181,7 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         ticket.status = TicketStatus.NEW.value
     ticket.updated_at = datetime.utcnow()
     append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
+    run_group_parent_assigned_hook(db, ticket, assignee)
     if is_admin(actor):
         # Admin took ticket from support queue.
         if assignee.id == actor.id and old_assignee is not None and old_assignee.id != actor.id:
@@ -539,7 +392,18 @@ def list_active(
     user: CurrentUser = Depends(get_current_user),
 ):
     statuses = [TicketStatus.NEW.value, TicketStatus.PENDING.value]
-    return _list_tickets_paginated(db, user, statuses, False, sort, order, page, limit, assignee_ids)
+    return list_tickets_paginated(
+        db=db,
+        user=user,
+        statuses=statuses,
+        is_frozen=False,
+        sort=sort,
+        order=order,
+        page=page,
+        limit=limit,
+        admin_assignee_ids=assignee_ids,
+        ensure_ticket_number_fn=_ensure_ticket_number,
+    )
 
 
 @router.get("/unassigned", response_model=TicketListResponse)
@@ -551,9 +415,20 @@ def list_unassigned(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    if not (is_admin(user) or is_readonly_chiki_piki(user)):
-        _error(403, "admin_only", "Нераспределённые заявки видны только администратору")
-    return _list_tickets_paginated(db, user, [TicketStatus.UNASSIGNED.value], False, sort, order, page, limit, None, False)
+    return list_tickets_paginated(
+        db=db,
+        user=user,
+        statuses=[TicketStatus.UNASSIGNED.value],
+        is_frozen=False,
+        sort=sort,
+        order=order,
+        page=page,
+        limit=limit,
+        admin_assignee_ids=None,
+        filter_admin_assignees=False,
+        require_admin_or_chiki=True,
+        ensure_ticket_number_fn=_ensure_ticket_number,
+    )
 
 
 @router.get("/frozen", response_model=TicketListResponse)
@@ -567,7 +442,18 @@ def list_frozen(
     user: CurrentUser = Depends(get_current_user),
 ):
     statuses = [TicketStatus.NEW.value, TicketStatus.PENDING.value]
-    return _list_tickets_paginated(db, user, statuses, True, sort, order, page, limit, assignee_ids)
+    return list_tickets_paginated(
+        db=db,
+        user=user,
+        statuses=statuses,
+        is_frozen=True,
+        sort=sort,
+        order=order,
+        page=page,
+        limit=limit,
+        admin_assignee_ids=assignee_ids,
+        ensure_ticket_number_fn=_ensure_ticket_number,
+    )
 
 
 @router.get("/closed", response_model=TicketListResponse)
@@ -581,7 +467,22 @@ def list_closed(
     user: CurrentUser = Depends(get_current_user),
 ):
     statuses = [TicketStatus.CLOSED.value]
-    return _list_tickets_paginated(db, user, statuses, None, sort, order, page, limit, assignee_ids, False, False, True, True)
+    return list_tickets_paginated(
+        db=db,
+        user=user,
+        statuses=statuses,
+        is_frozen=None,
+        sort=sort,
+        order=order,
+        page=page,
+        limit=limit,
+        admin_assignee_ids=assignee_ids,
+        filter_admin_assignees=False,
+        include_special_open=False,
+        include_support_special_closed=True,
+        include_support_all_closed=True,
+        ensure_ticket_number_fn=_ensure_ticket_number,
+    )
 
 
 @router.get("/special", response_model=TicketListResponse)
@@ -593,52 +494,15 @@ def list_special(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
-    conditions = [
-        Ticket.is_special.is_(True),
-        Ticket.status != TicketStatus.CLOSED.value,
-    ]
-    base_stmt = select(Ticket).where(and_(*conditions))
-    total_stmt = select(func.count()).select_from(base_stmt.subquery())
-    total = db.execute(total_stmt).scalar_one()
-    pages = max(1, (total + limit - 1) // limit)
-    if page > pages:
-        page = pages
-    offset = (page - 1) * limit
-    stmt = base_stmt.order_by(_sort_clause(sort, order)).offset(offset).limit(limit)
-    tickets = db.execute(stmt).scalars().all()
-    items: list[TicketListItem] = []
-    for t in tickets:
-        if t.ticket_number is None:
-            _ensure_ticket_number(db, t)
-        last_reply_by, last_reply_at = _last_reply_meta(db, t.id)
-        assignee = db.get(User, t.assignee_id) if t.assignee_id else None
-        special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
-        display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
-        items.append(
-            TicketListItem(
-                id=t.id,
-                ticket_number=t.ticket_number,
-                subject=t.subject,
-                workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
-                intake_state=t.intake_state or TicketIntakeState.READY.value,
-                status=t.status,
-                is_frozen=t.is_frozen,
-                seen_by_agent=False,
-                client_name=t.client.display_name if t.client else "",
-                assignee_id=t.assignee_id,
-                assignee_name=display_assignee_name,
-                is_special=True,
-                special_assignee_id=t.special_assignee_id,
-                special_assignee_name=special_assignee.full_name if special_assignee else None,
-                last_reply_by=last_reply_by,
-                last_reply_at=last_reply_at,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-            )
-        )
-    db.commit()
-    return TicketListResponse(items=items, total=total, page=page, pages=pages, limit=limit)
+    return list_special_tickets(
+        db=db,
+        user=user,
+        sort=sort,
+        order=order,
+        page=page,
+        limit=limit,
+        ensure_ticket_number_fn=_ensure_ticket_number,
+    )
 
 
 @router.get("/counts", response_model=TicketCountsOut)
@@ -647,33 +511,10 @@ def ticket_counts(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    def count_tickets(statuses: list[str], is_frozen: bool | None, apply_admin_filter: bool, special_only: bool = False) -> int:
-        conditions = [Ticket.status.in_(statuses)]
-        if special_only:
-            conditions.append(Ticket.is_special.is_(True))
-        elif TicketStatus.CLOSED.value not in statuses and not is_readonly_chiki_piki(user):
-            conditions.append(Ticket.is_special.is_(False))
-        if is_frozen is not None:
-            conditions.append(Ticket.is_frozen.is_(is_frozen))
-        stmt = select(Ticket).where(and_(*conditions))
-        stmt = _apply_role_filter_for_statuses(
-            stmt,
-            user,
-            statuses,
-            include_support_special_closed=(TicketStatus.CLOSED.value in statuses),
-            include_support_all_closed=(TicketStatus.CLOSED.value in statuses),
-        )
-        if apply_admin_filter:
-            stmt = _apply_admin_assignee_filter(stmt, user, assignee_ids)
-        total_stmt = select(func.count()).select_from(stmt.subquery())
-        return int(db.execute(total_stmt).scalar_one() or 0)
-
-    return TicketCountsOut(
-        unassigned=count_tickets([TicketStatus.UNASSIGNED.value], False, False) if (is_admin(user) or is_readonly_chiki_piki(user)) else 0,
-        active=count_tickets([TicketStatus.NEW.value, TicketStatus.PENDING.value], False, True),
-        frozen=count_tickets([TicketStatus.NEW.value, TicketStatus.PENDING.value], True, True),
-        closed=count_tickets([TicketStatus.CLOSED.value], None, False),
-        special=count_tickets([TicketStatus.NEW.value, TicketStatus.PENDING.value, TicketStatus.UNASSIGNED.value], None, False, True) if is_admin(user) else 0,
+    return build_ticket_counts(
+        db=db,
+        user=user,
+        assignee_ids=assignee_ids,
     )
 
 
@@ -749,7 +590,20 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
 
     warnings: list[str] = []
     deleted = 0
+    deleted_ids: set[str] = set()
     for ticket in tickets:
+        if ticket.id in deleted_ids:
+            continue
+        # If parent was already deleted in this batch, its children are already hard-deleted too.
+        if ticket.parent_ticket_id and ticket.parent_ticket_id in deleted_ids:
+            deleted_ids.add(ticket.id)
+            continue
+        # Skip stale ORM rows that may already be removed by previous parent delete.
+        still_exists = db.execute(select(Ticket.id).where(Ticket.id == ticket.id)).scalar_one_or_none()
+        if still_exists is None:
+            deleted_ids.add(ticket.id)
+            continue
+
         workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
         parent_ticket_id = ticket.parent_ticket_id if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value else None
         if workflow_type == TicketWorkflowType.TICKET.value:
@@ -765,13 +619,23 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
             except Exception:
                 # Deletion must not be blocked by Telegram delivery issues.
                 pass
-        elif workflow_type == TicketWorkflowType.TASK.value and ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
+        elif workflow_type == TicketWorkflowType.TASK.value:
             try:
-                _notify_group_parent_completion_before_delete(db, ticket)
+                # For group children we avoid client spam; parent summary/close handles client notification.
+                if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
+                    client_message = _first_client_message(db, ticket)
+                    _send_to_telegram_client(
+                        db,
+                        ticket,
+                        _format_task_closed_without_answer_text(ticket, client_message),
+                        required=False,
+                        remove_keyboard=True,
+                    )
             except Exception:
                 # Deletion must not be blocked by Telegram delivery issues.
                 pass
         warnings.extend(_delete_ticket_hard(db, ticket))
+        deleted_ids.add(ticket.id)
         if parent_ticket_id:
             parent = db.get(Ticket, parent_ticket_id)
             if parent is not None:
@@ -1175,6 +1039,26 @@ def _format_task_completion_text(ticket: Ticket, client_message: TicketMessage, 
     )
 
 
+def _format_task_closed_without_answer_text(ticket: Ticket, client_message: TicketMessage | None) -> str:
+    created_at = ticket.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
+    local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
+    created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
+    client_text = (client_message.body or "").strip() if client_message is not None else ""
+    if not client_text:
+        client_text = "(без текста)"
+    return (
+        "Ваша задача:\n"
+        f"\"{ticket.subject}\" от {created_text}\n"
+        "с текстом:\n"
+        f"\"{client_text}\"\n"
+        "закрыта без ответа по причине некорректных или неполных данных.\n\n"
+        "Для создания новой нажмите\n"
+        "/start"
+    )
+
+
 
 def _format_group_task_completion_text(ticket: Ticket, client_message: TicketMessage, answers: list[str]) -> str:
     created_at = ticket.created_at
@@ -1196,6 +1080,46 @@ def _format_group_task_completion_text(ticket: Ticket, client_message: TicketMes
     )
 
 
+def _group_parent_children_payload(db: Session, parent: Ticket) -> tuple[list[str], list[TicketAttachment]]:
+    children = db.execute(
+        select(Ticket)
+        .where(
+            and_(
+                Ticket.parent_ticket_id == parent.id,
+                Ticket.task_kind == TicketTaskKind.GROUP_CHILD.value,
+            )
+        )
+        .order_by(asc(Ticket.created_at))
+    ).scalars().all()
+
+    answers: list[str] = []
+    attachments: list[TicketAttachment] = []
+    for child in children:
+        last_agent_message = db.execute(
+            select(TicketMessage)
+            .where(
+                and_(
+                    TicketMessage.ticket_id == child.id,
+                    TicketMessage.message_type == MessageType.AGENT.value,
+                )
+            )
+            .order_by(desc(TicketMessage.created_at))
+            .limit(1)
+        ).scalar_one_or_none()
+        if last_agent_message is None:
+            continue
+        text = (last_agent_message.body or "").strip()
+        if text:
+            answers.append(text)
+        child_attachments = db.execute(
+            select(TicketAttachment)
+            .where(TicketAttachment.message_id == last_agent_message.id)
+            .order_by(asc(TicketAttachment.created_at))
+        ).scalars().all()
+        attachments.extend(child_attachments)
+    return answers, attachments
+
+
 def _finalize_group_parent_if_ready(
     db: Session,
     parent: Ticket,
@@ -1203,6 +1127,10 @@ def _finalize_group_parent_if_ready(
     closed_by_user_id: str | None = None,
     system_note: str = "Групповая задача завершена системой",
 ) -> bool:
+    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
+        return False
+    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
+        return False
     if parent.status == TicketStatus.CLOSED.value:
         return False
 
@@ -1221,26 +1149,15 @@ def _finalize_group_parent_if_ready(
 
     parent_client_message = _first_client_message(db, parent)
     if parent_client_message is not None:
-        parent_agent_messages = db.execute(
-            select(TicketMessage)
-            .where(and_(TicketMessage.ticket_id == parent.id, TicketMessage.message_type == MessageType.AGENT.value))
-            .order_by(asc(TicketMessage.created_at))
-        ).scalars().all()
-        answers = [(msg.body or "").strip() for msg in parent_agent_messages if (msg.body or "").strip()]
+        answers, attachments = _group_parent_children_payload(db, parent)
         _send_to_telegram_client(
             db,
             parent,
             _format_group_task_completion_text(parent, parent_client_message, answers),
             required=False,
         )
-        for msg in parent_agent_messages:
-            attachments = db.execute(
-                select(TicketAttachment)
-                .where(TicketAttachment.message_id == msg.id)
-                .order_by(asc(TicketAttachment.created_at))
-            ).scalars().all()
-            for attachment in attachments:
-                _send_attachment_to_telegram_client(db, parent, attachment, required=True)
+        for attachment in attachments:
+            _send_attachment_to_telegram_client(db, parent, attachment, required=True)
 
     parent.status = TicketStatus.CLOSED.value
     parent.closed_by_user_id = closed_by_user_id
@@ -1252,29 +1169,22 @@ def _finalize_group_parent_if_ready(
 
 
 def _notify_group_parent_completion_before_delete(db: Session, parent: Ticket) -> None:
+    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
+        return
+    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
+        return
     parent_client_message = _first_client_message(db, parent)
     if parent_client_message is None:
         return
-    parent_agent_messages = db.execute(
-        select(TicketMessage)
-        .where(and_(TicketMessage.ticket_id == parent.id, TicketMessage.message_type == MessageType.AGENT.value))
-        .order_by(asc(TicketMessage.created_at))
-    ).scalars().all()
-    answers = [(msg.body or "").strip() for msg in parent_agent_messages if (msg.body or "").strip()]
+    answers, attachments = _group_parent_children_payload(db, parent)
     _send_to_telegram_client(
         db,
         parent,
         _format_group_task_completion_text(parent, parent_client_message, answers),
         required=False,
     )
-    for msg in parent_agent_messages:
-        attachments = db.execute(
-            select(TicketAttachment)
-            .where(TicketAttachment.message_id == msg.id)
-            .order_by(asc(TicketAttachment.created_at))
-        ).scalars().all()
-        for attachment in attachments:
-            _send_attachment_to_telegram_client(db, parent, attachment, required=True)
+    for attachment in attachments:
+        _send_attachment_to_telegram_client(db, parent, attachment, required=True)
 
 
 @router.get("/{ticket_id}/problem-menu")
@@ -1316,6 +1226,10 @@ def _close_group_child_if_ready(db: Session, child: Ticket, last_agent_message: 
 
     parent = db.get(Ticket, child.parent_ticket_id)
     if parent is None:
+        return False
+    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
+        return False
+    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
         return False
 
     parent_agent_message = _add_message(db, parent, MessageType.AGENT, last_agent_message.body or "", user.id)
@@ -1361,10 +1275,11 @@ def _close_task_without_reply(db: Session, ticket: Ticket, actor: CurrentUser):
     _add_message(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
     # For group child tasks, client should receive only parent-level finalization messages.
     if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
+        client_message = _first_client_message(db, ticket)
         _send_to_telegram_client(
             db,
             ticket,
-            "Ваша задача закрыта без ответа по причине некорректных или неполных данных. Для создания новой нажмите /start",
+            _format_task_closed_without_answer_text(ticket, client_message),
             required=False,
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
