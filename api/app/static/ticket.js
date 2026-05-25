@@ -163,11 +163,7 @@ const el = {
   completionLegacy: document.getElementById("completionLegacy"),
 };
 
-let editMessageResolve = null;
-let imagePreviewScale = 1;
-let imagePreviewAttachment = null;
 state.lastMessagesSignature = null;
-let pendingAdminAction = null;
 const {
   api,
   apiPost,
@@ -183,6 +179,9 @@ const {
 } = window.TicketApi || {};
 const TicketAttachments = window.TicketAttachments || {};
 const TicketClientCard = window.TicketClientCard || {};
+const TicketComposer = window.TicketComposer || {};
+const TicketControls = window.TicketControls || {};
+const TicketMessageView = window.TicketMessageView || {};
 
 function attachmentsCtx() {
   return {
@@ -204,6 +203,67 @@ function clientCardCtx() {
     setControlValue,
     SALES_FIRST_DEPARTMENT,
     SALES_SECOND_DEPARTMENT,
+  };
+}
+
+function composerCtx() {
+  return {
+    state,
+    el,
+    api,
+    showError,
+    setStatus,
+    loadCard,
+    action,
+    renderAvailabilityStatus,
+    messageAuthorLabel,
+    isOnsitePhraseJs,
+  };
+}
+
+function controlsCtx() {
+  return {
+    state,
+    el,
+    api,
+    apiPost,
+    apiPatch,
+    escapeHtml,
+    minutesLeftToDue,
+    setStatus,
+    showError,
+    setVisible,
+    loadCard,
+    loadTabCounts,
+    action,
+    greetingAllowed,
+    closeOnBackdropClick,
+    openInstructionModal,
+    closeInstructionModal,
+    assignCurrentTicket,
+    openClientModal,
+    closeClientModal,
+    saveClientProfile,
+  };
+}
+
+function messageViewCtx() {
+  return {
+    state,
+    el,
+    api,
+    setStatus,
+    showError,
+    loadCard,
+    closeOnBackdropClick,
+    fmtMessageStamp,
+    linkifyText,
+    quoteMessage,
+    isStickerOnlyMessage: TicketAttachments.isStickerOnlyMessage,
+    messageRenderSignature: TicketAttachments.messageRenderSignature,
+    cleanupAttachmentObjectUrls: TicketAttachments.cleanupAttachmentObjectUrls,
+    cleanupStickerResources: TicketAttachments.cleanupStickerResources,
+    renderAttachments: (message, container) => TicketAttachments.renderAttachments(attachmentsCtx(), message, container),
   };
 }
 
@@ -286,163 +346,44 @@ function renderAgentSelect() {
   el.agentSelect.value = state.userId;
 }
 
-function assigneeOptionsHtml(selectedId) {
-  const options = [`<option value="" ${selectedId ? "" : "selected"}>Распределение</option>`];
-  const hasSelectedInSupport = Boolean(
-    selectedId && state.supportAgents.some((agent) => agent.id === selectedId)
-  );
-  if (selectedId && !hasSelectedInSupport) {
-    const currentAssigneeLabel =
-      state.card?.special_assignee_name ||
-      state.card?.assignee_name ||
-      "Текущий ответственный";
-    options.push(
-      `<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(currentAssigneeLabel)}</option>`
-    );
-  }
-  for (const agent of state.supportAgents) {
-    options.push(
-      `<option value="${escapeHtml(agent.id)}" ${agent.id === selectedId ? "selected" : ""}>${escapeHtml(agent.full_name)}</option>`
-    );
-  }
-  return options.join("");
-}
-
 function renderTicketAssigneeSelect() {
-  if (!state.card) return;
-  el.ticketAssigneeSelect.innerHTML = assigneeOptionsHtml(state.card.assignee_id);
-  if (state.card.assignee_id) {
-    el.ticketAssigneeSelect.value = state.card.assignee_id;
-  }
-}
-
-function isFinalProblemButton(item) {
-  return item && item.kind !== "submenu";
-}
-
-function renderWrongProblemRows(rows, container) {
-  container.innerHTML = "";
-  for (const row of rows || []) {
-    const rowEl = document.createElement("div");
-    rowEl.className = "wrong-problem-row";
-    for (const item of row.buttons || []) {
-      const wrap = document.createElement("div");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `wrong-problem-item ${item.kind === "submenu" ? "submenu" : ""}`.trim();
-      btn.textContent = item.kind === "submenu" ? `${item.label} ▾` : item.label;
-      wrap.appendChild(btn);
-
-      if (item.kind === "submenu") {
-        const children = document.createElement("div");
-        children.className = "wrong-problem-children hidden";
-        renderWrongProblemRows(item.children || [], children);
-        btn.addEventListener("click", () => children.classList.toggle("hidden"));
-        wrap.appendChild(children);
-      } else {
-        btn.addEventListener("click", () => chooseWrongProblem(item));
-      }
-
-      rowEl.appendChild(wrap);
-    }
-    container.appendChild(rowEl);
-  }
+  return TicketControls.renderTicketAssigneeSelect(controlsCtx());
 }
 
 async function openWrongProblemModal() {
-  try {
-    setStatus("Загружаю меню клиента...");
-    state.wrongProblemMenu = await api(`/api/v1/tickets/${state.ticketId}/problem-menu`);
-    renderWrongProblemRows(state.wrongProblemMenu.rows || [], el.wrongProblemMenu);
-    el.wrongProblemModal.classList.remove("hidden");
-    setStatus("Выберите правильный пункт меню");
-  } catch (e) {
-    showError(e.message);
-  }
+  return TicketControls.openWrongProblemModal(controlsCtx());
 }
 
 function closeWrongProblemModal() {
-  el.wrongProblemModal.classList.add("hidden");
+  return TicketControls.closeWrongProblemModal(controlsCtx());
 }
 
 function openSpecialConfirmModal() {
-  if (!el.specialConfirmModal) return;
-  el.specialConfirmModal.classList.remove("hidden");
+  return TicketControls.openSpecialConfirmModal(controlsCtx());
 }
 
 function closeSpecialConfirmModal() {
-  if (!el.specialConfirmModal) return;
-  el.specialConfirmModal.classList.add("hidden");
+  return TicketControls.closeSpecialConfirmModal(controlsCtx());
 }
 
 function openAdminActionModal(kind) {
-  pendingAdminAction = kind;
-  const isDelete = kind === "delete";
-  const isTask = (state.card?.workflow_type || "ticket") === "task";
-  el.adminActionModalTitle.textContent = isDelete ? "Удаление заявки" : "Принудительное завершение";
-  el.adminActionModalText.textContent = isDelete
-    ? "Вы уверены, что хотите удалить заявку?"
-    : (isTask
-      ? "Вы уверены, что хотите принудительно завершить задачу?"
-      : "Вы уверены, что хотите принудительно закрыть заявку?");
-  el.confirmAdminActionBtn.classList.toggle("danger", isDelete);
-  el.confirmAdminActionBtn.classList.toggle("primary", !isDelete);
-  el.adminActionModal.classList.remove("hidden");
+  return TicketControls.openAdminActionModal(controlsCtx(), kind);
 }
 
 function closeAdminActionModal() {
-  pendingAdminAction = null;
-  el.adminActionModal.classList.add("hidden");
+  return TicketControls.closeAdminActionModal(controlsCtx());
 }
 
 async function runAdminAction() {
-  if (!state.card || !pendingAdminAction) return;
-  const payload = { ticket_ids: [state.card.id] };
-  if (pendingAdminAction === "close") {
-    setStatus("Принудительно закрываю заявку...");
-    const result = await apiPost("/api/v1/tickets/admin/close", payload);
-    await Promise.all([loadCard(), loadTabCounts()]);
-    setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
-    return;
-  }
-  setStatus("Удаляю заявку...");
-  const result = await apiPost("/api/v1/tickets/admin/delete", payload);
-  if (result.file_delete_warnings?.length) {
-    showError(`Заявка удалена.\nПредупреждения:\n${result.file_delete_warnings.join("\n")}`);
-  }
-  window.location.href = `/tickets?tab=${encodeURIComponent(state.tab)}`;
+  return TicketControls.runAdminAction(controlsCtx());
 }
 
 async function markTicketSpecial() {
-  try {
-    setStatus("Перевожу заявку в особые...");
-    await apiPost(`/api/v1/tickets/${state.ticketId}/special`);
-    closeSpecialConfirmModal();
-    await Promise.all([loadCard(), loadTabCounts()]);
-    setStatus("Заявка переведена в особые");
-  } catch (e) {
-    showError(e.message);
-  }
+  return TicketControls.markTicketSpecial(controlsCtx());
 }
 
 async function chooseWrongProblem(item) {
-  if (!isFinalProblemButton(item)) return;
-  try {
-    setStatus("Отправляю подсказку...");
-    await apiPost(`/api/v1/tickets/${state.ticketId}/wrong-problem`, { button_key: item.key });
-    closeWrongProblemModal();
-    await loadCard();
-    if (state.card?.workflow_type === "task") {
-      setStatus("Подсказка сохранена. Клиент получит её после завершения задачи.");
-    } else {
-      setStatus("Подсказка отправлена клиенту");
-    }
-  } catch (e) {
-    showError(e.message);
-    if ((e.message || "").includes("уже использована")) {
-      await loadCard({ silent: true });
-    }
-  }
+  return TicketControls.chooseWrongProblem(controlsCtx(), item);
 }
 
 async function loadRoleUsers() {
@@ -560,29 +501,21 @@ async function loadTabCounts(options = {}) {
 }
 
 
-function clientDisplayName() {
-  const profile = state.card?.client_profile || {};
-  const fullName = `${profile.last_name || ""} ${profile.contact_name || ""}`.trim();
-  if (fullName) return fullName;
-  if (profile.telegram_display_name) return profile.telegram_display_name;
-  return state.card?.client_name || "Клиент";
+function selectedFileKey(file, index) {
+  return TicketComposer.selectedFileKey(file, index);
 }
-
-function normalizeAgentLabel(name) {
-  if (!name) return "Агент";
-  return name;
-}
-
 
 function messageAuthorLabel(message) {
   const messageType = typeof message === "string" ? message : message?.message_type;
+  const card = state.card || {};
+  const profile = card.client_profile || {};
+  const fullName = `${profile.last_name || ""} ${profile.contact_name || ""}`.trim();
+  const clientName = fullName || profile.telegram_display_name || card.client_name || "Клиент";
   if (typeof message === "object" && message) {
-    if (messageType === "client") return clientDisplayName();
-    if (messageType === "agent") return normalizeAgentLabel(message.author_name);
-    if (messageType === "internal") return normalizeAgentLabel(message.author_name);
+    if (messageType === "client") return clientName;
+    if (messageType === "agent" || messageType === "internal") return message.author_name || "Агент";
     if (messageType === "system") return "ES DESK";
   }
-
   const labels = {
     client: "Клиент",
     agent: "Агент",
@@ -592,282 +525,30 @@ function messageAuthorLabel(message) {
   return labels[messageType] || messageType || "";
 }
 
-function messageStatusNote(message) {
-  if (message.message_status === "edited") {
-    return `${messageAuthorLabel(message)} исправил сообщение`;
-  }
-  if (message.message_status === "deleted") {
-    return `${messageAuthorLabel(message)} удалил сообщение`;
-  }
-  return message.status_note || "";
-}
-
-function selectedFileKey(file, index) {
-  return `${index}:${file?.name || "file"}:${file?.size || 0}:${file?.lastModified || 0}`;
-}
-
 // ===== attachments/stickers =====
 function renderSelectedFiles() {
-  if (!el.selectedFilesList) return;
-  el.selectedFilesList.innerHTML = "";
-  el.selectedFilesList.classList.toggle("hidden", state.selectedFiles.length === 0);
-
-  state.selectedFiles.forEach((file, index) => {
-    const fileKey = selectedFileKey(file, index);
-    const progress = state.fileUploadProgress[fileKey];
-    const item = document.createElement("div");
-    item.className = "selected-file-item";
-
-    const meta = document.createElement("div");
-    meta.className = "selected-file-meta";
-    const name = document.createElement("div");
-    name.className = "selected-file-name";
-    name.textContent = file.name || "Файл";
-    const size = document.createElement("div");
-    size.className = "selected-file-size";
-    size.textContent = formatFileSize(file.size);
-    if (progress) {
-      const stageText = progress.stage === "sending"
-        ? `Отправляется в Telegram (${progress.current || 0}/${progress.total || 0})`
-        : progress.stage === "done"
-          ? "Отправлено"
-          : progress.stage === "queued"
-            ? "Ожидает отправки"
-            : progress.stage === "error"
-              ? `Ошибка: ${progress.message || "не удалось отправить"}`
-              : "";
-      if (stageText) size.textContent = `${size.textContent} · ${stageText}`;
-    }
-    meta.append(name, size);
-    item.append(meta);
-
-    if (progress && progress.stage === "done") {
-      item.classList.add("selected-file-item-ready");
-    } else {
-      item.classList.remove("selected-file-item-ready");
-    }
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "selected-file-remove";
-    remove.textContent = "Убрать";
-    remove.addEventListener("click", () => {
-      state.selectedFiles.splice(index, 1);
-      state.fileUploadProgress = {};
-      state.selectedFiles.forEach((nextFile, nextIndex) => {
-        state.fileUploadProgress[selectedFileKey(nextFile, nextIndex)] = { stage: "queued", percent: 0 };
-      });
-      if (el.replyFilesInput) el.replyFilesInput.value = "";
-      renderSelectedFiles();
-    });
-
-    item.append(remove);
-    el.selectedFilesList.appendChild(item);
-  });
+  return TicketComposer.renderSelectedFiles(composerCtx());
 }
 
 function clearSelectedFiles() {
-  state.selectedFiles = [];
-  state.fileUploadProgress = {};
-  if (el.replyFilesInput) el.replyFilesInput.value = "";
-  renderSelectedFiles();
-}
-
-function isStickerOnlyMessage(message) {
-  return TicketAttachments.isStickerOnlyMessage(message);
-}
-
-function messageRenderSignature(messages) {
-  return TicketAttachments.messageRenderSignature(messages);
-}
-
-function cleanupAttachmentObjectUrls(currentAttachmentIds) {
-  return TicketAttachments.cleanupAttachmentObjectUrls(currentAttachmentIds);
-}
-
-function cleanupStickerResources(currentAttachmentIds = new Set()) {
-  return TicketAttachments.cleanupStickerResources(currentAttachmentIds);
+  return TicketComposer.clearSelectedFiles(composerCtx());
 }
 
 function closeImagePreview() {
   return TicketAttachments.closeImagePreview(attachmentsCtx());
 }
 
-function renderAttachments(message, container) {
-  return TicketAttachments.renderAttachments(attachmentsCtx(), message, container);
-}
-
 // ===== composer/reply/comment =====
-function canEditAgentMessage(message) {
-  return state.role !== "chiki_piki" && message.message_type === "agent" && message.message_status !== "deleted" && state.card?.status !== "closed";
-}
-
-function quotedMessage() {
-  return (state.card?.messages || []).find((m) => m.id === state.quoteMessageId) || null;
-}
-
 function refreshComposerActions() {
-  const quoted = quotedMessage();
-
-  if (quoted) {
-    el.quotePreviewAuthor.textContent = messageAuthorLabel(quoted);
-    el.quotePreviewText.textContent = quoted.body || "";
-    el.quotePreview.classList.remove("hidden");
-  } else {
-    el.quotePreview.classList.add("hidden");
-    el.quotePreviewAuthor.textContent = "";
-    el.quotePreviewText.textContent = "";
-  }
+  return TicketComposer.refreshComposerActions(composerCtx());
 }
 
 function quoteMessage(message) {
-  state.quoteMessageId = message.id;
-  el.messageInput.focus();
-  if (message.telegram_message_id) {
-    setStatus(`Ответ будет отправлен в Telegram как reply на сообщение: ${messageAuthorLabel(message)}`);
-  } else {
-    setStatus("Цитата выбрана только в helpdesk: у сообщения нет Telegram ID для reply в Telegram");
-  }
-  refreshComposerActions();
+  return TicketComposer.quoteMessage(composerCtx(), message);
 }
 
 function clearQuote() {
-  state.quoteMessageId = null;
-  refreshComposerActions();
-}
-
-function ensureEditMessageModal() {
-  if (el.editMessageModal) return;
-
-  const modal = document.createElement("div");
-  modal.className = "modal hidden";
-
-  const dialog = document.createElement("div");
-  dialog.className = "modal-dialog edit-message-dialog";
-
-  const head = document.createElement("div");
-  head.className = "modal-head";
-  const title = document.createElement("div");
-  title.style.fontWeight = "700";
-  title.textContent = "Редактирование сообщения";
-  const cancelTop = document.createElement("button");
-  cancelTop.type = "button";
-  cancelTop.className = "action";
-  cancelTop.textContent = "Закрыть";
-  head.append(title, cancelTop);
-
-  const body = document.createElement("div");
-  body.className = "modal-body";
-  const textarea = document.createElement("textarea");
-  textarea.className = "edit-message-textarea";
-  textarea.placeholder = "Новый текст сообщения";
-  body.appendChild(textarea);
-
-  const foot = document.createElement("div");
-  foot.className = "modal-foot";
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "action";
-  cancel.textContent = "Отмена";
-  const save = document.createElement("button");
-  save.type = "button";
-  save.className = "action primary";
-  save.textContent = "Сохранить";
-  foot.append(cancel, save);
-
-  dialog.append(head, body, foot);
-  modal.appendChild(dialog);
-  document.body.appendChild(modal);
-
-  function close(value) {
-    modal.classList.add("hidden");
-    const resolve = editMessageResolve;
-    editMessageResolve = null;
-    if (resolve) resolve(value);
-  }
-
-  cancelTop.addEventListener("click", () => close(null));
-  cancel.addEventListener("click", () => close(null));
-  save.addEventListener("click", () => close(textarea.value));
-  closeOnBackdropClick(modal, () => close(null));
-  textarea.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close(null);
-    }
-    if (event.key === "Enter" && event.ctrlKey) {
-      event.preventDefault();
-      close(textarea.value);
-    }
-  });
-
-  el.editMessageModal = modal;
-  el.editMessageTextarea = textarea;
-  el.saveEditMessageBtn = save;
-  el.cancelEditMessageBtn = cancel;
-}
-
-function openEditMessageModal(initialText) {
-  ensureEditMessageModal();
-  if (editMessageResolve) {
-    editMessageResolve(null);
-  }
-  el.editMessageTextarea.value = initialText || "";
-  el.editMessageModal.classList.remove("hidden");
-  el.editMessageTextarea.focus();
-  el.editMessageTextarea.setSelectionRange(0, el.editMessageTextarea.value.length);
-  return new Promise((resolve) => {
-    editMessageResolve = resolve;
-  });
-}
-
-async function editAgentMessage(message) {
-  const text = await openEditMessageModal(message.body || "");
-  if (text === null) return;
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  try {
-    setStatus("Редактирую сообщение...");
-    await api(`/api/v1/tickets/${state.ticketId}/messages/${message.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: trimmed }),
-    });
-    await loadCard();
-    setStatus("Сообщение исправлено");
-  } catch (e) {
-    showError(e.message);
-  }
-}
-
-async function deleteAgentMessage(message) {
-  if (!window.confirm("Пометить сообщение удалённым и удалить его в Telegram, если возможно?")) return;
-  try {
-    setStatus("Удаляю сообщение...");
-    await api(`/api/v1/tickets/${state.ticketId}/messages/${message.id}`, { method: "DELETE" });
-    await loadCard();
-    setStatus("Сообщение помечено удалённым");
-  } catch (e) {
-    showError(e.message);
-  }
-}
-
-async function copyMessageText(message) {
-  const text = message.body || "";
-  try {
-    await navigator.clipboard.writeText(text);
-    setStatus("Текст сообщения скопирован");
-  } catch {
-    const tmp = document.createElement("textarea");
-    tmp.value = text;
-    tmp.style.position = "fixed";
-    tmp.style.left = "-9999px";
-    document.body.appendChild(tmp);
-    tmp.select();
-    document.execCommand("copy");
-    tmp.remove();
-    setStatus("Текст сообщения скопирован");
-  }
+  return TicketComposer.clearQuote(composerCtx());
 }
 
 // ===== ticket controls =====
@@ -879,12 +560,6 @@ function statusLabel(status) {
     closed: "Закрыта",
   };
   return labels[status] || status || "-";
-}
-
-function freezeLabel(card) {
-  if (!card.is_frozen) return "нет";
-  if (!card.freeze_until) return "да";
-  return `до ${fmtDate(card.freeze_until)}`;
 }
 
 function buildTicketHeaderBadges(card) {
@@ -925,10 +600,6 @@ function greetingAllowed() {
   return true;
 }
 
-function hasGreetingMessage(messages) {
-  return messages.some((m) => m.message_type === "agent" && /^Добр/i.test((m.body || "").trim()));
-}
-
 function setVisible(element, isVisible) {
   if (!element) return;
   element.classList.toggle("hidden", !isVisible);
@@ -955,14 +626,8 @@ function setControlValue(control, value) {
 }
 
 function applyComposeModeUi() {
-  const isReply = state.composeMode === "reply";
-  el.modeReplyBtn.classList.toggle("primary", isReply);
-  el.modeCommentBtn.classList.toggle("primary", !isReply);
-  el.messageInput.classList.toggle("comment-mode", !isReply);
-  el.messageInput.placeholder = isReply ? "Текст ответа клиенту" : "Внутренний комментарий";
-  if (el.addFilesBtn) {
-    el.addFilesBtn.disabled = !isReply || Boolean(state.card?.status === "closed");
-    el.addFilesBtn.title = isReply ? "Прикрепить файлы к ответу клиенту" : "Файлы доступны только для ответа клиенту";
+  if (typeof TicketComposer.applyComposeModeUi === "function") {
+    return TicketComposer.applyComposeModeUi(composerCtx());
   }
 }
 
@@ -1007,49 +672,41 @@ async function saveClientProfile() {
 }
 
 function hideMessageContextMenu() {
+  if (typeof TicketMessageView.hideMessageContextMenu === "function") {
+    return TicketMessageView.hideMessageContextMenu(messageViewCtx());
+  }
   if (!el.messageContextMenu) return;
   el.messageContextMenu.classList.add("hidden");
   el.messageContextMenu.innerHTML = "";
 }
 
-function addContextMenuItem(menu, label, onClick, options = {}) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "message-menu-item";
-  button.textContent = label;
-  button.disabled = Boolean(options.disabled);
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    hideMessageContextMenu();
-    onClick();
-  });
-  menu.appendChild(button);
-}
-
-function showMessageContextMenu(event, message) {
-  if (!["client", "agent", "internal"].includes(message.message_type)) return;
-  event.preventDefault();
-  event.stopPropagation();
-
-  const menu = el.messageContextMenu;
-  menu.innerHTML = "";
-  addContextMenuItem(menu, "Копировать", () => copyMessageText(message));
-  if (state.role !== "chiki_piki") {
-    addContextMenuItem(menu, "Цитировать", () => quoteMessage(message));
+function renderMessagesFallback(card) {
+  el.messages.innerHTML = "";
+  for (const m of card.messages || []) {
+    const div = document.createElement("div");
+    div.className = `message ${m.message_type || ""}`.trim();
+    const headerEl = document.createElement("div");
+    headerEl.className = "message-header";
+    const strong = document.createElement("strong");
+    strong.textContent = m.author_name || (m.message_type === "system" ? "ES DESK" : "Сообщение");
+    const dateEl = document.createElement("div");
+    dateEl.className = "message-date";
+    dateEl.textContent = fmtMessageStamp(m.created_at);
+    headerEl.append(strong, dateEl);
+    div.appendChild(headerEl);
+    if ((m.body || "").trim()) {
+      const bodyEl = document.createElement("div");
+      bodyEl.className = "message-body";
+      bodyEl.innerHTML = linkifyText(m.body || "");
+      div.appendChild(bodyEl);
+    }
+    el.messages.appendChild(div);
   }
-
-  if (canEditAgentMessage(message)) {
-    addContextMenuItem(menu, "Исправить", () => editAgentMessage(message));
-    addContextMenuItem(menu, "Удалить", () => deleteAgentMessage(message));
-  }
-
-  menu.classList.remove("hidden");
-  const rect = menu.getBoundingClientRect();
-  const left = Math.min(event.clientX, window.innerWidth - rect.width - 8);
-  const top = Math.min(event.clientY, window.innerHeight - rect.height - 8);
-  menu.style.left = `${Math.max(8, left)}px`;
-  menu.style.top = `${Math.max(8, top)}px`;
+  return {
+    signature: JSON.stringify((card.messages || []).map((m) => [m.id, m.body, m.created_at, m.message_type])),
+    quoteMissing: false,
+    wasNearBottom: true,
+  };
 }
 
 // ===== messages rendering =====
@@ -1074,75 +731,25 @@ function renderCard() {
   }
   fillClientPanel(card.client_profile || {});
 
-  const wasNearBottom = el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 80;
-  const currentSignature = messageRenderSignature(card.messages);
-  if (currentSignature !== state.lastMessagesSignature) {
-    const currentAttachmentIds = new Set();
-    for (const message of card.messages || []) {
-      for (const attachment of message.attachments || []) {
-        if (attachment?.id) currentAttachmentIds.add(attachment.id);
-      }
+  let renderResult;
+  try {
+    if (typeof TicketMessageView.renderMessages === "function") {
+      renderResult = TicketMessageView.renderMessages(messageViewCtx(), card, state.lastMessagesSignature, state.quoteMessageId);
+    } else {
+      renderResult = renderMessagesFallback(card);
     }
-    cleanupAttachmentObjectUrls(currentAttachmentIds);
-    cleanupStickerResources(currentAttachmentIds);
-
-    el.messages.innerHTML = "";
-    for (const m of card.messages) {
-      const div = document.createElement("div");
-      const cls = m.message_type || "";
-      const stickerOnly = isStickerOnlyMessage(m);
-      div.className = `message ${cls} ${stickerOnly ? "message-sticker-only" : ""} ${m.message_status && m.message_status !== "normal" ? `message-${m.message_status}` : ""}`.trim();
-      if (["client", "agent", "internal"].includes(m.message_type)) {
-        div.addEventListener("contextmenu", (event) => showMessageContextMenu(event, m));
-      }
-      if (!stickerOnly) {
-        const headerEl = document.createElement("div");
-        headerEl.className = "message-header";
-        const strong = document.createElement("strong");
-        strong.textContent = messageAuthorLabel(m);
-        const dateEl = document.createElement("div");
-        dateEl.className = "message-date";
-        dateEl.textContent = fmtMessageStamp(m.created_at);
-        headerEl.append(strong, dateEl);
-        div.appendChild(headerEl);
-      }
-      if ((m.body || "").trim()) {
-        const bodyEl = document.createElement("div");
-        bodyEl.className = "message-body";
-        bodyEl.innerHTML = linkifyText(m.body || "");
-        div.appendChild(bodyEl);
-      }
-      renderAttachments(m, div);
-      const note = messageStatusNote(m);
-      if (note) {
-        const noteEl = document.createElement("div");
-        noteEl.className = "message-status-note";
-        noteEl.textContent = note;
-        div.appendChild(noteEl);
-      }
-      if (stickerOnly) {
-        const ts = document.createElement("div");
-        ts.className = "sticker-time-hover";
-        ts.textContent = fmtMessageStamp(m.created_at);
-        div.appendChild(ts);
-      }
-      el.messages.appendChild(div);
-    }
-    cleanupStickerResources(currentAttachmentIds);
-    state.lastMessagesSignature = currentSignature;
+  } catch (e) {
+    console.error("renderMessages failed", e);
+    renderResult = renderMessagesFallback(card);
   }
-  if (state.quoteMessageId && !card.messages.some((m) => m.id === state.quoteMessageId)) {
+  state.lastMessagesSignature = renderResult.signature;
+  if (renderResult.quoteMissing) {
     state.quoteMessageId = null;
   }
   refreshComposerActions();
 
   const isClosed = card.status === "closed";
   const isReadonly = state.role === "chiki_piki";
-  const hasAgentMessage = card.messages.some((m) => m.message_type === "agent");
-  const hasAnyMessage = card.messages.length > 0;
-  const greeted = hasGreetingMessage(card.messages);
-  const isFirstConnection = card.subject === "Первое подключение к боту";
-  const firstConnectionVerified = Boolean(card.client_profile?.is_verified);
 
   el.modeReplyBtn.disabled = isClosed || isReadonly;
   el.modeCommentBtn.disabled = isClosed || isReadonly;
@@ -1151,55 +758,8 @@ function renderCard() {
   el.sendNowBtn.disabled = isClosed || isReadonly;
   if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed || isReadonly || state.composeMode !== "reply";
 
-  const workflowType = card.workflow_type || "ticket";
-  const isGreetingFlow = workflowType !== "task" && workflowType !== "auto";
-  const showGreeting = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed() && !greeted;
-  const showClose = !isReadonly && !isClosed && (!isFirstConnection || firstConnectionVerified) && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
-  const showFreezeToggle = !isReadonly && !isClosed;
-  const canRestore = state.role === "admin" || (card.closed_by_user_id && card.closed_by_user_id === state.userId);
-  const canRestoreFlow = workflowType !== "task" && workflowType !== "auto";
-  const showRestore = !isReadonly && isClosed && canRestoreFlow && canRestore;
-  const isGroupChildTask = (card.task_kind || "") === "group_child";
-  const showWrongProblem = !isReadonly && !isClosed && !card.wrong_problem_used && !isGroupChildTask;
-  const showMarkSpecial = state.role === "admin" && !isClosed && !card.is_special && workflowType === "ticket";
-  const showAdminForceClose = state.role === "admin" && !isClosed;
-  const showAdminDelete = state.role === "admin";
-  const isCollecting = (card.intake_state || "ready") === "collecting";
-  const showAutoCloseBox = !isReadonly && !isClosed && !card.is_special && workflowType === "ticket" && !isCollecting;
-
-  setVisible(el.greetingBtn, showGreeting);
-  setVisible(el.wrongProblemBtn, showWrongProblem);
-  setVisible(el.closeBtn, showClose);
-  if (el.adminForceCloseBtn) setVisible(el.adminForceCloseBtn, showAdminForceClose);
-  if (el.adminDeleteBtn) setVisible(el.adminDeleteBtn, showAdminDelete);
-  setVisible(el.freezeToggleBtn, showFreezeToggle);
-  setVisible(el.restoreBtn, showRestore);
-  if (el.markSpecialBtn) setVisible(el.markSpecialBtn, showMarkSpecial);
-  if (el.autoCloseBox) setVisible(el.autoCloseBox, showAutoCloseBox);
-  const canSeeInstruction = state.role !== "chiki_piki" && Boolean(card.instruction_text);
-  if (el.instructionBtn) setVisible(el.instructionBtn, canSeeInstruction);
-  setVisible(el.editClientBtn, !isReadonly);
-  el.ticketAssigneeBox.classList.toggle("hidden", state.role !== "admin");
-  renderTicketAssigneeSelect();
-
-  const isOnsiteTicket = workflowType === "ticket" && card.onsite_triggered;
-  el.closeBtn.textContent = isTask ? "Завершить задачу" : (isOnsiteTicket ? "Решил на месте" : "Закрыть заявку");
-  if (el.adminForceCloseBtn) {
-    el.adminForceCloseBtn.textContent = "Принудительно завершить";
-  }
-  el.freezeToggleBtn.textContent = card.is_frozen ? "Разморозить" : "Заморозить";
-  if (el.autoCloseDisabledCheckbox) {
-    el.autoCloseDisabledCheckbox.checked = Boolean(card.auto_close_disabled);
-  }
-  if (el.autoCloseDueText) {
-    const minutesLeft = minutesLeftToDue(card.auto_close_due_at);
-    if (!showAutoCloseBox || card.auto_close_disabled || minutesLeft === null) {
-      el.autoCloseDueText.textContent = "";
-    } else {
-      el.autoCloseDueText.textContent = `До закрытия: ${minutesLeft} м.`;
-    }
-  }
-  if (wasNearBottom) {
+  TicketControls.renderTicketControlsView(controlsCtx());
+  if (renderResult.wasNearBottom) {
     el.messages.scrollTop = el.messages.scrollHeight;
   }
 }
@@ -1241,88 +801,7 @@ async function loadCard(options = {}) {
 }
 
 async function sendByMode() {
-  if (state.isSendingReply) return;
-  if (state.role === "chiki_piki") {
-    showError("Роль Чики-пики работает только в режиме просмотра");
-    return;
-  }
-  const text = el.messageInput.value.trim();
-  const hasFiles = state.selectedFiles.length > 0;
-  if (!text && !hasFiles) return;
-  if (state.composeMode === "comment" && hasFiles) {
-    showError("Файлы можно отправлять только в ответе клиенту. Внутренние комментарии пока поддерживают только текст.");
-    return;
-  }
-
-  const actionName = state.composeMode === "reply" ? "reply" : "comment";
-  try {
-    state.isSendingReply = true;
-    state.pendingCloseAfterSend = false;
-    setStatus("Отправка...");
-    const quoteMessageId = state.quoteMessageId;
-    if (state.composeMode === "reply" && hasFiles) {
-      const queue = [...state.selectedFiles];
-      for (let index = 0; index < queue.length; index += 1) {
-        const file = queue[index];
-        const fileKey = selectedFileKey(file, index);
-        state.fileUploadProgress[fileKey] = { stage: "sending", current: index + 1, total: queue.length };
-        renderSelectedFiles();
-        setStatus(`Отправка в Telegram: ${index + 1}/${queue.length}`);
-        const formData = new FormData();
-        formData.append("text", index === 0 ? text : "");
-        if (index === 0 && quoteMessageId) formData.append("quote_message_id", quoteMessageId);
-        formData.append("files", file, file.name);
-        await api(`/api/v1/tickets/${state.ticketId}/reply`, {
-          method: "POST",
-          body: formData,
-        });
-        state.fileUploadProgress[fileKey] = { stage: "done" };
-        renderSelectedFiles();
-        const idxInState = state.selectedFiles.indexOf(file);
-        if (idxInState >= 0) state.selectedFiles.splice(idxInState, 1);
-        delete state.fileUploadProgress[fileKey];
-        renderSelectedFiles();
-        await loadCard(true);
-      }
-    } else {
-      await api(`/api/v1/tickets/${state.ticketId}/${actionName}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, quote_message_id: quoteMessageId }),
-      });
-    }
-    el.messageInput.value = "";
-    state.quoteMessageId = null;
-    clearSelectedFiles();
-    await loadCard();
-    if (
-      state.role === "agent"
-      && state.composeMode === "reply"
-      && (state.card?.workflow_type || "ticket") === "ticket"
-      && isOnsitePhraseJs(text)
-    ) {
-      renderAvailabilityStatus("on_ticket");
-    }
-    if (state.card?.workflow_type === "task" && state.composeMode === "reply") {
-      setStatus("Ответ сохранён. Клиент получит сообщение и файлы после завершения задачи.");
-    } else {
-      setStatus("Сообщение отправлено");
-    }
-  } catch (e) {
-    if (state.selectedFiles.length) {
-      const file = state.selectedFiles[0];
-      const fileKey = selectedFileKey(file, 0);
-      state.fileUploadProgress[fileKey] = { stage: "error", message: e.message || "ошибка отправки" };
-      renderSelectedFiles();
-    }
-    showError(e.message);
-  } finally {
-    state.isSendingReply = false;
-    if (state.pendingCloseAfterSend) {
-      state.pendingCloseAfterSend = false;
-      await action("close");
-    }
-  }
+  return TicketComposer.sendByMode(composerCtx());
 }
 
 async function action(name, body = null) {
@@ -1497,121 +976,14 @@ function init() {
 
   // Admin agent filter toggle is handled by shared sidebar.js
 
-  el.modeReplyBtn.addEventListener("click", () => {
-    state.composeMode = "reply";
-    applyComposeModeUi();
-  });
-
-  el.modeCommentBtn.addEventListener("click", () => {
-    state.composeMode = "comment";
-    applyComposeModeUi();
-  });
-
-  el.sendNowBtn.addEventListener("click", async () => {
-    await sendByMode();
-  });
-  el.addFilesBtn.addEventListener("click", () => {
-    if (state.composeMode !== "reply") {
-      showError("Файлы можно прикреплять только к ответу клиенту");
-      return;
-    }
-    el.replyFilesInput.click();
-  });
-  el.replyFilesInput.addEventListener("change", () => {
-    state.selectedFiles.push(...Array.from(el.replyFilesInput.files || []));
-    state.fileUploadProgress = {};
-    state.selectedFiles.forEach((file, index) => {
-      state.fileUploadProgress[selectedFileKey(file, index)] = { stage: "queued", percent: 0 };
-    });
-    el.replyFilesInput.value = "";
-    renderSelectedFiles();
-  });
-  el.clearQuoteBtn.addEventListener("click", clearQuote);
-
-  el.messageInput.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter" && e.ctrlKey) {
-      e.preventDefault();
-      await sendByMode();
-    }
-  });
-
-  el.greetingBtn.addEventListener("click", (event) => {
-    const profile = state.card?.client_profile || {};
-    const name = (profile.contact_name || "").trim();
-    if (!name) {
-      event.preventDefault();
-      showError("Поле 'Имя' в карточке клиента не заполнено");
-      return;
-    }
-    action("greeting");
-  });
-
-  el.freezeToggleBtn.addEventListener("click", () => {
-    const card = state.card;
-    if (!card) return;
-
-    if (card.is_frozen) {
-      action("unfreeze");
-      return;
-    }
-
-    const raw = el.freezeUntil.value;
-    const freezeUntil = raw ? new Date(raw).toISOString() : null;
-    action("freeze", { freeze_until: freezeUntil });
-  });
-
-  el.closeBtn.addEventListener("click", () => action("close"));
-  if (el.adminForceCloseBtn) {
-    el.adminForceCloseBtn.addEventListener("click", () => openAdminActionModal("close"));
+  if (typeof TicketComposer.bindComposerHandlers === "function") {
+    TicketComposer.bindComposerHandlers(composerCtx());
   }
-  if (el.adminDeleteBtn) {
-    el.adminDeleteBtn.addEventListener("click", () => openAdminActionModal("delete"));
-  }
-  el.restoreBtn.addEventListener("click", () => action("restore"));
-  if (el.autoCloseDisabledCheckbox) {
-    el.autoCloseDisabledCheckbox.addEventListener("change", async () => {
-      try {
-        await apiPatch(`/api/v1/tickets/${state.ticketId}/auto-close`, {
-          auto_close_disabled: Boolean(el.autoCloseDisabledCheckbox.checked),
-        });
-        await loadCard();
-      } catch (e) {
-        showError(e.message);
-        el.autoCloseDisabledCheckbox.checked = Boolean(state.card?.auto_close_disabled);
-      }
-    });
-  }
-  el.wrongProblemBtn.addEventListener("click", openWrongProblemModal);
-  if (el.instructionBtn) el.instructionBtn.addEventListener("click", openInstructionModal);
-  if (el.closeInstructionModalBtn) el.closeInstructionModalBtn.addEventListener("click", closeInstructionModal);
 
-  el.ticketAssigneeSelect.addEventListener("change", async () => {
-    await assignCurrentTicket(el.ticketAssigneeSelect.value || null);
-  });
+  if (typeof TicketControls.bindTicketControlHandlers === "function") {
+    TicketControls.bindTicketControlHandlers(controlsCtx());
+  }
 
-  el.editClientBtn.addEventListener("click", openClientModal);
-  el.closeClientModalBtn.addEventListener("click", closeClientModal);
-  el.closeWrongProblemModalBtn.addEventListener("click", closeWrongProblemModal);
-  if (el.markSpecialBtn) el.markSpecialBtn.addEventListener("click", openSpecialConfirmModal);
-  if (el.closeSpecialConfirmBtn) el.closeSpecialConfirmBtn.addEventListener("click", closeSpecialConfirmModal);
-  if (el.confirmSpecialBtn) {
-    el.confirmSpecialBtn.addEventListener("click", async () => {
-      await markTicketSpecial();
-    });
-  }
-  el.saveClientBtn.addEventListener("click", saveClientProfile);
-  if (el.closeAdminActionModalBtn) el.closeAdminActionModalBtn.addEventListener("click", closeAdminActionModal);
-  if (el.cancelAdminActionBtn) el.cancelAdminActionBtn.addEventListener("click", closeAdminActionModal);
-  if (el.confirmAdminActionBtn) {
-    el.confirmAdminActionBtn.addEventListener("click", async () => {
-      try {
-        await runAdminAction();
-        closeAdminActionModal();
-      } catch (e) {
-        showError(e.message);
-      }
-    });
-  }
   el.closeErrorModalBtn.addEventListener("click", closeError);
   el.okErrorBtn.addEventListener("click", closeError);
   el.copyErrorBtn.addEventListener("click", async () => {
@@ -1624,12 +996,7 @@ function init() {
       setStatus("Текст ошибки скопирован");
     }
   });
-  closeOnBackdropClick(el.clientModal, closeClientModal);
-  closeOnBackdropClick(el.wrongProblemModal, closeWrongProblemModal);
-  if (el.specialConfirmModal) closeOnBackdropClick(el.specialConfirmModal, closeSpecialConfirmModal);
-  if (el.adminActionModal) closeOnBackdropClick(el.adminActionModal, closeAdminActionModal);
   closeOnBackdropClick(el.errorModal, closeError);
-  if (el.instructionModal) closeOnBackdropClick(el.instructionModal, closeInstructionModal);
 
   el.fDestination.addEventListener("change", syncDynamicModalFields);
   el.fLocationType.addEventListener("change", syncDynamicModalFields);
