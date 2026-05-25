@@ -210,6 +210,42 @@
     avatar.title = sourceName || "Пользователь";
   }
 
+  function renderAvailabilityStatus(status) {
+    qsa("[data-availability-status]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.availabilityStatus === status);
+    });
+  }
+
+  async function updateMyAvailabilityStatus(status) {
+    const me = await api("/api/v1/users/me/status", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ availability_status: status }),
+    });
+    renderAvailabilityStatus(me?.availability_status || status);
+    // Refresh counts after potential auto-assignment trigger on backend.
+    await loadCounts();
+    notify();
+  }
+
+  function bindSettingsStatusButtons() {
+    // Bind globally so status switch works from sidebar on any page.
+    qsa("[data-availability-status]").forEach((btn) => {
+      if (btn.dataset.boundStatusSidebar === "1") return;
+      btn.dataset.boundStatusSidebar = "1";
+      btn.addEventListener("click", async () => {
+        const status = btn.dataset.availabilityStatus;
+        if (!status) return;
+        try {
+          renderAvailabilityStatus(status);
+          await updateMyAvailabilityStatus(status);
+        } catch {
+          // noop; page-level error handling is absent on settings, keep silent.
+        }
+      });
+    });
+  }
+
   function syncToggleAll(toggle, listEl) {
     if (!toggle || !listEl) return;
     const selected = new Set(state.adminAssigneeIds || []);
@@ -351,6 +387,7 @@
     renderAvatar();
     renderAgentFilter();
     bindToggleAll();
+    bindSettingsStatusButtons();
   }
 
   async function init(options = {}) {

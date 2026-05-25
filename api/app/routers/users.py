@@ -215,6 +215,7 @@ def update_my_status(
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
     if user.role == "agent" and payload.availability_status == "online":
+        db.flush()
         assign_unassigned_fairly(db, user.company_id, notify_client=True)
     db.commit()
     db.refresh(user)
@@ -239,7 +240,12 @@ def update_user_status(
         _error(400, "invalid_role", "?????? ????? ?????? ?????? ??????????? ?????????")
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
+    if user.role == "agent" and payload.availability_status == "online":
+        db.flush()
+        assign_unassigned_fairly(db, user.company_id, notify_client=True)
     db.commit()
     db.refresh(user)
     return _status_out(user)
+
+
 
