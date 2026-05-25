@@ -2,7 +2,7 @@
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import TicketStatus
+from ..models import TicketStatus, TicketTaskKind, TicketWorkflowType
 from .telegram_bot import get_updates
 from .telegram_bot import send_message
 
@@ -15,6 +15,12 @@ async def _notify_if_still_unassigned(ticket_id: str, chat_id: str):
 
             ticket = db.get(Ticket, ticket_id)
             if ticket is None or ticket.status != TicketStatus.UNASSIGNED.value:
+                return
+            workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+            if workflow_type != TicketWorkflowType.TICKET.value:
+                return
+            task_kind = ticket.task_kind or TicketTaskKind.NORMAL.value
+            if task_kind in {TicketTaskKind.GROUP_PARENT.value, TicketTaskKind.GROUP_CHILD.value}:
                 return
             send_message(chat_id, "Ваша заявка находится в очереди на распределение, ожидайте")
     except Exception as exc:
