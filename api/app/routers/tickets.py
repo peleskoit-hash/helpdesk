@@ -5,18 +5,15 @@ import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import Select, and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import (
     CurrentUser,
-    can_comment,
     can_edit_client_profile,
-    can_edit_messages,
     can_manage_ticket,
-    can_reply,
     get_current_user,
     is_admin,
     is_readonly_chiki_piki,
@@ -28,7 +25,7 @@ from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile,
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardConfigResponse, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListItem, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
-from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_text, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
+from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
 from ..services.button_config import BASIC_MENU_NAME, DEFAULT_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
 from ..services.ticket_attachments import (
     _attachment_out,
@@ -40,6 +37,8 @@ from ..services.ticket_attachments import (
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
+from ..services.ticket_messages import add_message as add_ticket_message
+from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, reply_to_ticket
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -71,13 +70,6 @@ SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT = (
 
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
-
-
-def _is_onsite_phrase(text: str | None) -> bool:
-    normalized = str(text or "").strip().lower()
-    if normalized.endswith("."):
-        normalized = normalized[:-1].strip()
-    return normalized == "иду к вам"
 
 
 def _apply_role_filter(stmt: Select, user: CurrentUser):
@@ -379,6 +371,11 @@ def _get_or_create_client_profile(db: Session, client_id: str) -> ClientProfile:
 
 def _telegram_contact_for_client(db: Session, client_id: str) -> TelegramContact | None:
     return db.execute(select(TelegramContact).where(TelegramContact.client_id == client_id)).scalar_one_or_none()
+
+
+def _telegram_chat_id_for_client(db: Session, client_id: str) -> str | None:
+    contact = _telegram_contact_for_client(db, client_id)
+    return contact.external_chat_id if contact is not None else None
 
 
 def _send_to_telegram_client(
@@ -1056,23 +1053,18 @@ def _add_message(
     status_note: str | None = None,
     replaced_message_id: str | None = None,
 ):
-    if agent_visible is None:
-        agent_visible = message_type != MessageType.SYSTEM
-    msg = TicketMessage(
-        id=str(uuid.uuid4()),
-        ticket_id=ticket.id,
-        message_type=message_type.value,
-        author_user_id=author_user_id,
+    return add_ticket_message(
+        db=db,
+        ticket=ticket,
+        message_type=message_type,
         body=body,
+        author_user_id=author_user_id,
         agent_visible=agent_visible,
         telegram_message_id=telegram_message_id,
         message_status=message_status,
         status_note=status_note,
         replaced_message_id=replaced_message_id,
     )
-    db.add(msg)
-    ticket.updated_at = datetime.utcnow()
-    return msg
 
 
 def _first_client_message(db: Session, ticket: Ticket) -> TicketMessage | None:
@@ -1495,91 +1487,35 @@ async def reply(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_reply(user):
-        _error(403, "readonly_role", "Нет прав на отправку ответа")
-    if ticket.status == TicketStatus.CLOSED.value:
-        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-
-    content_type = (request.headers.get("content-type") or "").lower()
-    text: str | None = None
-    quote_message_id: str | None = None
-    uploaded_files: list[UploadFile] = []
-    if "multipart/form-data" in content_type:
-        form = await request.form()
-        text = (form.get("text") or "").strip() or None
-        quote_message_id = (form.get("quote_message_id") or "").strip() or None
-        for value in form.getlist("files"):
-            if hasattr(value, "filename") and hasattr(value, "file"):
-                uploaded_files.append(value)
-        if not text and not uploaded_files:
-            _error(400, "reply_payload_empty", "Нужно передать текст или хотя бы один файл")
-    else:
-        payload_raw = await request.json()
-        payload = TextPayload.model_validate(payload_raw)
-        text = payload.text.strip()
-        quote_message_id = payload.quote_message_id
-        if not text:
-            _error(400, "reply_payload_empty", "Текст ответа не может быть пустым")
-
-    quote_telegram_message_id = None
-    if quote_message_id:
-        quoted = db.get(TicketMessage, quote_message_id)
-        if quoted is not None and quoted.ticket_id == ticket.id:
-            quote_telegram_message_id = quoted.telegram_message_id
-
-    sent_message_id = None
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value and text:
-        response = _send_to_telegram_client(db, ticket, text, reply_to_message_id=quote_telegram_message_id)
-        sent_message_id = _telegram_message_id(response)
-
-    agent_message = _add_message(
-        db,
-        ticket,
-        MessageType.AGENT,
-        text or "",
-        user.id,
-        telegram_message_id=sent_message_id,
+    return await reply_to_ticket(
+        request=request,
+        db=db,
+        user=user,
+        ticket=ticket,
+        send_to_telegram_client=_send_to_telegram_client,
+        telegram_message_id_from_response=_telegram_message_id,
+        save_upload_attachment=_save_upload_attachment,
+        send_attachment_to_telegram_client=lambda db_session, t, a, required: _send_attachment_to_telegram_client(
+            db_session, t, a, required=required
+        ),
+        unfreeze_ticket_on_message=_unfreeze_ticket_on_message,
+        remove_client_close_button=_remove_client_close_button,
+        refresh_ticket_auto_close=lambda db_session, t, restart_from_now: _refresh_ticket_auto_close(
+            db_session, t, restart_from_now=restart_from_now
+        ),
     )
-
-    attachments: list[TicketAttachment] = []
-    for upload in uploaded_files:
-        attachment = _save_upload_attachment(db, ticket, agent_message, upload)
-        attachments.append(attachment)
-
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
-        for attachment in attachments:
-            _send_attachment_to_telegram_client(db, ticket, attachment, required=True)
-    _unfreeze_ticket_on_message(ticket)
-    if (
-        (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value
-        and user.role == "agent"
-        and _is_onsite_phrase(text)
-    ):
-        ticket.onsite_triggered = True
-        actor_user = db.get(User, user.id)
-        if actor_user is not None and actor_user.availability_status != "on_ticket":
-            actor_user.availability_status = "on_ticket"
-            actor_user.updated_at = datetime.utcnow()
-    _remove_client_close_button(db, ticket)
-    if ticket.status == TicketStatus.NEW.value:
-        ticket.status = TicketStatus.PENDING.value
-    _refresh_ticket_auto_close(db, ticket, restart_from_now=True)
-    db.commit()
-    return {"ok": True}
 
 
 @router.post("/{ticket_id}/comment")
 def comment(ticket_id: str, payload: TextPayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_comment(user):
-        _error(403, "readonly_role", "Нет прав на внутренний комментарий")
-    if ticket.status == TicketStatus.CLOSED.value:
-        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-
-    _add_message(db, ticket, MessageType.INTERNAL, payload.text, user.id)
-    _unfreeze_ticket_on_message(ticket)
-    db.commit()
-    return {"ok": True}
+    return comment_on_ticket(
+        db=db,
+        user=user,
+        ticket=ticket,
+        payload=payload,
+        unfreeze_ticket_on_message=_unfreeze_ticket_on_message,
+    )
 
 
 @router.post("/{ticket_id}/greeting")
@@ -1761,34 +1697,15 @@ def edit_ticket_message(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_edit_messages(user):
-        _error(403, "readonly_role", "Нет прав на редактирование сообщений")
-    if ticket.status == TicketStatus.CLOSED.value:
-        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    message = db.get(TicketMessage, message_id)
-    if message is None or message.ticket_id != ticket.id:
-        _error(404, "message_not_found", "Сообщение не найдено")
-    if message.message_type != MessageType.AGENT.value:
-        _error(409, "only_agent_message_edit", "Редактировать можно только сообщения сотрудника")
-    if message.message_status == "deleted":
-        _error(409, "message_deleted", "Удалённое сообщение нельзя редактировать")
-    if not message.telegram_message_id:
-        _error(409, "telegram_message_id_missing", "У этого сообщения нет Telegram ID. Его нельзя изменить в Telegram, потому что оно было отправлено до включения синхронизации сообщений.")
-
-    contact = _telegram_contact_for_client(db, ticket.client_id)
-    if contact is not None:
-        try:
-            edit_message_text(contact.external_chat_id, message.telegram_message_id, payload.text)
-        except TelegramApiError as exc:
-            _error(502, "telegram_edit_failed", f"Telegram не принял редактирование: {exc}")
-
-    message.body = payload.text
-    message.message_status = "edited"
-    actor_name = _actor_display_name(db, user)
-    message.status_note = f"{actor_name} исправил сообщение"
-    ticket.updated_at = datetime.utcnow()
-    db.commit()
-    return {"ok": True}
+    return edit_agent_message(
+        db=db,
+        user=user,
+        ticket=ticket,
+        message_id=message_id,
+        payload=payload,
+        telegram_chat_id_by_client_id=_telegram_chat_id_for_client,
+        actor_display_name=_actor_display_name,
+    )
 
 
 @router.delete("/{ticket_id}/messages/{message_id}")
@@ -1799,45 +1716,14 @@ def delete_ticket_message(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_edit_messages(user):
-        _error(403, "readonly_role", "Нет прав на удаление сообщений")
-    if ticket.status == TicketStatus.CLOSED.value:
-        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    message = db.get(TicketMessage, message_id)
-    if message is None or message.ticket_id != ticket.id:
-        _error(404, "message_not_found", "Сообщение не найдено")
-    if message.message_type != MessageType.AGENT.value:
-        _error(409, "only_agent_message_delete", "Удалять можно только сообщения сотрудника")
-    if message.message_status == "deleted":
-        return {"ok": True}
-    attachments = db.execute(
-        select(TicketAttachment)
-        .where(TicketAttachment.message_id == message.id)
-        .order_by(asc(TicketAttachment.created_at))
-    ).scalars().all()
-    contact = _telegram_contact_for_client(db, ticket.client_id)
-    if contact is not None and message.telegram_message_id:
-        try:
-            delete_message(contact.external_chat_id, message.telegram_message_id)
-        except TelegramApiError as exc:
-            _error(502, "telegram_delete_failed", f"Telegram не принял удаление: {exc}")
-    if contact is not None:
-        for attachment in attachments:
-            telegram_attachment_message_id = (attachment.telegram_message_id or "").strip()
-            if not telegram_attachment_message_id:
-                continue
-            try:
-                delete_message(contact.external_chat_id, telegram_attachment_message_id)
-            except TelegramApiError:
-                # Attachment message may already be gone; local deletion should still complete.
-                pass
-
-    message.message_status = "deleted"
-    actor_name = _actor_display_name(db, user)
-    message.status_note = f"{actor_name} удалил сообщение"
-    ticket.updated_at = datetime.utcnow()
-    db.commit()
-    return {"ok": True}
+    return delete_agent_message(
+        db=db,
+        user=user,
+        ticket=ticket,
+        message_id=message_id,
+        telegram_chat_id_by_client_id=_telegram_chat_id_for_client,
+        actor_display_name=_actor_display_name,
+    )
 
 
 @router.post("/{ticket_id}/close")
