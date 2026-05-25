@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -44,6 +44,7 @@ from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
 from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
+from ..services.assignment import set_group_parent_assigned_hook
 from ..services.template_fields import render_template_text
 from ..services.auto_close import refresh_ticket_auto_close_timer
 from ..services.telegram_attachments import (
@@ -96,7 +97,7 @@ TASK_DESCRIPTION_REQUEST_TEXT = (
 )
 TASK_DESCRIPTION_TIMEOUT_MINUTES = 5
 MENU_SELECTION_TIMEOUT_MINUTES = 10
-TASK_CREATED_CLIENT_TEXT = "Заявка создана и передана в работу. Для создания другой нажмите /start"
+TASK_CREATED_CLIENT_TEXT = "Заявка создана и передана в работу.\n\nДля создания другой нажмите\n /start"
 TASK_EXPIRED_TEXT = "Создание задачи не было завершено вовремя, попробуйте еще раз"
 AUTO_REQUEST_TEXT = (
     "Автоматическая заявка принята в обработку.\n"
@@ -1851,11 +1852,26 @@ def _prepare_collecting_ticket_for_button(db: Session, ticket: Ticket, button: B
     _store_button_system_text(db, ticket, button)
 
 
-def _create_group_children_from_collecting(db: Session, parent: Ticket, button: ButtonSpec, client_body: str) -> User | None:
-    assignee = choose_online_agent(db, parent.company_id)
-    parent.intake_state = TicketIntakeState.READY.value
-    parent.assignee_id = assignee.id if assignee is not None else None
-    parent.status = TicketStatus.NEW.value if assignee is not None else TicketStatus.UNASSIGNED.value
+def _create_group_children_from_collecting(
+    db: Session,
+    parent: Ticket,
+    button: ButtonSpec,
+    client_body: str,
+    assignee: User | None,
+) -> None:
+    existing_child_id = db.execute(
+        select(Ticket.id)
+        .where(
+            and_(
+                Ticket.parent_ticket_id == parent.id,
+                Ticket.task_kind == TicketTaskKind.GROUP_CHILD.value,
+            )
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing_child_id is not None:
+        return
+
     append_system_message(db, parent, "Созданы подзадачи групповой задачи")
 
     for child in button.subtasks:
@@ -1934,12 +1950,79 @@ def _create_group_children_from_collecting(db: Session, parent: Ticket, button: 
         else:
             append_system_message(db, child_ticket, "На распределении")
 
-    if assignee is not None:
-        assignee.last_assigned_at = datetime.utcnow()
-        append_system_message(db, parent, assignee_change_message(None, assignee))
-    else:
-        append_system_message(db, parent, "На распределении")
-    return assignee
+def _group_parent_client_body(db: Session, parent: Ticket) -> str:
+    first_client = db.execute(
+        select(TicketMessage)
+        .where(
+            and_(
+                TicketMessage.ticket_id == parent.id,
+                TicketMessage.message_type == MessageType.CLIENT.value,
+            )
+        )
+        .order_by(asc(TicketMessage.created_at))
+        .limit(1)
+    ).scalar_one_or_none()
+    text = (first_client.body or "").strip() if first_client is not None else ""
+    return text or "(пустое сообщение)"
+
+
+def _on_group_parent_assigned(db: Session, ticket: Ticket, agent: User) -> None:
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
+        return
+    if (ticket.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
+        return
+    key = (ticket.button_config_key or "").strip()
+    if not key:
+        return
+    button = find_button(key)
+    if button is None or button.kind != "group_task":
+        parent_row = db.execute(
+            select(BotButtonSetting).where(
+                and_(
+                    BotButtonSetting.button_key == key,
+                    BotButtonSetting.currently_present.is_(True),
+                    BotButtonSetting.is_archived.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if parent_row is None:
+            return
+        child_rows = db.execute(
+            select(BotButtonSetting).where(
+                and_(
+                    BotButtonSetting.menu_type == parent_row.menu_type,
+                    BotButtonSetting.parent_path == (parent_row.button_path or ""),
+                    BotButtonSetting.currently_present.is_(True),
+                    BotButtonSetting.is_archived.is_(False),
+                )
+            )
+            .order_by(asc(BotButtonSetting.created_at), asc(BotButtonSetting.button_label))
+        ).scalars().all()
+        subtasks: list[ButtonSpec] = []
+        for row in child_rows:
+            row_kind = (row.button_kind or "").strip().lower()
+            if row_kind in {"section", "group_parent"}:
+                continue
+            workflow = (row.workflow_type or "").strip().lower()
+            if workflow not in {"task", "group_task_child"}:
+                continue
+            label = (row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else (row.button_label or "")
+            if not label:
+                continue
+            subtasks.append(ButtonSpec(key=row.button_key, label=label, kind="task"))
+        if not subtasks:
+            return
+        button = ButtonSpec(key=parent_row.button_key, label=parent_row.button_label or ticket.subject, kind="group_task", subtasks=tuple(subtasks))
+    _create_group_children_from_collecting(
+        db,
+        ticket,
+        button,
+        _group_parent_client_body(db, ticket),
+        agent,
+    )
+
+
+set_group_parent_assigned_hook(_on_group_parent_assigned)
 
 
 def _handoff_automation_task_to_agent(
@@ -2650,24 +2733,15 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             _store_telegram_attachment(db, collecting_ticket, client_message, attachment_data, external_chat_id)
         refresh_ticket_auto_close_timer(db, collecting_ticket, restart_from_now=False)
 
-        if collecting_ticket.task_kind == TicketTaskKind.GROUP_PARENT.value and button is not None:
-            assigned_agent = _create_group_children_from_collecting(db, collecting_ticket, button, client_body)
-            _remove_client_close_button(db, collecting_ticket)
-            db.commit()
-            if notify_client:
-                send_message(external_chat_id, TASK_CREATED_CLIENT_TEXT)
-            return {
-                "ok": True,
-                "ticket_id": collecting_ticket.id,
-                "workflow_type": TicketWorkflowType.TASK.value,
-                "task_kind": TicketTaskKind.GROUP_PARENT.value,
-                "status": collecting_ticket.status,
-                "external_chat_id": external_chat_id,
-            }
-
         if button is not None:
             _store_button_system_text(db, collecting_ticket, button, client_message=client_body)
         assigned_agent = _ready_ticket_for_distribution(db, collecting_ticket, button)
+        if (
+            collecting_ticket.task_kind == TicketTaskKind.GROUP_PARENT.value
+            and button is not None
+            and assigned_agent is not None
+        ):
+            _create_group_children_from_collecting(db, collecting_ticket, button, client_body, assigned_agent)
         db.commit()
         if notify_client:
             send_message(external_chat_id, TASK_CREATED_CLIENT_TEXT)

@@ -1,12 +1,26 @@
 import html
 import uuid
 from datetime import datetime
+from typing import Callable
 
-from sqlalchemy import and_, asc, func, select
+from sqlalchemy import and_, asc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType, User
 from .telegram_bot import TelegramApiError, send_message
+
+GroupParentAssignedHook = Callable[[Session, Ticket, User], None]
+_group_parent_assigned_hook: GroupParentAssignedHook | None = None
+
+
+def set_group_parent_assigned_hook(hook: GroupParentAssignedHook | None) -> None:
+    global _group_parent_assigned_hook
+    _group_parent_assigned_hook = hook
+
+
+def run_group_parent_assigned_hook(db: Session, ticket: Ticket, agent: User) -> None:
+    if _group_parent_assigned_hook is not None:
+        _group_parent_assigned_hook(db, ticket, agent)
 
 
 def append_system_message(db: Session, ticket: Ticket, body: str, *, agent_visible: bool = False):
@@ -104,7 +118,8 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     ticket.updated_at = datetime.utcnow()
     agent.last_assigned_at = datetime.utcnow()
     append_system_message(db, ticket, assignee_change_message(old_assignee, agent))
-    if notify_client:
+    run_group_parent_assigned_hook(db, ticket, agent)
+    if notify_client and (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value:
         notify_client_about_assignee(db, ticket, agent)
     return True
 
@@ -171,7 +186,10 @@ def assign_unassigned_to_agent(db: Session, agent: User, notify_client: bool = T
                 Ticket.status == TicketStatus.UNASSIGNED.value,
                 Ticket.intake_state == TicketIntakeState.READY.value,
                 Ticket.workflow_type != TicketWorkflowType.AUTO.value,
-                Ticket.agent_visible.is_(True),
+                or_(
+                    Ticket.agent_visible.is_(True),
+                    Ticket.task_kind == "group_parent",
+                ),
                 Ticket.assignee_id.is_(None),
                 Ticket.is_frozen.is_(False),
             )
@@ -195,7 +213,10 @@ def assign_unassigned_fairly(db: Session, company_id: str, notify_client: bool =
                 Ticket.status == TicketStatus.UNASSIGNED.value,
                 Ticket.intake_state == TicketIntakeState.READY.value,
                 Ticket.workflow_type != TicketWorkflowType.AUTO.value,
-                Ticket.agent_visible.is_(True),
+                or_(
+                    Ticket.agent_visible.is_(True),
+                    Ticket.task_kind == "group_parent",
+                ),
                 Ticket.assignee_id.is_(None),
                 Ticket.is_frozen.is_(False),
             )
