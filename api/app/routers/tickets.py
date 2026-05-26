@@ -26,7 +26,7 @@ from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResu
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
-from ..services.button_config import BASIC_MENU_NAME, DEFAULT_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
+from ..services.button_config import DEFAULT_MENU_NAME
 from ..services.ticket_attachments import (
     _attachment_out,
     _ensure_local_attachment_file,
@@ -51,6 +51,12 @@ from ..services.ticket_lifecycle import (
     unfreeze_ticket_on_message,
     update_ticket_auto_close,
 )
+from ..services.ticket_problem_flow import (
+    apply_wrong_problem,
+    get_problem_menu_for_ticket,
+    menu_name_for_ticket_client,
+)
+from ..services.ticket_subject import resolve_ticket_subject
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -273,87 +279,16 @@ def _send_problem_menu_to_telegram_client(db: Session, ticket: Ticket):
     contact = _telegram_contact_for_client(db, ticket.client_id)
     if contact is not None:
         try:
-            send_problem_menu(contact.external_chat_id, menu_name=_menu_name_for_ticket_client(db, ticket))
+            send_problem_menu(
+                contact.external_chat_id,
+                menu_name=menu_name_for_ticket_client(
+                    db,
+                    ticket,
+                    get_or_create_client_profile_fn=_get_or_create_client_profile,
+                ),
+            )
         except TelegramApiError:
             pass
-
-
-def _menu_name_for_ticket_client(db: Session, ticket: Ticket) -> str:
-    button_key = (ticket.button_config_key or "").strip()
-    if button_key:
-        for menu_name in available_menu_names():
-            config = load_button_config(menu_name)
-            if button_key in config.buttons:
-                return menu_name
-
-    profile = _get_or_create_client_profile(db, ticket.client_id)
-    if profile.is_verified and profile.destination:
-        destination = profile.destination.strip()
-        if destination:
-            binding = db.execute(
-                select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
-            ).scalar_one_or_none()
-            if binding is not None:
-                try:
-                    load_button_config(binding.menu_type)
-                    return binding.menu_type
-                except Exception:
-                    return BASIC_MENU_NAME
-            try:
-                load_button_config(destination)
-                return destination
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
-    return BASIC_MENU_NAME
-
-
-def _button_tree_for_menu(config: ButtonConfig, menu: MenuSpec) -> list[dict]:
-    tree: list[dict] = []
-    for row in menu.rows:
-        row_items = []
-        for button_key in row:
-            button = config.buttons.get(button_key)
-            if button is None:
-                continue
-            item = {
-                "key": button.key,
-                "label": button.label,
-                "kind": button.kind,
-                "children": [],
-            }
-            if button.kind == "submenu" and button.submenu_key and button.submenu_key in config.menus:
-                item["children"] = _button_tree_for_menu(config, config.menus[button.submenu_key])
-            row_items.append(item)
-        if row_items:
-            tree.append({"buttons": row_items})
-    return tree
-
-
-def _button_full_path_label(config: ButtonConfig, target_key: str) -> str | None:
-    if not target_key:
-        return None
-    root = config.menus.get(config.root_menu_key) if config.root_menu_key else None
-    if root is None:
-        return None
-
-    def walk(menu: MenuSpec, trail: list[str]) -> str | None:
-        for row in menu.rows:
-            for button_key in row:
-                button = config.buttons.get(button_key)
-                if button is None:
-                    continue
-                next_trail = [*trail, button.label]
-                if button.key == target_key:
-                    return " → ".join(next_trail)
-                if button.kind == "submenu" and button.submenu_key and button.submenu_key in config.menus:
-                    found = walk(config.menus[button.submenu_key], next_trail)
-                    if found:
-                        return found
-        return None
-
-    return walk(root, [])
 
 
 def _instruction_for_ticket(db: Session, ticket: Ticket) -> tuple[str | None, str | None]:
@@ -649,7 +584,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                     _send_to_telegram_client(
                         db,
                         ticket,
-                        format_task_closed_without_answer_text(ticket, client_message),
+                        format_task_closed_without_answer_text(db, ticket, client_message),
                         required=False,
                         remove_keyboard=True,
                     )
@@ -754,7 +689,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
     return TicketCard(
         id=t.id,
         ticket_number=t.ticket_number,
-        subject=t.subject,
+        subject=resolve_ticket_subject(db, t),
         workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
         task_kind=t.task_kind,
         parent_ticket_id=t.parent_ticket_id,
@@ -985,14 +920,11 @@ def _last_agent_message(db: Session, ticket: Ticket) -> TicketMessage | None:
 @router.get("/{ticket_id}/problem-menu")
 def problem_menu_for_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    menu_name = _menu_name_for_ticket_client(db, ticket)
-    config = load_button_config(menu_name)
-    root_menu = config.menus[config.root_menu_key]
-    return {
-        "menu_name": menu_name,
-        "text": root_menu.text or "Выберите тип проблемы",
-        "rows": _button_tree_for_menu(config, root_menu),
-    }
+    return get_problem_menu_for_ticket(
+        db,
+        ticket,
+        get_or_create_client_profile_fn=_get_or_create_client_profile,
+    )
 
 
 @router.post("/{ticket_id}/reply")
@@ -1155,39 +1087,21 @@ def wrong_problem(
     ticket = _get_ticket_or_404(db, ticket_id, user)
     if not can_manage_ticket(user):
         _error(403, "readonly_role", "Нет прав на управление заявкой")
-    if ticket.status == TicketStatus.CLOSED.value:
-        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    if ticket.wrong_problem_used_at is not None:
-        _error(409, "wrong_problem_already_used", "Подсказка по неверной проблеме уже использована для этой заявки")
-    if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.GROUP_CHILD.value:
-        _error(409, "wrong_problem_not_allowed", "Для подзадач эта функция недоступна")
-
-    config = load_button_config(_menu_name_for_ticket_client(db, ticket))
-    button = config.buttons.get(payload.button_key) or find_button(payload.button_key)
-    if button is None:
-        _error(404, "button_not_found", "Кнопка меню не найдена")
-    if button.kind == "submenu":
-        _error(409, "submenu_not_final", "Выберите конечную кнопку, а не подменю")
-
-    target_label = _button_full_path_label(config, button.key) or button.label
-    hint_text = WRONG_PROBLEM_TEXT_TEMPLATE.format(label=target_label)
-    ticket.wrong_problem_used_at = datetime.utcnow()
-    ticket.wrong_problem_button_key = button.key
-    ticket.wrong_problem_label = target_label
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TASK.value:
-        ticket.wrong_problem_hint = hint_text
-        _add_message(db, ticket, MessageType.SYSTEM, f"После завершения задачи клиенту будет отправлена подсказка: {target_label}", None)
-    else:
-        response = _send_to_telegram_client(db, ticket, hint_text)
-        _add_message(db, ticket, MessageType.AGENT, hint_text, user.id, telegram_message_id=_telegram_message_id(response))
-        unfreeze_ticket_on_message(ticket)
-        _add_message(db, ticket, MessageType.SYSTEM, f"Сотрудник подсказал клиенту правильный пункт меню: {target_label}", None)
-        _remove_client_close_button(db, ticket)
-        if ticket.status == TicketStatus.NEW.value:
-            ticket.status = TicketStatus.PENDING.value
-
+    result = apply_wrong_problem(
+        db,
+        ticket,
+        payload,
+        actor_user_id=user.id,
+        wrong_problem_text_template=WRONG_PROBLEM_TEXT_TEMPLATE,
+        get_or_create_client_profile_fn=_get_or_create_client_profile,
+        send_to_telegram_client_fn=_send_to_telegram_client,
+        telegram_message_id_from_response_fn=_telegram_message_id,
+        add_message_fn=_add_message,
+        unfreeze_ticket_on_message_fn=unfreeze_ticket_on_message,
+        remove_client_close_button_fn=_remove_client_close_button,
+    )
     db.commit()
-    return {"ok": True, "label": target_label}
+    return result
 
 
 @router.post("/{ticket_id}/special")
