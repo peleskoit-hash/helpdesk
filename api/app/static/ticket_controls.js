@@ -193,7 +193,7 @@
     const canRestore = state.role === "admin" || (card.closed_by_user_id && card.closed_by_user_id === state.userId);
     const canRestoreFlow = workflowType !== "task" && workflowType !== "auto";
     const showRestore = !isReadonly && isClosed && canRestoreFlow && canRestore;
-    const isGroupChildTask = (card.task_kind || "") === "group_child";
+    const isGroupChildTask = (card.task_kind || "") === "group_child" || Boolean(card.parent_ticket_id);
     const showWrongProblem = !isReadonly && !isClosed && !card.wrong_problem_used && !isGroupChildTask;
     const showMarkSpecial = state.role === "admin" && !isClosed && !card.is_special && workflowType === "ticket";
     const showAdminForceClose = state.role === "admin" && !isClosed;

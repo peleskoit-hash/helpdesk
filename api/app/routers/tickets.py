@@ -40,6 +40,17 @@ from ..services.ticket_special import _apply_move_to_special, _display_assignee_
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, reply_to_ticket
 from ..services.ticket_list import build_ticket_counts, list_special_tickets, list_tickets_paginated
+from ..services.ticket_lifecycle import (
+    close_ticket_by_actor,
+    format_task_closed_without_answer_text,
+    finalize_group_parent_if_ready,
+    freeze_ticket,
+    notify_group_parent_completion_before_delete,
+    refresh_ticket_auto_close,
+    unfreeze_ticket,
+    unfreeze_ticket_on_message,
+    update_ticket_auto_close,
+)
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -561,11 +572,22 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
     closed = 0
     already_closed = 0
     for ticket in tickets:
-        result = _close_ticket_by_actor(
+        result = close_ticket_by_actor(
             db,
             ticket,
             user,
             force_without_agent_reply_for_task=True,
+            is_admin_fn=is_admin,
+            get_or_create_client_profile_fn=_get_or_create_client_profile,
+            last_agent_message_fn=_last_agent_message,
+            first_client_message_fn=_first_client_message,
+            send_to_telegram_client_fn=_send_to_telegram_client,
+            actor_display_name_fn=_actor_display_name,
+            add_message_fn=_add_message,
+            message_attachments_fn=_message_attachments,
+            send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
+            onsite_close_reminder_text=ONSITE_CLOSE_REMINDER_TEXT,
+            ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
         )
         if result == "already_closed":
             already_closed += 1
@@ -627,7 +649,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                     _send_to_telegram_client(
                         db,
                         ticket,
-                        _format_task_closed_without_answer_text(ticket, client_message),
+                        format_task_closed_without_answer_text(ticket, client_message),
                         required=False,
                         remove_keyboard=True,
                     )
@@ -639,11 +661,15 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
         if parent_ticket_id:
             parent = db.get(Ticket, parent_ticket_id)
             if parent is not None:
-                _finalize_group_parent_if_ready(
+                finalize_group_parent_if_ready(
                     db,
                     parent,
                     closed_by_user_id=user.id,
                     system_note="Групповая задача завершена системой (возможен неполный ответ)",
+                    first_client_message_fn=_first_client_message,
+                    send_to_telegram_client_fn=_send_to_telegram_client,
+                    send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
+                    add_message_fn=_add_message,
                 )
         deleted += 1
     db.commit()
@@ -667,7 +693,12 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         and (t.intake_state or TicketIntakeState.READY.value) != TicketIntakeState.COLLECTING.value
         and t.auto_close_due_at is None
     ):
-        _refresh_ticket_auto_close(db, t, restart_from_now=False)
+        refresh_ticket_auto_close(
+            db,
+            t,
+            restart_from_now=False,
+            refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+        )
         db.commit()
     if user.role == "agent":
         view = db.execute(
@@ -725,6 +756,8 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         ticket_number=t.ticket_number,
         subject=t.subject,
         workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
+        task_kind=t.task_kind,
+        parent_ticket_id=t.parent_ticket_id,
         intake_state=t.intake_state or TicketIntakeState.READY.value,
         status=t.status,
         is_frozen=t.is_frozen,
@@ -949,244 +982,6 @@ def _last_agent_message(db: Session, ticket: Ticket) -> TicketMessage | None:
     ).scalar_one_or_none()
 
 
-def _last_client_visible_support_message_author_id(db: Session, ticket: Ticket) -> str | None:
-    row = db.execute(
-        select(TicketMessage.author_user_id)
-        .join(User, User.id == TicketMessage.author_user_id)
-        .where(
-            and_(
-                TicketMessage.ticket_id == ticket.id,
-                TicketMessage.message_type == MessageType.AGENT.value,
-                TicketMessage.message_status != "deleted",
-                User.role.in_(["agent", "trainee"]),
-            )
-        )
-        .order_by(desc(TicketMessage.created_at))
-        .limit(1)
-    ).first()
-    if row is None:
-        return None
-    return row[0]
-
-
-def _has_client_visible_support_message_by_user(db: Session, ticket: Ticket, user_id: str) -> bool:
-    if not user_id:
-        return False
-    return db.execute(
-        select(TicketMessage.id)
-        .join(User, User.id == TicketMessage.author_user_id)
-        .where(
-            and_(
-                TicketMessage.ticket_id == ticket.id,
-                TicketMessage.message_type == MessageType.AGENT.value,
-                TicketMessage.message_status != "deleted",
-                TicketMessage.author_user_id == user_id,
-                User.role.in_(["agent", "trainee"]),
-            )
-        )
-        .limit(1)
-    ).first() is not None
-
-
-def _resolve_completed_by_user_id(db: Session, ticket: Ticket, actor: CurrentUser) -> str | None:
-    if actor.role in {"agent", "trainee"}:
-        return actor.id
-    if not is_admin(actor):
-        return None
-
-    assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
-    if assignee and assignee.role in {"agent", "trainee"} and _has_client_visible_support_message_by_user(db, ticket, assignee.id):
-        return assignee.id
-
-    return _last_client_visible_support_message_author_id(db, ticket)
-
-
-def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser) -> None:
-    if ticket.completed_by_user_id or ticket.completed_counted_at:
-        return
-    completed_by_user_id = _resolve_completed_by_user_id(db, ticket, actor)
-    if not completed_by_user_id:
-        return
-    ticket.completed_by_user_id = completed_by_user_id
-    ticket.completed_counted_at = datetime.utcnow()
-
-
-def _is_client_visible_message(message: TicketMessage) -> bool:
-    return message.message_type in {MessageType.CLIENT.value, MessageType.AGENT.value}
-
-
-def _refresh_ticket_auto_close(db: Session, ticket: Ticket, restart_from_now: bool = False):
-    refresh_ticket_auto_close_timer(db, ticket, restart_from_now=restart_from_now)
-
-def _format_task_completion_text(ticket: Ticket, client_message: TicketMessage, agent_message: TicketMessage) -> str:
-    created_at = ticket.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
-    local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
-    created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
-    agent_text = (agent_message.body or "").strip()
-    if agent_text:
-        return (
-            f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
-            f"\"{client_message.body}\"\n"
-            "\nПолучен ответ:\n"
-            f"{agent_text}"
-        )
-    return (
-        f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
-        f"\"{client_message.body}\"\n"
-        "\nПолучены файлы от сотрудника:"
-    )
-
-
-def _format_task_closed_without_answer_text(ticket: Ticket, client_message: TicketMessage | None) -> str:
-    created_at = ticket.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
-    local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
-    created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
-    client_text = (client_message.body or "").strip() if client_message is not None else ""
-    if not client_text:
-        client_text = "(без текста)"
-    return (
-        "Ваша задача:\n"
-        f"\"{ticket.subject}\" от {created_text}\n"
-        "с текстом:\n"
-        f"\"{client_text}\"\n"
-        "закрыта без ответа по причине некорректных или неполных данных.\n\n"
-        "Для создания новой нажмите\n"
-        "/start"
-    )
-
-
-
-def _format_group_task_completion_text(ticket: Ticket, client_message: TicketMessage, answers: list[str]) -> str:
-    created_at = ticket.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
-    local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
-    created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
-    if not answers:
-        return (
-            f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
-            f"\"{client_message.body}\"\n\n"
-            "Получены файлы от сотрудников."
-        )
-    return (
-        f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
-        f"\"{client_message.body}\"\n\n"
-        "Получены ответы:\n"
-        f"{chr(10).join(answers)}"
-    )
-
-
-def _group_parent_children_payload(db: Session, parent: Ticket) -> tuple[list[str], list[TicketAttachment]]:
-    children = db.execute(
-        select(Ticket)
-        .where(
-            and_(
-                Ticket.parent_ticket_id == parent.id,
-                Ticket.task_kind == TicketTaskKind.GROUP_CHILD.value,
-            )
-        )
-        .order_by(asc(Ticket.created_at))
-    ).scalars().all()
-
-    answers: list[str] = []
-    attachments: list[TicketAttachment] = []
-    for child in children:
-        last_agent_message = db.execute(
-            select(TicketMessage)
-            .where(
-                and_(
-                    TicketMessage.ticket_id == child.id,
-                    TicketMessage.message_type == MessageType.AGENT.value,
-                )
-            )
-            .order_by(desc(TicketMessage.created_at))
-            .limit(1)
-        ).scalar_one_or_none()
-        if last_agent_message is None:
-            continue
-        text = (last_agent_message.body or "").strip()
-        if text:
-            answers.append(text)
-        child_attachments = db.execute(
-            select(TicketAttachment)
-            .where(TicketAttachment.message_id == last_agent_message.id)
-            .order_by(asc(TicketAttachment.created_at))
-        ).scalars().all()
-        attachments.extend(child_attachments)
-    return answers, attachments
-
-
-def _finalize_group_parent_if_ready(
-    db: Session,
-    parent: Ticket,
-    *,
-    closed_by_user_id: str | None = None,
-    system_note: str = "Групповая задача завершена системой",
-) -> bool:
-    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
-        return False
-    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
-        return False
-    if parent.status == TicketStatus.CLOSED.value:
-        return False
-
-    open_children = db.execute(
-        select(Ticket.id)
-        .where(
-            and_(
-                Ticket.parent_ticket_id == parent.id,
-                Ticket.status != TicketStatus.CLOSED.value,
-            )
-        )
-        .limit(1)
-    ).first()
-    if open_children is not None:
-        return False
-
-    parent_client_message = _first_client_message(db, parent)
-    if parent_client_message is not None:
-        answers, attachments = _group_parent_children_payload(db, parent)
-        _send_to_telegram_client(
-            db,
-            parent,
-            _format_group_task_completion_text(parent, parent_client_message, answers),
-            required=False,
-        )
-        for attachment in attachments:
-            _send_attachment_to_telegram_client(db, parent, attachment, required=True)
-
-    parent.status = TicketStatus.CLOSED.value
-    parent.closed_by_user_id = closed_by_user_id
-    parent.closed_at = datetime.utcnow()
-    parent.is_frozen = False
-    parent.freeze_until = None
-    _add_message(db, parent, MessageType.SYSTEM, system_note, None, agent_visible=True)
-    return True
-
-
-def _notify_group_parent_completion_before_delete(db: Session, parent: Ticket) -> None:
-    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
-        return
-    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
-        return
-    parent_client_message = _first_client_message(db, parent)
-    if parent_client_message is None:
-        return
-    answers, attachments = _group_parent_children_payload(db, parent)
-    _send_to_telegram_client(
-        db,
-        parent,
-        _format_group_task_completion_text(parent, parent_client_message, answers),
-        required=False,
-    )
-    for attachment in attachments:
-        _send_attachment_to_telegram_client(db, parent, attachment, required=True)
-
-
 @router.get("/{ticket_id}/problem-menu")
 def problem_menu_for_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     ticket = _get_ticket_or_404(db, ticket_id, user)
@@ -1198,200 +993,6 @@ def problem_menu_for_ticket(ticket_id: str, db: Session = Depends(get_db), user:
         "text": root_menu.text or "Выберите тип проблемы",
         "rows": _button_tree_for_menu(config, root_menu),
     }
-
-
-def _send_pending_wrong_problem_hint(db: Session, ticket: Ticket):
-    if not ticket.wrong_problem_hint:
-        return
-    if _send_to_telegram_client(db, ticket, ticket.wrong_problem_hint, required=False):
-        _add_message(db, ticket, MessageType.SYSTEM, "Подсказка по неверной проблеме отправлена клиенту", None)
-        ticket.wrong_problem_hint = None
-
-
-def _unfreeze_ticket_on_message(ticket: Ticket) -> None:
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
-        return
-    if ticket.status == TicketStatus.CLOSED.value:
-        return
-    if not ticket.is_frozen:
-        return
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    ticket.updated_at = datetime.utcnow()
-
-
-def _close_group_child_if_ready(db: Session, child: Ticket, last_agent_message: TicketMessage, user: CurrentUser) -> bool:
-    if child.task_kind != TicketTaskKind.GROUP_CHILD.value or not child.parent_ticket_id:
-        return False
-
-    parent = db.get(Ticket, child.parent_ticket_id)
-    if parent is None:
-        return False
-    if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
-        return False
-    if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
-        return False
-
-    parent_agent_message = _add_message(db, parent, MessageType.AGENT, last_agent_message.body or "", user.id)
-    child_attachments = db.execute(
-        select(TicketAttachment)
-        .where(TicketAttachment.message_id == last_agent_message.id)
-        .order_by(asc(TicketAttachment.created_at))
-    ).scalars().all()
-    for attachment in child_attachments:
-        db.add(
-            TicketAttachment(
-                id=str(uuid.uuid4()),
-                ticket_id=parent.id,
-                message_id=parent_agent_message.id,
-                source=attachment.source,
-                telegram_file_id=attachment.telegram_file_id,
-                telegram_file_unique_id=attachment.telegram_file_unique_id,
-                telegram_file_path=attachment.telegram_file_path,
-                telegram_message_id=attachment.telegram_message_id,
-                original_filename=attachment.original_filename,
-                mime_type=attachment.mime_type,
-                file_size=attachment.file_size,
-                local_path=attachment.local_path,
-                created_at=datetime.utcnow(),
-            )
-        )
-
-    _finalize_group_parent_if_ready(
-        db,
-        parent,
-        closed_by_user_id=user.id,
-        system_note="Групповая задача завершена системой",
-    )
-    return True
-
-
-def _close_task_without_reply(db: Session, ticket: Ticket, actor: CurrentUser):
-    ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_by_user_id = actor.id
-    ticket.closed_at = datetime.utcnow()
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    _add_message(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
-    # For group child tasks, client should receive only parent-level finalization messages.
-    if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
-        client_message = _first_client_message(db, ticket)
-        _send_to_telegram_client(
-            db,
-            ticket,
-            _format_task_closed_without_answer_text(ticket, client_message),
-            required=False,
-        )
-    if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
-        parent = db.get(Ticket, ticket.parent_ticket_id)
-        if parent is not None:
-            _finalize_group_parent_if_ready(
-                db,
-                parent,
-                closed_by_user_id=actor.id,
-                system_note="Групповая задача завершена системой (возможен неполный ответ)",
-            )
-    _mark_ticket_completed_once(db, ticket, actor)
-
-
-def _close_ticket_by_actor(
-    db: Session,
-    ticket: Ticket,
-    actor: CurrentUser,
-    *,
-    force_without_agent_reply_for_task: bool = False,
-):
-    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
-    is_admin_action = is_admin(actor)
-
-    if ticket.status == TicketStatus.CLOSED.value:
-        return "already_closed"
-
-    if ticket.subject == "Первое подключение к боту":
-        profile = _get_or_create_client_profile(db, ticket.client_id)
-        if not profile.is_verified and not is_admin_action:
-            _error(409, "first_connection_not_verified", "Нельзя закрыть первое подключение, пока карточка клиента не верифицирована")
-
-    last_agent_message = _last_agent_message(db, ticket)
-    if last_agent_message is None and is_admin_action and force_without_agent_reply_for_task:
-        if workflow_type == TicketWorkflowType.TASK.value:
-            _close_task_without_reply(db, ticket, actor)
-            return "closed"
-        if workflow_type == TicketWorkflowType.TICKET.value:
-            ticket.status = TicketStatus.CLOSED.value
-            ticket.closed_by_user_id = actor.id
-            ticket.closed_at = datetime.utcnow()
-            ticket.is_frozen = False
-            ticket.freeze_until = None
-            _add_message(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {_actor_display_name(db, actor)}", None, agent_visible=True)
-            _send_to_telegram_client(
-                db,
-                ticket,
-                TICKET_CLOSED_CLIENT_TEXT,
-                required=False,
-                remove_keyboard=True,
-            )
-            _mark_ticket_completed_once(db, ticket, actor)
-            return "closed"
-        ticket.status = TicketStatus.CLOSED.value
-        ticket.closed_by_user_id = actor.id
-        ticket.closed_at = datetime.utcnow()
-        ticket.is_frozen = False
-        ticket.freeze_until = None
-        _add_message(db, ticket, MessageType.SYSTEM, f"Автообращение принудительно завершено администратором: {_actor_display_name(db, actor)}", None, agent_visible=True)
-        _mark_ticket_completed_once(db, ticket, actor)
-        return "closed"
-
-    if last_agent_message is None:
-        action_name = "задачу" if workflow_type == TicketWorkflowType.TASK.value else "заявку"
-        _error(409, "close_not_allowed", f"Нельзя завершить {action_name} без ответа сотрудника")
-
-    ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_by_user_id = actor.id
-    ticket.closed_at = datetime.utcnow()
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-
-    if workflow_type == TicketWorkflowType.TASK.value:
-        client_message = _first_client_message(db, ticket)
-        if client_message is None:
-            if force_without_agent_reply_for_task:
-                _close_task_without_reply(db, ticket, actor)
-                return "closed"
-            _error(409, "task_client_message_required", "У задачи нет текста клиента")
-        if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value:
-            _close_group_child_if_ready(db, ticket, last_agent_message, actor)
-            close_text = "Подзадача завершена сотрудником" if not is_admin_action else f"Подзадача принудительно завершена администратором: {_actor_display_name(db, actor)}"
-            _add_message(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-        else:
-            _send_to_telegram_client(
-                db,
-                ticket,
-                _format_task_completion_text(ticket, client_message, last_agent_message),
-                required=False,
-            )
-            for attachment in _message_attachments(db, last_agent_message.id):
-                _send_attachment_to_telegram_client(db, ticket, attachment, required=True)
-            _send_pending_wrong_problem_hint(db, ticket)
-            close_text = "Задача завершена сотрудником" if not is_admin_action else f"Задача принудительно завершена администратором: {_actor_display_name(db, actor)}"
-            _add_message(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-    elif workflow_type == TicketWorkflowType.TICKET.value:
-        close_text = "Заявка закрыта сотрудником" if not is_admin_action else f"Заявка принудительно завершена администратором: {_actor_display_name(db, actor)}"
-        _add_message(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-        if bool(ticket.onsite_triggered):
-            _add_message(db, ticket, MessageType.SYSTEM, ONSITE_CLOSE_REMINDER_TEXT, None, agent_visible=True)
-        _send_to_telegram_client(
-            db,
-            ticket,
-            TICKET_CLOSED_CLIENT_TEXT,
-            required=False,
-            remove_keyboard=True,
-        )
-    else:
-        close_text = "Автообращение завершено системой" if not is_admin_action else f"Автообращение принудительно завершено администратором: {_actor_display_name(db, actor)}"
-        _add_message(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-    _mark_ticket_completed_once(db, ticket, actor)
-    return "closed"
 
 
 @router.post("/{ticket_id}/reply")
@@ -1413,10 +1014,10 @@ async def reply(
         send_attachment_to_telegram_client=lambda db_session, t, a, required: _send_attachment_to_telegram_client(
             db_session, t, a, required=required
         ),
-        unfreeze_ticket_on_message=_unfreeze_ticket_on_message,
+        unfreeze_ticket_on_message=unfreeze_ticket_on_message,
         remove_client_close_button=_remove_client_close_button,
-        refresh_ticket_auto_close=lambda db_session, t, restart_from_now: _refresh_ticket_auto_close(
-            db_session, t, restart_from_now=restart_from_now
+        refresh_ticket_auto_close=lambda db_session, t, restart_from_now: refresh_ticket_auto_close(
+            db_session, t, restart_from_now=restart_from_now, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer
         ),
     )
 
@@ -1429,7 +1030,7 @@ def comment(ticket_id: str, payload: TextPayload, db: Session = Depends(get_db),
         user=user,
         ticket=ticket,
         payload=payload,
-        unfreeze_ticket_on_message=_unfreeze_ticket_on_message,
+        unfreeze_ticket_on_message=unfreeze_ticket_on_message,
     )
 
 
@@ -1471,11 +1072,16 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
 
     response = _send_to_telegram_client(db, ticket, text)
     _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
-    _unfreeze_ticket_on_message(ticket)
+    unfreeze_ticket_on_message(ticket)
     _remove_client_close_button(db, ticket)
     if ticket.status == TicketStatus.NEW.value:
         ticket.status = TicketStatus.PENDING.value
-    _refresh_ticket_auto_close(db, ticket, restart_from_now=True)
+    refresh_ticket_auto_close(
+        db,
+        ticket,
+        restart_from_now=True,
+        refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+    )
     db.commit()
     return {"ok": True, "text": text}
 
@@ -1488,10 +1094,12 @@ def freeze(ticket_id: str, payload: FreezePayload, db: Session = Depends(get_db)
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "freeze_closed_ticket", "Нельзя заморозить закрытую заявку")
 
-    ticket.is_frozen = True
-    ticket.freeze_until = payload.freeze_until
-    clear_ticket_auto_close_timer(ticket)
-    _add_message(db, ticket, MessageType.SYSTEM, "Заявка заморожена", None)
+    freeze_ticket(
+        db,
+        ticket,
+        freeze_until=payload.freeze_until,
+        add_message_fn=_add_message,
+    )
     db.commit()
     return {"ok": True}
 
@@ -1504,10 +1112,12 @@ def unfreeze(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     if not ticket.is_frozen:
         _error(409, "unfreeze_not_frozen", "Заявка не заморожена")
 
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    _add_message(db, ticket, MessageType.SYSTEM, "Заявка разморожена", None)
-    _refresh_ticket_auto_close(db, ticket, restart_from_now=True)
+    unfreeze_ticket(
+        db,
+        ticket,
+        add_message_fn=_add_message,
+        refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+    )
     db.commit()
     return {"ok": True}
 
@@ -1525,12 +1135,12 @@ def update_auto_close(
     if not can_use_auto_close_controls(ticket):
         _error(409, "auto_close_not_available", "Таймер автозакрытия недоступен для этой заявки")
 
-    ticket.auto_close_disabled = bool(payload.auto_close_disabled)
-    if ticket.auto_close_disabled:
-        clear_ticket_auto_close_timer(ticket)
-    else:
-        _refresh_ticket_auto_close(db, ticket, restart_from_now=True)
-    ticket.updated_at = datetime.utcnow()
+    update_ticket_auto_close(
+        db,
+        ticket,
+        auto_close_disabled=bool(payload.auto_close_disabled),
+        refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+    )
     db.commit()
     return {"ok": True}
 
@@ -1549,6 +1159,8 @@ def wrong_problem(
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
     if ticket.wrong_problem_used_at is not None:
         _error(409, "wrong_problem_already_used", "Подсказка по неверной проблеме уже использована для этой заявки")
+    if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.GROUP_CHILD.value:
+        _error(409, "wrong_problem_not_allowed", "Для подзадач эта функция недоступна")
 
     config = load_button_config(_menu_name_for_ticket_client(db, ticket))
     button = config.buttons.get(payload.button_key) or find_button(payload.button_key)
@@ -1568,7 +1180,7 @@ def wrong_problem(
     else:
         response = _send_to_telegram_client(db, ticket, hint_text)
         _add_message(db, ticket, MessageType.AGENT, hint_text, user.id, telegram_message_id=_telegram_message_id(response))
-        _unfreeze_ticket_on_message(ticket)
+        unfreeze_ticket_on_message(ticket)
         _add_message(db, ticket, MessageType.SYSTEM, f"Сотрудник подсказал клиенту правильный пункт меню: {target_label}", None)
         _remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
@@ -1648,11 +1260,22 @@ def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Dep
         _error(403, "readonly_role", "Нет прав на управление заявкой")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_already_closed", "Заявка уже закрыта")
-    _close_ticket_by_actor(
+    close_ticket_by_actor(
         db,
         ticket,
         user,
         force_without_agent_reply_for_task=False,
+        is_admin_fn=is_admin,
+        get_or_create_client_profile_fn=_get_or_create_client_profile,
+        last_agent_message_fn=_last_agent_message,
+        first_client_message_fn=_first_client_message,
+        send_to_telegram_client_fn=_send_to_telegram_client,
+        actor_display_name_fn=_actor_display_name,
+        add_message_fn=_add_message,
+        message_attachments_fn=_message_attachments,
+        send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
+        onsite_close_reminder_text=ONSITE_CLOSE_REMINDER_TEXT,
+        ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
     )
     db.commit()
     return {"ok": True}
@@ -1754,6 +1377,11 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
         except Exception:
             pass
 
-    _refresh_ticket_auto_close(db, ticket, restart_from_now=True)
+    refresh_ticket_auto_close(
+        db,
+        ticket,
+        restart_from_now=True,
+        refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+    )
     db.commit()
     return {"ok": True}
