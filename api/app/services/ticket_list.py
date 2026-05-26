@@ -1,11 +1,12 @@
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import ClientProfile, MessageType, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, MessageType, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .ticket_special import _display_assignee_name
+from .ticket_subject import build_ticket_subject_map
 
 
 def _error(status_code: int, code: str, message: str):
@@ -16,11 +17,32 @@ def apply_role_filter(stmt: Select, user: CurrentUser):
     if is_support_user(user):
         return stmt.where(and_(Ticket.assignee_id == user.id, Ticket.agent_visible.is_(True)))
     if is_readonly_chiki_piki(user):
-        return stmt.join(ClientProfile, ClientProfile.client_id == Ticket.client_id).where(
+        call_center_key_match = or_(
+            Ticket.button_config_key.like("Колл Центр|%"),
+            Ticket.instruction_button_key.like("Колл Центр|%"),
+        )
+        call_center_registry_match = or_(
+            exists(
+                select(BotButtonSetting.id).where(
+                    and_(
+                        BotButtonSetting.button_key == Ticket.button_config_key,
+                        func.lower(func.trim(BotButtonSetting.menu_type)) == "колл центр",
+                    )
+                )
+            ),
+            exists(
+                select(BotButtonSetting.id).where(
+                    and_(
+                        BotButtonSetting.button_key == Ticket.instruction_button_key,
+                        func.lower(func.trim(BotButtonSetting.menu_type)) == "колл центр",
+                    )
+                )
+            ),
+        )
+        return stmt.where(
             or_(
-                func.lower(func.trim(ClientProfile.destination)) == "\u043a\u043e\u043b\u043b \u0446\u0435\u043d\u0442\u0440",
-                Ticket.button_config_key.like("\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440|%"),
-                Ticket.instruction_button_key.like("\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440|%"),
+                call_center_key_match,
+                call_center_registry_match,
             )
         )
     return stmt
@@ -136,6 +158,7 @@ def list_tickets_paginated(
 
     items: list[TicketListItem] = []
     has_new_numbers = False
+    subject_map = build_ticket_subject_map(db, tickets)
     for t in tickets:
         if t.ticket_number is None:
             has_new_numbers = True
@@ -149,7 +172,7 @@ def list_tickets_paginated(
             TicketListItem(
                 id=t.id,
                 ticket_number=ticket_number,
-                subject=t.subject,
+                subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
                 intake_state=t.intake_state or TicketIntakeState.READY.value,
                 status=t.status,
@@ -199,6 +222,7 @@ def list_special_tickets(
     stmt = base_stmt.order_by(sort_clause(sort, order)).offset(offset).limit(limit)
     tickets = db.execute(stmt).scalars().all()
     items: list[TicketListItem] = []
+    subject_map = build_ticket_subject_map(db, tickets)
     for t in tickets:
         if t.ticket_number is None:
             ensure_ticket_number_fn(db, t)
@@ -210,7 +234,7 @@ def list_special_tickets(
             TicketListItem(
                 id=t.id,
                 ticket_number=t.ticket_number,
-                subject=t.subject,
+                subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
                 intake_state=t.intake_state or TicketIntakeState.READY.value,
                 status=t.status,

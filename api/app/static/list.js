@@ -331,8 +331,6 @@ function sortValue(ticket, key) {
       return dateMs(ticket.created_at);
     case "age_created":
       return dateMs(ticket.created_at);
-    case "updated_at":
-      return dateMs(ticket.updated_at);
     default:
       return "";
   }
@@ -529,17 +527,18 @@ function renderTable() {
       ? `<td class="ticket-check-cell"><input class="ticket-check" data-ticket-id="${escapeHtml(t.id)}" type="checkbox" ${state.selectedTicketIds.has(t.id) ? "checked" : ""} /></td>`
       : "";
     const assigneeCell = state.role === "admin"
-      ? `<td><select class="row-assignee-select" data-ticket-id="${escapeHtml(t.id)}" data-selected-id="${escapeHtml(t.assignee_id || "")}">${assigneeOptionsHtml(t.assignee_id, t.special_assignee_name || t.assignee_name || "")}</select></td>`
-      : "";
+      ? `<td class="ticket-assignee-col"><select class="row-assignee-select" data-ticket-id="${escapeHtml(t.id)}" data-selected-id="${escapeHtml(t.assignee_id || "")}">${assigneeOptionsHtml(t.assignee_id, t.special_assignee_name || t.assignee_name || "")}</select></td>`
+      : (state.role === "chiki_piki"
+        ? `<td class="ticket-assignee-col">${escapeHtml(t.special_assignee_name || t.assignee_name || "Нераспределён")}</td>`
+        : "");
     tr.innerHTML = `
       ${selectCell}
-      <td>${escapeHtml((t.subject || "") + intakeBadge(t))}</td>
-      <td>${escapeHtml(t.client_name || "")}</td>
+      <td class="ticket-subject-col">${escapeHtml((t.subject || "") + intakeBadge(t))}</td>
+      <td class="ticket-client-col">${escapeHtml(t.client_name || "")}</td>
       ${assigneeCell}
-      <td>${lastReplyText(t)}</td>
-      <td>${fmtDate(t.created_at)}</td>
-      <td>${ageText(t.created_at)}</td>
-      <td>${fmtDate(t.updated_at)}</td>
+      <td class="ticket-age-col">${ageText(t.created_at)}</td>
+      <td class="ticket-created-col">${fmtDate(t.created_at)}</td>
+      <td class="ticket-last-reply-col">${lastReplyText(t)}</td>
     `;
     tr.addEventListener("click", () => {
       const publicId = t.ticket_number || t.id;
@@ -587,7 +586,7 @@ function applyRoleUi() {
     node.classList.toggle("hidden", !isAdmin);
   });
   el.adminAssigneeCols.forEach((node) => {
-    node.classList.toggle("hidden", !isAdmin);
+    node.classList.toggle("hidden", !(isAdmin || isReadonly));
   });
   el.adminSelectCols.forEach((node) => {
     node.classList.toggle("hidden", !isAdmin);

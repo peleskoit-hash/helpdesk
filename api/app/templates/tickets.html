@@ -115,13 +115,12 @@
             <thead>
               <tr>
                 <th class="admin-select-col hidden"><button id="selectAllTicketsBtn" class="mini-check-btn" type="button">✓</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="subject">Тема</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="client_name">Заявка от</button></th>
-                <th class="admin-assignee-col hidden"><button type="button" class="table-sort-btn" data-sort-key="assignee_name">Исполнитель</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="last_reply_at">Последний ответ</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="created_at">Дата создания</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="age_created">С создания</button></th>
-                <th><button type="button" class="table-sort-btn" data-sort-key="updated_at">Последняя активность</button></th>
+                <th class="ticket-subject-col"><button type="button" class="table-sort-btn" data-sort-key="subject">Тема</button></th>
+                <th class="ticket-client-col"><button type="button" class="table-sort-btn" data-sort-key="client_name">Заявка от</button></th>
+                <th class="admin-assignee-col ticket-assignee-col hidden"><button type="button" class="table-sort-btn" data-sort-key="assignee_name">Исполнитель</button></th>
+                <th class="ticket-age-col"><button type="button" class="table-sort-btn" data-sort-key="age_created">С создания</button></th>
+                <th class="ticket-created-col"><button type="button" class="table-sort-btn" data-sort-key="created_at">Дата создания</button></th>
+                <th class="ticket-last-reply-col"><button type="button" class="table-sort-btn" data-sort-key="last_reply_at">Последний ответ</button></th>
               </tr>
             </thead>
             <tbody id="ticketsTableBody"></tbody>

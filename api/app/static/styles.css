@@ -581,6 +581,7 @@ table {
   margin: 0 5px;
   border-collapse: separate;
   border-spacing: 0 8px;
+  table-layout: fixed;
 }
 
 th, td {
@@ -588,6 +589,12 @@ th, td {
   border-bottom: 1px solid var(--border);
   text-align: left;
   font-size: 14px;
+}
+
+.table-wrap table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .admin-select-col,
@@ -619,7 +626,7 @@ th, td {
 }
 
 .row-assignee-select {
-  width: 150px;
+  width: 100px;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 7px;
@@ -652,6 +659,36 @@ th button {
 
 .table-sort-btn.active {
   color: #0b5f73;
+}
+
+th.ticket-subject-col,
+td.ticket-subject-col {
+  width: 31.25%;
+}
+
+th.ticket-client-col,
+td.ticket-client-col {
+  width: 14.25%;
+}
+
+th.ticket-assignee-col,
+td.ticket-assignee-col {
+  width: 14%;
+}
+
+th.ticket-age-col,
+td.ticket-age-col {
+  width: 8%;
+}
+
+th.ticket-created-col,
+td.ticket-created-col {
+  width: 13%;
+}
+
+th.ticket-last-reply-col,
+td.ticket-last-reply-col {
+  width: 19.5%;
 }
 
 tr.row-click { cursor: pointer; }

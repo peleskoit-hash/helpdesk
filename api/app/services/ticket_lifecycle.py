@@ -12,6 +12,7 @@ from ..auth import CurrentUser
 from ..config import settings
 from ..models import MessageType, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
+from .ticket_subject import resolve_ticket_subject
 
 
 def _error(status_code: int, code: str, message: str):
@@ -102,39 +103,52 @@ def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser)
     ticket.completed_counted_at = datetime.utcnow()
 
 
-def _format_task_completion_text(ticket: Ticket, client_message: TicketMessage, agent_message: TicketMessage) -> str:
+def _format_task_completion_text(
+    ticket: Ticket,
+    client_message: TicketMessage,
+    agent_message: TicketMessage,
+    *,
+    subject_text: str | None = None,
+) -> str:
     created_at = ticket.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
     local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
     created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
+    subject = subject_text or ticket.subject
     agent_text = (agent_message.body or "").strip()
     if agent_text:
         return (
-            f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
+            f"По Вашей задаче \"{subject}\" от {created_text}\n"
             f"\"{client_message.body}\"\n"
             "\nПолучен ответ:\n"
             f"{agent_text}"
         )
     return (
-        f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
+        f"По Вашей задаче \"{subject}\" от {created_text}\n"
         f"\"{client_message.body}\"\n"
         "\nПолучены файлы от сотрудника:"
     )
 
 
-def _format_task_closed_without_answer_text(ticket: Ticket, client_message: TicketMessage | None) -> str:
+def _format_task_closed_without_answer_text(
+    ticket: Ticket,
+    client_message: TicketMessage | None,
+    *,
+    subject_text: str | None = None,
+) -> str:
     created_at = ticket.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
     local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
     created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
+    subject = subject_text or ticket.subject
     client_text = (client_message.body or "").strip() if client_message is not None else ""
     if not client_text:
         client_text = "(без текста)"
     return (
         "Ваша задача:\n"
-        f"\"{ticket.subject}\" от {created_text}\n"
+        f"\"{subject}\" от {created_text}\n"
         "с текстом:\n"
         f"\"{client_text}\"\n"
         "закрыта без ответа по причине некорректных или неполных данных.\n\n"
@@ -143,26 +157,33 @@ def _format_task_closed_without_answer_text(ticket: Ticket, client_message: Tick
     )
 
 
-def format_task_closed_without_answer_text(ticket: Ticket, client_message: TicketMessage | None) -> str:
-    return _format_task_closed_without_answer_text(ticket, client_message)
+def format_task_closed_without_answer_text(db: Session, ticket: Ticket, client_message: TicketMessage | None) -> str:
+    return _format_task_closed_without_answer_text(ticket, client_message, subject_text=resolve_ticket_subject(db, ticket))
 
 
-def _format_group_task_completion_text(ticket: Ticket, client_message: TicketMessage, answers: list[str]) -> str:
+def _format_group_task_completion_text(
+    ticket: Ticket,
+    client_message: TicketMessage,
+    answers: list[str],
+    *,
+    subject_text: str | None = None,
+) -> str:
     created_at = ticket.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
     local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
     created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
+    subject = subject_text or ticket.subject
     if not answers:
         return (
-            f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
+            f"По Вашей задаче \"{subject}\" от {created_text}\n"
             f"\"{client_message.body}\"\n\n"
             "Получены файлы от сотрудников.\n\n"
             "Для создания новой нажмите\n"
             "/start"
         )
     return (
-        f"По Вашей задаче \"{ticket.subject}\" от {created_text}\n"
+        f"По Вашей задаче \"{subject}\" от {created_text}\n"
         f"\"{client_message.body}\"\n\n"
         "Получены ответы:\n"
         f"{chr(10).join(answers)}\n\n"
@@ -275,10 +296,11 @@ def finalize_group_parent_if_ready(
     parent_client_message = first_client_message_fn(db, parent)
     if parent_client_message is not None:
         answers, attachments = _group_parent_children_payload(db, parent)
+        subject_text = resolve_ticket_subject(db, parent)
         send_to_telegram_client_fn(
             db,
             parent,
-            _format_group_task_completion_text(parent, parent_client_message, answers),
+            _format_group_task_completion_text(parent, parent_client_message, answers, subject_text=subject_text),
             required=False,
         )
         for attachment in attachments:
@@ -309,10 +331,11 @@ def notify_group_parent_completion_before_delete(
     if parent_client_message is None:
         return
     answers, attachments = _group_parent_children_payload(db, parent)
+    subject_text = resolve_ticket_subject(db, parent)
     send_to_telegram_client_fn(
         db,
         parent,
-        _format_group_task_completion_text(parent, parent_client_message, answers),
+        _format_group_task_completion_text(parent, parent_client_message, answers, subject_text=subject_text),
         required=False,
     )
     for attachment in attachments:
@@ -399,10 +422,11 @@ def _close_task_without_reply(
     add_message_fn(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
     if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
         client_message = first_client_message_fn(db, ticket)
+        subject_text = resolve_ticket_subject(db, ticket)
         send_to_telegram_client_fn(
             db,
             ticket,
-            _format_task_closed_without_answer_text(ticket, client_message),
+            _format_task_closed_without_answer_text(ticket, client_message, subject_text=subject_text),
             required=False,
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
@@ -522,10 +546,11 @@ def close_ticket_by_actor(
             _error(409, "task_client_message_required", "У задачи нет текста клиента")
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
+            subject_text = resolve_ticket_subject(db, ticket)
             send_to_telegram_client_fn(
                 db,
                 ticket,
-                _format_group_task_completion_text(ticket, client_message, answers),
+                _format_group_task_completion_text(ticket, client_message, answers, subject_text=subject_text),
                 required=False,
             )
             for attachment in attachments:
@@ -550,10 +575,11 @@ def close_ticket_by_actor(
             close_text = "Подзадача завершена сотрудником" if not is_admin_action else f"Подзадача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         else:
+            subject_text = resolve_ticket_subject(db, ticket)
             send_to_telegram_client_fn(
                 db,
                 ticket,
-                _format_task_completion_text(ticket, client_message, last_agent_message),
+                _format_task_completion_text(ticket, client_message, last_agent_message, subject_text=subject_text),
                 required=False,
             )
             for attachment in message_attachments_fn(db, last_agent_message.id):
@@ -624,4 +650,3 @@ def update_ticket_auto_close(
     else:
         refresh_ticket_auto_close(db, ticket, restart_from_now=True, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer_fn)
     ticket.updated_at = datetime.utcnow()
-

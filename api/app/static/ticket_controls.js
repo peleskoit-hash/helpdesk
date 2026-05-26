@@ -153,6 +153,8 @@
   async function chooseWrongProblem(ctx, item) {
     const { state, apiPost, setStatus, loadCard, showError } = ctx;
     if (!isFinalProblemButton(item)) return;
+    const confirmText = `Вы уверены что хотите отправить клиенту коррекционное сообщение с выбором "${item.label}"?`;
+    if (!window.confirm(confirmText)) return;
     try {
       setStatus("Применяю результат...");
       await apiPost(`/api/v1/tickets/${state.ticketId}/wrong-problem`, { button_key: item.key });
