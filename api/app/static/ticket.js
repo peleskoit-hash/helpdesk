@@ -318,6 +318,25 @@ function closeOnBackdropClick(modal, closeHandler) {
   });
 }
 
+function focusMessageInputIfAvailable() {
+  if (!el.messageInput) return;
+  if (el.messageInput.disabled) return;
+  if (document.hidden) return;
+  if (el.clientModal && !el.clientModal.classList.contains("hidden")) return;
+  if (el.errorModal && !el.errorModal.classList.contains("hidden")) return;
+  if (el.wrongProblemModal && !el.wrongProblemModal.classList.contains("hidden")) return;
+  if (el.specialConfirmModal && !el.specialConfirmModal.classList.contains("hidden")) return;
+  if (el.adminActionModal && !el.adminActionModal.classList.contains("hidden")) return;
+  if (el.instructionModal && !el.instructionModal.classList.contains("hidden")) return;
+  requestAnimationFrame(() => {
+    try {
+      el.messageInput.focus({ preventScroll: true });
+    } catch {
+      el.messageInput.focus();
+    }
+  });
+}
+
 function isOnsitePhraseJs(text) {
   let normalized = String(text || "").trim().toLowerCase();
   if (normalized.endsWith(".")) normalized = normalized.slice(0, -1).trim();
@@ -790,6 +809,7 @@ async function loadCard(options = {}) {
       : defaultClientCardViewConfig();
     renderCard();
     applyComposeModeUi();
+    focusMessageInputIfAvailable();
     setStatus("Карточка загружена");
   } catch (e) {
     console.error("loadCard failed", e);
