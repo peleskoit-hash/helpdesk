@@ -69,6 +69,13 @@ from ..services.telegram_automation import (
     _handoff_automation_task_to_agent as _handoff_automation_task_to_agent_service,
     _process_bitrix_deal_phone_lookup_task as _process_bitrix_deal_phone_lookup_task_service,
 )
+from ..services.telegram_attachment_policy import (
+    FORBIDDEN_ATTACHMENT_TEXT,
+    attachment_is_too_large,
+    forbidden_attachment_system_text,
+    send_too_large_attachment_client_messages,
+    too_large_attachment_system_text,
+)
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
@@ -113,12 +120,6 @@ PROBLEM_NOT_SELECTED_TEXT = (
 PROBLEM_SUBMENU_TEXT = "Вы остановились на промежуточном пункте меню. Выберите конечную проблему, иначе текст не будет передан в техническую поддержку."
 MENU_SELECTION_TIMEOUT_TEXT = "Вы не выбрали нужное меню, создание заявки прервано.\nДля создания новой нажмите\n/start."
 NO_ACTIVE_TICKET_TEXT = "Активное обращение не найдено. Для создания новой заявки нажмите /start."
-FORBIDDEN_ATTACHMENT_TEXT = (
-    "Голосовые и видеосообщения не принимаются. "
-    "Пожалуйста, опишите проблему текстом или прикрепите файл/скриншот."
-)
-TELEGRAM_ATTACHMENT_SIZE_LIMIT_BYTES = 20 * 1024 * 1024
-TOO_LARGE_ATTACHMENT_WARNING_MARKER = "Клиент уведомлен об ограничении размера файлов Telegram Bot API"
 ALLOWED_ATTACHMENT_TYPES = {"document", "photo", "audio", "video", "animation", "sticker"}
 IMAGE_PREVIEW_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 SUBMENU_MARKER_PREFIX = "__submenu__:"
@@ -1105,79 +1106,6 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
         append_system_message(db, new_ticket, "На распределении")
 
     return new_ticket
-
-
-def _attachment_is_too_large(attachment_data: dict | None) -> bool:
-    if not attachment_data:
-        return False
-    size = attachment_data.get("file_size")
-    try:
-        size_value = int(size)
-    except Exception:
-        return False
-    return size_value > TELEGRAM_ATTACHMENT_SIZE_LIMIT_BYTES
-
-
-def _too_large_attachment_system_text(attachment_data: dict | None) -> str:
-    if not attachment_data:
-        return "Клиент отправил файл больше 20 МБ, скачивание через Telegram Bot API недоступно"
-    name = (attachment_data.get("original_filename") or attachment_data.get("source") or "Файл").strip()
-    size = attachment_data.get("file_size")
-    size_mb = None
-    try:
-        size_mb = int(size) / (1024 * 1024)
-    except Exception:
-        size_mb = None
-    if size_mb is None:
-        return f"Клиент отправил файл «{name}»: больше 20 МБ, скачивание недоступно"
-    return f"Клиент отправил файл «{name}» ({size_mb:.1f} МБ): больше 20 МБ, скачивание недоступно"
-
-
-def _kb_size(value: object) -> int | None:
-    try:
-        size = int(value)
-    except Exception:
-        return None
-    if size <= 0:
-        return 0
-    return (size + 1023) // 1024
-
-
-def _too_large_attachment_client_notice(attachment_data: dict | None) -> str:
-    name = ((attachment_data or {}).get("original_filename") or (attachment_data or {}).get("source") or "Файл").strip()
-    size_kb = _kb_size((attachment_data or {}).get("file_size"))
-    if size_kb is None:
-        return f"Файл «{name}» имеет размер больше 20 МБ и не будет доставлен."
-    return f"Файл «{name}» имеет размер {size_kb} КБ и не будет доставлен."
-
-
-def _send_too_large_attachment_client_messages(
-    db: Session,
-    ticket: Ticket,
-    external_chat_id: str,
-    attachment_data: dict | None,
-    *,
-    notify_client: bool,
-) -> None:
-    if not notify_client:
-        return
-    already_warned = db.execute(
-        select(TicketMessage.id).where(
-            and_(
-                TicketMessage.ticket_id == ticket.id,
-                TicketMessage.message_type == MessageType.SYSTEM.value,
-                TicketMessage.body == TOO_LARGE_ATTACHMENT_WARNING_MARKER,
-            )
-        ).limit(1)
-    ).first() is not None
-    if not already_warned:
-        limit_kb = (TELEGRAM_ATTACHMENT_SIZE_LIMIT_BYTES + 1023) // 1024
-        send_message(
-            external_chat_id,
-            f"Обратите внимание, что файлы больше 20 МБ ({limit_kb} КБ) не будут доставлены в связи с ограничениями Telegram Bot API.",
-        )
-        append_system_message(db, ticket, TOO_LARGE_ATTACHMENT_WARNING_MARKER, agent_visible=False)
-    send_message(external_chat_id, _too_large_attachment_client_notice(attachment_data))
 
 
 def _create_task_from_intent(db: Session, intent: PendingTaskIntent, body: str) -> Ticket:
@@ -2566,7 +2494,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     text = (message.get("text") or message.get("caption") or "").strip()
     telegram_message_id = str(message.get("message_id")) if message.get("message_id") is not None else None
     attachment_data = None if is_edited_message else _extract_attachment(message)
-    attachment_too_large = _attachment_is_too_large(attachment_data)
+    attachment_too_large = attachment_is_too_large(attachment_data)
     forbidden_attachment_type = None if is_edited_message else _forbidden_attachment_type(message)
 
     external_chat_id = str(chat.get("id", ""))
@@ -2610,7 +2538,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             append_system_message(
                 db,
                 ticket,
-                f"Клиент отправил запрещённый тип сообщения: {forbidden_attachment_type}",
+                forbidden_attachment_system_text(forbidden_attachment_type),
                 agent_visible=True,
             )
         db.commit()
@@ -2682,10 +2610,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 append_system_message(
                     db,
                     collecting_ticket,
-                    _too_large_attachment_system_text(attachment_data),
+                    too_large_attachment_system_text(attachment_data),
                     agent_visible=True,
                 )
-                _send_too_large_attachment_client_messages(
+                send_too_large_attachment_client_messages(
                     db,
                     collecting_ticket,
                     external_chat_id,
@@ -2723,10 +2651,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             append_system_message(
                 db,
                 collecting_ticket,
-                _too_large_attachment_system_text(attachment_data),
+                too_large_attachment_system_text(attachment_data),
                 agent_visible=True,
             )
-            _send_too_large_attachment_client_messages(
+            send_too_large_attachment_client_messages(
                 db,
                 collecting_ticket,
                 external_chat_id,
@@ -2776,10 +2704,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         append_system_message(
             db,
             ticket,
-            _too_large_attachment_system_text(attachment_data),
+            too_large_attachment_system_text(attachment_data),
             agent_visible=True,
         )
-        _send_too_large_attachment_client_messages(
+        send_too_large_attachment_client_messages(
             db,
             ticket,
             external_chat_id,
