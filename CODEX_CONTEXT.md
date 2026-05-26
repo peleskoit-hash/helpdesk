@@ -20,5 +20,10 @@ WORKFLOW_SHORT_RULES:
 - При выносе кода: без дублей, показывать строки до/после и `git diff --stat`.
 - Перед commit: `git status`, исключить `.env/logs/storage/db/pycache`, коммитить только после проверок.
 
+GIT_HOOKS:
+- Включение project hooks: `git config core.hooksPath .githooks`
+- Назначение pre-commit hook: проверка mojibake (`tools/check_mojibake.py`) перед commit.
+- Если hook блокирует commit: сначала исправить причину (битую кириллицу), а не отключать проверку.
+
 NOTE:
 - Не использовать устаревшие практики header-auth как “временную” auth-модель: в проекте используется session auth c login/logout.
