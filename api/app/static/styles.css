@@ -626,7 +626,10 @@ th, td {
 }
 
 .row-assignee-select {
-  width: 100px;
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 7px;
