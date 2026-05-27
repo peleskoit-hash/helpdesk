@@ -151,13 +151,15 @@
   }
 
   async function chooseWrongProblem(ctx, item) {
-    const { state, apiPost, setStatus, loadCard, showError } = ctx;
+    const { state, el, apiPost, setStatus, loadCard, showError, setVisible } = ctx;
     if (!isFinalProblemButton(item)) return;
     const confirmText = `Вы уверены что хотите отправить клиенту коррекционное сообщение с выбором "${item.label}"?`;
     if (!window.confirm(confirmText)) return;
     try {
       setStatus("Применяю результат...");
       await apiPost(`/api/v1/tickets/${state.ticketId}/wrong-problem`, { button_key: item.key });
+      if (state.card) state.card.wrong_problem_used = true;
+      setVisible(el.wrongProblemBtn, false);
       closeWrongProblemModal(ctx);
       await loadCard();
       if (state.card?.workflow_type === "task") {
@@ -183,7 +185,8 @@
     const isReadonly = state.role === "chiki_piki";
     const hasAgentMessage = card.messages.some((m) => m.message_type === "agent");
     const hasAnyMessage = card.messages.length > 0;
-    const greeted = card.messages.some((m) => m.message_type === "agent" && /^здрав/i.test((m.body || "").trim()));
+    const greetedByMessage = card.messages.some((m) => m.message_type === "agent" && /^добр/i.test((m.body || "").trim()));
+    const greeted = greetedByMessage || Boolean(card.greeting_used);
     const isFirstConnection = card.subject === "Первое подключение к боту";
     const firstConnectionVerified = Boolean(card.client_profile?.is_verified);
 
@@ -238,10 +241,10 @@
   }
 
   function bindTicketControlHandlers(ctx) {
-    const { el, state, action, apiPatch, loadCard, showError, openInstructionModal, closeInstructionModal, closeOnBackdropClick, assignCurrentTicket, saveClientProfile, openClientModal, closeClientModal } = ctx;
+    const { el, state, action, apiPost, apiPatch, loadCard, setStatus, showError, setVisible, openInstructionModal, closeInstructionModal, closeOnBackdropClick, assignCurrentTicket, saveClientProfile, openClientModal, closeClientModal } = ctx;
 
     if (el.greetingBtn) {
-      el.greetingBtn.addEventListener("click", (event) => {
+      el.greetingBtn.addEventListener("click", async (event) => {
         const profile = state.card?.client_profile || {};
         const name = (profile.contact_name || "").trim();
         if (!name) {
@@ -249,7 +252,17 @@
           showError("Поле 'Имя' в карточке клиента не заполнено");
           return;
         }
-        action("greeting");
+        try {
+          setStatus("Отправляю приветствие...");
+          await apiPost(`/api/v1/tickets/${state.ticketId}/greeting`);
+          if (state.card) state.card.greeting_used = true;
+          setVisible(el.greetingBtn, false);
+          await loadCard();
+          setStatus("Приветствие отправлено");
+        } catch (e) {
+          showError(e.message);
+          await loadCard({ silent: true });
+        }
       });
     }
 
