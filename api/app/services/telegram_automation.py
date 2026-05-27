@@ -17,6 +17,13 @@ BITRIX_DEAL_FORMAT_ERROR_TEXT = (
 AUTOMATION_FALLBACK_CLIENT_TEXT = "Заявка создана и передана в работу."
 
 
+def _is_phone_payload_allowed(phone_text: str | None) -> bool:
+    value = (phone_text or "").strip()
+    if not value:
+        return False
+    return all(ch.isdigit() or ch == "+" for ch in value)
+
+
 def get_automation_registry() -> dict[str, dict]:
     bitrix_available = bool((settings.bitrix_webhook_base or "").strip())
     return {
@@ -128,6 +135,14 @@ def _process_bitrix_deal_phone_lookup_task(
             agent_visible=True,
         )
         return handoff_automation_task_to_agent_fn(db, ticket, button, external_chat_id, notify_client)
+    if not _is_phone_payload_allowed(lookup.phone):
+        append_system_message_fn(
+            db,
+            ticket,
+            f"Bitrix lookup вернул недопустимый формат телефона: {lookup.phone!r}. Заявка передана сотруднику.",
+            agent_visible=True,
+        )
+        return handoff_automation_task_to_agent_fn(db, ticket, button, external_chat_id, notify_client)
 
     append_system_message_fn(
         db,
@@ -156,3 +171,101 @@ def _process_bitrix_deal_phone_lookup_task(
         "external_chat_id": external_chat_id,
         "automation_completed": True,
     }
+
+
+def resolve_effective_automation_key(
+    db: Session,
+    ticket: Ticket,
+    button,
+    *,
+    button_setting_for_ticket_fn,
+) -> str | None:
+    row = button_setting_for_ticket_fn(db, ticket)
+    if row is not None and bool(getattr(row, "automation_overridden", False)):
+        return (getattr(row, "automation_key", None) or "").strip() or None
+    return (getattr(button, "automation_key", None) or "").strip() or None
+
+
+def process_collecting_ticket_automation(
+    db: Session,
+    ticket: Ticket,
+    button,
+    client_body: str,
+    telegram_message_id: str | None,
+    attachment_data: dict | None,
+    *,
+    attachment_too_large: bool,
+    external_chat_id: str,
+    notify_client: bool,
+    append_system_message_fn,
+    append_client_message_fn,
+    store_telegram_attachment_fn,
+    remove_client_close_button_fn,
+    send_message_fn,
+    too_large_attachment_system_text_fn,
+    send_too_large_attachment_client_messages_fn,
+    button_setting_for_ticket_fn,
+    append_button_system_text_fn,
+    ready_ticket_for_distribution_fn,
+) -> dict | None:
+    if button is None:
+        return None
+
+    effective_automation_key = resolve_effective_automation_key(
+        db,
+        ticket,
+        button,
+        button_setting_for_ticket_fn=button_setting_for_ticket_fn,
+    )
+    if not effective_automation_key:
+        return None
+
+    if effective_automation_key == BITRIX_LOOKUP_AUTOMATION_KEY:
+        if attachment_too_large:
+            append_system_message_fn(
+                db,
+                ticket,
+                too_large_attachment_system_text_fn(attachment_data),
+                agent_visible=True,
+            )
+            send_too_large_attachment_client_messages_fn(
+                db,
+                ticket,
+                external_chat_id,
+                attachment_data,
+                notify_client=notify_client,
+            )
+            attachment_data = None
+        return _process_bitrix_deal_phone_lookup_task(
+            db=db,
+            ticket=ticket,
+            button=button,
+            client_body=client_body,
+            telegram_message_id=telegram_message_id,
+            attachment_data=attachment_data,
+            external_chat_id=external_chat_id,
+            notify_client=notify_client,
+            append_client_message_fn=append_client_message_fn,
+            store_telegram_attachment_fn=store_telegram_attachment_fn,
+            append_system_message_fn=append_system_message_fn,
+            handoff_automation_task_to_agent_fn=lambda _db, _ticket, _button, _chat_id, _notify: _handoff_automation_task_to_agent(
+                _db,
+                _ticket,
+                _button,
+                _chat_id,
+                _notify,
+                append_button_system_text_fn=append_button_system_text_fn,
+                ready_ticket_for_distribution_fn=ready_ticket_for_distribution_fn,
+                send_message_fn=send_message_fn,
+            ),
+            remove_client_close_button_fn=remove_client_close_button_fn,
+            send_message_fn=send_message_fn,
+        )
+
+    append_system_message_fn(
+        db,
+        ticket,
+        f"Автоматизация не найдена или недоступна: {effective_automation_key}. Заявка передана сотруднику.",
+        agent_visible=True,
+    )
+    return None

@@ -65,9 +65,7 @@ from ..services.telegram_menu_flow import (
     _store_menu_message_id,
 )
 from ..services.telegram_automation import (
-    BITRIX_LOOKUP_AUTOMATION_KEY,
-    _handoff_automation_task_to_agent as _handoff_automation_task_to_agent_service,
-    _process_bitrix_deal_phone_lookup_task as _process_bitrix_deal_phone_lookup_task_service,
+    process_collecting_ticket_automation,
 )
 from ..services.telegram_attachment_policy import (
     FORBIDDEN_ATTACHMENT_TEXT,
@@ -1713,15 +1711,6 @@ def _resolve_effective_client_text(db: Session, ticket: Ticket, button: ButtonSp
     return (button.text or "").strip() or None
 
 
-def _resolve_effective_automation_key(db: Session, ticket: Ticket, button: ButtonSpec) -> str | None:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and bool(row.automation_overridden):
-            return (row.automation_key or "").strip() or None
-    return (button.automation_key or "").strip() or None
-
-
 def _render_client_text(db: Session, ticket: Ticket, button: ButtonSpec, fallback: str) -> str:
     effective = _resolve_effective_client_text(db, ticket, button)
     if effective:
@@ -1955,25 +1944,6 @@ def _on_group_parent_assigned(db: Session, ticket: Ticket, agent: User) -> None:
 
 
 set_group_parent_assigned_hook(_on_group_parent_assigned)
-
-
-def _handoff_automation_task_to_agent(
-    db: Session,
-    ticket: Ticket,
-    button: ButtonSpec | None,
-    external_chat_id: str,
-    notify_client: bool,
-):
-    return _handoff_automation_task_to_agent_service(
-        db,
-        ticket,
-        button,
-        external_chat_id,
-        notify_client,
-        append_button_system_text_fn=_store_button_system_text,
-        ready_ticket_for_distribution_fn=_ready_ticket_for_distribution,
-        send_message_fn=send_message,
-    )
 
 def _process_menu_callback(
     db: Session,
@@ -2604,46 +2574,29 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             f"btn:{collecting_ticket.button_config_key or ''}",
             _menu_name_for_ticket_client(db, collecting_ticket),
         )
-        effective_automation_key = _resolve_effective_automation_key(db, collecting_ticket, button) if button is not None else None
-        if button is not None and effective_automation_key == BITRIX_LOOKUP_AUTOMATION_KEY:
-            if attachment_too_large:
-                append_system_message(
-                    db,
-                    collecting_ticket,
-                    too_large_attachment_system_text(attachment_data),
-                    agent_visible=True,
-                )
-                send_too_large_attachment_client_messages(
-                    db,
-                    collecting_ticket,
-                    external_chat_id,
-                    attachment_data,
-                    notify_client=notify_client,
-                )
-                attachment_data = None
-            return _process_bitrix_deal_phone_lookup_task_service(
-                db=db,
-                ticket=collecting_ticket,
-                button=button,
-                client_body=client_body,
-                telegram_message_id=telegram_message_id,
-                attachment_data=attachment_data,
-                external_chat_id=external_chat_id,
-                notify_client=notify_client,
-                append_client_message_fn=_append_client_message,
-                store_telegram_attachment_fn=_store_telegram_attachment,
-                append_system_message_fn=append_system_message,
-                handoff_automation_task_to_agent_fn=_handoff_automation_task_to_agent,
-                remove_client_close_button_fn=_remove_client_close_button,
-                send_message_fn=send_message,
-            )
-        if button is not None and effective_automation_key:
-            append_system_message(
-                db,
-                collecting_ticket,
-                f"Автоматизация не найдена или недоступна: {effective_automation_key}. Заявка передана сотруднику.",
-                agent_visible=True,
-            )
+        automation_result = process_collecting_ticket_automation(
+            db=db,
+            ticket=collecting_ticket,
+            button=button,
+            client_body=client_body,
+            telegram_message_id=telegram_message_id,
+            attachment_data=attachment_data,
+            attachment_too_large=attachment_too_large,
+            external_chat_id=external_chat_id,
+            notify_client=notify_client,
+            append_system_message_fn=append_system_message,
+            append_client_message_fn=_append_client_message,
+            store_telegram_attachment_fn=_store_telegram_attachment,
+            remove_client_close_button_fn=_remove_client_close_button,
+            send_message_fn=send_message,
+            too_large_attachment_system_text_fn=too_large_attachment_system_text,
+            send_too_large_attachment_client_messages_fn=send_too_large_attachment_client_messages,
+            button_setting_for_ticket_fn=_button_setting_for_ticket,
+            append_button_system_text_fn=_store_button_system_text,
+            ready_ticket_for_distribution_fn=_ready_ticket_for_distribution,
+        )
+        if automation_result is not None:
+            return automation_result
         client_message = None
         if client_body or not attachment_too_large:
             client_message = _append_client_message(db, collecting_ticket, client_body, telegram_message_id)
