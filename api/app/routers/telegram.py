@@ -47,6 +47,13 @@ from ..services.assignment import choose_online_agent
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
+from ..services.telegram_client_close import (
+    client_can_close_ticket,
+    close_active_ticket_for_contact,
+    process_client_close_callback,
+    remove_client_close_button,
+    store_client_close_button,
+)
 from ..services.auto_close import refresh_ticket_auto_close_timer
 from ..services.telegram_attachments import (
     _attachment_extension,
@@ -249,14 +256,14 @@ def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSp
     if fixed_assignee is not None:
         _apply_button_creation_flags(db, ticket)
         if ticket.workflow_type == TicketWorkflowType.TASK.value:
-            _remove_client_close_button(db, ticket)
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         return fixed_assignee
 
     forced_assignee = _try_forced_assignment(db, ticket, button)
     if forced_assignee is not None:
         _apply_button_creation_flags(db, ticket)
         if ticket.workflow_type == TicketWorkflowType.TASK.value:
-            _remove_client_close_button(db, ticket)
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         return forced_assignee
 
     assignee = choose_online_agent(db, ticket.company_id)
@@ -267,49 +274,11 @@ def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSp
     if assign_ticket_to_agent(db, ticket, assignee, notify_client=False):
         _apply_button_creation_flags(db, ticket)
         if ticket.workflow_type == TicketWorkflowType.TASK.value:
-            _remove_client_close_button(db, ticket)
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         return assignee
     append_system_message(db, ticket, "На распределении")
     _apply_button_creation_flags(db, ticket)
     return None
-
-def _store_client_close_button(ticket: Ticket, response: dict):
-    message_id = _response_message_id(response)
-    if message_id is not None:
-        ticket.client_close_message_id = message_id
-
-
-def _remove_client_close_button(db: Session, ticket: Ticket):
-    if not ticket.client_close_message_id:
-        return
-    contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
-    if contact is None:
-        ticket.client_close_message_id = None
-        return
-    try:
-        remove_inline_keyboard(contact.external_chat_id, int(ticket.client_close_message_id))
-    except Exception:
-        pass
-    ticket.client_close_message_id = None
-
-
-def _has_agent_message(db: Session, ticket: Ticket) -> bool:
-    return db.execute(
-        select(TicketMessage.id)
-        .where(and_(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.AGENT.value))
-        .limit(1)
-    ).first() is not None
-
-
-def _client_can_close_ticket(db: Session, ticket: Ticket) -> bool:
-    if ticket.status == TicketStatus.CLOSED.value:
-        return False
-    if ticket.workflow_type == TicketWorkflowType.TASK.value:
-        return ticket.assignee_id is None
-    if ticket.workflow_type == TicketWorkflowType.AUTO.value:
-        return ticket.assignee_id is None
-    return not _has_agent_message(db, ticket)
-
 
 def _complete_auto_ticket(db: Session, ticket: Ticket, external_chat_id: str | None, notify_client: bool):
     append_system_message(db, ticket, "Автоматическая заявка обработана системой")
@@ -1225,38 +1194,6 @@ def _handle_edited_client_message(
     return ticket
 
 
-def _close_active_ticket_for_contact(
-    db: Session,
-    contact: TelegramContact,
-    *,
-    fallback_message_id: int | None = None,
-) -> bool:
-    ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id) or _collecting_ticket_for_client(
-        db,
-        contact.company_id,
-        contact.client_id,
-    )
-    if ticket is None:
-        return False
-
-    ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    if ticket.intake_state == TicketIntakeState.COLLECTING.value:
-        ticket.intake_state = TicketIntakeState.CANCELLED.value
-    ticket.updated_at = datetime.utcnow()
-    _remove_menu_keyboard(
-        db,
-        ticket,
-        fallback_chat_id=contact.external_chat_id,
-        fallback_message_id=fallback_message_id,
-    )
-    _remove_client_close_button(db, ticket)
-
-    append_system_message(db, ticket, "Обращение закрыто клиентом через /close")
-    return True
-
 def _get_or_create_contact_from_user(
     db: Session,
     company_id: str,
@@ -2124,14 +2061,14 @@ def _process_problem_type_callback(
             if callback_id:
                 answer_callback_query(callback_id, "\u0423 \u0412\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435")
             _safe_delete_message(external_chat_id, message_id if isinstance(message_id, int) else None)
-            markup = client_close_markup() if _client_can_close_ticket(db, active_ticket) else None
+            markup = client_close_markup() if client_can_close_ticket(db, active_ticket) else None
             response = send_message(
                 external_chat_id,
                 "\u0423 \u0412\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435. \u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435, \u0438 \u043e\u043d\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u0441\u044f \u0432 \u0442\u0435\u043a\u0443\u0449\u0443\u044e \u0437\u0430\u044f\u0432\u043a\u0443.",
                 reply_markup=markup,
             )
             if markup is not None:
-                _store_client_close_button(active_ticket, response)
+                store_client_close_button(active_ticket, response, response_message_id_fn=_response_message_id)
                 db.commit()
         return {"ok": True, "ticket_id": active_ticket.id, "already_active": True}
 
@@ -2207,7 +2144,7 @@ def _process_problem_type_callback(
                 parse_mode=task_client_parse_mode,
                 reply_markup=client_close_markup(),
             )
-            _store_client_close_button(collecting_ticket, response)
+            store_client_close_button(collecting_ticket, response, response_message_id_fn=_response_message_id)
             db.commit()
         return {"ok": True, "ticket_id": collecting_ticket.id, "task_pending": True, "button": button.label}
 
@@ -2227,78 +2164,12 @@ def _process_problem_type_callback(
             parse_mode=ticket_client_parse_mode,
             reply_markup=client_close_markup(),
         )
-        _store_client_close_button(ticket, response)
+        store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
         db.commit()
         if assigned_agent is not None and ticket.workflow_type != TicketWorkflowType.TASK.value:
             notify_client_about_assignee(db, ticket, assigned_agent)
 
     return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
-
-def _process_client_close_callback(
-    db: Session,
-    payload: dict,
-    callback: dict,
-    notify_client: bool,
-) -> dict:
-    callback_id = str(callback.get("id", ""))
-    message = callback.get("message") or {}
-    chat = message.get("chat") or {}
-    from_user = callback.get("from") or {}
-    external_chat_id = str(chat.get("id", ""))
-    message_id = message.get("message_id")
-
-    db.add(
-        TelegramUpdate(
-            id=str(uuid.uuid4()),
-            update_id=str(payload.get("update_id")),
-            external_chat_id=external_chat_id or None,
-            payload_json=json.dumps(payload, ensure_ascii=False),
-            created_at=datetime.utcnow(),
-        )
-    )
-
-    company = _first_company(db)
-    if company is None or not external_chat_id:
-        db.commit()
-        return {"ok": True, "ignored": "invalid_client_close"}
-
-    contact = _get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
-    ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id) or _active_ticket_for_client(
-        db,
-        contact.company_id,
-        contact.client_id,
-    )
-    if ticket is None:
-        db.commit()
-        if notify_client and callback_id:
-            answer_callback_query(callback_id, "Активное обращение не найдено")
-        return {"ok": True, "closed": False}
-
-    if not _client_can_close_ticket(db, ticket):
-        db.commit()
-        if notify_client and callback_id:
-            answer_callback_query(callback_id, "Это обращение уже нельзя закрыть этой кнопкой")
-        return {"ok": True, "closed": False, "ticket_id": ticket.id}
-
-    ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    ticket.intake_state = TicketIntakeState.CANCELLED.value if ticket.intake_state == TicketIntakeState.COLLECTING.value else ticket.intake_state
-    ticket.client_close_message_id = None
-    _remove_menu_keyboard(db, ticket, fallback_chat_id=external_chat_id, fallback_message_id=message_id if isinstance(message_id, int) else None)
-    append_system_message(db, ticket, "Обращение закрыто клиентом через кнопку")
-    db.commit()
-
-    if notify_client:
-        if callback_id:
-            answer_callback_query(callback_id, "Обращение закрыто")
-        if isinstance(message_id, int):
-            _safe_remove_inline_keyboard(external_chat_id, message_id)
-        send_message(external_chat_id, TICKET_CLOSED_CLIENT_TEXT)
-
-    return {"ok": True, "closed": True, "ticket_id": ticket.id}
-
 
 def _process_first_connection_start(
     db: Session,
@@ -2327,7 +2198,7 @@ def _process_first_connection_start(
 
     if notify_client:
         response = send_message(external_chat_id, FIRST_CONNECTION_CLIENT_TEXT, reply_markup=client_close_markup())
-        _store_client_close_button(ticket, response)
+        store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
         db.commit()
         if assigned_agent is not None:
             notify_client_about_assignee(db, ticket, assigned_agent)
@@ -2471,7 +2342,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                         parse_mode=task_client_parse_mode,
                         reply_markup=client_close_markup(),
                     )
-                    _store_client_close_button(collecting_ticket, response)
+                    store_client_close_button(collecting_ticket, response, response_message_id_fn=_response_message_id)
                     db.commit()
                 return {"ok": True, "ticket_id": collecting_ticket.id, "task_pending": True, "button": button.label}
 
@@ -2490,14 +2361,30 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     parse_mode=ticket_client_parse_mode,
                     reply_markup=client_close_markup(),
                 )
-                _store_client_close_button(ticket, response)
+                store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
                 db.commit()
                 if assigned_agent is not None and ticket.workflow_type != TicketWorkflowType.TASK.value:
                     notify_client_about_assignee(db, ticket, assigned_agent)
             return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
 
         if data == "client_close":
-            return _process_client_close_callback(db, payload, callback, notify_client)
+            return process_client_close_callback(
+                db,
+                payload,
+                callback,
+                notify_client,
+                first_company_fn=_first_company,
+                get_or_create_contact_from_user_fn=_get_or_create_contact_from_user,
+                collecting_ticket_for_client_fn=_collecting_ticket_for_client,
+                active_ticket_for_client_fn=_active_ticket_for_client,
+                client_can_close_ticket_fn=client_can_close_ticket,
+                remove_menu_keyboard_fn=_remove_menu_keyboard,
+                append_system_message_fn=append_system_message,
+                answer_callback_query_fn=answer_callback_query,
+                safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
+                send_message_fn=send_message,
+                ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+            )
         menu_key = _menu_key_from_callback(db, data, None)
         if menu_key is not None:
             return _process_menu_callback(db, payload, callback, notify_client, menu_key)
@@ -2577,7 +2464,18 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     if text.startswith("/close"):
         close_fallback_message_id = message.get("message_id") if isinstance(message.get("message_id"), int) else None
-        closed = _close_active_ticket_for_contact(db, contact, fallback_message_id=close_fallback_message_id)
+        closed = close_active_ticket_for_contact(
+            db,
+            contact,
+            active_ticket_for_client_fn=_active_ticket_for_client,
+            collecting_ticket_for_client_fn=_collecting_ticket_for_client,
+            remove_menu_keyboard_fn=_remove_menu_keyboard,
+            remove_client_close_button_fn=lambda _db, _ticket: remove_client_close_button(
+                _db, _ticket, remove_inline_keyboard_fn=remove_inline_keyboard
+            ),
+            append_system_message_fn=append_system_message,
+            fallback_message_id=close_fallback_message_id,
+        )
         db.commit()
         if notify_client:
             close_text = TICKET_CLOSED_CLIENT_TEXT if closed else NO_ACTIVE_TICKET_TEXT
@@ -2602,14 +2500,14 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     _send_problem_menu_for_contact(db, contact, collecting_ticket)
                     db.commit()
             else:
-                markup = client_close_markup() if _client_can_close_ticket(db, ticket) else None
+                markup = client_close_markup() if client_can_close_ticket(db, ticket) else None
                 response = send_message(
                     external_chat_id,
                     "У Вас уже есть активное обращение. Напишите сообщение, и оно добавится в текущую заявку.",
                     reply_markup=markup,
                 )
                 if markup is not None:
-                    _store_client_close_button(ticket, response)
+                    store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
                     db.commit()
         return {"ok": True, "command": "start", "ticket_id": ticket.id if ticket else None}
 
@@ -2621,7 +2519,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             collecting_ticket.closed_at = datetime.utcnow()
             append_system_message(db, collecting_ticket, "\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: \u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0442\u0435\u043a\u0441\u0442 \u0432\u043e\u0432\u0440\u0435\u043c\u044f")
             _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id)
-            _remove_client_close_button(db, collecting_ticket)
+            remove_client_close_button(db, collecting_ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
             db.commit()
             if notify_client:
                 send_message(external_chat_id, TASK_EXPIRED_TEXT)
@@ -2760,7 +2658,7 @@ def cleanup_expired_task_intents(db: Session) -> int:
         else:
             append_system_message(db, ticket, "Создание заявки отменено: клиент не выбрал конечный пункт меню вовремя")
         _remove_menu_keyboard(db, ticket, fallback_chat_id=contact.external_chat_id if contact is not None else None)
-        _remove_client_close_button(db, ticket)
+        remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         if contact is not None:
             timeout_text = TASK_EXPIRED_TEXT if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_TEXT
             send_message(contact.external_chat_id, timeout_text)
