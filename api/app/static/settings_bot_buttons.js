@@ -1,4 +1,4 @@
-﻿const el = {
+const el = {
   statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   pageTitle: document.getElementById("botButtonsPageTitle"),
@@ -198,6 +198,26 @@ function currentLevel() {
   return BotButtonsLevelView.currentLevel(levelViewCtx());
 }
 
+async function openParentTaskEditor() {
+  const level = currentLevel();
+  if (!level || String(level.kind || "") !== "group_task_parent") return;
+  const technicalKey = String(level.technicalKey || "").trim();
+  if (!technicalKey) {
+    alert("Не удалось определить технический ключ материнской задачи.");
+    return;
+  }
+  if (!confirmDiscard()) return;
+  discardEditorChanges();
+  await openEditor({
+    label: level.label || "Групповая задача",
+    kind: "terminal",
+    technical_key: technicalKey,
+    workflow_type: level.workflowType || "group_task",
+    full_path: level.fullPath || level.label || "",
+    is_enabled: true,
+  });
+}
+
 function isLayoutEditableLevel(level) {
   return BotButtonsLevelView.isLayoutEditableLevel(levelViewCtx(), level);
 }
@@ -268,6 +288,7 @@ function levelViewCtx() {
     confirmDiscard,
     discardEditorChanges,
     openEditor,
+    openParentTaskEditor,
     createLevelItem,
     refreshMenuStructure,
     reloadMenuMeta,
@@ -767,6 +788,8 @@ function handleBack() {
   if (state.view === "level") {
     if (!confirmDiscard()) return;
     discardEditorChanges();
+    state.layoutEditMode = false;
+    state.layoutDraftRows = [];
     if (state.levelStack.length > 1) {
       state.levelStack.pop();
       state.preview = {

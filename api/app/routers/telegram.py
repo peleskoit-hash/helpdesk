@@ -1703,12 +1703,21 @@ def _resolve_effective_confirmation(ticket: Ticket, button: ButtonSpec, db: Sess
     return bool(txt), txt
 
 def _resolve_effective_client_text(db: Session, ticket: Ticket, button: ButtonSpec) -> str | None:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
+    keys: list[str] = []
+    instruction_key = (ticket.instruction_button_key or "").strip()
+    button_config_key = (ticket.button_config_key or "").strip()
+    button_key = (button.key or "").strip()
+    for candidate in (instruction_key, button_config_key, button_key):
+        if candidate and candidate not in keys:
+            keys.append(candidate)
+    for key in keys:
         row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and bool(row.client_text_overridden):
-            return (row.client_text or "").strip() or None
-    return (button.text or "").strip() or None
+        if row is None or not bool(row.client_text_overridden):
+            continue
+        raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
+        return raw if raw.strip() else None
+    raw_txt = (button.text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return raw_txt if raw_txt.strip() else None
 
 
 def _render_client_text(db: Session, ticket: Ticket, button: ButtonSpec, fallback: str) -> str:

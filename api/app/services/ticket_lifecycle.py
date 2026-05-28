@@ -167,7 +167,10 @@ def _format_group_task_completion_text(
     answers: list[str],
     *,
     subject_text: str | None = None,
+    override_text: str | None = None,
 ) -> str:
+    if override_text and override_text.strip():
+        return override_text.strip()
     created_at = ticket.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
@@ -268,6 +271,7 @@ def finalize_group_parent_if_ready(
     send_to_telegram_client_fn,
     send_attachment_to_telegram_client_fn,
     add_message_fn,
+    resolve_group_parent_client_text_fn=None,
 ) -> bool:
     if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
         return False
@@ -297,10 +301,21 @@ def finalize_group_parent_if_ready(
     if parent_client_message is not None:
         answers, attachments = _group_parent_children_payload(db, parent)
         subject_text = resolve_ticket_subject(db, parent)
+        override_text = (
+            resolve_group_parent_client_text_fn(db, parent)
+            if resolve_group_parent_client_text_fn is not None
+            else None
+        )
         send_to_telegram_client_fn(
             db,
             parent,
-            _format_group_task_completion_text(parent, parent_client_message, answers, subject_text=subject_text),
+            _format_group_task_completion_text(
+                parent,
+                parent_client_message,
+                answers,
+                subject_text=subject_text,
+                override_text=override_text,
+            ),
             required=False,
         )
         for attachment in attachments:
@@ -322,6 +337,7 @@ def notify_group_parent_completion_before_delete(
     first_client_message_fn,
     send_to_telegram_client_fn,
     send_attachment_to_telegram_client_fn,
+    resolve_group_parent_client_text_fn=None,
 ) -> None:
     if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
         return
@@ -332,10 +348,21 @@ def notify_group_parent_completion_before_delete(
         return
     answers, attachments = _group_parent_children_payload(db, parent)
     subject_text = resolve_ticket_subject(db, parent)
+    override_text = (
+        resolve_group_parent_client_text_fn(db, parent)
+        if resolve_group_parent_client_text_fn is not None
+        else None
+    )
     send_to_telegram_client_fn(
         db,
         parent,
-        _format_group_task_completion_text(parent, parent_client_message, answers, subject_text=subject_text),
+        _format_group_task_completion_text(
+            parent,
+            parent_client_message,
+            answers,
+            subject_text=subject_text,
+            override_text=override_text,
+        ),
         required=False,
     )
     for attachment in attachments:
@@ -458,6 +485,7 @@ def close_ticket_by_actor(
     send_attachment_to_telegram_client_fn,
     onsite_close_reminder_text: str,
     ticket_closed_client_text: str,
+    resolve_group_parent_client_text_fn=None,
 ) -> str:
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     is_admin_action = is_admin_fn(actor)
@@ -470,6 +498,7 @@ def close_ticket_by_actor(
             send_to_telegram_client_fn=send_to_telegram_client_fn,
             send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
             add_message_fn=add_message_fn,
+            resolve_group_parent_client_text_fn=resolve_group_parent_client_text_fn,
             **kwargs,
         )
 
@@ -547,10 +576,21 @@ def close_ticket_by_actor(
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
             subject_text = resolve_ticket_subject(db, ticket)
+            override_text = (
+                resolve_group_parent_client_text_fn(db, ticket)
+                if resolve_group_parent_client_text_fn is not None
+                else None
+            )
             send_to_telegram_client_fn(
                 db,
                 ticket,
-                _format_group_task_completion_text(ticket, client_message, answers, subject_text=subject_text),
+                _format_group_task_completion_text(
+                    ticket,
+                    client_message,
+                    answers,
+                    subject_text=subject_text,
+                    override_text=override_text,
+                ),
                 required=False,
             )
             for attachment in attachments:

@@ -1,4 +1,4 @@
-﻿from datetime import datetime, time
+from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import uuid
@@ -37,6 +37,7 @@ from ..services.ticket_attachments import (
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
+from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, reply_to_ticket
 from ..services.ticket_list import build_ticket_counts, list_special_tickets, list_tickets_paginated
@@ -304,6 +305,62 @@ def _instruction_for_ticket(db: Session, ticket: Ticket) -> tuple[str | None, st
     return row.button_label, text
 
 
+def _group_parent_client_text_override(db: Session, ticket: Ticket) -> str | None:
+    keys: list[str] = []
+    instruction_key = (ticket.instruction_button_key or "").strip()
+    button_key = (ticket.button_config_key or "").strip()
+    if instruction_key:
+        keys.append(instruction_key)
+    if button_key and button_key not in keys:
+        keys.append(button_key)
+    if not keys:
+        return None
+
+    rows = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key.in_(keys))).scalars().all()
+    rows_by_key = {row.button_key: row for row in rows}
+    for key in keys:
+        row = rows_by_key.get(key)
+        if row is None or not bool(row.client_text_overridden):
+            continue
+        raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not raw.strip():
+            return None
+        rendered = render_template_text(raw, db, ticket=ticket) or raw
+        return rendered.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Fallback for group parent rows: in hybrid mode instruction_button_key can be empty
+    # and button_config_key may differ from the DB settings key for parent group_task.
+    if (
+        (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TASK.value
+        and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.GROUP_PARENT.value
+    ):
+        menu_hint = ""
+        if button_key and "|" in button_key:
+            menu_hint = button_key.split("|", 1)[0].strip()
+        subject = (ticket.subject or "").strip()
+        if subject:
+            stmt = select(BotButtonSetting).where(
+                and_(
+                    BotButtonSetting.workflow_type == "group_task",
+                    BotButtonSetting.currently_present.is_(True),
+                    BotButtonSetting.is_archived.is_(False),
+                    BotButtonSetting.button_label == subject,
+                )
+            )
+            if menu_hint:
+                stmt = stmt.where(BotButtonSetting.menu_type == menu_hint)
+            candidates = db.execute(stmt).scalars().all()
+            for row in candidates:
+                if not bool(row.client_text_overridden):
+                    continue
+                raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
+                if not raw.strip():
+                    return None
+                rendered = render_template_text(raw, db, ticket=ticket) or raw
+                return rendered.replace("\r\n", "\n").replace("\r", "\n")
+    return None
+
+
 def _remove_client_close_button(db: Session, ticket: Ticket):
     if not ticket.client_close_message_id:
         return
@@ -523,6 +580,7 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
             send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
             onsite_close_reminder_text=ONSITE_CLOSE_REMINDER_TEXT,
             ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+            resolve_group_parent_client_text_fn=_group_parent_client_text_override,
         )
         if result == "already_closed":
             already_closed += 1
@@ -605,6 +663,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                     send_to_telegram_client_fn=_send_to_telegram_client,
                     send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
                     add_message_fn=_add_message,
+                    resolve_group_parent_client_text_fn=_group_parent_client_text_override,
                 )
         deleted += 1
     db.commit()
@@ -1190,6 +1249,7 @@ def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Dep
         send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
         onsite_close_reminder_text=ONSITE_CLOSE_REMINDER_TEXT,
         ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+        resolve_group_parent_client_text_fn=_group_parent_client_text_override,
     )
     db.commit()
     return {"ok": True}

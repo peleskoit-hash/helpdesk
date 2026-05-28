@@ -14,6 +14,7 @@ from ..services.button_config import (
     BUTTON_CONFIG_DIR,
     find_button,
     list_terminal_buttons,
+    load_button_config,
 )
 from ..services.telegram_automation import get_automation_registry
 
@@ -86,54 +87,60 @@ def _require_admin(user: CurrentUser) -> None:
 
 
 def _fallback_system_text(menu_type: str, button_key: str) -> str | None:
-    try:
-        refs = list_terminal_buttons(menu_type)
-    except Exception:
-        return None
-    source_button_key = None
-    for ref in refs:
-        if ref.technical_key == button_key:
-            source_button_key = ref.source_button_key
-            break
-    if not source_button_key:
-        return None
-    button = find_button(source_button_key)
+    button = _fallback_source_button(menu_type, button_key)
     if button is None:
         return None
     return button.system_text
 
 
-def _fallback_client_text(menu_type: str, button_key: str) -> str | None:
-    try:
-        refs = list_terminal_buttons(menu_type)
-    except Exception:
+def _fallback_source_button(menu_type: str, button_key: str):
+    menu_name = (menu_type or "").strip()
+    key = (button_key or "").strip()
+    if not menu_name or not key:
         return None
+    try:
+        refs = list_terminal_buttons(menu_name)
+    except Exception:
+        refs = ()
     source_button_key = None
     for ref in refs:
-        if ref.technical_key == button_key:
+        if ref.technical_key == key:
             source_button_key = ref.source_button_key
             break
-    if not source_button_key:
-        return None
-    button = find_button(source_button_key)
+    if source_button_key:
+        return find_button(source_button_key)
+
+    # group_task parent is not part of list_terminal_buttons, resolve it from encoded technical key
+    # format: {menu_name}|group_task|{label_or_path}
+    parts = key.split("|", 2)
+    if len(parts) == 3 and parts[0] == menu_name and parts[1] == "group_task":
+        target = parts[2]
+        try:
+            config = load_button_config(menu_name)
+            root = config.menus.get(config.root_menu_key)
+            if root is None:
+                return None
+            for row in root.rows:
+                for bkey in row:
+                    button = config.buttons.get(bkey)
+                    if button is None or button.kind != "group_task":
+                        continue
+                    if button.label == target:
+                        return button
+        except Exception:
+            return None
+    return None
+
+
+def _fallback_client_text(menu_type: str, button_key: str) -> str | None:
+    button = _fallback_source_button(menu_type, button_key)
     if button is None:
         return None
     return button.text
 
 
 def _fallback_automation_key(menu_type: str, button_key: str) -> str | None:
-    try:
-        refs = list_terminal_buttons(menu_type)
-    except Exception:
-        return None
-    source_button_key = None
-    for ref in refs:
-        if ref.technical_key == button_key:
-            source_button_key = ref.source_button_key
-            break
-    if not source_button_key:
-        return None
-    button = find_button(source_button_key)
+    button = _fallback_source_button(menu_type, button_key)
     if button is None:
         return None
     value = (button.automation_key or "").strip()
@@ -641,7 +648,11 @@ def save_bot_button_instruction(
             _error(422, "fixed_assignee_role_invalid", "Можно выбрать только admin/agent/trainee")
 
     text_value = (payload.instruction_text or "").strip() or None
-    client_text_value = (payload.client_text or "").strip() or None if payload.client_text is not None else None
+    if payload.client_text is not None:
+        _raw_client_text = str(payload.client_text).replace("\r\n", "\n").replace("\r", "\n")
+        client_text_value = _raw_client_text if _raw_client_text.strip() else None
+    else:
+        client_text_value = None
     system_value = (payload.system_text or "").strip() or None if payload.system_text is not None else None
     automation_key_value = (payload.automation_key or "").strip() or None if payload.automation_key is not None else None
     if automation_key_value is not None:
