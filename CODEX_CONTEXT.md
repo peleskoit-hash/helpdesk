@@ -1,4 +1,4 @@
-﻿# Codex Context
+# Codex Context
 
 PROJECT_ROOT:
 C:\Users\ES\Downloads\Source\helpdesk
@@ -22,8 +22,17 @@ WORKFLOW_SHORT_RULES:
 
 GIT_HOOKS:
 - Включение project hooks: `git config core.hooksPath .githooks`
-- Назначение pre-commit hook: проверка mojibake (`tools/check_mojibake.py`) перед commit.
+- Назначение pre-commit hook: двойная защита перед commit:
+  - `tools/check_staged_encoding.py` (только staged файлы: UTF-8, без BOM, anti-mojibake).
+  - `tools/check_mojibake.py` (проектная проверка по каталогу).
 - Если hook блокирует commit: сначала исправить причину (битую кириллицу), а не отключать проверку.
+
+POWERSHELL_UTF8:
+- Для текущей сессии PowerShell (Windows) перед массовыми текстовыми правками:
+  - `[Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false)`
+  - `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`
+  - `$OutputEncoding = [System.Text.UTF8Encoding]::new($false)`
+- Для записи файлов в shell всегда указывать UTF-8 явно (`-Encoding utf8`) или использовать `apply_patch`.
 
 NOTE:
 - Не использовать устаревшие практики header-auth как “временную” auth-модель: в проекте используется session auth c login/logout.
