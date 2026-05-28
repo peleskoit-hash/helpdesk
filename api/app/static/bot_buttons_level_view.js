@@ -58,8 +58,10 @@
       })
       .filter((row) => (row.buttons || []).length > 0);
     const removedCount = Array.isArray(ctx.state.menuStructure?.removed_items) ? ctx.state.menuStructure.removed_items.length : 0;
-    const canEditLayout = isLayoutEditableLevel(ctx, current);
-    const addButtonLabel = String(current?.kind || "") === "group_task_parent" ? "Добавить child task" : "Добавить";
+    const canEditLayoutBase = isLayoutEditableLevel(ctx, current);
+    const isGroupParentLevel = String(current?.kind || "") === "group_task_parent";
+    const addButtonLabel = isGroupParentLevel ? "Создать child task" : "Добавить";
+    const canEditLayout = canEditLayoutBase && !isGroupParentLevel;
     const toolbarHtml = canEditLayout
       ? `
         <div class="bot-layout-toolbar">
@@ -67,10 +69,14 @@
             ? `<button type="button" id="saveLayoutBtn" class="action action-primary">Сохранить раскладку</button>
                <button type="button" id="cancelLayoutBtn" class="action">Отмена</button>`
             : `<button type="button" id="editLayoutBtn" class="action">Изменить порядок</button>
+               ${isGroupParentLevel ? `<button type="button" id="editParentTaskBtn" class="action">Редактирование материнской задачи</button>` : ""}
                <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>`}
         </div>
       `
-      : `<div class="bot-layout-toolbar"><button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button></div>`;
+      : `<div class="bot-layout-toolbar">
+           ${isGroupParentLevel ? `<button type="button" id="editParentTaskBtn" class="action">Редактирование материнской задачи</button>` : ""}
+           <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>
+         </div>`;
 
     const rowsForRender = ctx.state.layoutEditMode ? (ctx.state.layoutDraftRows || []) : visibleRows;
 
@@ -155,7 +161,15 @@
         ctx.loadPreviewItem(node);
         const nextRows = Array.isArray(node.children_rows) ? node.children_rows : [];
         if (nextRows.length > 0) {
-          ctx.state.levelStack.push({ label: node.label, rows: nextRows, levelKey: node.level_key || null, fullPath: node.full_path || "", kind: node.kind || "" });
+          ctx.state.levelStack.push({
+            label: node.label,
+            rows: nextRows,
+            levelKey: node.level_key || null,
+            fullPath: node.full_path || "",
+            kind: node.kind || "",
+            technicalKey: node.technical_key || "",
+            workflowType: node.workflow_type || "",
+          });
           ctx.render();
           return;
         }
@@ -168,6 +182,7 @@
 
     const editLayoutBtn = document.getElementById("editLayoutBtn");
     const addLevelItemBtn = document.getElementById("addLevelItemBtn");
+    const editParentTaskBtn = document.getElementById("editParentTaskBtn");
     const cancelLayoutBtn = document.getElementById("cancelLayoutBtn");
     const saveLayoutBtn = document.getElementById("saveLayoutBtn");
     editLayoutBtn?.addEventListener("click", () => {
@@ -180,6 +195,11 @@
     });
     addLevelItemBtn?.addEventListener("click", async () => {
       await ctx.createLevelItem();
+    });
+    editParentTaskBtn?.addEventListener("click", async () => {
+      if (typeof ctx.openParentTaskEditor === "function") {
+        await ctx.openParentTaskEditor();
+      }
     });
     cancelLayoutBtn?.addEventListener("click", () => {
       ctx.state.layoutEditMode = false;
@@ -389,4 +409,3 @@
     buildArchiveRowsFromStructure,
   };
 })(window);
-

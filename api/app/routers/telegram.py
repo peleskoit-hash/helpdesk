@@ -1,4 +1,4 @@
-﻿import json
+import json
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -100,10 +100,10 @@ TASK_DESCRIPTION_REQUEST_TEXT = (
     "Опишите задачу одним сообщением.\n"
     "Если текст не будет отправлен в течение 5 минут, создание задачи будет отменено."
 )
-TASK_DESCRIPTION_TIMEOUT_MINUTES = 5
+TASK_DESCRIPTION_TIMEOUT_MINUTES = 10
 MENU_SELECTION_TIMEOUT_MINUTES = 10
 TASK_CREATED_CLIENT_TEXT = "Заявка создана и передана в работу.\n\nДля создания другой нажмите\n /start"
-TASK_EXPIRED_TEXT = "Создание задачи не было завершено вовремя, попробуйте еще раз"
+TASK_EXPIRED_TEXT = "Создание заявки было прервано т.к. текст не был написан в течении 10 мин.\n\nДля создания новой нажмите\n/start"
 AUTO_REQUEST_TEXT = (
     "Автоматическая заявка принята в обработку.\n"
     "Система обработает её автоматически."
