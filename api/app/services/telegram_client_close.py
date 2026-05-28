@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime
+
+from sqlalchemy import and_, select
+from sqlalchemy.orm import Session
+
+from ..models import (
+    MessageType,
+    TelegramContact,
+    TelegramUpdate,
+    Ticket,
+    TicketIntakeState,
+    TicketMessage,
+    TicketStatus,
+    TicketWorkflowType,
+)
+
+
+def store_client_close_button(ticket: Ticket, response: dict, *, response_message_id_fn) -> None:
+    message_id = response_message_id_fn(response)
+    if message_id is not None:
+        ticket.client_close_message_id = message_id
+
+
+def remove_client_close_button(
+    db: Session,
+    ticket: Ticket,
+    *,
+    remove_inline_keyboard_fn,
+) -> None:
+    if not ticket.client_close_message_id:
+        return
+    contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
+    if contact is None:
+        ticket.client_close_message_id = None
+        return
+    try:
+        remove_inline_keyboard_fn(contact.external_chat_id, int(ticket.client_close_message_id))
+    except Exception:
+        pass
+    ticket.client_close_message_id = None
+
+
+def has_agent_message(db: Session, ticket: Ticket) -> bool:
+    return db.execute(
+        select(TicketMessage.id)
+        .where(and_(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.AGENT.value))
+        .limit(1)
+    ).first() is not None
+
+
+def client_can_close_ticket(db: Session, ticket: Ticket) -> bool:
+    if ticket.status == TicketStatus.CLOSED.value:
+        return False
+    if ticket.workflow_type == TicketWorkflowType.TASK.value:
+        return ticket.assignee_id is None
+    if ticket.workflow_type == TicketWorkflowType.AUTO.value:
+        return ticket.assignee_id is None
+    return not has_agent_message(db, ticket)
+
+
+def close_active_ticket_for_contact(
+    db: Session,
+    contact,
+    *,
+    active_ticket_for_client_fn,
+    collecting_ticket_for_client_fn,
+    remove_menu_keyboard_fn,
+    remove_client_close_button_fn,
+    append_system_message_fn,
+    fallback_message_id: int | None = None,
+) -> bool:
+    ticket = active_ticket_for_client_fn(db, contact.company_id, contact.client_id) or collecting_ticket_for_client_fn(
+        db,
+        contact.company_id,
+        contact.client_id,
+    )
+    if ticket is None:
+        return False
+
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.closed_at = datetime.utcnow()
+    ticket.is_frozen = False
+    ticket.freeze_until = None
+    if ticket.intake_state == TicketIntakeState.COLLECTING.value:
+        ticket.intake_state = TicketIntakeState.CANCELLED.value
+    ticket.updated_at = datetime.utcnow()
+    remove_menu_keyboard_fn(
+        db,
+        ticket,
+        fallback_chat_id=contact.external_chat_id,
+        fallback_message_id=fallback_message_id,
+    )
+    remove_client_close_button_fn(db, ticket)
+    append_system_message_fn(db, ticket, "Обращение закрыто клиентом через /close")
+    return True
+
+
+def process_client_close_callback(
+    db: Session,
+    payload: dict,
+    callback: dict,
+    notify_client: bool,
+    *,
+    first_company_fn,
+    get_or_create_contact_from_user_fn,
+    collecting_ticket_for_client_fn,
+    active_ticket_for_client_fn,
+    client_can_close_ticket_fn,
+    remove_menu_keyboard_fn,
+    append_system_message_fn,
+    answer_callback_query_fn,
+    safe_remove_inline_keyboard_fn,
+    send_message_fn,
+    ticket_closed_client_text: str,
+) -> dict:
+    callback_id = str(callback.get("id", ""))
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    from_user = callback.get("from") or {}
+    external_chat_id = str(chat.get("id", ""))
+    message_id = message.get("message_id")
+
+    db.add(
+        TelegramUpdate(
+            id=str(uuid.uuid4()),
+            update_id=str(payload.get("update_id")),
+            external_chat_id=external_chat_id or None,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+    )
+
+    company = first_company_fn(db)
+    if company is None or not external_chat_id:
+        db.commit()
+        return {"ok": True, "ignored": "invalid_client_close"}
+
+    contact = get_or_create_contact_from_user_fn(db, company.id, external_chat_id, from_user)
+    ticket = collecting_ticket_for_client_fn(db, contact.company_id, contact.client_id) or active_ticket_for_client_fn(
+        db,
+        contact.company_id,
+        contact.client_id,
+    )
+    if ticket is None:
+        db.commit()
+        if notify_client and callback_id:
+            answer_callback_query_fn(callback_id, "Активное обращение не найдено")
+        return {"ok": True, "closed": False}
+
+    if not client_can_close_ticket_fn(db, ticket):
+        db.commit()
+        if notify_client and callback_id:
+            answer_callback_query_fn(callback_id, "Это обращение уже нельзя закрыть этой кнопкой")
+        return {"ok": True, "closed": False, "ticket_id": ticket.id}
+
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.closed_at = datetime.utcnow()
+    ticket.is_frozen = False
+    ticket.freeze_until = None
+    ticket.intake_state = (
+        TicketIntakeState.CANCELLED.value
+        if ticket.intake_state == TicketIntakeState.COLLECTING.value
+        else ticket.intake_state
+    )
+    ticket.client_close_message_id = None
+    remove_menu_keyboard_fn(
+        db,
+        ticket,
+        fallback_chat_id=external_chat_id,
+        fallback_message_id=message_id if isinstance(message_id, int) else None,
+    )
+    append_system_message_fn(db, ticket, "Обращение закрыто клиентом через кнопку")
+    db.commit()
+
+    if notify_client:
+        if callback_id:
+            answer_callback_query_fn(callback_id, "Обращение закрыто")
+        if isinstance(message_id, int):
+            safe_remove_inline_keyboard_fn(external_chat_id, message_id)
+        send_message_fn(external_chat_id, ticket_closed_client_text)
+
+    return {"ok": True, "closed": True, "ticket_id": ticket.id}
+
