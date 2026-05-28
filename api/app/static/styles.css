@@ -1,4 +1,4 @@
-﻿/* ===== base/layout/sidebar ===== */
+/* ===== base/layout/sidebar ===== */
 :root {
   --bg: #f4f6f8;
   --surface: #ffffff;
@@ -3701,6 +3701,88 @@ body[data-theme="dark"] .verified-no {
   display: flex;
   gap: 8px;
   padding-left: 2px;
+}
+
+.action.action-muted {
+  opacity: 0.75;
+}
+
+.bot-text-editor-dialog {
+  width: min(1100px, 88vw);
+  height: min(760px, 84vh);
+  max-height: min(760px, 84vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.bot-text-editor-dialog .modal-head,
+.bot-text-editor-dialog .modal-foot {
+  flex: 0 0 auto;
+}
+
+.bot-text-editor-dialog .modal-foot {
+  justify-content: flex-end;
+}
+
+.bot-text-editor-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.bot-text-editor-body.bot-text-editor-body-split {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.bot-text-editor-body:not(.bot-text-editor-body-split) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.bot-text-editor-textarea {
+  min-height: 0;
+  height: 100%;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.bot-telegram-preview-wrap {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: rgba(243, 246, 252, 0.65);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.bot-telegram-preview-title {
+  font-weight: 700;
+  color: #2f3d53;
+}
+
+.bot-telegram-preview {
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.bot-editor-text-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bot-editor-text-row .field-label {
+  margin: 0;
 }
 
 @media (max-width: 1100px) {

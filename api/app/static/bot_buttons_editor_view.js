@@ -1,5 +1,106 @@
 (function initBotButtonsEditorView(global) {
   const EditorView = {};
+  const TEXT_MODAL_ID = "botTextEditorModal";
+  let textModalEscHandler = null;
+
+  function escapeModalHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function textStatus(value) {
+    return String(value || "").trim() ? "Задан" : "Не задан";
+  }
+
+  function closeTextEditorModal() {
+    const modal = document.getElementById(TEXT_MODAL_ID);
+    if (modal) modal.remove();
+    if (textModalEscHandler) {
+      document.removeEventListener("keydown", textModalEscHandler);
+      textModalEscHandler = null;
+    }
+  }
+
+  function openTextEditorModal(options) {
+    closeTextEditorModal();
+    const {
+      title,
+      value,
+      onApply,
+      withTelegramPreview = false,
+      placeholder = "",
+    } = options || {};
+    const overlay = document.createElement("div");
+    overlay.id = TEXT_MODAL_ID;
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-dialog bot-text-editor-dialog" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <strong>${escapeModalHtml(title || "Редактирование текста")}</strong>
+        </div>
+        <div class="modal-body bot-text-editor-body ${withTelegramPreview ? "bot-text-editor-body-split" : ""}">
+          <textarea id="botTextEditorTextarea" class="input bot-text-editor-textarea" placeholder="${escapeModalHtml(placeholder)}">${escapeModalHtml(value || "")}</textarea>
+          ${withTelegramPreview ? `
+            <div class="bot-telegram-preview-wrap">
+              <div class="bot-telegram-preview-title">Предпросмотр Telegram</div>
+              <div id="botTelegramPreview" class="bot-telegram-preview"></div>
+            </div>
+          ` : ""}
+        </div>
+        <div class="modal-foot">
+          <button id="botTextEditorCancelBtn" type="button" class="action">Отмена</button>
+          <button id="botTextEditorApplyBtn" type="button" class="action action-primary">Применить</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const textarea = document.getElementById("botTextEditorTextarea");
+    const preview = document.getElementById("botTelegramPreview");
+    const cancelBtn = document.getElementById("botTextEditorCancelBtn");
+    const applyBtn = document.getElementById("botTextEditorApplyBtn");
+    const initialValue = String(value || "");
+    let backdropMouseDown = false;
+
+    const syncPreview = () => {
+      if (!preview || !textarea) return;
+      preview.textContent = textarea.value || "Текст не задан";
+    };
+
+    const hasUnsavedChanges = () => String(textarea?.value || "") !== initialValue;
+    const requestClose = (force = false) => {
+      if (!force && hasUnsavedChanges()) {
+        const ok = window.confirm("Есть несохранённые изменения. Закрыть окно без применения?");
+        if (!ok) return;
+      }
+      closeTextEditorModal();
+    };
+
+    textarea?.focus();
+    textarea?.setSelectionRange((textarea.value || "").length, (textarea.value || "").length);
+    textarea?.addEventListener("input", syncPreview);
+    syncPreview();
+
+    cancelBtn?.addEventListener("click", () => requestClose(false));
+    applyBtn?.addEventListener("click", () => {
+      if (typeof onApply === "function") onApply(textarea?.value || "");
+      requestClose(true);
+    });
+    overlay.addEventListener("mousedown", (event) => {
+      backdropMouseDown = event.target === overlay;
+    });
+    overlay.addEventListener("mouseup", (event) => {
+      if (event.target === overlay && backdropMouseDown) requestClose(false);
+      backdropMouseDown = false;
+    });
+    textModalEscHandler = (event) => {
+      if (event.key === "Escape") requestClose(false);
+    };
+    document.addEventListener("keydown", textModalEscHandler);
+  }
 
   EditorView.renderEditor = function renderEditor(ctx) {
     const {
@@ -107,20 +208,27 @@
 
           <div class="bot-editor-col bot-editor-col-right">
             <div class="bot-editor-section">
-              <label class="field-label">Инструкция</label>
-              <textarea id="botInstructionTextarea" class="input" rows="7" placeholder="Введите инструкцию для этой конечной кнопки...">${escapeHtml(state.editorText)}</textarea>
+              <div class="bot-editor-text-row">
+                <label class="field-label">Инструкция</label>
+                <button id="editInstructionBtn" type="button" class="action">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.editorText))}</div>
             </div>
 
             <div class="bot-editor-section">
-              <label class="field-label">Текст клиенту</label>
-              <textarea id="botClientTextTextarea" class="input" rows="4" placeholder="Сообщение, которое бот отправит клиенту">${escapeHtml(state.editorClientText)}</textarea>
-              <div class="status">Источник текста клиенту: настройки БД</div>
+              <div class="bot-editor-text-row">
+                <label class="field-label">Текст клиенту</label>
+                <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
             </div>
 
             <div class="bot-editor-section">
-              <label class="field-label">Текст системный</label>
-              <textarea id="botSystemTextTextarea" class="input" rows="5" placeholder="Системное сообщение для чата заявки/задачи">${escapeHtml(state.editorSystemText)}</textarea>
-              <div class="status">Источник системного текста: ${state.systemTextOverridden ? "из БД (override)" : "fallback из txt"}</div>
+              <div class="bot-editor-text-row">
+                <label class="field-label">Текст системный</label>
+                <button id="editSystemTextBtn" type="button" class="action">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.editorSystemText))}</div>
             </div>
 
             <div class="bot-editor-section">
@@ -128,7 +236,12 @@
                 <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
                 <span>Требовать подтверждение перед созданием</span>
               </label>
-              <textarea id="confirmationText" class="input" rows="3" ${state.confirmationEnabled ? "" : "disabled"} placeholder="Текст подтверждения (если пусто — стандартный)">${escapeHtml(state.confirmationText)}</textarea>
+              <div class="bot-editor-text-row">
+                <label class="field-label">Подтверждение перед созданием</label>
+                <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
+              ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
             </div>
           </div>
         </div>
@@ -151,17 +264,17 @@
       </div>
     `;
 
-    const textarea = document.getElementById("botInstructionTextarea");
     const botLabelInput = document.getElementById("botLabelInput");
-    const botClientTextTextarea = document.getElementById("botClientTextTextarea");
-    const systemTextarea = document.getElementById("botSystemTextTextarea");
+    const editInstructionBtn = document.getElementById("editInstructionBtn");
+    const editClientTextBtn = document.getElementById("editClientTextBtn");
+    const editSystemTextBtn = document.getElementById("editSystemTextBtn");
+    const editConfirmationTextBtn = document.getElementById("editConfirmationTextBtn");
     const fixedEnabledEl = document.getElementById("fixedAssigneeEnabled");
     const buttonIsEnabledEl = document.getElementById("buttonIsEnabled");
     const fixedUserEl = document.getElementById("fixedAssigneeUserId");
     const freezeOnCreateEl = document.getElementById("freezeOnCreate");
     const automationKeySelectEl = document.getElementById("automationKeySelect");
     const confirmationEnabledEl = document.getElementById("confirmationEnabled");
-    const confirmationTextEl = document.getElementById("confirmationText");
     const addBotFileBtn = document.getElementById("addBotFileBtn");
     const removeBotFileBtn = document.getElementById("removeBotFileBtn");
     const addConditionalRuleBtn = document.getElementById("addConditionalRuleBtn");
@@ -171,15 +284,52 @@
     botLabelInput?.addEventListener("input", () => {
       state.editorBotLabel = botLabelInput.value;
     });
-    botClientTextTextarea?.addEventListener("input", () => {
-      state.editorClientText = botClientTextTextarea.value;
+    editInstructionBtn?.addEventListener("click", () => {
+      openTextEditorModal({
+        title: "Редактирование инструкции",
+        value: state.editorText || "",
+        placeholder: "Введите инструкцию для этой конечной кнопки...",
+        onApply: (nextValue) => {
+          state.editorText = nextValue;
+          EditorView.renderEditor(ctx);
+        },
+      });
     });
-    textarea?.addEventListener("input", () => {
-      state.editorText = textarea.value;
+    editClientTextBtn?.addEventListener("click", () => {
+      openTextEditorModal({
+        title: "Редактирование текста клиенту",
+        value: state.editorClientText || "",
+        placeholder: "Сообщение, которое бот отправит клиенту",
+        withTelegramPreview: true,
+        onApply: (nextValue) => {
+          state.editorClientText = nextValue;
+          EditorView.renderEditor(ctx);
+        },
+      });
     });
-    systemTextarea?.addEventListener("input", () => {
-      state.editorSystemText = systemTextarea.value;
-      state.systemTextOverridden = true;
+    editSystemTextBtn?.addEventListener("click", () => {
+      openTextEditorModal({
+        title: "Редактирование системного текста",
+        value: state.editorSystemText || "",
+        placeholder: "Системное сообщение для чата заявки/задачи",
+        onApply: (nextValue) => {
+          state.editorSystemText = nextValue;
+          state.systemTextOverridden = true;
+          EditorView.renderEditor(ctx);
+        },
+      });
+    });
+    editConfirmationTextBtn?.addEventListener("click", () => {
+      openTextEditorModal({
+        title: "Редактирование подтверждения",
+        value: state.confirmationText || "",
+        placeholder: "Текст подтверждения (если пусто — стандартный)",
+        withTelegramPreview: true,
+        onApply: (nextValue) => {
+          state.confirmationText = nextValue;
+          EditorView.renderEditor(ctx);
+        },
+      });
     });
     buttonIsEnabledEl?.addEventListener("change", () => {
       state.isEnabled = !!buttonIsEnabledEl.checked;
@@ -200,10 +350,7 @@
     });
     confirmationEnabledEl?.addEventListener("change", () => {
       state.confirmationEnabled = !!confirmationEnabledEl.checked;
-      if (confirmationTextEl) confirmationTextEl.disabled = !state.confirmationEnabled;
-    });
-    confirmationTextEl?.addEventListener("input", () => {
-      state.confirmationText = confirmationTextEl.value;
+      EditorView.renderEditor(ctx);
     });
     addBotFileBtn?.addEventListener("click", () => {
       openFilePickerModal();
