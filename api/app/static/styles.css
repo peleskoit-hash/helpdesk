@@ -3736,6 +3736,10 @@ body[data-theme="dark"] .verified-no {
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+.bot-text-editor-body.bot-text-editor-body-split.bot-text-editor-body-toolbar {
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+}
+
 .bot-text-editor-body:not(.bot-text-editor-body-split) {
   grid-template-rows: minmax(0, 1fr);
 }
@@ -3746,6 +3750,17 @@ body[data-theme="dark"] .verified-no {
   resize: vertical;
   width: 100%;
   box-sizing: border-box;
+}
+
+.bot-text-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bot-text-toolbar .action {
+  min-width: 38px;
+  padding: 5px 8px;
 }
 
 .bot-telegram-preview-wrap {
@@ -3772,6 +3787,66 @@ body[data-theme="dark"] .verified-no {
   border: 1px solid rgba(148, 163, 184, 0.32);
   border-radius: 8px;
   padding: 10px;
+}
+
+.bot-telegram-preview b,
+.bot-telegram-preview strong {
+  font-weight: 700;
+}
+
+.bot-telegram-preview i,
+.bot-telegram-preview em {
+  font-style: italic;
+}
+
+.bot-telegram-preview u,
+.bot-telegram-preview ins {
+  text-decoration: underline;
+}
+
+.bot-telegram-preview s,
+.bot-telegram-preview strike,
+.bot-telegram-preview del {
+  text-decoration: line-through;
+}
+
+.bot-telegram-preview code {
+  font-family: Consolas, "Courier New", monospace;
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.bot-telegram-preview pre {
+  font-family: Consolas, "Courier New", monospace;
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.bot-telegram-preview blockquote {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #8da6c2;
+  background: rgba(141, 166, 194, 0.13);
+}
+
+.bot-telegram-preview blockquote.tg-preview-expandable::before {
+  content: "Под кат";
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4c6482;
+}
+
+.bot-telegram-preview .tg-preview-spoiler {
+  background: #d9e2ee;
+  color: transparent;
+  border-radius: 4px;
+  padding: 0 3px;
 }
 
 .bot-editor-text-row {

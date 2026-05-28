@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 import uuid
 from urllib.error import HTTPError, URLError
@@ -7,6 +8,10 @@ from urllib.request import Request, urlopen
 
 from ..config import settings
 from .button_config import load_button_config
+from .telegram_text_format import strip_telegram_html
+
+
+logger = logging.getLogger(__name__)
 
 
 TEST_TELEGRAM_CHAT_ID = "test-chat"
@@ -216,7 +221,16 @@ def send_message(
         payload["reply_markup"] = reply_markup
     if is_test_chat_id(chat_id):
         return fake_telegram_response("sendMessage", payload)
-    return telegram_request("sendMessage", payload=payload)
+    try:
+        return telegram_request("sendMessage", payload=payload)
+    except TelegramApiError as exc:
+        if parse_mode == "HTML":
+            logger.warning("Telegram rejected HTML message, falling back to plain text: %s", exc)
+            fallback_payload = dict(payload)
+            fallback_payload.pop("parse_mode", None)
+            fallback_payload["text"] = strip_telegram_html(text)
+            return telegram_request("sendMessage", payload=fallback_payload)
+        raise
 
 
 def edit_message_text(chat_id: str, message_id: str | int, text: str) -> dict:

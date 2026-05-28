@@ -653,6 +653,11 @@ def save_bot_button_instruction(
         client_text_value = _raw_client_text if _raw_client_text.strip() else None
     else:
         client_text_value = None
+    if payload.confirmation_text is not None:
+        _raw_confirmation_text = str(payload.confirmation_text).replace("\r\n", "\n").replace("\r", "\n")
+        confirmation_text_value = _raw_confirmation_text if _raw_confirmation_text.strip() else None
+    else:
+        confirmation_text_value = None
     system_value = (payload.system_text or "").strip() or None if payload.system_text is not None else None
     automation_key_value = (payload.automation_key or "").strip() or None if payload.automation_key is not None else None
     if automation_key_value is not None:
@@ -700,7 +705,7 @@ def save_bot_button_instruction(
             fixed_assignee_user_id=fixed_user_id,
             freeze_on_create=bool(payload.freeze_on_create),
             confirmation_enabled=bool(payload.confirmation_enabled),
-            confirmation_text=((payload.confirmation_text or "").strip() or None),
+            confirmation_text=confirmation_text_value,
             confirmation_overridden=bool(payload.confirmation_overridden),
             files_overridden=bool(payload.files_overridden),
             files_json=normalized_files if payload.files is not None else None,
@@ -757,7 +762,7 @@ def save_bot_button_instruction(
         if payload.confirmation_enabled is not None:
             row.confirmation_enabled = bool(payload.confirmation_enabled)
         if payload.confirmation_text is not None:
-            row.confirmation_text = (payload.confirmation_text or "").strip() or None
+            row.confirmation_text = confirmation_text_value
         if payload.confirmation_overridden is not None:
             row.confirmation_overridden = bool(payload.confirmation_overridden)
             if not row.confirmation_overridden:

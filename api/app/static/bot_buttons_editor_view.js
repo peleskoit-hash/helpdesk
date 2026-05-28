@@ -24,6 +24,97 @@
     }
   }
 
+  function sanitizeLinkHref(rawHref) {
+    const href = String(rawHref || "").trim();
+    if (!href) return "";
+    try {
+      const parsed = new URL(href, window.location.origin);
+      const protocol = String(parsed.protocol || "").toLowerCase();
+      if (!["http:", "https:", "tg:", "mailto:"].includes(protocol)) return "";
+      return href;
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function stripAllowedTelegramTags(text) {
+    return String(text || "").replace(/<\/?(?:b|strong|i|em|u|ins|s|strike|del|tg-spoiler|code|pre|blockquote|a)(?:\s+[^>]*)?>/gi, "");
+  }
+
+  function applyTagToSelection(textarea, before, after = "") {
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const source = textarea.value || "";
+    const selected = source.slice(start, end);
+    const next = source.slice(0, start) + before + selected + after + source.slice(end);
+    textarea.value = next;
+    const cursorPos = start + before.length + selected.length;
+    textarea.focus();
+    if (selected.length) {
+      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
+    } else {
+      textarea.setSelectionRange(cursorPos, cursorPos);
+    }
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function renderTelegramPreviewHtml(text) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${String(text || "")}</div>`, "text/html");
+    const root = doc.body.firstElementChild || doc.body;
+    const allowed = new Set(["b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "tg-spoiler", "code", "pre", "blockquote", "a"]);
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return document.createTextNode(node.textContent || "");
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return document.createTextNode("");
+      }
+      const tag = String(node.tagName || "").toLowerCase();
+      if (!allowed.has(tag)) {
+        const frag = document.createDocumentFragment();
+        node.childNodes.forEach((child) => frag.appendChild(walk(child)));
+        return frag;
+      }
+
+      let el;
+      if (tag === "tg-spoiler") {
+        el = document.createElement("span");
+        el.className = "tg-preview-spoiler";
+      } else if (tag === "strong") {
+        el = document.createElement("b");
+      } else if (tag === "em") {
+        el = document.createElement("i");
+      } else if (tag === "ins") {
+        el = document.createElement("u");
+      } else if (tag === "strike" || tag === "del") {
+        el = document.createElement("s");
+      } else {
+        el = document.createElement(tag);
+      }
+
+      if (tag === "a") {
+        const href = sanitizeLinkHref(node.getAttribute("href") || "");
+        if (href) {
+          el.setAttribute("href", href);
+          el.setAttribute("target", "_blank");
+          el.setAttribute("rel", "noopener noreferrer");
+        }
+      }
+      if (tag === "blockquote" && node.hasAttribute("expandable")) {
+        el.classList.add("tg-preview-expandable");
+      }
+      node.childNodes.forEach((child) => el.appendChild(walk(child)));
+      return el;
+    }
+
+    const previewRoot = document.createElement("div");
+    root.childNodes.forEach((child) => previewRoot.appendChild(walk(child)));
+    return previewRoot.innerHTML || "Текст не задан";
+  }
+
   function openTextEditorModal(options) {
     closeTextEditorModal();
     const {
@@ -31,6 +122,7 @@
       value,
       onApply,
       withTelegramPreview = false,
+      withTelegramToolbar = false,
       placeholder = "",
     } = options || {};
     const overlay = document.createElement("div");
@@ -41,7 +133,22 @@
         <div class="modal-head">
           <strong>${escapeModalHtml(title || "Редактирование текста")}</strong>
         </div>
-        <div class="modal-body bot-text-editor-body ${withTelegramPreview ? "bot-text-editor-body-split" : ""}">
+        <div class="modal-body bot-text-editor-body ${withTelegramPreview ? "bot-text-editor-body-split" : ""} ${withTelegramToolbar ? "bot-text-editor-body-toolbar" : ""}">
+          ${withTelegramToolbar ? `
+            <div class="bot-text-toolbar" id="botTextToolbar">
+              <button type="button" class="action" data-format-action="bold"><b>Ж</b></button>
+              <button type="button" class="action" data-format-action="italic"><i>К</i></button>
+              <button type="button" class="action" data-format-action="underline"><u>Ч</u></button>
+              <button type="button" class="action" data-format-action="strike"><s>З</s></button>
+              <button type="button" class="action" data-format-action="spoiler">Спойлер</button>
+              <button type="button" class="action" data-format-action="code">Код</button>
+              <button type="button" class="action" data-format-action="pre">Блок кода</button>
+              <button type="button" class="action" data-format-action="quote">Цитата</button>
+              <button type="button" class="action" data-format-action="quote_expandable">Под кат</button>
+              <button type="button" class="action" data-format-action="link">Ссылка</button>
+              <button type="button" class="action" data-format-action="clear">Очистить формат</button>
+            </div>
+          ` : ""}
           <textarea id="botTextEditorTextarea" class="input bot-text-editor-textarea" placeholder="${escapeModalHtml(placeholder)}">${escapeModalHtml(value || "")}</textarea>
           ${withTelegramPreview ? `
             <div class="bot-telegram-preview-wrap">
@@ -67,7 +174,7 @@
 
     const syncPreview = () => {
       if (!preview || !textarea) return;
-      preview.textContent = textarea.value || "Текст не задан";
+      preview.innerHTML = renderTelegramPreviewHtml(textarea.value || "");
     };
 
     const hasUnsavedChanges = () => String(textarea?.value || "") !== initialValue;
@@ -83,6 +190,49 @@
     textarea?.setSelectionRange((textarea.value || "").length, (textarea.value || "").length);
     textarea?.addEventListener("input", syncPreview);
     syncPreview();
+
+    if (withTelegramToolbar) {
+      document.querySelectorAll("[data-format-action]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const action = btn.getAttribute("data-format-action");
+          if (!textarea || !action) return;
+          if (action === "bold") return applyTagToSelection(textarea, "<b>", "</b>");
+          if (action === "italic") return applyTagToSelection(textarea, "<i>", "</i>");
+          if (action === "underline") return applyTagToSelection(textarea, "<u>", "</u>");
+          if (action === "strike") return applyTagToSelection(textarea, "<s>", "</s>");
+          if (action === "spoiler") return applyTagToSelection(textarea, "<tg-spoiler>", "</tg-spoiler>");
+          if (action === "code") return applyTagToSelection(textarea, "<code>", "</code>");
+          if (action === "pre") return applyTagToSelection(textarea, "<pre>", "</pre>");
+          if (action === "quote") return applyTagToSelection(textarea, "<blockquote>", "</blockquote>");
+          if (action === "quote_expandable") return applyTagToSelection(textarea, "<blockquote expandable>", "</blockquote>");
+          if (action === "link") {
+            const selected = (textarea.value || "").slice(textarea.selectionStart ?? 0, textarea.selectionEnd ?? 0);
+            const hrefInput = window.prompt("Введите URL (http/https/tg/mailto):", "https://");
+            const safeHref = sanitizeLinkHref(hrefInput || "");
+            if (!safeHref) return;
+            if (selected) return applyTagToSelection(textarea, `<a href="${safeHref}">`, "</a>");
+            return applyTagToSelection(textarea, `<a href="${safeHref}">ссылка</a>`, "");
+          }
+          if (action === "clear") {
+            const source = textarea.value || "";
+            const start = textarea.selectionStart ?? 0;
+            const end = textarea.selectionEnd ?? 0;
+            const selected = source.slice(start, end);
+            if (selected) {
+              const cleaned = stripAllowedTelegramTags(selected);
+              textarea.value = source.slice(0, start) + cleaned + source.slice(end);
+              textarea.focus();
+              textarea.setSelectionRange(start, start + cleaned.length);
+            } else {
+              textarea.value = stripAllowedTelegramTags(source);
+              textarea.focus();
+              textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        });
+      });
+    }
 
     cancelBtn?.addEventListener("click", () => requestClose(false));
     applyBtn?.addEventListener("click", () => {
@@ -301,6 +451,7 @@
         value: state.editorClientText || "",
         placeholder: "Сообщение, которое бот отправит клиенту",
         withTelegramPreview: true,
+        withTelegramToolbar: true,
         onApply: (nextValue) => {
           state.editorClientText = nextValue;
           EditorView.renderEditor(ctx);
@@ -325,6 +476,7 @@
         value: state.confirmationText || "",
         placeholder: "Текст подтверждения (если пусто — стандартный)",
         withTelegramPreview: true,
+        withTelegramToolbar: true,
         onApply: (nextValue) => {
           state.confirmationText = nextValue;
           EditorView.renderEditor(ctx);

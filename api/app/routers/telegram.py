@@ -46,6 +46,7 @@ from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.template_fields import render_template_text
+from ..services.telegram_text_format import prepare_telegram_html_message
 from ..services.auto_close import refresh_ticket_auto_close_timer
 from ..services.telegram_attachments import (
     _attachment_extension,
@@ -1727,6 +1728,33 @@ def _render_client_text(db: Session, ticket: Ticket, button: ButtonSpec, fallbac
     return fallback
 
 
+def _render_client_text_for_telegram(
+    db: Session,
+    ticket: Ticket,
+    button: ButtonSpec,
+    fallback: str,
+) -> tuple[str, str | None]:
+    rendered = _render_client_text(db, ticket, button, fallback)
+    try:
+        return prepare_telegram_html_message(rendered)
+    except Exception:
+        return rendered, None
+
+
+def _render_confirmation_text_for_telegram(
+    db: Session,
+    ticket: Ticket,
+    confirmation_text: str | None,
+    default_confirmation_text: str,
+) -> tuple[str, str | None]:
+    rendered = render_template_text(confirmation_text, db, ticket=ticket) if confirmation_text else None
+    candidate = rendered or confirmation_text or default_confirmation_text
+    try:
+        return prepare_telegram_html_message(candidate)
+    except Exception:
+        return candidate, None
+
+
 def _store_button_system_text(db: Session, ticket: Ticket, button: ButtonSpec, client_message: str | None = None):
     system_text = _resolve_effective_system_text(db, ticket, button)
     if not system_text:
@@ -2121,10 +2149,16 @@ def _process_problem_type_callback(
             if callback_id:
                 answer_callback_query(callback_id)
             default_confirmation_text = "Подтвердите, пожалуйста, создание обращения"
-            rendered_confirmation = render_template_text(confirmation_text, db, ticket=collecting_ticket) if confirmation_text else None
+            confirmation_payload_text, confirmation_parse_mode = _render_confirmation_text_for_telegram(
+                db,
+                collecting_ticket,
+                confirmation_text,
+                default_confirmation_text,
+            )
             send_message(
                 external_chat_id,
-                rendered_confirmation or confirmation_text or default_confirmation_text,
+                confirmation_payload_text,
+                parse_mode=confirmation_parse_mode,
                 reply_markup=_confirmation_markup(data),
             )
         return {"ok": True, "ticket_id": collecting_ticket.id, "awaiting_confirmation": True, "button": button.label}
@@ -2139,10 +2173,10 @@ def _process_problem_type_callback(
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
-            send_message(
-                external_chat_id,
-                _render_client_text(db, collecting_ticket, button, AUTO_DONE_TEXT),
+            auto_client_text, auto_client_parse_mode = _render_client_text_for_telegram(
+                db, collecting_ticket, button, AUTO_DONE_TEXT
             )
+            send_message(external_chat_id, auto_client_text, parse_mode=auto_client_parse_mode)
             direct_file_ok, direct_file_error = _send_button_direct_file(db, collecting_ticket, button, external_chat_id)
             _send_button_rule_files(db, collecting_ticket, button, external_chat_id)
         if not direct_file_ok:
@@ -2164,9 +2198,13 @@ def _process_problem_type_callback(
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id, "\u041e\u043f\u0438\u0448\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c")
+            task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
+                db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT
+            )
             response = send_message(
                 external_chat_id,
-                _render_client_text(db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT),
+                task_client_text,
+                parse_mode=task_client_parse_mode,
                 reply_markup=client_close_markup(),
             )
             _store_client_close_button(collecting_ticket, response)
@@ -2180,9 +2218,13 @@ def _process_problem_type_callback(
     if notify_client:
         if callback_id:
             answer_callback_query(callback_id, "\u0417\u0430\u044f\u0432\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430")
+        ticket_client_text, ticket_client_parse_mode = _render_client_text_for_telegram(
+            db, ticket, button, "Заявка создана. Опишите проблему сообщением."
+        )
         response = send_message(
             external_chat_id,
-            _render_client_text(db, ticket, button, "Заявка создана. Опишите проблему сообщением."),
+            ticket_client_text,
+            parse_mode=ticket_client_parse_mode,
             reply_markup=client_close_markup(),
         )
         _store_client_close_button(ticket, response)
@@ -2395,10 +2437,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 if notify_client:
                     if callback_id:
                         answer_callback_query(callback_id, "Автоматическая заявка обработана")
-                    send_message(
-                        external_chat_id,
-                        _render_client_text(db, collecting_ticket, button, AUTO_DONE_TEXT),
+                    auto_client_text, auto_client_parse_mode = _render_client_text_for_telegram(
+                        db, collecting_ticket, button, AUTO_DONE_TEXT
                     )
+                    send_message(external_chat_id, auto_client_text, parse_mode=auto_client_parse_mode)
                     direct_file_ok, direct_file_error = _send_button_direct_file(db, collecting_ticket, button, external_chat_id)
                     _send_button_rule_files(db, collecting_ticket, button, external_chat_id)
                 if not direct_file_ok:
@@ -2420,9 +2462,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 if notify_client:
                     if callback_id:
                         answer_callback_query(callback_id, "Опишите задачу одним сообщением")
+                    task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
+                        db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT
+                    )
                     response = send_message(
                         external_chat_id,
-                        _render_client_text(db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT),
+                        task_client_text,
+                        parse_mode=task_client_parse_mode,
                         reply_markup=client_close_markup(),
                     )
                     _store_client_close_button(collecting_ticket, response)
@@ -2435,9 +2481,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             if notify_client:
                 if callback_id:
                     answer_callback_query(callback_id, "Заявка создана")
+                ticket_client_text, ticket_client_parse_mode = _render_client_text_for_telegram(
+                    db, ticket, button, "Заявка создана. Опишите проблему сообщением."
+                )
                 response = send_message(
                     external_chat_id,
-                    _render_client_text(db, ticket, button, "Заявка создана. Опишите проблему сообщением."),
+                    ticket_client_text,
+                    parse_mode=ticket_client_parse_mode,
                     reply_markup=client_close_markup(),
                 )
                 _store_client_close_button(ticket, response)

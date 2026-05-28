@@ -58,6 +58,7 @@ from ..services.ticket_problem_flow import (
     menu_name_for_ticket_client,
 )
 from ..services.ticket_subject import resolve_ticket_subject
+from ..services.telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -264,8 +265,27 @@ def _send_to_telegram_client(
             _error(409, "telegram_contact_not_found", "У клиента нет Telegram-контакта")
         return None
     try:
-        return send_message(contact.external_chat_id, text, remove_keyboard=remove_keyboard, reply_to_message_id=reply_to_message_id)
+        payload_text, parse_mode = prepare_telegram_html_message(text)
+        return send_message(
+            contact.external_chat_id,
+            payload_text,
+            parse_mode=parse_mode,
+            remove_keyboard=remove_keyboard,
+            reply_to_message_id=reply_to_message_id,
+        )
     except TelegramApiError as exc:
+        # Fallback: if HTML parse failed, send plain text without formatting.
+        if "parse" in str(exc).lower() or "entity" in str(exc).lower() or "can't parse" in str(exc).lower():
+            plain_text = strip_telegram_html(text)
+            try:
+                return send_message(
+                    contact.external_chat_id,
+                    plain_text,
+                    remove_keyboard=remove_keyboard,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            except TelegramApiError:
+                pass
         if required:
             _error(502, "telegram_send_failed", f"Telegram не принял сообщение: {exc}")
         return None
