@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from ..auth import (
     CurrentUser,
@@ -46,7 +47,6 @@ from ..services.ticket_lifecycle import (
     format_task_closed_without_answer_text,
     finalize_group_parent_if_ready,
     freeze_ticket,
-    notify_group_parent_completion_before_delete,
     refresh_ticket_auto_close,
     unfreeze_ticket,
     unfreeze_ticket_on_message,
@@ -620,6 +620,7 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
 def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _require_admin(user)
     tickets = db.execute(select(Ticket).where(Ticket.id.in_(payload.ticket_ids))).scalars().all()
+    selected_ids = set(payload.ticket_ids)
     found_ids = {ticket.id for ticket in tickets}
     not_found = [ticket_id for ticket_id in payload.ticket_ids if ticket_id not in found_ids]
 
@@ -627,20 +628,29 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
     deleted = 0
     deleted_ids: set[str] = set()
     for ticket in tickets:
-        if ticket.id in deleted_ids:
-            continue
-        # If parent was already deleted in this batch, its children are already hard-deleted too.
-        if ticket.parent_ticket_id and ticket.parent_ticket_id in deleted_ids:
-            deleted_ids.add(ticket.id)
-            continue
-        # Skip stale ORM rows that may already be removed by previous parent delete.
-        still_exists = db.execute(select(Ticket.id).where(Ticket.id == ticket.id)).scalar_one_or_none()
-        if still_exists is None:
-            deleted_ids.add(ticket.id)
+        try:
+            ticket_id = ticket.id
+            ticket_parent_id = ticket.parent_ticket_id
+            ticket_task_kind = ticket.task_kind
+            workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+            ticket_status = ticket.status
+        except ObjectDeletedError:
+            # Ticket row was hard-deleted earlier in this batch (for example by parent delete).
             continue
 
-        workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
-        parent_ticket_id = ticket.parent_ticket_id if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value else None
+        if ticket_id in deleted_ids:
+            continue
+        # If parent was already deleted in this batch, its children are already hard-deleted too.
+        if ticket_parent_id and ticket_parent_id in deleted_ids:
+            deleted_ids.add(ticket_id)
+            continue
+        # Skip stale ORM rows that may already be removed by previous parent delete.
+        still_exists = db.execute(select(Ticket.id).where(Ticket.id == ticket_id)).scalar_one_or_none()
+        if still_exists is None:
+            deleted_ids.add(ticket_id)
+            continue
+
+        parent_ticket_id = ticket_parent_id if ticket_task_kind == TicketTaskKind.GROUP_CHILD.value else None
         if workflow_type == TicketWorkflowType.TICKET.value:
             # For admin hard-delete of a regular ticket, notify client with the same text as normal close.
             try:
@@ -656,8 +666,8 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                 pass
         elif workflow_type == TicketWorkflowType.TASK.value:
             try:
-                # For group children we avoid client spam; parent summary/close handles client notification.
-                if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
+                # For group children we avoid client spam; parent close/restore flow handles parent state.
+                if ticket_task_kind != TicketTaskKind.GROUP_CHILD.value:
                     client_message = _first_client_message(db, ticket)
                     _send_to_telegram_client(
                         db,
@@ -670,8 +680,13 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                 # Deletion must not be blocked by Telegram delivery issues.
                 pass
         warnings.extend(_delete_ticket_hard(db, ticket))
-        deleted_ids.add(ticket.id)
+        deleted_ids.add(ticket_id)
         if parent_ticket_id:
+            # Parent is being deleted in the same bulk action:
+            # do not finalize it via child path (avoids duplicate client notice and
+            # avoids creating parent system messages that can conflict with hard-delete flush).
+            if parent_ticket_id in selected_ids:
+                continue
             parent = db.get(Ticket, parent_ticket_id)
             if parent is not None:
                 finalize_group_parent_if_ready(
