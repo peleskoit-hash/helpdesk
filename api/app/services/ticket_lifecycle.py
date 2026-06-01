@@ -167,10 +167,7 @@ def _format_group_task_completion_text(
     answers: list[str],
     *,
     subject_text: str | None = None,
-    override_text: str | None = None,
 ) -> str:
-    if override_text and override_text.strip():
-        return override_text.strip()
     created_at = ticket.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=ZoneInfo("UTC"))
@@ -301,11 +298,6 @@ def finalize_group_parent_if_ready(
     if parent_client_message is not None:
         answers, attachments = _group_parent_children_payload(db, parent)
         subject_text = resolve_ticket_subject(db, parent)
-        override_text = (
-            resolve_group_parent_client_text_fn(db, parent)
-            if resolve_group_parent_client_text_fn is not None
-            else None
-        )
         send_to_telegram_client_fn(
             db,
             parent,
@@ -314,7 +306,6 @@ def finalize_group_parent_if_ready(
                 parent_client_message,
                 answers,
                 subject_text=subject_text,
-                override_text=override_text,
             ),
             required=False,
         )
@@ -348,11 +339,6 @@ def notify_group_parent_completion_before_delete(
         return
     answers, attachments = _group_parent_children_payload(db, parent)
     subject_text = resolve_ticket_subject(db, parent)
-    override_text = (
-        resolve_group_parent_client_text_fn(db, parent)
-        if resolve_group_parent_client_text_fn is not None
-        else None
-    )
     send_to_telegram_client_fn(
         db,
         parent,
@@ -361,7 +347,6 @@ def notify_group_parent_completion_before_delete(
             parent_client_message,
             answers,
             subject_text=subject_text,
-            override_text=override_text,
         ),
         required=False,
     )
@@ -576,11 +561,6 @@ def close_ticket_by_actor(
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
             subject_text = resolve_ticket_subject(db, ticket)
-            override_text = (
-                resolve_group_parent_client_text_fn(db, ticket)
-                if resolve_group_parent_client_text_fn is not None
-                else None
-            )
             send_to_telegram_client_fn(
                 db,
                 ticket,
@@ -589,7 +569,6 @@ def close_ticket_by_actor(
                     client_message,
                     answers,
                     subject_text=subject_text,
-                    override_text=override_text,
                 ),
                 required=False,
             )
