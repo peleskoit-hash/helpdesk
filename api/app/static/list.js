@@ -1,7 +1,7 @@
-﻿const params = new URLSearchParams(window.location.search);
-const tabFromQuery = params.get("tab");
 const TAB_COUNTS_STORAGE_KEY = "hd_tab_counts";
 const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
+const DEFAULT_TAB = "active";
+const TAB_KEYS = new Set(["active", "unassigned", "special", "frozen", "closed"]);
 
 function readStoredTabCounts() {
   try {
@@ -21,7 +21,7 @@ function readStoredTabCounts() {
 }
 
 const state = {
-  tab: tabFromQuery || localStorage.getItem("hd_tab") || "active",
+  tab: readTabFromUrl() || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   tableSortKey: localStorage.getItem("hd_table_sort_key") || "created_at",
   tableSortDir: localStorage.getItem("hd_table_sort_dir") || "desc",
   role: localStorage.getItem("hd_user_role") || "agent",
@@ -51,6 +51,24 @@ const endpointMap = {
   frozen: "/api/v1/tickets/frozen",
   closed: "/api/v1/tickets/closed",
 };
+
+function readTabFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab");
+  return TAB_KEYS.has(tab) ? tab : null;
+}
+
+function syncTabUrl(tab, mode = "push") {
+  const nextTab = TAB_KEYS.has(tab) ? tab : DEFAULT_TAB;
+  const url = new URL(window.location.href);
+  url.searchParams.set("tab", nextTab);
+  const next = `${url.pathname}?${url.searchParams.toString()}${url.hash}`;
+  if (mode === "replace") {
+    window.history.replaceState({ tab: nextTab }, "", next);
+  } else {
+    window.history.pushState({ tab: nextTab }, "", next);
+  }
+}
 
 const el = {
   tabButtons: [...document.querySelectorAll(".tab-btn")],
@@ -612,12 +630,14 @@ function applyRoleUi() {
     specialBtn.classList.toggle("hidden", !isAdmin);
   }
   if (!(isAdmin || isReadonly) && state.tab === "unassigned") {
-    state.tab = "active";
+    state.tab = DEFAULT_TAB;
     localStorage.setItem("hd_tab", state.tab);
+    syncTabUrl(state.tab, "replace");
   }
   if (!isAdmin && state.tab === "special") {
-    state.tab = "active";
+    state.tab = DEFAULT_TAB;
     localStorage.setItem("hd_tab", state.tab);
+    syncTabUrl(state.tab, "replace");
   }
   el.tabButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === state.tab);
@@ -785,9 +805,10 @@ function resetToFirstPage() {
 }
 
 function init() {
-  if (!endpointMap[state.tab]) state.tab = "active";
+  if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
   localStorage.setItem("hd_tab", state.tab);
+  syncTabUrl(state.tab, "replace");
 
   el.roleSelect.value = state.role;
   el.agentSelect.value = state.userId;
@@ -804,6 +825,7 @@ function init() {
       btn.classList.add("active");
       state.tab = btn.dataset.tab;
       localStorage.setItem("hd_tab", state.tab);
+      syncTabUrl(state.tab, "push");
       state.selectedTicketIds.clear();
       resetToFirstPage();
       await Promise.all([loadTickets(), loadCounts()]);
@@ -921,6 +943,17 @@ function init() {
     loadCompletionStats({ silent: true });
   }, 5000);
 
+  window.addEventListener("popstate", async () => {
+    const tabFromUrl = readTabFromUrl() || DEFAULT_TAB;
+    if (state.tab === tabFromUrl) return;
+    state.tab = tabFromUrl;
+    localStorage.setItem("hd_tab", state.tab);
+    applyRoleUi();
+    state.selectedTicketIds.clear();
+    resetToFirstPage();
+    await Promise.all([loadTickets({ silent: true }), loadCounts({ silent: true })]);
+  });
+
   if (el.completionToggleBtn) {
     el.completionToggleBtn.addEventListener("click", () => {
       state.completionOpen = !state.completionOpen;
@@ -943,3 +976,4 @@ function init() {
   await loadMe();
   await Promise.all([loadTickets(), loadCounts(), loadCompletionStats()]);
 })();
+
