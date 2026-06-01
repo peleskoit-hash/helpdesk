@@ -1,4 +1,4 @@
-﻿from enum import Enum
+from enum import Enum
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
@@ -212,6 +212,8 @@ class TelegramContact(Base):
     external_chat_id: Mapped[str] = mapped_column(String(100), unique=True)
     external_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     external_display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    active_menu_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    menu_message_ids_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

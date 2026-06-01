@@ -82,6 +82,11 @@ from ..services.telegram_attachment_policy import (
     send_too_large_attachment_client_messages,
     too_large_attachment_system_text,
 )
+from ..services.telegram_onboarding import (
+    get_or_create_contact_from_user,
+    process_first_connection_start,
+    telegram_contact_by_chat_id,
+)
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
@@ -322,44 +327,6 @@ def _create_or_replace_pending_task_intent(
     return intent
 
 
-def _create_client_and_contact(
-    db: Session,
-    company_id: str,
-    external_user_id: str,
-    external_chat_id: str,
-    display_name: str,
-    username: str | None,
-) -> TelegramContact:
-    client = Client(
-        id=str(uuid.uuid4()),
-        company_id=company_id,
-        display_name=display_name or "Клиент Telegram",
-    )
-    db.add(client)
-    db.flush()
-
-    contact = TelegramContact(
-        id=str(uuid.uuid4()),
-        company_id=company_id,
-        client_id=client.id,
-        external_user_id=external_user_id,
-        external_chat_id=external_chat_id,
-        external_username=username,
-        external_display_name=display_name or "Клиент Telegram",
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
-    db.add(contact)
-    db.flush()
-    return contact
-
-
-def _telegram_contact_by_chat_id(db: Session, external_chat_id: str) -> TelegramContact | None:
-    return db.execute(
-        select(TelegramContact).where(TelegramContact.external_chat_id == external_chat_id)
-    ).scalar_one_or_none()
-
-
 def _client_profile(db: Session, client_id: str) -> ClientProfile | None:
     return db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
 
@@ -424,7 +391,85 @@ def _send_problem_menu_for_contact(db: Session, contact: TelegramContact, ticket
     response = _send_problem_menu_with_visibility(db, contact.external_chat_id, menu_name=menu_name)
     if ticket is not None:
         _store_menu_message_id(ticket, response)
+    _remember_contact_menu_message(contact, response)
     return response
+
+
+def _contact_menu_message_ids(contact: TelegramContact) -> list[int]:
+    raw = contact.menu_message_ids_json if isinstance(contact.menu_message_ids_json, list) else []
+    result: list[int] = []
+    seen: set[int] = set()
+    for value in raw:
+        try:
+            msg_id = int(value)
+        except Exception:
+            continue
+        if msg_id <= 0 or msg_id in seen:
+            continue
+        seen.add(msg_id)
+        result.append(msg_id)
+    return result
+
+
+def _set_contact_menu_message_ids(contact: TelegramContact, ids: list[int]) -> None:
+    clean: list[int] = []
+    seen: set[int] = set()
+    for value in ids:
+        try:
+            msg_id = int(value)
+        except Exception:
+            continue
+        if msg_id <= 0 or msg_id in seen:
+            continue
+        seen.add(msg_id)
+        clean.append(msg_id)
+    # keep only recent small tail to avoid unbounded growth
+    clean = clean[-20:]
+    contact.menu_message_ids_json = clean
+    contact.active_menu_message_id = str(clean[-1]) if clean else None
+
+
+def _remember_contact_menu_message(contact: TelegramContact, response: dict) -> None:
+    msg_id = _response_message_id(response)
+    if msg_id is None:
+        return
+    try:
+        new_id = int(msg_id)
+    except Exception:
+        return
+    ids = _contact_menu_message_ids(contact)
+    ids.append(new_id)
+    _set_contact_menu_message_ids(contact, ids)
+
+
+def _clear_client_menu_keyboards(db: Session, contact: TelegramContact) -> None:
+    """Remove all tracked menu copies for this contact before sending a new /start menu."""
+    ids = _contact_menu_message_ids(contact)
+    # Also include currently tracked per-ticket menu ids as fallback source.
+    ticket_ids = db.execute(
+        select(Ticket.menu_message_id).where(
+            and_(
+                Ticket.client_id == contact.client_id,
+                Ticket.menu_message_id.is_not(None),
+            )
+        )
+    ).all()
+    for row in ticket_ids:
+        try:
+            if row and row[0]:
+                ids.append(int(row[0]))
+        except Exception:
+            continue
+    dedup = []
+    seen: set[int] = set()
+    for mid in ids:
+        if mid in seen:
+            continue
+        seen.add(mid)
+        dedup.append(mid)
+    for mid in dedup:
+        _safe_delete_message(contact.external_chat_id, mid)
+    _set_contact_menu_message_ids(contact, [])
 
 
 def _button_visibility_enabled(row: BotButtonSetting | None) -> bool:
@@ -1194,35 +1239,6 @@ def _handle_edited_client_message(
     return ticket
 
 
-def _get_or_create_contact_from_user(
-    db: Session,
-    company_id: str,
-    external_chat_id: str,
-    from_user: dict,
-) -> TelegramContact:
-    external_user_id = str(from_user.get("id", ""))
-    display_name = " ".join(x for x in [from_user.get("first_name"), from_user.get("last_name")] if x).strip()
-    username = (from_user.get("username") or "").strip() or None
-
-    contact = _telegram_contact_by_chat_id(db, external_chat_id)
-
-    if contact is None:
-        return _create_client_and_contact(
-            db=db,
-            company_id=company_id,
-            external_user_id=external_user_id or external_chat_id,
-            external_chat_id=external_chat_id,
-            display_name=display_name or "Клиент Telegram",
-            username=username,
-        )
-
-    contact.updated_at = datetime.utcnow()
-    contact.external_username = username
-    if display_name:
-        contact.external_display_name = display_name
-    return contact
-
-
 
 def _button_from_callback(db: Session, data: str, menu_name: str | None = None) -> ButtonSpec | None:
     def _button_from_db_row(row: BotButtonSetting) -> ButtonSpec:
@@ -1950,10 +1966,10 @@ def _process_menu_callback(
     if external_chat_id:
         company = _first_company(db)
         if company is not None:
-            contact = _telegram_contact_by_chat_id(db, external_chat_id)
+            contact = telegram_contact_by_chat_id(db, external_chat_id)
             if contact is None:
                 from_user = callback.get("from") or {}
-                contact = _get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
+                contact = get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
             if contact is not None:
                 menu_name = _menu_name_for_contact(db, contact)
                 submenu_path = _submenu_path_by_key_or_db(db, menu_name, menu_key)
@@ -2038,7 +2054,7 @@ def _process_problem_type_callback(
         db.commit()
         return {"ok": True, "ignored": "no_company"}
 
-    contact = _get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
+    contact = get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
     menu_name_for_contact = _menu_name_for_contact(db, contact)
     button = _button_from_callback(db, data, menu_name_for_contact)
     if button is None:
@@ -2171,48 +2187,6 @@ def _process_problem_type_callback(
 
     return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
 
-def _process_first_connection_start(
-    db: Session,
-    contact: TelegramContact,
-    external_chat_id: str,
-    notify_client: bool,
-) -> dict:
-    ticket = _ensure_ticket_for_incoming(
-        db,
-        contact.company_id,
-        contact.client_id,
-        FIRST_CONNECTION_SUBJECT,
-    )
-    append_system_message(
-        db,
-        ticket,
-        FIRST_CONNECTION_AGENT_TEXT.format(username_text="@username"),
-        agent_visible=True,
-    )
-
-    assigned_agent = None
-    if ticket.assignee_id:
-        assigned_agent = db.execute(select(User).where(User.id == ticket.assignee_id)).scalar_one_or_none()
-
-    db.commit()
-
-    if notify_client:
-        response = send_message(external_chat_id, FIRST_CONNECTION_CLIENT_TEXT, reply_markup=client_close_markup())
-        store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
-        db.commit()
-        if assigned_agent is not None:
-            notify_client_about_assignee(db, ticket, assigned_agent)
-
-    return {
-        "ok": True,
-        "command": "start",
-        "first_connection": True,
-        "ticket_id": ticket.id,
-        "status": ticket.status,
-        "external_chat_id": external_chat_id,
-    }
-
-
 def process_telegram_update(db: Session, payload: dict, notify_client: bool = False) -> dict:
     update_id = payload.get("update_id")
     if update_id is None:
@@ -2258,7 +2232,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 db.commit()
                 return {"ok": True, "ignored": "no_company"}
 
-            contact = _get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
+            contact = get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
             collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
             menu_name_for_contact = _menu_name_for_contact(db, contact)
             button_callback_data = button_ref
@@ -2374,7 +2348,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 callback,
                 notify_client,
                 first_company_fn=_first_company,
-                get_or_create_contact_from_user_fn=_get_or_create_contact_from_user,
+                get_or_create_contact_from_user_fn=get_or_create_contact_from_user,
                 collecting_ticket_for_client_fn=_collecting_ticket_for_client,
                 active_ticket_for_client_fn=_active_ticket_for_client,
                 client_can_close_ticket_fn=client_can_close_ticket,
@@ -2433,9 +2407,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         db.commit()
         return {"ok": True, "ignored": "no_company"}
 
-    existing_contact = _telegram_contact_by_chat_id(db, external_chat_id)
-    is_new_contact = existing_contact is None
-    contact = _get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
+    existing_contact = telegram_contact_by_chat_id(db, external_chat_id)
+    contact = get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)
 
     if is_edited_message:
         edited_ticket = _handle_edited_client_message(db, contact, text or "(пустое сообщение)", telegram_message_id)
@@ -2484,8 +2457,27 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     if text.startswith("/start"):
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id)
-        if is_new_contact and ticket is None:
-            return _process_first_connection_start(db, contact, external_chat_id, notify_client)
+        profile = _client_profile(db, contact.client_id)
+        has_destination = bool((profile.destination or "").strip()) if profile is not None else False
+        needs_onboarding = bool(profile is None or not profile.is_verified or not has_destination)
+        if ticket is None and needs_onboarding:
+            return process_first_connection_start(
+                db,
+                contact,
+                external_chat_id,
+                notify_client,
+                first_connection_subject=FIRST_CONNECTION_SUBJECT,
+                first_connection_agent_text=FIRST_CONNECTION_AGENT_TEXT,
+                first_connection_client_text=FIRST_CONNECTION_CLIENT_TEXT,
+                ensure_ticket_for_incoming_fn=_ensure_ticket_for_incoming,
+                append_system_message_fn=append_system_message,
+                user_by_id_fn=lambda _db, _id: _db.execute(select(User).where(User.id == _id)).scalar_one_or_none(),
+                send_message_fn=send_message,
+                client_close_markup_fn=client_close_markup,
+                store_client_close_button_fn=store_client_close_button,
+                notify_client_about_assignee_fn=notify_client_about_assignee,
+                response_message_id_fn=_response_message_id,
+            )
 
         collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
         if ticket is None and collecting_ticket is None:
@@ -2493,6 +2485,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             append_system_message(db, draft, "Клиент нажал /start")
             collecting_ticket = draft
 
+        # Always remove all tracked old menus before sending a fresh one.
+        _clear_client_menu_keyboards(db, contact)
         db.commit()
         if notify_client:
             if ticket is None:
@@ -2544,7 +2538,9 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             append_system_message_fn=append_system_message,
             append_client_message_fn=_append_client_message,
             store_telegram_attachment_fn=_store_telegram_attachment,
-            remove_client_close_button_fn=_remove_client_close_button,
+            remove_client_close_button_fn=lambda _db, _ticket: remove_client_close_button(
+                _db, _ticket, remove_inline_keyboard_fn=remove_inline_keyboard
+            ),
             send_message_fn=send_message,
             too_large_attachment_system_text_fn=too_large_attachment_system_text,
             send_too_large_attachment_client_messages_fn=send_too_large_attachment_client_messages,

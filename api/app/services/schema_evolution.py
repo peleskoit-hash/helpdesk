@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sqlalchemy import text
 
@@ -86,6 +86,8 @@ def ensure_telegram_contact_columns() -> None:
     required_columns = {
         "external_username": "VARCHAR(100)",
         "external_display_name": "VARCHAR(200)",
+        "active_menu_message_id": "VARCHAR(100)",
+        "menu_message_ids_json": "JSONB",
     }
 
     with engine.begin() as conn:
@@ -95,6 +97,7 @@ def ensure_telegram_contact_columns() -> None:
         if dialect == "sqlite":
             rows = conn.execute(text("PRAGMA table_info(telegram_contacts)")).mappings().all()
             existing = {row["name"] for row in rows}
+            required_columns["menu_message_ids_json"] = "TEXT"
         else:
             rows = conn.execute(
                 text(
@@ -111,6 +114,10 @@ def ensure_telegram_contact_columns() -> None:
             if column_name in existing:
                 continue
             conn.execute(text(f"ALTER TABLE telegram_contacts ADD COLUMN {column_name} {column_type}"))
+        if dialect == "sqlite":
+            conn.execute(text("UPDATE telegram_contacts SET menu_message_ids_json = '[]' WHERE menu_message_ids_json IS NULL"))
+        else:
+            conn.execute(text("UPDATE telegram_contacts SET menu_message_ids_json = '[]'::jsonb WHERE menu_message_ids_json IS NULL"))
 
 
 def ensure_user_columns() -> None:
