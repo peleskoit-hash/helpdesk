@@ -365,9 +365,13 @@ def bot_button_destination_options(db: Session = Depends(get_db), user: CurrentU
         row.destination_value: row.menu_type
         for row in db.execute(select(BotMenuDestinationBinding)).scalars().all()
     }
+    free = [item for item in options if item not in busy]
     return {
+        # Legacy + current aliases to keep frontend/backward compatibility.
+        "items": options,
+        "free": free,
         "options": options,
-        "free_options": [item for item in options if item not in busy],
+        "free_options": free,
         "bindings": busy,
     }
 
