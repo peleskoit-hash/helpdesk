@@ -160,7 +160,7 @@
         }
         ctx.loadPreviewItem(node);
         const nextRows = Array.isArray(node.children_rows) ? node.children_rows : [];
-        if (nextRows.length > 0) {
+        if (node.kind === "submenu" || node.kind === "group_task_parent" || nextRows.length > 0) {
           ctx.state.levelStack.push({
             label: node.label,
             rows: nextRows,
