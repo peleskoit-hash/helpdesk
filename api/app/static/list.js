@@ -3,6 +3,22 @@ const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
 const DEFAULT_TAB = "active";
 const TAB_KEYS = new Set(["active", "unassigned", "special", "frozen", "closed"]);
 
+function parsePage(value) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+function readListStateFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const rawTab = params.get("tab");
+  const rawPage = params.get("page");
+  const rawQ = params.get("q");
+  const tab = TAB_KEYS.has(rawTab) ? rawTab : null;
+  const page = parsePage(rawPage);
+  const q = (rawQ || "").trim();
+  return { tab, page, q, hasPageParam: rawPage !== null };
+}
+
 function readStoredTabCounts() {
   try {
     const raw = localStorage.getItem(TAB_COUNTS_STORAGE_KEY);
@@ -20,8 +36,10 @@ function readStoredTabCounts() {
   }
 }
 
+const urlState = readListStateFromUrl();
 const state = {
-  tab: readTabFromUrl() || localStorage.getItem("hd_tab") || DEFAULT_TAB,
+  tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
+  appliedSearchQuery: urlState.q,
   tableSortKey: localStorage.getItem("hd_table_sort_key") || "created_at",
   tableSortDir: localStorage.getItem("hd_table_sort_dir") || "desc",
   role: localStorage.getItem("hd_user_role") || "agent",
@@ -33,7 +51,7 @@ const state = {
   selectedTicketIds: new Set(),
   visibleTicketIds: [],
   tickets: [],
-  page: 1,
+  page: urlState.page,
   pages: 1,
   total: 0,
   limit: 20,
@@ -42,6 +60,7 @@ const state = {
   sessionContext: null,
   completionStats: null,
   completionOpen: false,
+  hasPageFromUrl: Boolean(urlState.hasPageParam),
 };
 
 const endpointMap = {
@@ -52,21 +71,20 @@ const endpointMap = {
   closed: "/api/v1/tickets/closed",
 };
 
-function readTabFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const tab = params.get("tab");
-  return TAB_KEYS.has(tab) ? tab : null;
-}
-
-function syncTabUrl(tab, mode = "push") {
-  const nextTab = TAB_KEYS.has(tab) ? tab : DEFAULT_TAB;
+function syncListUrl(mode = "replace") {
+  const nextTab = TAB_KEYS.has(state.tab) ? state.tab : DEFAULT_TAB;
+  const nextPage = parsePage(state.page);
+  const nextQ = (state.appliedSearchQuery || "").trim();
   const url = new URL(window.location.href);
   url.searchParams.set("tab", nextTab);
+  url.searchParams.set("page", String(nextPage));
+  if (nextQ) url.searchParams.set("q", nextQ);
+  else url.searchParams.delete("q");
   const next = `${url.pathname}?${url.searchParams.toString()}${url.hash}`;
   if (mode === "replace") {
-    window.history.replaceState({ tab: nextTab }, "", next);
+    window.history.replaceState({ tab: nextTab, page: nextPage, q: nextQ }, "", next);
   } else {
-    window.history.pushState({ tab: nextTab }, "", next);
+    window.history.pushState({ tab: nextTab, page: nextPage, q: nextQ }, "", next);
   }
 }
 
@@ -78,12 +96,12 @@ const el = {
   agentSelect: document.getElementById("agentSelect"),
   agentSelectWrap: document.getElementById("agentSelectWrap"),
   searchInput: document.getElementById("searchInput"),
+  searchClearBtn: document.getElementById("searchClearBtn"),
   ticketsTableBody: document.getElementById("ticketsTableBody"),
   ticketCount: document.getElementById("ticketCount"),
-  pageCurrent: document.getElementById("pageCurrent"),
-  pageTotal: document.getElementById("pageTotal"),
   prevPageBtn: document.getElementById("prevPageBtn"),
   nextPageBtn: document.getElementById("nextPageBtn"),
+  paginationPages: document.getElementById("paginationPages"),
   emptyText: document.getElementById("emptyText"),
   statusText: document.getElementById("statusText"),
   bulkAssignBtn: document.getElementById("bulkAssignBtn"),
@@ -139,10 +157,46 @@ const el = {
 };
 let pendingBulkAction = null;
 
+function updateSearchUi() {
+  const draft = (el.searchInput?.value || "").trim();
+  const hasDraft = draft.length > 0;
+  const hasApplied = (state.appliedSearchQuery || "").trim().length > 0;
+  if (el.searchClearBtn) {
+    el.searchClearBtn.classList.toggle("hidden", !hasDraft);
+  }
+  if (el.searchInput) {
+    el.searchInput.classList.toggle("search-active", hasApplied);
+  }
+}
+
+async function applySearchFromInput() {
+  const nextQuery = (el.searchInput.value || "").trim();
+  if (nextQuery === state.appliedSearchQuery) {
+    updateSearchUi();
+    return;
+  }
+  state.appliedSearchQuery = nextQuery;
+  resetToFirstPage();
+  updateSearchUi();
+  await loadTickets({ historyMode: "push" });
+}
+
+async function clearSearchQuery() {
+  const hadDraft = Boolean((el.searchInput.value || "").trim());
+  const hadApplied = Boolean(state.appliedSearchQuery);
+  el.searchInput.value = "";
+  state.appliedSearchQuery = "";
+  updateSearchUi();
+  if (hadDraft || hadApplied) {
+    resetToFirstPage();
+    await loadTickets({ historyMode: "push" });
+  }
+}
+
 function setStatus(text) { el.statusText.textContent = text; }
 
 function showError(message) {
-  el.errorText.value = message || "Неизвестная ошибка";
+  el.errorText.value = message || "Р СњР ВµР С‘Р В·Р Р†Р ВµРЎРѓРЎвЂљР Р…Р В°РЎРЏ Р С•РЎв‚¬Р С‘Р В±Р С”Р В°";
   el.errorModal.classList.remove("hidden");
 }
 
@@ -171,11 +225,11 @@ async function api(path) {
   const response = await fetch(path, { headers: headers() });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Требуется авторизация");
+    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Ошибка запроса";
+    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
     throw new Error(detail);
   }
   return payload;
@@ -192,11 +246,11 @@ async function apiWrite(path, body) {
   });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Требуется авторизация");
+    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Ошибка запроса";
+    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
     throw new Error(detail);
   }
   return payload;
@@ -213,11 +267,11 @@ async function apiPost(path, body) {
   });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Требуется авторизация");
+    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Ошибка запроса";
+    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
     throw new Error(detail);
   }
   return payload;
@@ -236,10 +290,10 @@ function ageText(dateIso) {
   const totalMinutes = Math.max(0, Math.floor(diffMs / 60000));
   const totalHours = Math.floor(totalMinutes / 60);
   const totalDays = Math.floor(totalHours / 24);
-  if (totalDays >= 7) return `${totalDays}д`;
-  if (totalDays >= 1) return `${totalDays}д ${totalHours % 24}ч`;
-  if (totalHours >= 1) return `${totalHours}ч ${totalMinutes % 60}м`;
-  return `${totalMinutes}м`;
+  if (totalDays >= 7) return `${totalDays}\u0434`;
+  if (totalDays >= 1) return `${totalDays}\u0434 ${totalHours % 24}\u0447`;
+  if (totalHours >= 1) return `${totalHours}\u0447 ${totalMinutes % 60}\u043c`;
+  return `${totalMinutes}\u043c`;
 }
 
 function renderTabCounts() {
@@ -251,7 +305,7 @@ function renderCompletionStats() {
   const session = state.sessionContext || {};
   const effectiveName = session?.effective_user?.full_name || session?.real_user?.full_name || "";
   const fallbackLogin = session?.effective_user?.login || session?.real_user?.login || "";
-  el.sidebarUserDisplayName.textContent = (effectiveName || fallbackLogin || "Пользователь").trim();
+  el.sidebarUserDisplayName.textContent = (effectiveName || fallbackLogin || "Р СџР С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ").trim();
 
   const role = session?.effective_user?.role || state.role;
   const showExpanded = role === "agent" || role === "trainee";
@@ -290,7 +344,7 @@ function renderCompletionStats() {
   if (el.completionAllTimeTotalRow) el.completionAllTimeTotalRow.textContent = String(Number(total.total || 0));
   if (el.completionLegacy) el.completionLegacy.textContent = String(legacy);
 
-  if (el.completionSummaryArrow) el.completionSummaryArrow.textContent = state.completionOpen ? "▲" : "▼";
+  if (el.completionSummaryArrow) el.completionSummaryArrow.textContent = state.completionOpen ? "\u25B2" : "\u25BC";
   if (el.completionDetails) el.completionDetails.classList.toggle("hidden", !state.completionOpen);
 }
 
@@ -318,15 +372,6 @@ async function loadCompletionStats(options = {}) {
     }
   }
   renderCompletionStats();
-}
-
-function applySearch(items) {
-  const q = (el.searchInput.value || "").trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((t) =>
-    (t.subject || "").toLowerCase().includes(q) ||
-    (t.client_name || "").toLowerCase().includes(q)
-  );
 }
 
 function dateMs(value) {
@@ -374,12 +419,12 @@ function sortTickets(items) {
 
 function refreshSortHeaderUi() {
   el.sortButtons.forEach((btn) => {
-    const base = btn.textContent.replace(/\s[▲▼]$/, "");
+    const base = btn.textContent.replace(/\s[\u25B2\u25BC?]$/, "");
     btn.textContent = base;
     btn.classList.remove("active");
     if (btn.dataset.sortKey === state.tableSortKey) {
       btn.classList.add("active");
-      btn.textContent = `${base} ${state.tableSortDir === "asc" ? "▲" : "▼"}`;
+      btn.textContent = `${base} ${state.tableSortDir === "asc" ? "\u25B2" : "\u25BC"}`;
     }
   });
 }
@@ -400,20 +445,20 @@ function lastReplyText(ticket) {
 }
 
 function intakeBadge(ticket) {
-  if (ticket.is_special) return " [Особая]";
-  if (ticket.workflow_type === "auto") return " [авто]";
-  if (ticket.intake_state === "collecting") return " [сбор данных]";
-  if (ticket.intake_state === "cancelled") return " [отменено]";
+  if (ticket.is_special) return " [\u041e\u0441\u043e\u0431\u0430\u044f]";
+  if (ticket.workflow_type === "auto") return " [\u0430\u0432\u0442\u043e]";
+  if (ticket.intake_state === "collecting") return " [\u0441\u0431\u043e\u0440 \u0434\u0430\u043d\u043d\u044b\u0445]";
+  if (ticket.intake_state === "cancelled") return " [\u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e]";
   return "";
 }
 
 function assigneeOptionsHtml(selectedId, selectedName = "") {
-  const options = [`<option value="" ${selectedId ? "" : "selected"}>Распределение</option>`];
+  const options = [`<option value="" ${selectedId ? "" : "selected"}>Р В Р В°РЎРѓР С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ</option>`];
   const hasSelectedInSupport = Boolean(
     selectedId && state.supportAgents.some((agent) => agent.id === selectedId)
   );
   if (selectedId && !hasSelectedInSupport) {
-    const fallbackName = selectedName || "Текущий ответственный";
+    const fallbackName = selectedName || "Р СћР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…РЎвЂ№Р в„–";
     options.push(
       `<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(fallbackName)}</option>`
     );
@@ -443,9 +488,9 @@ function updateBulkAssignUi() {
     el.bulkDeleteBtn.disabled = selectedCount === 0;
   }
   if (selectedCount > 0) {
-    el.bulkAssignBtn.textContent = `Назначить ответственно (${selectedCount})`;
+    el.bulkAssignBtn.textContent = `Р СњР В°Р В·Р Р…Р В°РЎвЂЎР С‘РЎвЂљРЎРЉ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С• (${selectedCount})`;
   } else {
-    el.bulkAssignBtn.textContent = "Назначить ответственно";
+    el.bulkAssignBtn.textContent = "Р СњР В°Р В·Р Р…Р В°РЎвЂЎР С‘РЎвЂљРЎРЉ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С•";
   }
 
   if (el.selectAllTicketsBtn) {
@@ -457,7 +502,7 @@ function updateBulkAssignUi() {
 
 async function assignTickets(ticketIds, assigneeId) {
   if (!ticketIds.length) return;
-  setStatus("Назначаю ответственного...");
+  setStatus("Р СњР В°Р В·Р Р…Р В°РЎвЂЎР В°РЎР‹ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С•Р С–Р С•...");
   await apiPost("/api/v1/tickets/assign", {
     ticket_ids: ticketIds,
     assignee_id: assigneeId || null,
@@ -466,7 +511,7 @@ async function assignTickets(ticketIds, assigneeId) {
     state.selectedTicketIds.delete(ticketId);
   }
   await Promise.all([loadTickets(), loadCounts({ silent: true })]);
-  setStatus("Ответственный назначен");
+  setStatus("Р С›РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…РЎвЂ№Р в„– Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р…");
 }
 
 function openAssignModal() {
@@ -481,16 +526,16 @@ function closeAssignModal() {
 function openBulkActionModal(kind) {
   const selected = state.selectedTicketIds.size;
   if (!selected) {
-    showError("Выберите заявки");
+    showError("Р вЂ™РЎвЂ№Р В±Р ВµРЎР‚Р С‘РЎвЂљР Вµ Р В·Р В°РЎРЏР Р†Р С”Р С‘");
     return;
   }
   pendingBulkAction = kind;
   const isSingle = selected === 1;
   const isDelete = kind === "delete";
-  el.bulkActionModalTitle.textContent = isDelete ? "Удаление заявок" : "Завершение заявок";
+  el.bulkActionModalTitle.textContent = isDelete ? "Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С‘Р Вµ Р В·Р В°РЎРЏР Р†Р С•Р С”" : "Р вЂ”Р В°Р Р†Р ВµРЎР‚РЎв‚¬Р ВµР Р…Р С‘Р Вµ Р В·Р В°РЎРЏР Р†Р С•Р С”";
   el.bulkActionModalText.textContent = isDelete
-    ? (isSingle ? "Вы уверены, что хотите удалить заявку?" : "Вы уверены, что хотите удалить заявки?")
-    : (isSingle ? "Вы уверены, что хотите закрыть заявку?" : "Вы уверены, что хотите закрыть заявки?");
+    ? (isSingle ? "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ РЎС“Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”РЎС“?" : "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ РЎС“Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”Р С‘?")
+    : (isSingle ? "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”РЎС“?" : "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”Р С‘?");
   el.confirmBulkActionBtn.classList.toggle("danger", isDelete);
   el.confirmBulkActionBtn.classList.toggle("primary", !isDelete);
   el.bulkActionModal.classList.remove("hidden");
@@ -505,16 +550,16 @@ async function runBulkAction() {
   const ticketIds = [...state.selectedTicketIds];
   if (!ticketIds.length || !pendingBulkAction) return;
   if (pendingBulkAction === "close") {
-    setStatus("Принудительно закрываю заявки...");
+    setStatus("Р СџРЎР‚Р С‘Р Р…РЎС“Р Т‘Р С‘РЎвЂљР ВµР В»РЎРЉР Р…Р С• Р В·Р В°Р С”РЎР‚РЎвЂ№Р Р†Р В°РЎР‹ Р В·Р В°РЎРЏР Р†Р С”Р С‘...");
     const result = await apiPost("/api/v1/tickets/admin/close", { ticket_ids: ticketIds });
-    setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
+    setStatus(`Р вЂ”Р В°Р С”РЎР‚РЎвЂ№РЎвЂљР С•: ${result.closed}, РЎС“Р В¶Р Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎвЂ№: ${result.already_closed}`);
   } else {
-    setStatus("Удаляю заявки...");
+    setStatus("Р Р€Р Т‘Р В°Р В»РЎРЏРЎР‹ Р В·Р В°РЎРЏР Р†Р С”Р С‘...");
     const result = await apiPost("/api/v1/tickets/admin/delete", { ticket_ids: ticketIds });
     if (result.file_delete_warnings?.length) {
-      showError(`Удалено: ${result.deleted}\nПредупреждения:\n${result.file_delete_warnings.join("\n")}`);
+      showError(`Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С•: ${result.deleted}\nР СџРЎР‚Р ВµР Т‘РЎС“Р С—РЎР‚Р ВµР В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ:\n${result.file_delete_warnings.join("\n")}`);
     } else {
-      setStatus(`Удалено: ${result.deleted}`);
+      setStatus(`Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С•: ${result.deleted}`);
     }
   }
   state.selectedTicketIds.clear();
@@ -522,12 +567,10 @@ async function runBulkAction() {
 }
 
 function renderTable() {
-  const filtered = sortTickets(applySearch(state.tickets));
+  const filtered = sortTickets(state.tickets);
   state.visibleTicketIds = filtered.map((t) => t.id);
   el.ticketsTableBody.innerHTML = "";
   el.ticketCount.textContent = String(state.total);
-  el.pageCurrent.textContent = String(state.page);
-  el.pageTotal.textContent = String(state.pages);
   el.prevPageBtn.disabled = state.page <= 1;
   el.nextPageBtn.disabled = state.page >= state.pages;
   el.emptyText.style.display = filtered.length ? "none" : "block";
@@ -541,29 +584,50 @@ function renderTable() {
     if (t.is_frozen || state.tab === "frozen") rowClasses.push("ticket-row-frozen");
     if (t.status === "closed" || state.tab === "closed") rowClasses.push("ticket-row-closed");
     tr.className = rowClasses.join(" ");
+    const currentListUrl = `${window.location.pathname}${window.location.search}`;
+    const publicId = t.ticket_number || t.id;
+    const ticketUrl = new URL(`/tickets/${publicId}`, window.location.origin);
+    ticketUrl.searchParams.set("tab", state.tab || DEFAULT_TAB);
+    ticketUrl.searchParams.set("page", String(parsePage(state.page)));
+    const appliedQuery = (state.appliedSearchQuery || "").trim();
+    if (appliedQuery) ticketUrl.searchParams.set("q", appliedQuery);
+    ticketUrl.searchParams.set("return_url", currentListUrl);
+    const ticketHref = `${ticketUrl.pathname}${ticketUrl.search}`;
+    const linkedCell = (className, textValue) => (
+      `<td class="${className}"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${escapeHtml(textValue)}</a></td>`
+    );
     const selectCell = state.role === "admin"
       ? `<td class="ticket-check-cell"><input class="ticket-check" data-ticket-id="${escapeHtml(t.id)}" type="checkbox" ${state.selectedTicketIds.has(t.id) ? "checked" : ""} /></td>`
       : "";
     const assigneeCell = state.role === "admin"
       ? `<td class="ticket-assignee-col"><select class="row-assignee-select" data-ticket-id="${escapeHtml(t.id)}" data-selected-id="${escapeHtml(t.assignee_id || "")}">${assigneeOptionsHtml(t.assignee_id, t.special_assignee_name || t.assignee_name || "")}</select></td>`
       : (state.role === "chiki_piki"
-        ? `<td class="ticket-assignee-col">${escapeHtml(t.special_assignee_name || t.assignee_name || "Нераспределён")}</td>`
+        ? linkedCell("ticket-assignee-col", t.special_assignee_name || t.assignee_name || "РќРµСЂР°СЃРїСЂРµРґРµР»С‘РЅ")
         : "");
     tr.innerHTML = `
       ${selectCell}
-      <td class="ticket-subject-col">${escapeHtml((t.subject || "") + intakeBadge(t))}</td>
-      <td class="ticket-client-col">${escapeHtml(t.client_name || "")}</td>
+      ${linkedCell("ticket-subject-col", (t.subject || "") + intakeBadge(t))}
+      ${linkedCell("ticket-client-col", t.client_name || "")}
       ${assigneeCell}
-      <td class="ticket-age-col">${ageText(t.created_at)}</td>
-      <td class="ticket-created-col">${fmtDate(t.created_at)}</td>
-      <td class="ticket-last-reply-col">${lastReplyText(t)}</td>
+      ${linkedCell("ticket-age-col", ageText(t.created_at))}
+      ${linkedCell("ticket-created-col", fmtDate(t.created_at))}
+      ${linkedCell("ticket-last-reply-col", lastReplyText(t))}
     `;
-    tr.addEventListener("click", () => {
-      const publicId = t.ticket_number || t.id;
-      window.location.href = `/tickets/${publicId}`;
-    });
     el.ticketsTableBody.appendChild(tr);
   }
+
+  el.ticketsTableBody.querySelectorAll(".ticket-row-link").forEach((link) => {
+    const persistReturnUrl = () => {
+      const currentListUrl = `${window.location.pathname}${window.location.search}`;
+      sessionStorage.setItem("ticketListReturnUrl", currentListUrl);
+    };
+    link.addEventListener("click", () => {
+      persistReturnUrl();
+    });
+    link.addEventListener("auxclick", (event) => {
+      if (event.button === 1) persistReturnUrl();
+    });
+  });
 
   el.ticketsTableBody.querySelectorAll(".ticket-check").forEach((checkbox) => {
     checkbox.addEventListener("click", (event) => {
@@ -595,6 +659,60 @@ function renderTable() {
     });
   });
   updateBulkAssignUi();
+  renderPagination();
+}
+
+function buildPaginationModel(totalPages, currentPage) {
+  if (totalPages <= 1) return [1];
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const left = Math.max(2, currentPage - 1);
+  const right = Math.min(totalPages - 1, currentPage + 1);
+  const model = [1];
+  if (left > 2) model.push("\u2026");
+  for (let page = left; page <= right; page += 1) {
+    model.push(page);
+  }
+  if (right < totalPages - 1) model.push("\u2026");
+  model.push(totalPages);
+  return model;
+}
+
+async function goToPage(page) {
+  const nextPage = parsePage(page);
+  if (nextPage === state.page) return;
+  state.page = nextPage;
+  await loadTickets({ historyMode: "push" });
+}
+
+function renderPagination() {
+  if (!el.paginationPages) return;
+  el.paginationPages.innerHTML = "";
+  const totalPages = Math.max(1, Number(state.pages || 1));
+  const currentPage = parsePage(state.page);
+  const model = buildPaginationModel(totalPages, currentPage);
+  for (const token of model) {
+    if (token === "\u2026") {
+      const span = document.createElement("span");
+      span.className = "table-page-ellipsis";
+      span.textContent = "\u2026";
+      el.paginationPages.appendChild(span);
+      continue;
+    }
+    const page = Number(token);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "table-page-number";
+    if (page === currentPage) {
+      button.classList.add("active");
+      button.setAttribute("aria-current", "page");
+    }
+    button.textContent = String(page);
+    button.disabled = page === currentPage;
+    button.addEventListener("click", async () => {
+      await goToPage(page);
+    });
+    el.paginationPages.appendChild(button);
+  }
 }
 
 function applyRoleUi() {
@@ -631,13 +749,15 @@ function applyRoleUi() {
   }
   if (!(isAdmin || isReadonly) && state.tab === "unassigned") {
     state.tab = DEFAULT_TAB;
+    resetToFirstPage();
     localStorage.setItem("hd_tab", state.tab);
-    syncTabUrl(state.tab, "replace");
+    syncListUrl("replace");
   }
   if (!isAdmin && state.tab === "special") {
     state.tab = DEFAULT_TAB;
+    resetToFirstPage();
     localStorage.setItem("hd_tab", state.tab);
-    syncTabUrl(state.tab, "replace");
+    syncListUrl("replace");
   }
   el.tabButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === state.tab);
@@ -650,7 +770,7 @@ function applyRoleUi() {
 
 function renderAgentSelect() {
   el.agentSelect.innerHTML = "";
-  const fallbackName = state.sessionContext?.real_user?.full_name || "Текущий пользователь";
+  const fallbackName = state.sessionContext?.real_user?.full_name || "Р СћР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ";
   const option = document.createElement("option");
   option.value = state.userId || "";
   option.textContent = fallbackName;
@@ -711,6 +831,10 @@ function syncSidebarState(sidebarState) {
   applyRoleUi();
   renderCompletionStats();
   const nextAssigneeKey = (state.adminAssigneeIds || []).slice().sort().join(",");
+  const isInitialSidebarHydration = !prevUserId && Boolean(state.userId);
+  if (isInitialSidebarHydration && state.hasPageFromUrl) {
+    return;
+  }
   if ((prevRole !== state.role || prevUserId !== state.userId || prevAssigneeKey !== nextAssigneeKey) && !state.isLoading) {
     resetToFirstPage();
     loadTickets({ silent: true });
@@ -734,10 +858,10 @@ async function loadMe() {
     }
     if (el.sidebarUserDisplayName) {
       const displayName = (me.full_name || "").trim() || me.login || "";
-      el.sidebarUserDisplayName.textContent = displayName || "Пользователь";
+      el.sidebarUserDisplayName.textContent = displayName || "Р СџР С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ";
     }
   } catch (e) {
-    showError(`Ошибка статуса: ${e.message}`);
+    showError(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂљР В°РЎвЂљРЎС“РЎРѓР В°: ${e.message}`);
   }
 }
 
@@ -746,9 +870,9 @@ async function updateAvailabilityStatus(status) {
     renderAvailabilityStatus(status);
     const me = await apiWrite("/api/v1/users/me/status", { availability_status: status });
     renderAvailabilityStatus(me.availability_status);
-    setStatus("Статус обновлён");
+    setStatus("Р РЋРЎвЂљР В°РЎвЂљРЎС“РЎРѓ Р С•Р В±Р Р…Р С•Р Р†Р В»РЎвЂР Р…");
   } catch (e) {
-    showError(`Ошибка статуса: ${e.message}`);
+    showError(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂљР В°РЎвЂљРЎС“РЎРѓР В°: ${e.message}`);
     await loadMe();
   }
 }
@@ -757,7 +881,8 @@ async function loadTickets(options = {}) {
   if (state.isLoading) return;
   state.isLoading = true;
   const silent = Boolean(options.silent);
-  if (!silent) setStatus("Загружаю список...");
+  const historyMode = options.historyMode || null;
+  if (!silent) setStatus("Р вЂ”Р В°Р С–РЎР‚РЎС“Р В¶Р В°РЎР‹ РЎРѓР С—Р С‘РЎРѓР С•Р С”...");
   const base = endpointMap[state.tab];
   const queryParams = new URLSearchParams({
     sort: "created_at",
@@ -765,6 +890,10 @@ async function loadTickets(options = {}) {
     page: String(state.page),
     limit: String(state.limit),
   });
+  const searchQuery = (state.appliedSearchQuery || "").trim();
+  if (searchQuery) {
+    queryParams.set("query", searchQuery);
+  }
   if (state.role === "admin" && state.tab !== "unassigned") {
     if (state.tab === "special") {
       // Special queue is global for admins and does not depend on selected agents.
@@ -779,11 +908,14 @@ async function loadTickets(options = {}) {
     state.total = payload.total || 0;
     state.pages = payload.pages || 1;
     state.page = payload.page || 1;
+    if (historyMode) {
+      syncListUrl(historyMode);
+    }
 
     renderTable();
-    setStatus("Готово");
+    setStatus("Р вЂњР С•РЎвЂљР С•Р Р†Р С•");
   } catch (e) {
-    if (!silent) setStatus(`Ошибка: ${e.message}`);
+    if (!silent) setStatus(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В°: ${e.message}`);
   } finally {
     state.isLoading = false;
   }
@@ -796,7 +928,7 @@ async function loadCounts(options = {}) {
     const sidebarState = window.HelpdeskSidebar.getState();
     state.counts = sidebarState.counts || state.counts;
   } catch (e) {
-    if (!silent) setStatus(`Ошибка счётчиков: ${e.message}`);
+    if (!silent) setStatus(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂЎРЎвЂРЎвЂљРЎвЂЎР С‘Р С”Р С•Р Р†: ${e.message}`);
   }
 }
 
@@ -808,10 +940,13 @@ function init() {
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
   localStorage.setItem("hd_tab", state.tab);
-  syncTabUrl(state.tab, "replace");
+  state.page = parsePage(state.page);
+  syncListUrl("replace");
 
   el.roleSelect.value = state.role;
   el.agentSelect.value = state.userId;
+  el.searchInput.value = state.appliedSearchQuery;
+  updateSearchUi();
   refreshSortHeaderUi();
   renderTabCounts();
 
@@ -825,10 +960,9 @@ function init() {
       btn.classList.add("active");
       state.tab = btn.dataset.tab;
       localStorage.setItem("hd_tab", state.tab);
-      syncTabUrl(state.tab, "push");
       state.selectedTicketIds.clear();
       resetToFirstPage();
-      await Promise.all([loadTickets(), loadCounts()]);
+      await Promise.all([loadTickets({ historyMode: "push" }), loadCounts()]);
     });
   });
 
@@ -919,21 +1053,33 @@ function init() {
     } catch {
       document.execCommand("copy");
     }
-    setStatus("Текст ошибки скопирован");
+    setStatus("Р СћР ВµР С”РЎРѓРЎвЂљ Р С•РЎв‚¬Р С‘Р В±Р С”Р С‘ РЎРѓР С”Р С•Р С—Р С‘РЎР‚Р С•Р Р†Р В°Р Р…");
   });
 
-  el.searchInput.addEventListener("input", renderTable);
+  el.searchInput.addEventListener("input", () => {
+    updateSearchUi();
+  });
+  el.searchInput.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    await applySearchFromInput();
+  });
+  if (el.searchClearBtn) {
+    el.searchClearBtn.addEventListener("click", async () => {
+      await clearSearchQuery();
+    });
+  }
 
   el.prevPageBtn.addEventListener("click", async () => {
     if (state.page <= 1) return;
     state.page -= 1;
-    await loadTickets();
+    await loadTickets({ historyMode: "push" });
   });
 
   el.nextPageBtn.addEventListener("click", async () => {
     if (state.page >= state.pages) return;
     state.page += 1;
-    await loadTickets();
+    await loadTickets({ historyMode: "push" });
   });
 
   window.setInterval(() => {
@@ -944,14 +1090,21 @@ function init() {
   }, 5000);
 
   window.addEventListener("popstate", async () => {
-    const tabFromUrl = readTabFromUrl() || DEFAULT_TAB;
-    if (state.tab === tabFromUrl) return;
+    const next = readListStateFromUrl();
+    const tabFromUrl = next.tab || DEFAULT_TAB;
+    const pageFromUrl = parsePage(next.page);
+    const qFromUrl = (next.q || "").trim();
+    const changed = state.tab !== tabFromUrl || state.page !== pageFromUrl || state.appliedSearchQuery !== qFromUrl;
+    if (!changed) return;
     state.tab = tabFromUrl;
+    state.page = pageFromUrl;
+    state.appliedSearchQuery = qFromUrl;
     localStorage.setItem("hd_tab", state.tab);
+    el.searchInput.value = state.appliedSearchQuery;
+    updateSearchUi();
     applyRoleUi();
     state.selectedTicketIds.clear();
-    resetToFirstPage();
-    await Promise.all([loadTickets({ silent: true }), loadCounts({ silent: true })]);
+    await Promise.all([loadTickets({ silent: true, historyMode: "replace" }), loadCounts({ silent: true })]);
   });
 
   if (el.completionToggleBtn) {
@@ -976,4 +1129,6 @@ function init() {
   await loadMe();
   await Promise.all([loadTickets(), loadCounts(), loadCompletionStats()]);
 })();
+
+
 

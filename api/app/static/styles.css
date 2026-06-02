@@ -547,6 +547,44 @@ body {
   font-size: 12px;
 }
 
+.search-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.search-input-wrap #searchInput {
+  min-width: 280px;
+  padding-right: 28px;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.search-clear-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+#searchInput.search-active {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
+
 .content {
   display: grid;
   grid-template-columns: 1fr 420px;
@@ -572,8 +610,14 @@ body {
 
 /* ===== tables/list ===== */
 .table-wrap {
-  overflow: auto;
+  overflow: hidden;
   height: 100%;
+}
+
+.table-scroll {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 table {
@@ -595,6 +639,20 @@ th, td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ticket-row-link {
+  display: block;
+  width: 100%;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ticket-row-link:focus-visible {
+  outline: 2px solid #0ea5e9;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .admin-select-col,
@@ -1340,6 +1398,72 @@ button.action:disabled {
 .pager {
   display: flex;
   gap: 8px;
+}
+
+.table-pagination-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.table-pagination-total {
+  font-size: 13px;
+  color: #334155;
+  justify-self: start;
+}
+
+.table-pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 2;
+  justify-self: center;
+}
+
+.table-page-btn {
+  min-width: 34px;
+  height: 30px;
+  padding: 0 8px;
+}
+
+.table-pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-page-number {
+  min-width: 34px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #1e293b;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 8px;
+}
+
+.table-page-number:hover {
+  border-color: #0ea5e9;
+}
+
+.table-page-number.active {
+  background: #0ea5e9;
+  color: #fff;
+  border-color: #0ea5e9;
+  font-weight: 700;
+}
+
+.table-page-ellipsis {
+  color: #64748b;
+  min-width: 20px;
+  text-align: center;
 }
 
 .ticket-side {

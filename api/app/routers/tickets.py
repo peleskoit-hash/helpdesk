@@ -410,6 +410,7 @@ def list_active(
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
     assignee_ids: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -424,6 +425,7 @@ def list_active(
         order=order,
         page=page,
         limit=limit,
+        query=query,
         admin_assignee_ids=assignee_ids,
         ensure_ticket_number_fn=_ensure_ticket_number,
     )
@@ -435,6 +437,7 @@ def list_unassigned(
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -447,6 +450,7 @@ def list_unassigned(
         order=order,
         page=page,
         limit=limit,
+        query=query,
         admin_assignee_ids=None,
         filter_admin_assignees=False,
         require_admin_or_chiki=True,
@@ -460,6 +464,7 @@ def list_frozen(
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
     assignee_ids: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -474,6 +479,7 @@ def list_frozen(
         order=order,
         page=page,
         limit=limit,
+        query=query,
         admin_assignee_ids=assignee_ids,
         ensure_ticket_number_fn=_ensure_ticket_number,
     )
@@ -485,6 +491,7 @@ def list_closed(
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
     assignee_ids: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -499,6 +506,7 @@ def list_closed(
         order=order,
         page=page,
         limit=limit,
+        query=query,
         admin_assignee_ids=assignee_ids,
         filter_admin_assignees=False,
         include_special_open=False,
@@ -514,6 +522,7 @@ def list_special(
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -524,6 +533,7 @@ def list_special(
         order=order,
         page=page,
         limit=limit,
+        query=query,
         ensure_ticket_number_fn=_ensure_ticket_number,
     )
 

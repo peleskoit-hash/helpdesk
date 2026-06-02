@@ -1,7 +1,25 @@
-﻿// ===== state/elements =====
+// ===== state/elements =====
 const params = new URLSearchParams(window.location.search);
 const ticketId = window.location.pathname.split("/").pop();
 const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
+
+function parseReturnPage(value) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+}
+
+function normalizeTicketsReturnUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin) return "";
+    if (!parsed.pathname.startsWith("/tickets")) return "";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "";
+  }
+}
 
 const SALES_FIRST_DEPARTMENT = new Set([
   "группа Власова",
@@ -18,6 +36,8 @@ const state = {
   ticketId,
   role: localStorage.getItem("hd_user_role") || "agent",
   tab: params.get("tab") || localStorage.getItem("hd_tab") || "active",
+  returnPage: parseReturnPage(params.get("page")),
+  returnQuery: (params.get("q") || "").trim(),
   userId: "",
   isRealAdmin: false,
   roleUsers: [],
@@ -980,7 +1000,21 @@ function init() {
   });
 
   el.backToListBtn.addEventListener("click", () => {
-    window.location.href = `/tickets?tab=${encodeURIComponent(state.tab)}`;
+    const queryReturnUrl = normalizeTicketsReturnUrl(params.get("return_url"));
+    if (queryReturnUrl) {
+      window.location.href = queryReturnUrl;
+      return;
+    }
+    const savedReturnUrl = normalizeTicketsReturnUrl(sessionStorage.getItem("ticketListReturnUrl"));
+    if (savedReturnUrl) {
+      window.location.href = savedReturnUrl;
+      return;
+    }
+    const listUrl = new URL("/tickets", window.location.origin);
+    listUrl.searchParams.set("tab", state.tab || "active");
+    listUrl.searchParams.set("page", String(state.returnPage || 1));
+    if (state.returnQuery) listUrl.searchParams.set("q", state.returnQuery);
+    window.location.href = listUrl.toString();
   });
 
   el.agentSelect.addEventListener("change", async () => {

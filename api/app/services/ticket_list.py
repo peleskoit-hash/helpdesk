@@ -3,7 +3,7 @@ from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import BotButtonSetting, MessageType, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, Client, MessageType, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
@@ -78,6 +78,60 @@ def sort_clause(sort: str, order: str):
     return asc(field) if order == "asc" else desc(field)
 
 
+def apply_search_filter(stmt: Select, query: str | None):
+    q = (query or "").strip()
+    if not q:
+        return stmt
+    pattern = f"%{q}%"
+    return stmt.where(
+        or_(
+            Ticket.subject.ilike(pattern),
+            Ticket.button_config_key.ilike(pattern),
+            Ticket.instruction_button_key.ilike(pattern),
+            exists(
+                select(Client.id).where(
+                    and_(
+                        Client.id == Ticket.client_id,
+                        Client.display_name.ilike(pattern),
+                    )
+                )
+            ),
+            exists(
+                select(BotButtonSetting.id).where(
+                    and_(
+                        BotButtonSetting.button_key == Ticket.button_config_key,
+                        or_(
+                            BotButtonSetting.button_path.ilike(pattern),
+                            BotButtonSetting.button_label.ilike(pattern),
+                            BotButtonSetting.menu_type.ilike(pattern),
+                        ),
+                    )
+                )
+            ),
+            exists(
+                select(BotButtonSetting.id).where(
+                    and_(
+                        BotButtonSetting.button_key == Ticket.instruction_button_key,
+                        or_(
+                            BotButtonSetting.button_path.ilike(pattern),
+                            BotButtonSetting.button_label.ilike(pattern),
+                            BotButtonSetting.menu_type.ilike(pattern),
+                        ),
+                    )
+                )
+            ),
+            exists(
+                select(TicketMessage.id).where(
+                    and_(
+                        TicketMessage.ticket_id == Ticket.id,
+                        TicketMessage.body.ilike(pattern),
+                    )
+                )
+            ),
+        )
+    )
+
+
 def last_reply_meta(db: Session, ticket_id: str):
     stmt = (
         select(TicketMessage.message_type, TicketMessage.created_at)
@@ -123,6 +177,7 @@ def list_tickets_paginated(
     include_support_special_closed: bool = False,
     include_support_all_closed: bool = False,
     require_admin_or_chiki: bool = False,
+    query: str | None = None,
     ensure_ticket_number_fn=None,
 ) -> TicketListResponse:
     if require_admin_or_chiki and not (is_admin(user) or is_readonly_chiki_piki(user)):
@@ -144,6 +199,7 @@ def list_tickets_paginated(
     )
     if filter_admin_assignees:
         base_stmt = apply_admin_assignee_filter(base_stmt, user, admin_assignee_ids)
+    base_stmt = apply_search_filter(base_stmt, query)
 
     total_stmt = select(func.count()).select_from(base_stmt.subquery())
     total = db.execute(total_stmt).scalar_one()
@@ -204,6 +260,7 @@ def list_special_tickets(
     order: str,
     page: int,
     limit: int,
+    query: str | None,
     ensure_ticket_number_fn,
 ) -> TicketListResponse:
     if not is_admin(user):
@@ -213,6 +270,7 @@ def list_special_tickets(
         Ticket.status != TicketStatus.CLOSED.value,
     ]
     base_stmt = select(Ticket).where(and_(*conditions))
+    base_stmt = apply_search_filter(base_stmt, query)
     total_stmt = select(func.count()).select_from(base_stmt.subquery())
     total = db.execute(total_stmt).scalar_one()
     pages = max(1, (total + limit - 1) // limit)
