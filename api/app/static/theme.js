@@ -28,8 +28,12 @@ function initThemeToggle() {
   logoutForms.forEach((form) => {
     form.addEventListener("submit", () => {
       localStorage.removeItem("hd_role");
+      localStorage.removeItem("hd_user_role");
       localStorage.removeItem("hd_user_id");
       localStorage.removeItem("hd_admin_assignee_ids");
+      localStorage.removeItem("hd_tab_counts");
+      localStorage.removeItem("hd_agents_cache");
+      localStorage.removeItem("hd_completion_sidebar_open");
     });
   });
 }

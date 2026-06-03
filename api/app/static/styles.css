@@ -26,6 +26,19 @@ body {
   background: var(--bg);
 }
 
+body:not([data-sidebar-ready="1"]) .admin-only,
+body[data-sidebar-ready="0"] .admin-only,
+body:not([data-sidebar-ready="1"]) .status-panel,
+body[data-sidebar-ready="0"] .status-panel,
+body:not([data-sidebar-ready="1"]) #adminAgentFilter,
+body[data-sidebar-ready="0"] #adminAgentFilter,
+body:not([data-sidebar-ready="1"]) .admin-assignee-col,
+body[data-sidebar-ready="0"] .admin-assignee-col,
+body:not([data-sidebar-ready="1"]) .admin-select-col,
+body[data-sidebar-ready="0"] .admin-select-col {
+  display: none !important;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 266px 1fr;

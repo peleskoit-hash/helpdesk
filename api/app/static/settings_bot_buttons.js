@@ -1,3 +1,5 @@
+(function () {
+function initSettingsBotButtonsPage() {
 const el = {
   statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
@@ -822,14 +824,20 @@ function handleBack() {
     render();
     return;
   }
+  if (window.HelpdeskAppShell?.navigate) {
+    window.HelpdeskAppShell.navigate("/settings");
+    return;
+  }
   window.location.href = "/settings";
 }
 
-window.addEventListener("beforeunload", (event) => {
+function handleBeforeUnload(event) {
   if (!hasUnsavedChanges()) return;
   event.preventDefault();
   event.returnValue = "";
-});
+}
+
+window.addEventListener("beforeunload", handleBeforeUnload);
 
 (function init() {
   el.backToSettingsBtn?.addEventListener("click", handleBack);
@@ -847,4 +855,14 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
       console.error(e);
     });
 })();
+return () => {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+};
+}
 
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("settings-bot-buttons", initSettingsBotButtonsPage);
+} else {
+  initSettingsBotButtonsPage();
+}
+})();

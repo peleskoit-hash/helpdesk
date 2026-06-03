@@ -1,9 +1,14 @@
-﻿(function () {
+(function () {
   const TAB_COUNTS_STORAGE_KEY = "hd_tab_counts";
   const AGENTS_CACHE_STORAGE_KEY = "hd_agents_cache";
   const ASSIGNEES_STORAGE_KEY = "hd_admin_assignee_ids";
   const USER_ROLE_STORAGE_KEY = "hd_user_role";
   const STORED_ASSIGNEES_RAW = localStorage.getItem(ASSIGNEES_STORAGE_KEY);
+  const rootBody = document.body;
+
+  if (rootBody) {
+    rootBody.dataset.sidebarReady = "0";
+  }
 
   function safeParse(raw, fallback) {
     try {
@@ -36,8 +41,8 @@
   }
 
   const state = {
-    role: localStorage.getItem(USER_ROLE_STORAGE_KEY) || "agent",
-    userId: localStorage.getItem("hd_user_id") || "",
+    role: null,
+    userId: "",
     isRealAdmin: false,
     sessionLoginTs: 0,
     login: "",
@@ -50,6 +55,13 @@
 
   const listeners = new Set();
   let statsAnchor = null;
+  let initialized = false;
+  let initPromise = null;
+
+  function setSidebarReady(value) {
+    if (!rootBody) return;
+    rootBody.dataset.sidebarReady = value ? "1" : "0";
+  }
 
   function ensureStatsAnchor() {
     const stats = qs("#sidebarUserStats");
@@ -391,23 +403,32 @@
   }
 
   async function init(options = {}) {
+    if (initialized) return { ...state };
+    if (initPromise) return initPromise;
+    setSidebarReady(false);
     renderFromCurrentState();
-    try {
-      await loadSession();
-      await loadAgents();
-      await loadCounts();
-      renderFromCurrentState();
-      notify();
-      return { ...state };
-    } catch (error) {
-      if (error?.status === 401) {
-        window.location.href = "/login";
+    initPromise = (async () => {
+      try {
+        await loadSession();
+        await loadAgents();
+        await loadCounts();
+        renderFromCurrentState();
+        setSidebarReady(true);
+        initialized = true;
+        notify();
+        return { ...state };
+      } catch (error) {
+        initPromise = null;
+        if (error?.status === 401) {
+          window.location.href = "/login";
+        }
+        if (typeof options.onError === "function") {
+          options.onError(error);
+        }
+        throw error;
       }
-      if (typeof options.onError === "function") {
-        options.onError(error);
-      }
-      throw error;
-    }
+    })();
+    return initPromise;
   }
 
   window.HelpdeskSidebar = {

@@ -1,4 +1,6 @@
-﻿const state = {
+(function () {
+function initSettingsUsersPage() {
+const state = {
   users: [],
   editingUserId: null,
 };
@@ -36,6 +38,7 @@ function fmtDate(d) { return d ? new Date(d).toLocaleString("ru-RU", { hour12: f
 async function api(path, options = {}) {
   const r = await fetch(path, {
     ...options,
+    credentials: "include",
     headers: { accept: "application/json", ...(options.headers || {}) },
   });
   const t = await r.text();
@@ -164,8 +167,16 @@ async function saveUser() {
   }
 }
 
+const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); closeError(); } };
+
 (function init() {
-  el.backToSettingsBtn.addEventListener("click", () => { window.location.href = "/settings"; });
+  el.backToSettingsBtn.addEventListener("click", () => {
+    if (window.HelpdeskAppShell?.navigate) {
+      window.HelpdeskAppShell.navigate("/settings");
+      return;
+    }
+    window.location.href = "/settings";
+  });
   el.createUserBtn.addEventListener("click", () => openUserModal());
   el.closeUserModalBtn.addEventListener("click", closeUserModal);
   el.saveUserBtn.addEventListener("click", saveUser);
@@ -179,7 +190,7 @@ async function saveUser() {
     catch { document.execCommand("copy"); }
     setStatus("Текст ошибки скопирован");
   });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeUserModal(); closeError(); } });
+  document.addEventListener("keydown", handlePageKeydown);
 
   setStatus("Загружаю настройки...");
   window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
@@ -189,4 +200,15 @@ async function saveUser() {
       if (e?.status !== 401) showError(e.message);
       setStatus("Ошибка загрузки настроек");
     });
+})();
+return () => {
+  document.removeEventListener("keydown", handlePageKeydown);
+};
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("settings-users", initSettingsUsersPage);
+} else {
+  initSettingsUsersPage();
+}
 })();

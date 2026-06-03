@@ -6,17 +6,17 @@
   <title>Helpdesk MVP - Список заявок</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
+<body data-sidebar-ready="0">
   <div class="layout">
     <aside class="sidebar">
       <div class="sidebar-brand">ES DESK</div>
       <h2 class="sidebar-title">Заявки</h2>
       <div class="tab-list">
-        <button class="tab-btn admin-only" data-tab="unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></button>
+        <button class="tab-btn admin-only hidden" data-tab="unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></button>
         <button class="tab-btn active" data-tab="active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></button>
         <button class="tab-btn" data-tab="frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></button>
         <button class="tab-btn" data-tab="closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></button>
-        <button class="tab-btn admin-only" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></button>
+        <button class="tab-btn admin-only hidden" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></button>
       </div>
       <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
         <label class="status-panel-title admin-agent-header">
@@ -69,7 +69,7 @@
         </div>
       </div>
       <div class="sidebar-bottom">
-        <div class="status-panel">
+        <div class="status-panel hidden">
           <div class="status-panel-title">Статус</div>
           <button class="agent-status-btn status-offline" data-availability-status="offline">Не в сети</button>
           <button class="agent-status-btn status-online" data-availability-status="online">В сети</button>
@@ -86,7 +86,7 @@
       </div>
     </aside>
 
-    <main class="main">
+    <main id="appContent" class="main" data-shell-page="tickets-list">
       <div class="toolbar">
         <label id="roleControl" class="hidden">Роль
           <select id="roleSelect">
@@ -193,6 +193,7 @@
 
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
+  <script src="/static/app_shell.js"></script>
   <script src="/static/list.js"></script>
 </body>
 </html>

@@ -6,17 +6,17 @@
   <title>Helpdesk MVP - Карточка заявки</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
+<body data-sidebar-ready="0">
   <div class="layout">
     <aside class="sidebar">
       <div class="sidebar-brand">ES DESK</div>
       <h2 class="sidebar-title">Заявки</h2>
       <div class="tab-list">
-        <a class="tab-btn admin-only" data-tab-link="unassigned" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn admin-only hidden" data-tab-link="unassigned" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
         <a class="tab-btn" data-tab-link="active" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
         <a class="tab-btn" data-tab-link="frozen" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
         <a class="tab-btn" data-tab-link="closed" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
-        <a class="tab-btn admin-only" data-tab-link="special" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+        <a class="tab-btn admin-only hidden" data-tab-link="special" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
       </div>
       <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
         <label class="status-panel-title admin-agent-header">
@@ -69,7 +69,7 @@
         </div>
       </div>
       <div class="sidebar-bottom">
-        <div class="status-panel">
+        <div class="status-panel hidden">
           <div class="status-panel-title">Статус</div>
           <button class="agent-status-btn status-offline" data-availability-status="offline">Не в сети</button>
           <button class="agent-status-btn status-online" data-availability-status="online">В сети</button>

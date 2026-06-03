@@ -1,4 +1,6 @@
-﻿const state = {
+(function () {
+function initSettingsClientCardPage() {
+const state = {
   clientCard: { blocks: [] },
   expandedBlocks: new Set(),
   editingFieldId: null,
@@ -64,6 +66,7 @@ function escapeHtml(v) { return String(v ?? "").replaceAll("&", "&amp;").replace
 async function api(path, options = {}) {
   const r = await fetch(path, {
     ...options,
+    credentials: "include",
     headers: { accept: "application/json", ...(options.headers || {}) },
   });
   const t = await r.text();
@@ -395,8 +398,23 @@ async function createBlock() {
   }
 }
 
+const handlePageKeydown = (e) => {
+  if (e.key === "Escape") {
+    closeCreateModal();
+    closeCreateFieldModal();
+    closeEditFieldModal();
+    closeError();
+  }
+};
+
 (function init() {
-  el.backToSettingsBtn.addEventListener("click", () => { window.location.href = "/settings"; });
+  el.backToSettingsBtn.addEventListener("click", () => {
+    if (window.HelpdeskAppShell?.navigate) {
+      window.HelpdeskAppShell.navigate("/settings");
+      return;
+    }
+    window.location.href = "/settings";
+  });
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
   el.addClientCardFieldBtn.addEventListener("click", openCreateFieldModal);
   el.closeCreateClientCardBlockModalBtn.addEventListener("click", closeCreateModal);
@@ -425,14 +443,7 @@ async function createBlock() {
     setStatus("Текст ошибки скопирован");
   });
 
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      closeCreateModal();
-      closeCreateFieldModal();
-      closeEditFieldModal();
-      closeError();
-    }
-  });
+  document.addEventListener("keydown", handlePageKeydown);
 
   setStatus("Загружаю настройки...");
   window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
@@ -442,4 +453,15 @@ async function createBlock() {
       if (e?.status !== 401) showError(e.message);
       setStatus("Ошибка загрузки настроек");
     });
+})();
+return () => {
+  document.removeEventListener("keydown", handlePageKeydown);
+};
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("settings-client-card", initSettingsClientCardPage);
+} else {
+  initSettingsClientCardPage();
+}
 })();
