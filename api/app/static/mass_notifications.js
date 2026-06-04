@@ -1,4 +1,6 @@
-﻿const state = {
+(function () {
+function initMassNotificationsPage() {
+const state = {
   selectedFiles: [],
   recipients: [],
   filterField: "",
@@ -200,4 +202,15 @@ async function sendBroadcast() {
       if (error?.status !== 401) showError(error.message);
       setStatus("Ошибка загрузки");
     });
+})();
+return () => {
+  // Page-local handlers are attached to DOM nodes that are replaced on navigation.
+};
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("mass-notifications", initMassNotificationsPage);
+} else {
+  initMassNotificationsPage();
+}
 })();

@@ -1,4 +1,6 @@
-﻿const state = {
+(function () {
+function initStatusesPage() {
+const state = {
   users: [],
   inFlight: new Set(),
   pollTimer: null,
@@ -184,4 +186,16 @@ function stopPolling() {
     });
 
   window.addEventListener("beforeunload", stopPolling);
+})();
+return () => {
+  stopPolling();
+  window.removeEventListener("beforeunload", stopPolling);
+};
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("statuses", initStatusesPage);
+} else {
+  initStatusesPage();
+}
 })();

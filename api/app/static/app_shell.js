@@ -7,7 +7,7 @@
     url: "",
     initialized: false,
   };
-  const settingsRoutes = new Map([
+  const shellRoutes = new Map([
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20260603b"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260603b"] }],
@@ -23,6 +23,8 @@
         "/static/settings_bot_buttons.js?v=20260602a",
       ],
     }],
+    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
+    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
   ]);
   const loadedScripts = new Set([...document.scripts].map((script) => script.getAttribute("src")).filter(Boolean));
 
@@ -117,7 +119,7 @@
   }
 
   function isSettingsRoute(url) {
-    return settingsRoutes.has(url.pathname);
+    return shellRoutes.has(url.pathname);
   }
 
   function canHandleUrl(url) {
@@ -145,7 +147,9 @@
     document.querySelectorAll(".settings-link").forEach((link) => {
       const href = link.getAttribute("href") || "";
       const linkUrl = new URL(href, window.location.origin);
-      const active = linkUrl.pathname === "/settings" && url.pathname.startsWith("/settings");
+      const active = linkUrl.pathname === "/settings"
+        ? url.pathname.startsWith("/settings")
+        : linkUrl.pathname === url.pathname;
       link.classList.toggle("active", active);
     });
   }
@@ -160,7 +164,7 @@
 
   async function ensurePageScript(page) {
     if (registry.has(page)) return;
-    const route = [...settingsRoutes.values()].find((item) => item.page === page);
+    const route = [...shellRoutes.values()].find((item) => item.page === page);
     if (!route?.scripts?.length) return;
     for (const src of route.scripts) {
       if (loadedScripts.has(src)) continue;
@@ -196,7 +200,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       payload = extractShellPayload(await response.text());
       if (!payload?.page) throw new Error("Shell content not found");
-      if (!settingsRoutes.get(url.pathname) || settingsRoutes.get(url.pathname).page !== payload.page) {
+      if (!shellRoutes.get(url.pathname) || shellRoutes.get(url.pathname).page !== payload.page) {
         throw new Error("Unexpected shell page");
       }
     } catch (error) {
@@ -231,7 +235,7 @@
     extractShellPayload,
     mountShellPayload,
     getCurrentPage: () => ({ ...current }),
-    version: "20260603c",
+    version: "20260604a",
   };
 
   document.addEventListener("click", (event) => {
