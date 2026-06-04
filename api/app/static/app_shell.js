@@ -4,6 +4,7 @@
     name: "",
     root: null,
     destroy: null,
+    onUrlChange: null,
     url: "",
     initialized: false,
   };
@@ -19,12 +20,13 @@
         "/static/bot_buttons_level_view.js?v=20260520a",
         "/static/bot_buttons_editor.js?v=20260520a",
         "/static/bot_buttons_menu_view.js?v=20260521a",
-        "/static/bot_buttons_editor_view.js?v=20260521a",
-        "/static/settings_bot_buttons.js?v=20260602a",
+        "/static/bot_buttons_editor_view.js?v=20260604a",
+        "/static/settings_bot_buttons.js?v=20260604a",
       ],
     }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
   ]);
   const loadedScripts = new Set([...document.scripts].map((script) => script.getAttribute("src")).filter(Boolean));
 
@@ -32,12 +34,15 @@
     return document.getElementById("appContent");
   }
 
-  function normalizeDestroy(result) {
-    if (typeof result === "function") return result;
-    if (result && typeof result.destroy === "function") {
-      return () => result.destroy();
+  function normalizeLifecycle(result) {
+    if (typeof result === "function") return { destroy: result, onUrlChange: null };
+    if (result && typeof result === "object") {
+      return {
+        destroy: typeof result.destroy === "function" ? () => result.destroy() : () => {},
+        onUrlChange: typeof result.onUrlChange === "function" ? result.onUrlChange : null,
+      };
     }
-    return () => {};
+    return { destroy: () => {}, onUrlChange: null };
   }
 
   function destroyCurrentPage() {
@@ -51,6 +56,7 @@
     current.name = "";
     current.root = null;
     current.destroy = null;
+    current.onUrlChange = null;
     current.url = "";
     current.initialized = false;
   }
@@ -72,14 +78,17 @@
 
     const factory = registry.get(name);
     if (typeof factory === "function") {
-      current.destroy = normalizeDestroy(factory({
+      const lifecycle = normalizeLifecycle(factory({
         name,
         root,
         url: current.url,
       }));
+      current.destroy = lifecycle.destroy;
+      current.onUrlChange = lifecycle.onUrlChange;
       current.initialized = true;
     } else {
       current.destroy = () => {};
+      current.onUrlChange = null;
       current.initialized = false;
     }
     return true;
@@ -140,6 +149,7 @@
     if (url.origin !== window.location.origin) return null;
     if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash) return null;
     if (!canHandleUrl(url)) return null;
+    if (url.pathname === window.location.pathname && typeof current.onUrlChange === "function") return null;
     return { link, url };
   }
 
@@ -210,6 +220,13 @@
 
     try {
       if (!mountShellPayload(payload)) throw new Error("Shell mount failed");
+      updateSidebarActiveState(url);
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      if (options.replace) {
+        window.history.replaceState({ shell: true, url: nextUrl }, "", nextUrl);
+      } else {
+        window.history.pushState({ shell: true, url: nextUrl }, "", nextUrl);
+      }
       await ensurePageScript(payload.page);
       startCurrentPage();
     } catch (error) {
@@ -217,13 +234,6 @@
       return false;
     }
 
-    updateSidebarActiveState(url);
-    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
-    if (options.replace) {
-      window.history.replaceState({ shell: true, url: nextUrl }, "", nextUrl);
-    } else {
-      window.history.pushState({ shell: true, url: nextUrl }, "", nextUrl);
-    }
     return true;
   }
 
@@ -235,7 +245,7 @@
     extractShellPayload,
     mountShellPayload,
     getCurrentPage: () => ({ ...current }),
-    version: "20260604a",
+    version: "20260604c",
   };
 
   document.addEventListener("click", (event) => {
@@ -247,9 +257,15 @@
     navigate(match.url);
   }, true);
 
-  window.addEventListener("popstate", () => {
+  window.addEventListener("popstate", async () => {
     const url = new URL(window.location.href);
     if (!canHandleUrl(url)) return;
+    if (url.pathname === current.url.split("?")[0] && typeof current.onUrlChange === "function") {
+      await current.onUrlChange(url);
+      current.url = `${url.pathname}${url.search}`;
+      updateSidebarActiveState(url);
+      return;
+    }
     navigate(url, { replace: true });
   });
 

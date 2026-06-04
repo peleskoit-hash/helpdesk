@@ -837,6 +837,13 @@ function handleBeforeUnload(event) {
   event.returnValue = "";
 }
 
+function cleanupBotButtonOverlays() {
+  if (window.BotButtonsEditorView?.cleanup) {
+    window.BotButtonsEditorView.cleanup();
+  }
+  document.querySelectorAll("body > .modal-overlay").forEach((overlay) => overlay.remove());
+}
+
 window.addEventListener("beforeunload", handleBeforeUnload);
 
 (function init() {
@@ -852,11 +859,11 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
     })
     .catch((e) => {
       setStatus(`Ошибка: ${e.message}`);
-      console.error(e);
     });
 })();
 return () => {
   window.removeEventListener("beforeunload", handleBeforeUnload);
+  cleanupBotButtonOverlays();
 };
 }
 

@@ -1,3 +1,5 @@
+(function () {
+function initTicketsListPage() {
 const TAB_COUNTS_STORAGE_KEY = "hd_tab_counts";
 const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
 const DEFAULT_TAB = "active";
@@ -37,6 +39,9 @@ function readStoredTabCounts() {
 }
 
 const urlState = readListStateFromUrl();
+let pollTimer = null;
+let unsubscribeSidebar = null;
+let ownsPopState = false;
 const state = {
   tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   appliedSearchQuery: urlState.q,
@@ -70,6 +75,20 @@ const endpointMap = {
   frozen: "/api/v1/tickets/frozen",
   closed: "/api/v1/tickets/closed",
 };
+
+function tabKeyFromNode(node) {
+  const direct = node?.dataset?.tab || "";
+  if (TAB_KEYS.has(direct)) return direct;
+  const href = node?.getAttribute?.("href") || "";
+  if (!href) return "";
+  try {
+    const url = new URL(href, window.location.origin);
+    const tab = url.searchParams.get("tab") || "";
+    return TAB_KEYS.has(tab) ? tab : "";
+  } catch {
+    return "";
+  }
+}
 
 function syncListUrl(mode = "replace") {
   const nextTab = TAB_KEYS.has(state.tab) ? state.tab : DEFAULT_TAB;
@@ -526,21 +545,20 @@ function closeAssignModal() {
 function openBulkActionModal(kind) {
   const selected = state.selectedTicketIds.size;
   if (!selected) {
-    showError("Р вЂ™РЎвЂ№Р В±Р ВµРЎР‚Р С‘РЎвЂљР Вµ Р В·Р В°РЎРЏР Р†Р С”Р С‘");
+    showError("Выберите заявки");
     return;
   }
   pendingBulkAction = kind;
   const isSingle = selected === 1;
   const isDelete = kind === "delete";
-  el.bulkActionModalTitle.textContent = isDelete ? "Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С‘Р Вµ Р В·Р В°РЎРЏР Р†Р С•Р С”" : "Р вЂ”Р В°Р Р†Р ВµРЎР‚РЎв‚¬Р ВµР Р…Р С‘Р Вµ Р В·Р В°РЎРЏР Р†Р С•Р С”";
+  el.bulkActionModalTitle.textContent = isDelete ? "Удаление заявок" : "Завершение заявок";
   el.bulkActionModalText.textContent = isDelete
-    ? (isSingle ? "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ РЎС“Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”РЎС“?" : "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ РЎС“Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”Р С‘?")
-    : (isSingle ? "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”РЎС“?" : "Р вЂ™РЎвЂ№ РЎС“Р Р†Р ВµРЎР‚Р ВµР Р…РЎвЂ№, РЎвЂЎРЎвЂљР С• РЎвЂ¦Р С•РЎвЂљР С‘РЎвЂљР Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р В·Р В°РЎРЏР Р†Р С”Р С‘?");
+    ? (isSingle ? "Вы уверены, что хотите удалить заявку?" : "Вы уверены, что хотите удалить заявки?")
+    : (isSingle ? "Вы уверены, что хотите закрыть заявку?" : "Вы уверены, что хотите закрыть заявки?");
   el.confirmBulkActionBtn.classList.toggle("danger", isDelete);
   el.confirmBulkActionBtn.classList.toggle("primary", !isDelete);
   el.bulkActionModal.classList.remove("hidden");
 }
-
 function closeBulkActionModal() {
   pendingBulkAction = null;
   el.bulkActionModal.classList.add("hidden");
@@ -739,8 +757,8 @@ function applyRoleUi() {
   if (el.adminAgentFilter) {
     el.adminAgentFilter.classList.toggle("hidden", !isAdmin);
   }
-  const unassignedBtn = el.tabButtons.find((btn) => btn.dataset.tab === "unassigned");
-  const specialBtn = el.tabButtons.find((btn) => btn.dataset.tab === "special");
+  const unassignedBtn = el.tabButtons.find((btn) => tabKeyFromNode(btn) === "unassigned");
+  const specialBtn = el.tabButtons.find((btn) => tabKeyFromNode(btn) === "special");
   if (unassignedBtn) {
     unassignedBtn.classList.toggle("hidden", !(isAdmin || isReadonly));
   }
@@ -760,7 +778,7 @@ function applyRoleUi() {
     syncListUrl("replace");
   }
   el.tabButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.tab === state.tab);
+    btn.classList.toggle("active", tabKeyFromNode(btn) === state.tab);
   });
   if (!isAdmin) {
     state.selectedTicketIds.clear();
@@ -936,6 +954,24 @@ function resetToFirstPage() {
   state.page = 1;
 }
 
+async function handleListUrlChange() {
+  const next = readListStateFromUrl();
+  const tabFromUrl = next.tab || DEFAULT_TAB;
+  const pageFromUrl = parsePage(next.page);
+  const qFromUrl = (next.q || "").trim();
+  const changed = state.tab !== tabFromUrl || state.page !== pageFromUrl || state.appliedSearchQuery !== qFromUrl;
+  if (!changed) return;
+  state.tab = tabFromUrl;
+  state.page = pageFromUrl;
+  state.appliedSearchQuery = qFromUrl;
+  localStorage.setItem("hd_tab", state.tab);
+  el.searchInput.value = state.appliedSearchQuery;
+  updateSearchUi();
+  applyRoleUi();
+  state.selectedTicketIds.clear();
+  await Promise.all([loadTickets({ silent: true, historyMode: "replace" }), loadCounts({ silent: true })]);
+}
+
 function init() {
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
@@ -951,14 +987,16 @@ function init() {
   renderTabCounts();
 
   el.tabButtons.forEach((btn) => {
-    if (btn.dataset.tab === state.tab) btn.classList.add("active");
+    if (tabKeyFromNode(btn) === state.tab) btn.classList.add("active");
     else btn.classList.remove("active");
 
-    btn.addEventListener("click", async () => {
-      if (btn.classList.contains("hidden")) return;
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const nextTab = tabKeyFromNode(btn);
+      if (!nextTab || btn.classList.contains("hidden")) return;
       el.tabButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      state.tab = btn.dataset.tab;
+      state.tab = tabKeyFromNode(btn) || DEFAULT_TAB;
       localStorage.setItem("hd_tab", state.tab);
       state.selectedTicketIds.clear();
       resetToFirstPage();
@@ -1082,30 +1120,17 @@ function init() {
     await loadTickets({ historyMode: "push" });
   });
 
-  window.setInterval(() => {
+  pollTimer = window.setInterval(() => {
     if (document.hidden) return;
     loadTickets({ silent: true });
     loadCounts({ silent: true });
     loadCompletionStats({ silent: true });
   }, 5000);
 
-  window.addEventListener("popstate", async () => {
-    const next = readListStateFromUrl();
-    const tabFromUrl = next.tab || DEFAULT_TAB;
-    const pageFromUrl = parsePage(next.page);
-    const qFromUrl = (next.q || "").trim();
-    const changed = state.tab !== tabFromUrl || state.page !== pageFromUrl || state.appliedSearchQuery !== qFromUrl;
-    if (!changed) return;
-    state.tab = tabFromUrl;
-    state.page = pageFromUrl;
-    state.appliedSearchQuery = qFromUrl;
-    localStorage.setItem("hd_tab", state.tab);
-    el.searchInput.value = state.appliedSearchQuery;
-    updateSearchUi();
-    applyRoleUi();
-    state.selectedTicketIds.clear();
-    await Promise.all([loadTickets({ silent: true, historyMode: "replace" }), loadCounts({ silent: true })]);
-  });
+  if (!window.HelpdeskAppShell?.getCurrentPage) {
+    ownsPopState = true;
+    window.addEventListener("popstate", handleListUrlChange);
+  }
 
   if (el.completionToggleBtn) {
     el.completionToggleBtn.addEventListener("click", () => {
@@ -1121,14 +1146,44 @@ function init() {
   }
 }
 
-(async function run() {
+async function runTicketsListPage() {
   await window.HelpdeskSidebar.init();
   syncSidebarState(window.HelpdeskSidebar.getState());
-  window.HelpdeskSidebar.onChange(syncSidebarState);
+  unsubscribeSidebar = window.HelpdeskSidebar.onChange(syncSidebarState);
   init();
   await loadMe();
   await Promise.all([loadTickets(), loadCounts(), loadCompletionStats()]);
+}
+
+runTicketsListPage().catch((error) => {
+  const message = error?.message || "Ошибка загрузки списка заявок";
+  setStatus(`Ошибка: ${message}`);
+  showError(message);
+});
+
+return {
+  destroy() {
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    if (ownsPopState) {
+      window.removeEventListener("popstate", handleListUrlChange);
+      ownsPopState = false;
+    }
+    if (typeof unsubscribeSidebar === "function") {
+      unsubscribeSidebar();
+      unsubscribeSidebar = null;
+    }
+  },
+  onUrlChange: handleListUrlChange,
+};
+
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("tickets-list", initTicketsListPage);
+} else {
+  initTicketsListPage();
+}
 })();
-
-
-

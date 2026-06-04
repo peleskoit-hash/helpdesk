@@ -651,6 +651,10 @@
     }
   };
 
+  EditorView.cleanup = function cleanup() {
+    closeTextEditorModal();
+  };
+
   global.BotButtonsEditorView = EditorView;
 })(window);
 
