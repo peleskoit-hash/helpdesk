@@ -123,3 +123,32 @@ For each shell route:
 6. Back/Forward works.
 7. Repeated transitions do not duplicate handlers/polling.
 8. Browser Ctrl/Cmd-click and middle click remain normal links.
+## UI/app shell text safety
+
+Любая app shell, UI, HTML, template или frontend JS-задача считается текстоопасной, если меняет русские подписи или строки интерфейса.
+
+Перед ответом и перед commit обязательно:
+```powershell
+node --check <changed js files>
+python tools/check_mojibake.py <changed js/html/css/md files>
+python tools/check_staged_encoding.py
+git diff --check
+```
+
+Ручной diff review обязателен даже при passed checks. Проверить добавленные/изменённые русские строки:
+- подписи кнопок;
+- modal titles;
+- labels;
+- empty states;
+- error/status messages;
+- placeholder/aria-label/title;
+- cache-busting версии, если менялся JS.
+
+В diff не должно быть mojibake-паттернов: кириллическая `Р`/`С` в начале бессмысленных фрагментов, латинские `D-with-stroke`/`N-with-tilde`/`A-with-circumflex` последовательности, двойные UTF-8 артефакты или `????`.
+
+Для записи файлов:
+- использовать `apply_patch` или UTF-8 write через Python;
+- не писать кириллицу через PowerShell pipe/`Set-Content`/`Out-File` без явного UTF-8;
+- не добавлять BOM и не делать массовую смену line endings.
+
+Если после UI/app shell правки появились кракозябры, не делать commit: сначала исправить текст и повторить проверки.

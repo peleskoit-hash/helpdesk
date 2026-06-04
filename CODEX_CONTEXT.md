@@ -155,3 +155,31 @@ git config core.hooksPath .githooks
 - Один commit = один логический блок.
 - Перед commit: relevant `py_compile`, `node --check`, mojibake/encoding checks.
 - UI/Telegram задачи коммитить только после ручного smoke, если пользователь этого требует.
+## Обязательное правило против mojibake
+
+Если задача меняет любой человекочитаемый текст, русские строки, UI labels, Telegram messages, HTML templates, JS strings, docs или markdown, Codex обязан перед ответом и перед commit выполнить encoding/mojibake-проверки и вручную посмотреть diff.
+
+Текстоопасные файлы:
+- `*.js`, `*.html`, `*.css`, `*.md`;
+- `*.py`, если менялись сообщения, ошибки, Telegram-тексты или UI-строки;
+- txt-конфиги кнопок, templates и любые файлы с русским текстом.
+
+Обязательные проверки:
+```powershell
+python tools/check_mojibake.py <all changed text files>
+python tools/check_staged_encoding.py
+git diff --check
+node --check <changed js files>
+python -m py_compile <changed py files>
+```
+
+Даже если `check_mojibake.py` passed, нужно вручную просмотреть добавленные/изменённые русские строки в `git diff` и убедиться, что нет mojibake-паттернов: кириллическая `Р`/`С` в начале бессмысленных фрагментов, латинские `D-with-stroke`/`N-with-tilde`/`A-with-circumflex` последовательности, двойные UTF-8 артефакты или `????`.
+
+Правила записи файлов:
+- не использовать `Set-Content` / `Out-File` без явного UTF-8;
+- предпочтительно использовать `apply_patch` или `Path.write_text(..., encoding="utf-8")`;
+- не сохранять файлы в Windows-1251/ANSI;
+- не добавлять BOM;
+- не менять окончания строк массово без необходимости.
+
+Если в diff видны кракозябры или есть сомнение в кодировке, commit запрещён: остановиться, показать файл/строку и исправить причину.
