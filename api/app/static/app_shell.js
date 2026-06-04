@@ -28,6 +28,21 @@
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
   ]);
+  const dynamicShellRoutes = [
+    {
+      page: "ticket-card",
+      test: (url) => /^\/tickets\/[^/]+$/.test(url.pathname),
+      scripts: [
+        "/static/ticket_api.js?v=20260521a",
+        "/static/ticket_attachments.js?v=20260604a",
+        "/static/ticket_client_card.js?v=20260522a",
+        "/static/ticket_composer.js?v=20260522a",
+        "/static/ticket_controls.js?v=20260604a",
+        "/static/ticket_message_view.js?v=20260604a",
+        "/static/ticket.js?v=20260604a",
+      ],
+    },
+  ];
   const loadedScripts = new Set([...document.scripts].map((script) => script.getAttribute("src")).filter(Boolean));
 
   function getRoot() {
@@ -127,13 +142,19 @@
     return true;
   }
 
-  function isSettingsRoute(url) {
-    return shellRoutes.has(url.pathname);
+  function resolveShellRoute(url) {
+    const exact = shellRoutes.get(url.pathname);
+    if (exact) return exact;
+    return dynamicShellRoutes.find((route) => route.test(url)) || null;
+  }
+
+  function isShellRoute(url) {
+    return Boolean(resolveShellRoute(url));
   }
 
   function canHandleUrl(url) {
     const currentUrl = new URL(window.location.href);
-    return isSettingsRoute(currentUrl) && isSettingsRoute(url);
+    return isShellRoute(currentUrl) && isShellRoute(url);
   }
 
   function isPlainLeftClick(event) {
@@ -174,7 +195,7 @@
 
   async function ensurePageScript(page) {
     if (registry.has(page)) return;
-    const route = [...shellRoutes.values()].find((item) => item.page === page);
+    const route = [...shellRoutes.values(), ...dynamicShellRoutes].find((item) => item.page === page);
     if (!route?.scripts?.length) return;
     for (const src of route.scripts) {
       if (loadedScripts.has(src)) continue;
@@ -210,7 +231,8 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       payload = extractShellPayload(await response.text());
       if (!payload?.page) throw new Error("Shell content not found");
-      if (!shellRoutes.get(url.pathname) || shellRoutes.get(url.pathname).page !== payload.page) {
+      const route = resolveShellRoute(url);
+      if (!route || route.page !== payload.page) {
         throw new Error("Unexpected shell page");
       }
     } catch (error) {
@@ -245,7 +267,7 @@
     extractShellPayload,
     mountShellPayload,
     getCurrentPage: () => ({ ...current }),
-    version: "20260604c",
+    version: "20260604d",
   };
 
   document.addEventListener("click", (event) => {

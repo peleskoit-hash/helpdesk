@@ -1,3 +1,5 @@
+(function () {
+function initTicketCardPage() {
 // ===== state/elements =====
 const params = new URLSearchParams(window.location.search);
 const ticketId = window.location.pathname.split("/").pop();
@@ -202,6 +204,80 @@ const TicketClientCard = window.TicketClientCard || {};
 const TicketComposer = window.TicketComposer || {};
 const TicketControls = window.TicketControls || {};
 const TicketMessageView = window.TicketMessageView || {};
+
+let pollTimer = null;
+let unsubscribeSidebar = null;
+let keydownHandler = null;
+let documentClickHandler = null;
+let resizeHandler = null;
+let beforeUnloadHandler = null;
+let destroyed = false;
+
+function shellNavigateOrReload(urlLike) {
+  const url = new URL(urlLike, window.location.origin);
+  const href = `${url.pathname}${url.search}${url.hash}`;
+  if (url.pathname === "/tickets" && window.HelpdeskAppShell?.navigate) {
+    window.HelpdeskAppShell.navigate(href);
+    return;
+  }
+  window.location.href = href;
+}
+
+function cleanupTicketCardPage() {
+  destroyed = true;
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (typeof unsubscribeSidebar === "function") {
+    unsubscribeSidebar();
+    unsubscribeSidebar = null;
+  }
+  if (keydownHandler) {
+    document.removeEventListener("keydown", keydownHandler);
+    keydownHandler = null;
+  }
+  if (documentClickHandler) {
+    document.removeEventListener("click", documentClickHandler);
+    documentClickHandler = null;
+  }
+  if (resizeHandler) {
+    window.removeEventListener("resize", resizeHandler);
+    resizeHandler = null;
+  }
+  if (el.messages) {
+    el.messages.removeEventListener("scroll", hideMessageContextMenu);
+  }
+  if (beforeUnloadHandler) {
+    window.removeEventListener("beforeunload", beforeUnloadHandler);
+    beforeUnloadHandler = null;
+  }
+  try {
+    TicketAttachments.destroyAllAttachmentResources?.();
+  } catch {
+    // noop
+  }
+  if (el.messageContextMenu) {
+    el.messageContextMenu.remove();
+    el.messageContextMenu = null;
+  }
+  if (typeof TicketMessageView.cleanupEditMessageModal === "function") {
+    TicketMessageView.cleanupEditMessageModal(messageViewCtx());
+  } else if (el.editMessageModal) {
+    el.editMessageModal.remove();
+    el.editMessageModal = null;
+    el.editMessageTextarea = null;
+    el.saveEditMessageBtn = null;
+    el.cancelEditMessageBtn = null;
+  }
+  if (el.imagePreviewModal) {
+    el.imagePreviewModal.remove();
+    el.imagePreviewModal = null;
+    el.imagePreviewImg = null;
+    el.imagePreviewClose = null;
+    el.imagePreviewDownload = null;
+  }
+}
 
 function attachmentsCtx() {
   return {
@@ -804,7 +880,7 @@ function renderCard() {
 }
 
 async function loadCard(options = {}) {
-  if (state.isLoading) return;
+  if (destroyed || state.isLoading) return;
   state.isLoading = true;
   const silent = Boolean(options.silent);
   if (!silent) setStatus("Загружаю карточку...");
@@ -823,6 +899,7 @@ async function loadCard(options = {}) {
     if (!card.client_profile || typeof card.client_profile !== "object") {
       card.client_profile = {};
     }
+    if (destroyed) return;
     state.card = card;
     state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
       ? cardConfig
@@ -938,7 +1015,7 @@ async function loadMe() {
 }
 
 function syncSidebarState(sidebarState) {
-  if (!sidebarState) return;
+  if (destroyed || !sidebarState) return;
   const prevRole = state.role;
   const prevUserId = state.userId;
   state.role = sidebarState.role || state.role;
@@ -1002,19 +1079,19 @@ function init() {
   el.backToListBtn.addEventListener("click", () => {
     const queryReturnUrl = normalizeTicketsReturnUrl(params.get("return_url"));
     if (queryReturnUrl) {
-      window.location.href = queryReturnUrl;
+      shellNavigateOrReload(queryReturnUrl);
       return;
     }
     const savedReturnUrl = normalizeTicketsReturnUrl(sessionStorage.getItem("ticketListReturnUrl"));
     if (savedReturnUrl) {
-      window.location.href = savedReturnUrl;
+      shellNavigateOrReload(savedReturnUrl);
       return;
     }
     const listUrl = new URL("/tickets", window.location.origin);
     listUrl.searchParams.set("tab", state.tab || "active");
     listUrl.searchParams.set("page", String(state.returnPage || 1));
     if (state.returnQuery) listUrl.searchParams.set("q", state.returnQuery);
-    window.location.href = listUrl.toString();
+    shellNavigateOrReload(listUrl.toString());
   });
 
   el.agentSelect.addEventListener("change", async () => {
@@ -1055,7 +1132,7 @@ function init() {
   el.fDestination.addEventListener("change", syncDynamicModalFields);
   el.fLocationType.addEventListener("change", syncDynamicModalFields);
 
-  document.addEventListener("keydown", (e) => {
+  keydownHandler = (e) => {
     if (e.key === "Escape") {
       hideMessageContextMenu();
       closeImagePreview();
@@ -1077,13 +1154,16 @@ function init() {
     if (e.key === "Escape" && el.instructionModal && !el.instructionModal.classList.contains("hidden")) {
       closeInstructionModal();
     }
-  });
+  };
+  document.addEventListener("keydown", keydownHandler);
 
-  document.addEventListener("click", hideMessageContextMenu);
-  window.addEventListener("resize", hideMessageContextMenu);
+  documentClickHandler = hideMessageContextMenu;
+  resizeHandler = hideMessageContextMenu;
+  document.addEventListener("click", documentClickHandler);
+  window.addEventListener("resize", resizeHandler);
   el.messages.addEventListener("scroll", hideMessageContextMenu);
 
-  window.setInterval(() => {
+  pollTimer = window.setInterval(() => {
     if (document.hidden) return;
     if (!el.clientModal.classList.contains("hidden")) return;
     loadCard({ silent: true });
@@ -1104,16 +1184,19 @@ function init() {
     });
   }
 
-  window.addEventListener("beforeunload", () => {
+  beforeUnloadHandler = () => {
     TicketAttachments.destroyAllAttachmentResources();
-  });
+  };
+  window.addEventListener("beforeunload", beforeUnloadHandler);
 }
 
 (async function run() {
   await window.HelpdeskSidebar.init();
+  if (destroyed) return;
   syncSidebarState(window.HelpdeskSidebar.getState());
-  window.HelpdeskSidebar.onChange(syncSidebarState);
+  unsubscribeSidebar = window.HelpdeskSidebar.onChange(syncSidebarState);
   init();
+  if (destroyed) return;
   if (state.isRealAdmin) {
     await loadRoleUsers();
   } else {
@@ -1124,13 +1207,23 @@ function init() {
   } catch (e) {
     console.error("loadMe failed", e);
   }
+  if (destroyed) return;
   await Promise.all([loadCard(), loadTabCounts(), loadCompletionStats()]);
 })();
 
-document.querySelectorAll("input, textarea").forEach((field) => {
+document.querySelectorAll("#appContent input, #appContent textarea").forEach((field) => {
   field.setAttribute("autocomplete", "off");
   field.setAttribute("autocorrect", "off");
   field.setAttribute("autocapitalize", "off");
   field.setAttribute("spellcheck", "false");
 });
 
+return cleanupTicketCardPage;
+}
+
+if (window.HelpdeskAppShell?.registerPage) {
+  window.HelpdeskAppShell.registerPage("ticket-card", initTicketCardPage);
+} else {
+  initTicketCardPage();
+}
+})();

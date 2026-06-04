@@ -1,4 +1,4 @@
-﻿(function initTicketMessageView(global) {
+(function initTicketMessageView(global) {
   let editMessageResolve = null;
 
   function clientDisplayName(state, card) {
@@ -138,6 +138,21 @@
     el.editMessageTextarea = textarea;
     el.saveEditMessageBtn = save;
     el.cancelEditMessageBtn = cancel;
+  }
+
+  function cleanupEditMessageModal(ctx) {
+    const { el } = ctx;
+    if (editMessageResolve) {
+      editMessageResolve(null);
+      editMessageResolve = null;
+    }
+    if (el.editMessageModal) {
+      el.editMessageModal.remove();
+      el.editMessageModal = null;
+      el.editMessageTextarea = null;
+      el.saveEditMessageBtn = null;
+      el.cancelEditMessageBtn = null;
+    }
   }
 
   function openEditMessageModal(ctx, initialText) {
@@ -309,5 +324,6 @@
     deleteAgentMessage,
     copyMessageText,
     ensureEditMessageModal,
+    cleanupEditMessageModal,
   };
 })(window);

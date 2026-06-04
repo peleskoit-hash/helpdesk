@@ -1,4 +1,4 @@
-﻿(function initTicketControls(global) {
+(function initTicketControls(global) {
   let pendingAdminAction = null;
 
   function isFinalProblemButton(item) {
@@ -134,7 +134,12 @@
     if (result.file_delete_warnings?.length) {
       showError(`Заявка удалена.\nПредупреждения:\n${result.file_delete_warnings.join("\n")}`);
     }
-    window.location.href = `/tickets?tab=${encodeURIComponent(state.tab)}`;
+    const returnUrl = `/tickets?tab=${encodeURIComponent(state.tab)}`;
+    if (window.HelpdeskAppShell?.navigate) {
+      await window.HelpdeskAppShell.navigate(returnUrl);
+    } else {
+      window.location.href = returnUrl;
+    }
   }
 
   async function markTicketSpecial(ctx) {
