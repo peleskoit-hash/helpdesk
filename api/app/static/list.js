@@ -215,7 +215,7 @@ async function clearSearchQuery() {
 function setStatus(text) { el.statusText.textContent = text; }
 
 function showError(message) {
-  el.errorText.value = message || "Р СњР ВµР С‘Р В·Р Р†Р ВµРЎРѓРЎвЂљР Р…Р В°РЎРЏ Р С•РЎв‚¬Р С‘Р В±Р С”Р В°";
+  el.errorText.value = message || "Неизвестная ошибка";
   el.errorModal.classList.remove("hidden");
 }
 
@@ -244,11 +244,11 @@ async function api(path) {
   const response = await fetch(path, { headers: headers() });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
+    throw new Error("Требуется авторизация");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
+    const detail = payload?.detail?.error?.message || "Ошибка запроса";
     throw new Error(detail);
   }
   return payload;
@@ -265,11 +265,11 @@ async function apiWrite(path, body) {
   });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
+    throw new Error("Требуется авторизация");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
+    const detail = payload?.detail?.error?.message || "Ошибка запроса";
     throw new Error(detail);
   }
   return payload;
@@ -286,11 +286,11 @@ async function apiPost(path, body) {
   });
   if (response.status === 401) {
     window.location.href = "/login";
-    throw new Error("Р СћРЎР‚Р ВµР В±РЎС“Р ВµРЎвЂљРЎРѓРЎРЏ Р В°Р Р†РЎвЂљР С•РЎР‚Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ");
+    throw new Error("Требуется авторизация");
   }
   const payload = await response.json();
   if (!response.ok) {
-    const detail = payload?.detail?.error?.message || "Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р В·Р В°Р С—РЎР‚Р С•РЎРѓР В°";
+    const detail = payload?.detail?.error?.message || "Ошибка запроса";
     throw new Error(detail);
   }
   return payload;
@@ -324,7 +324,7 @@ function renderCompletionStats() {
   const session = state.sessionContext || {};
   const effectiveName = session?.effective_user?.full_name || session?.real_user?.full_name || "";
   const fallbackLogin = session?.effective_user?.login || session?.real_user?.login || "";
-  el.sidebarUserDisplayName.textContent = (effectiveName || fallbackLogin || "Р СџР С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ").trim();
+  el.sidebarUserDisplayName.textContent = (effectiveName || fallbackLogin || "Пользователь").trim();
 
   const role = session?.effective_user?.role || state.role;
   const showExpanded = role === "agent" || role === "trainee";
@@ -472,12 +472,12 @@ function intakeBadge(ticket) {
 }
 
 function assigneeOptionsHtml(selectedId, selectedName = "") {
-  const options = [`<option value="" ${selectedId ? "" : "selected"}>Р В Р В°РЎРѓР С—РЎР‚Р ВµР Т‘Р ВµР В»Р ВµР Р…Р С‘Р Вµ</option>`];
+  const options = [`<option value="" ${selectedId ? "" : "selected"}>Нераспределён</option>`];
   const hasSelectedInSupport = Boolean(
     selectedId && state.supportAgents.some((agent) => agent.id === selectedId)
   );
   if (selectedId && !hasSelectedInSupport) {
-    const fallbackName = selectedName || "Р СћР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…РЎвЂ№Р в„–";
+    const fallbackName = selectedName || "Текущий ответственный";
     options.push(
       `<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(fallbackName)}</option>`
     );
@@ -507,9 +507,9 @@ function updateBulkAssignUi() {
     el.bulkDeleteBtn.disabled = selectedCount === 0;
   }
   if (selectedCount > 0) {
-    el.bulkAssignBtn.textContent = `Р СњР В°Р В·Р Р…Р В°РЎвЂЎР С‘РЎвЂљРЎРЉ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С• (${selectedCount})`;
+    el.bulkAssignBtn.textContent = `Назначить ответственного (${selectedCount})`;
   } else {
-    el.bulkAssignBtn.textContent = "Р СњР В°Р В·Р Р…Р В°РЎвЂЎР С‘РЎвЂљРЎРЉ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С•";
+    el.bulkAssignBtn.textContent = "Назначить ответственного";
   }
 
   if (el.selectAllTicketsBtn) {
@@ -521,7 +521,7 @@ function updateBulkAssignUi() {
 
 async function assignTickets(ticketIds, assigneeId) {
   if (!ticketIds.length) return;
-  setStatus("Р СњР В°Р В·Р Р…Р В°РЎвЂЎР В°РЎР‹ Р С•РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…Р С•Р С–Р С•...");
+  setStatus("Назначаю ответственного...");
   await apiPost("/api/v1/tickets/assign", {
     ticket_ids: ticketIds,
     assignee_id: assigneeId || null,
@@ -530,7 +530,7 @@ async function assignTickets(ticketIds, assigneeId) {
     state.selectedTicketIds.delete(ticketId);
   }
   await Promise.all([loadTickets(), loadCounts({ silent: true })]);
-  setStatus("Р С›РЎвЂљР Р†Р ВµРЎвЂљРЎРѓРЎвЂљР Р†Р ВµР Р…Р Р…РЎвЂ№Р в„– Р Р…Р В°Р В·Р Р…Р В°РЎвЂЎР ВµР Р…");
+  setStatus("Ответственный назначен");
 }
 
 function openAssignModal() {
@@ -568,16 +568,18 @@ async function runBulkAction() {
   const ticketIds = [...state.selectedTicketIds];
   if (!ticketIds.length || !pendingBulkAction) return;
   if (pendingBulkAction === "close") {
-    setStatus("Р СџРЎР‚Р С‘Р Р…РЎС“Р Т‘Р С‘РЎвЂљР ВµР В»РЎРЉР Р…Р С• Р В·Р В°Р С”РЎР‚РЎвЂ№Р Р†Р В°РЎР‹ Р В·Р В°РЎРЏР Р†Р С”Р С‘...");
+    setStatus("Принудительно закрываю заявки...");
     const result = await apiPost("/api/v1/tickets/admin/close", { ticket_ids: ticketIds });
-    setStatus(`Р вЂ”Р В°Р С”РЎР‚РЎвЂ№РЎвЂљР С•: ${result.closed}, РЎС“Р В¶Р Вµ Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљРЎвЂ№: ${result.already_closed}`);
+    setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
   } else {
-    setStatus("Р Р€Р Т‘Р В°Р В»РЎРЏРЎР‹ Р В·Р В°РЎРЏР Р†Р С”Р С‘...");
+    setStatus("Удаляю заявки...");
     const result = await apiPost("/api/v1/tickets/admin/delete", { ticket_ids: ticketIds });
     if (result.file_delete_warnings?.length) {
-      showError(`Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С•: ${result.deleted}\nР СџРЎР‚Р ВµР Т‘РЎС“Р С—РЎР‚Р ВµР В¶Р Т‘Р ВµР Р…Р С‘РЎРЏ:\n${result.file_delete_warnings.join("\n")}`);
+      showError(`Удалено: ${result.deleted}
+Предупреждения:
+${result.file_delete_warnings.join("\n")}`);
     } else {
-      setStatus(`Р Р€Р Т‘Р В°Р В»Р ВµР Р…Р С•: ${result.deleted}`);
+      setStatus(`Удалено: ${result.deleted}`);
     }
   }
   state.selectedTicketIds.clear();
@@ -612,7 +614,7 @@ function renderTable() {
     ticketUrl.searchParams.set("return_url", currentListUrl);
     const ticketHref = `${ticketUrl.pathname}${ticketUrl.search}`;
     const linkedCell = (className, textValue) => (
-      `<td class="${className}"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${escapeHtml(textValue)}</a></td>`
+      `<td class="${className} ticket-linked-cell"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${escapeHtml(textValue)}</a></td>`
     );
     const selectCell = state.role === "admin"
       ? `<td class="ticket-check-cell"><input class="ticket-check" data-ticket-id="${escapeHtml(t.id)}" type="checkbox" ${state.selectedTicketIds.has(t.id) ? "checked" : ""} /></td>`
@@ -788,7 +790,7 @@ function applyRoleUi() {
 
 function renderAgentSelect() {
   el.agentSelect.innerHTML = "";
-  const fallbackName = state.sessionContext?.real_user?.full_name || "Р СћР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ";
+  const fallbackName = state.sessionContext?.real_user?.full_name || "Текущий пользователь";
   const option = document.createElement("option");
   option.value = state.userId || "";
   option.textContent = fallbackName;
@@ -876,10 +878,10 @@ async function loadMe() {
     }
     if (el.sidebarUserDisplayName) {
       const displayName = (me.full_name || "").trim() || me.login || "";
-      el.sidebarUserDisplayName.textContent = displayName || "Р СџР С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ";
+      el.sidebarUserDisplayName.textContent = displayName || "Пользователь";
     }
   } catch (e) {
-    showError(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂљР В°РЎвЂљРЎС“РЎРѓР В°: ${e.message}`);
+    showError(`Ошибка статуса: ${e.message}`);
   }
 }
 
@@ -888,9 +890,9 @@ async function updateAvailabilityStatus(status) {
     renderAvailabilityStatus(status);
     const me = await apiWrite("/api/v1/users/me/status", { availability_status: status });
     renderAvailabilityStatus(me.availability_status);
-    setStatus("Р РЋРЎвЂљР В°РЎвЂљРЎС“РЎРѓ Р С•Р В±Р Р…Р С•Р Р†Р В»РЎвЂР Р…");
+    setStatus("Статус обновлён");
   } catch (e) {
-    showError(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂљР В°РЎвЂљРЎС“РЎРѓР В°: ${e.message}`);
+    showError(`Ошибка статуса: ${e.message}`);
     await loadMe();
   }
 }
@@ -900,7 +902,7 @@ async function loadTickets(options = {}) {
   state.isLoading = true;
   const silent = Boolean(options.silent);
   const historyMode = options.historyMode || null;
-  if (!silent) setStatus("Р вЂ”Р В°Р С–РЎР‚РЎС“Р В¶Р В°РЎР‹ РЎРѓР С—Р С‘РЎРѓР С•Р С”...");
+  if (!silent) setStatus("Загружаю список...");
   const base = endpointMap[state.tab];
   const queryParams = new URLSearchParams({
     sort: "created_at",
@@ -931,9 +933,9 @@ async function loadTickets(options = {}) {
     }
 
     renderTable();
-    setStatus("Р вЂњР С•РЎвЂљР С•Р Р†Р С•");
+    setStatus("Готово");
   } catch (e) {
-    if (!silent) setStatus(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В°: ${e.message}`);
+    if (!silent) setStatus(`Ошибка: ${e.message}`);
   } finally {
     state.isLoading = false;
   }
@@ -946,7 +948,7 @@ async function loadCounts(options = {}) {
     const sidebarState = window.HelpdeskSidebar.getState();
     state.counts = sidebarState.counts || state.counts;
   } catch (e) {
-    if (!silent) setStatus(`Р С›РЎв‚¬Р С‘Р В±Р С”Р В° РЎРѓРЎвЂЎРЎвЂРЎвЂљРЎвЂЎР С‘Р С”Р С•Р Р†: ${e.message}`);
+    if (!silent) setStatus(`Ошибка счётчиков: ${e.message}`);
   }
 }
 
@@ -1091,7 +1093,7 @@ function init() {
     } catch {
       document.execCommand("copy");
     }
-    setStatus("Р СћР ВµР С”РЎРѓРЎвЂљ Р С•РЎв‚¬Р С‘Р В±Р С”Р С‘ РЎРѓР С”Р С•Р С—Р С‘РЎР‚Р С•Р Р†Р В°Р Р…");
+    setStatus("Текст ошибки скопирован");
   });
 
   el.searchInput.addEventListener("input", () => {

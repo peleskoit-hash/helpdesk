@@ -654,12 +654,24 @@ th, td {
   text-overflow: ellipsis;
 }
 
+.table-wrap table td.ticket-linked-cell {
+  padding: 0;
+}
+
 .ticket-row-link {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  min-height: 40px;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
   color: inherit;
   text-decoration: none;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ticket-row-link:focus-visible {
@@ -2271,16 +2283,27 @@ button.action:hover,
 tr.ticket-row td {
   border-top-color: rgba(255, 255, 255, 0.68);
   border-bottom-color: rgba(255, 255, 255, 0.68);
+  box-shadow:
+    inset 0 1px rgba(88, 116, 148, 0.26),
+    inset 0 -1px rgba(88, 116, 148, 0.26);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 
 tr.ticket-row td:first-child {
   border-left-color: rgba(255, 255, 255, 0.68);
+  box-shadow:
+    inset 1px 0 rgba(88, 116, 148, 0.26),
+    inset 0 1px rgba(88, 116, 148, 0.26),
+    inset 0 -1px rgba(88, 116, 148, 0.26);
 }
 
 tr.ticket-row td:last-child {
   border-right-color: rgba(255, 255, 255, 0.68);
+  box-shadow:
+    inset -1px 0 rgba(88, 116, 148, 0.26),
+    inset 0 1px rgba(88, 116, 148, 0.26),
+    inset 0 -1px rgba(88, 116, 148, 0.26);
 }
 
 tr.ticket-row-new td {
