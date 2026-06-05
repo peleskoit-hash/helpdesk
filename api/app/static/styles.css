@@ -3898,6 +3898,7 @@ body[data-theme="dark"] .verified-no {
 
 .bot-text-editor-body.bot-text-editor-body-split.bot-text-editor-body-toolbar {
   grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  overflow: visible;
 }
 
 .bot-text-editor-body:not(.bot-text-editor-body-split) {
@@ -3913,6 +3914,7 @@ body[data-theme="dark"] .verified-no {
 }
 
 .bot-text-toolbar {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -3921,6 +3923,107 @@ body[data-theme="dark"] .verified-no {
 .bot-text-toolbar .action {
   min-width: 38px;
   padding: 5px 8px;
+}
+
+.bot-emoji-trigger {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.bot-emoji-picker {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(420px, 82vw);
+  max-height: min(340px, 42vh);
+  padding: 12px;
+  border: 1px solid rgba(84, 116, 154, 0.32);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 42px rgba(23, 37, 54, 0.24);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.bot-emoji-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.bot-emoji-tab {
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
+  background: rgba(244, 247, 252, 0.92);
+  color: #324158;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.bot-emoji-tab.active,
+.bot-emoji-tab:hover,
+.bot-emoji-tab:focus-visible {
+  border-color: rgba(14, 165, 233, 0.65);
+  background: rgba(226, 244, 255, 0.98);
+  outline: none;
+}
+
+.bot-emoji-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.bot-emoji-category + .bot-emoji-category {
+  margin-top: 12px;
+}
+
+.bot-emoji-category-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: 8px;
+  padding: 4px 0;
+  background: rgba(255, 255, 255, 0.96);
+  color: #50627a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.bot-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 6px;
+}
+
+.bot-emoji-item {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 9px;
+  background: rgba(244, 247, 252, 0.92);
+  color: #1f2a3d;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.bot-emoji-item:hover,
+.bot-emoji-item:focus-visible {
+  border-color: rgba(14, 165, 233, 0.65);
+  background: rgba(226, 244, 255, 0.98);
+  transform: translateY(-1px);
+  outline: none;
 }
 
 .bot-telegram-preview-wrap {
@@ -4020,9 +4123,54 @@ body[data-theme="dark"] .verified-no {
   margin: 0;
 }
 
+body[data-theme="dark"] .bot-emoji-picker {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(17, 24, 39, 0.98);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+}
+
+body[data-theme="dark"] .bot-emoji-category-title {
+  background: rgba(17, 24, 39, 0.96);
+  color: #b8c7dc;
+}
+
+body[data-theme="dark"] .bot-emoji-tab {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.94);
+  color: #dbe7f7;
+}
+
+body[data-theme="dark"] .bot-emoji-tab.active,
+body[data-theme="dark"] .bot-emoji-tab:hover,
+body[data-theme="dark"] .bot-emoji-tab:focus-visible {
+  border-color: rgba(56, 189, 248, 0.72);
+  background: rgba(14, 116, 144, 0.42);
+}
+
+body[data-theme="dark"] .bot-emoji-item {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.94);
+  color: #f8fafc;
+}
+
+body[data-theme="dark"] .bot-emoji-item:hover,
+body[data-theme="dark"] .bot-emoji-item:focus-visible {
+  border-color: rgba(56, 189, 248, 0.72);
+  background: rgba(14, 116, 144, 0.42);
+}
+
 @media (max-width: 1100px) {
   .bot-editor-grid {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .bot-emoji-picker {
+    right: 0;
+    left: auto;
+    width: min(360px, calc(100vw - 32px));
+    max-height: 38vh;
   }
 }

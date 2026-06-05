@@ -1,7 +1,31 @@
 (function initBotButtonsEditorView(global) {
   const EditorView = {};
   const TEXT_MODAL_ID = "botTextEditorModal";
+  const EMOJI_PICKER_ID = "botEmojiPicker";
+  const FALLBACK_EMOJI_CATEGORIES = [
+    {
+      id: "smileys",
+      label: "Смайлы",
+      emojis: ["😀", "😃", "😄", "😁", "😆", "😊", "🙂", "😉", "😍", "😘", "😎", "🤔", "😐", "😔", "😢", "😡", "😴", "🥳"],
+    },
+    {
+      id: "gestures",
+      label: "Жесты",
+      emojis: ["👍", "👎", "👌", "✌️", "🤝", "🙏", "👏", "🙌", "👋", "🤙", "💪", "☝️", "👇", "👈", "👉", "✍️"],
+    },
+    {
+      id: "objects",
+      label: "Объекты",
+      emojis: ["📞", "📱", "💻", "🖥️", "⌨️", "🖱️", "📎", "📌", "📍", "📄", "📁", "🗂️", "🔑", "🔒", "⚙️", "🛠️", "💡", "📷"],
+    },
+    {
+      id: "symbols",
+      label: "Символы",
+      emojis: ["✅", "❌", "⚠️", "❗", "❓", "ℹ️", "➕", "➖", "➡️", "⬅️", "⬆️", "⬇️", "🔴", "🟢", "🟡", "⭐", "🔥", "💬"],
+    },
+  ];
   let textModalEscHandler = null;
+  let emojiOutsideClickHandler = null;
 
   function escapeModalHtml(value) {
     return String(value || "")
@@ -16,12 +40,38 @@
   }
 
   function closeTextEditorModal() {
+    closeEmojiPicker();
     const modal = document.getElementById(TEXT_MODAL_ID);
     if (modal) modal.remove();
     if (textModalEscHandler) {
       document.removeEventListener("keydown", textModalEscHandler);
       textModalEscHandler = null;
     }
+  }
+
+  function closeEmojiPicker() {
+    const picker = document.getElementById(EMOJI_PICKER_ID);
+    if (picker) picker.remove();
+    if (emojiOutsideClickHandler) {
+      document.removeEventListener("mousedown", emojiOutsideClickHandler, true);
+      emojiOutsideClickHandler = null;
+    }
+    document.querySelectorAll("[data-format-action='emoji']").forEach((btn) => {
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function getEmojiCategories() {
+    const source = Array.isArray(global.BotButtonsEmojiData) && global.BotButtonsEmojiData.length
+      ? global.BotButtonsEmojiData
+      : FALLBACK_EMOJI_CATEGORIES;
+    return source.map((category, index) => ({
+      id: String(category.id || `emoji-${index}`),
+      label: String(category.label || category.title || `Категория ${index + 1}`),
+      emojis: Array.isArray(category.emojis)
+        ? category.emojis
+        : (Array.isArray(category.items) ? category.items : []),
+    })).filter((category) => category.emojis.length);
   }
 
   function sanitizeLinkHref(rawHref) {
@@ -57,6 +107,43 @@
       textarea.setSelectionRange(cursorPos, cursorPos);
     }
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function insertTextAtSelection(textarea, text, range = null) {
+    if (!textarea || !text) return;
+    const source = textarea.value || "";
+    const start = Math.max(0, Math.min(range?.start ?? textarea.selectionStart ?? 0, source.length));
+    const end = Math.max(start, Math.min(range?.end ?? textarea.selectionEnd ?? start, source.length));
+    textarea.value = source.slice(0, start) + text + source.slice(end);
+    const nextCursor = start + text.length;
+    textarea.focus();
+    textarea.setSelectionRange(nextCursor, nextCursor);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function renderEmojiPickerHtml() {
+    const categories = getEmojiCategories();
+    return `
+      <div id="${EMOJI_PICKER_ID}" class="bot-emoji-picker" role="dialog" aria-label="Emoji">
+        <div class="bot-emoji-tabs" role="tablist" aria-label="Категории emoji">
+          ${categories.map((category, index) => `
+            <button type="button" class="bot-emoji-tab ${index === 0 ? "active" : ""}" data-emoji-category-index="${index}">${escapeModalHtml(category.label)}</button>
+          `).join("")}
+        </div>
+        <div class="bot-emoji-scroll">
+        ${categories.map((category, index) => `
+          <section class="bot-emoji-category" data-emoji-category="${index}">
+            <div class="bot-emoji-category-title">${escapeModalHtml(category.label)}</div>
+            <div class="bot-emoji-grid">
+              ${category.emojis.map((emoji) => `
+                <button type="button" class="bot-emoji-item" data-emoji="${escapeModalHtml(emoji)}" aria-label="${escapeModalHtml(emoji)}">${escapeModalHtml(emoji)}</button>
+              `).join("")}
+            </div>
+          </section>
+        `).join("")}
+        </div>
+      </div>
+    `;
   }
 
   function renderTelegramPreviewHtml(text) {
@@ -146,6 +233,7 @@
               <button type="button" class="action" data-format-action="quote">Цитата</button>
               <button type="button" class="action" data-format-action="quote_expandable">Под кат</button>
               <button type="button" class="action" data-format-action="link">Ссылка</button>
+              <button type="button" class="action bot-emoji-trigger" data-format-action="emoji" aria-expanded="false" aria-haspopup="dialog">🙂</button>
               <button type="button" class="action" data-format-action="clear">Очистить формат</button>
             </div>
           ` : ""}
@@ -169,8 +257,13 @@
     const preview = document.getElementById("botTelegramPreview");
     const cancelBtn = document.getElementById("botTextEditorCancelBtn");
     const applyBtn = document.getElementById("botTextEditorApplyBtn");
+    const toolbar = document.getElementById("botTextToolbar");
     const initialValue = String(value || "");
     let backdropMouseDown = false;
+    let lastSelection = {
+      start: textarea?.selectionStart ?? 0,
+      end: textarea?.selectionEnd ?? 0,
+    };
 
     const syncPreview = () => {
       if (!preview || !textarea) return;
@@ -188,14 +281,74 @@
 
     textarea?.focus();
     textarea?.setSelectionRange((textarea.value || "").length, (textarea.value || "").length);
+    const rememberSelection = () => {
+      if (!textarea) return;
+      lastSelection = {
+        start: textarea.selectionStart ?? 0,
+        end: textarea.selectionEnd ?? 0,
+      };
+    };
+    rememberSelection();
     textarea?.addEventListener("input", syncPreview);
+    textarea?.addEventListener("input", rememberSelection);
+    textarea?.addEventListener("keyup", rememberSelection);
+    textarea?.addEventListener("click", rememberSelection);
+    textarea?.addEventListener("select", rememberSelection);
     syncPreview();
 
     if (withTelegramToolbar) {
+      toolbar?.addEventListener("mousedown", (event) => {
+        if (event.target?.closest?.("[data-format-action], .bot-emoji-picker")) {
+          event.preventDefault();
+        }
+      });
+      const toggleEmojiPicker = (triggerBtn) => {
+        const existing = document.getElementById(EMOJI_PICKER_ID);
+        if (existing) {
+          closeEmojiPicker();
+          textarea?.focus();
+          return;
+        }
+        toolbar?.insertAdjacentHTML("beforeend", renderEmojiPickerHtml());
+        triggerBtn?.setAttribute("aria-expanded", "true");
+        const picker = document.getElementById(EMOJI_PICKER_ID);
+        emojiOutsideClickHandler = (event) => {
+          const activePicker = document.getElementById(EMOJI_PICKER_ID);
+          if (!activePicker) return;
+          const isInsidePicker = activePicker.contains(event.target);
+          const isEmojiTrigger = triggerBtn?.contains?.(event.target);
+          if (isInsidePicker || isEmojiTrigger) return;
+          closeEmojiPicker();
+        };
+        document.addEventListener("mousedown", emojiOutsideClickHandler, true);
+        picker?.addEventListener("click", (event) => {
+          const tabBtn = event.target?.closest?.("[data-emoji-category-index]");
+          if (tabBtn) {
+            const idx = Number(tabBtn.getAttribute("data-emoji-category-index"));
+            const target = picker.querySelector(`[data-emoji-category="${idx}"]`);
+            const scrollRoot = picker.querySelector(".bot-emoji-scroll");
+            if (target) {
+              picker.querySelectorAll(".bot-emoji-tab").forEach((btn) => btn.classList.remove("active"));
+              tabBtn.classList.add("active");
+              if (scrollRoot) {
+                scrollRoot.scrollTo({ top: target.offsetTop - scrollRoot.offsetTop, behavior: "smooth" });
+              }
+            }
+            return;
+          }
+          const emojiBtn = event.target?.closest?.("[data-emoji]");
+          if (!emojiBtn || !textarea) return;
+          insertTextAtSelection(textarea, emojiBtn.getAttribute("data-emoji") || "", lastSelection);
+          rememberSelection();
+          closeEmojiPicker();
+        });
+      };
       document.querySelectorAll("[data-format-action]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const action = btn.getAttribute("data-format-action");
           if (!textarea || !action) return;
+          if (action !== "emoji") closeEmojiPicker();
+          if (action === "emoji") return toggleEmojiPicker(btn);
           if (action === "bold") return applyTagToSelection(textarea, "<b>", "</b>");
           if (action === "italic") return applyTagToSelection(textarea, "<i>", "</i>");
           if (action === "underline") return applyTagToSelection(textarea, "<u>", "</u>");
@@ -247,7 +400,14 @@
       backdropMouseDown = false;
     });
     textModalEscHandler = (event) => {
-      if (event.key === "Escape") requestClose(false);
+      if (event.key !== "Escape") return;
+      if (document.getElementById(EMOJI_PICKER_ID)) {
+        event.preventDefault();
+        closeEmojiPicker();
+        textarea?.focus();
+        return;
+      }
+      requestClose(false);
     };
     document.addEventListener("keydown", textModalEscHandler);
   }
