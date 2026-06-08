@@ -1739,6 +1739,7 @@ def _prepare_collecting_ticket_for_button(db: Session, ticket: Ticket, button: B
     ticket.instruction_button_key = _resolve_instruction_button_key(db, menu_name, button.key)
     ticket.instruction_title = None
     ticket.instruction_text = None
+    ticket.updated_at = datetime.utcnow()
     if button.kind == "task":
         ticket.workflow_type = TicketWorkflowType.TASK.value
         ticket.task_kind = TicketTaskKind.NORMAL.value
@@ -2201,6 +2202,24 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     callback = payload.get("callback_query")
     if callback is not None:
         data = callback.get("data") or ""
+        if data == "client_close":
+            return process_client_close_callback(
+                db,
+                payload,
+                callback,
+                notify_client,
+                first_company_fn=_first_company,
+                get_or_create_contact_from_user_fn=get_or_create_contact_from_user,
+                collecting_ticket_for_client_fn=_collecting_ticket_for_client,
+                active_ticket_for_client_fn=_active_ticket_for_client,
+                client_can_close_ticket_fn=client_can_close_ticket,
+                remove_menu_keyboard_fn=_remove_menu_keyboard,
+                append_system_message_fn=append_system_message,
+                answer_callback_query_fn=answer_callback_query,
+                safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
+                send_message_fn=send_message,
+                ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+            )
         confirm = _parse_confirm_callback_data(data)
         if confirm is not None:
             button_ref, decision = confirm
@@ -2341,24 +2360,6 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     notify_client_about_assignee(db, ticket, assigned_agent)
             return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
 
-        if data == "client_close":
-            return process_client_close_callback(
-                db,
-                payload,
-                callback,
-                notify_client,
-                first_company_fn=_first_company,
-                get_or_create_contact_from_user_fn=get_or_create_contact_from_user,
-                collecting_ticket_for_client_fn=_collecting_ticket_for_client,
-                active_ticket_for_client_fn=_active_ticket_for_client,
-                client_can_close_ticket_fn=client_can_close_ticket,
-                remove_menu_keyboard_fn=_remove_menu_keyboard,
-                append_system_message_fn=append_system_message,
-                answer_callback_query_fn=answer_callback_query,
-                safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
-                send_message_fn=send_message,
-                ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
-            )
         menu_key = _menu_key_from_callback(db, data, None)
         if menu_key is not None:
             return _process_menu_callback(db, payload, callback, notify_client, menu_key)
