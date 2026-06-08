@@ -345,3 +345,15 @@ class BotMenuDestinationBinding(Base):
     menu_type: Mapped[str] = mapped_column(String(200), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class AutomaticMessageTemplate(Base):
+    __tablename__ = "automatic_message_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    key: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    html_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

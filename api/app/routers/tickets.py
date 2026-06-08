@@ -59,6 +59,7 @@ from ..services.ticket_problem_flow import (
 )
 from ..services.ticket_subject import resolve_ticket_subject
 from ..services.telegram_text_format import prepare_telegram_html_message, strip_telegram_html
+from ..services.automatic_messages import render_automatic_message_text
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -87,6 +88,10 @@ SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT = (
     "После завершения задачи клиенту будет отправлена подсказка:",
     "Клиент уведомлен об ограничении размера файлов Telegram Bot API",
 )
+
+def _ticket_closed_client_text(db: Session, ticket: Ticket | None = None) -> str:
+    return render_automatic_message_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT, ticket=ticket)
+
 
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
@@ -667,7 +672,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                 _send_to_telegram_client(
                     db,
                     ticket,
-                    TICKET_CLOSED_CLIENT_TEXT,
+                    _ticket_closed_client_text(db, ticket),
                     required=False,
                     remove_keyboard=True,
                 )
@@ -1293,7 +1298,7 @@ def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Dep
         message_attachments_fn=_message_attachments,
         send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
         onsite_close_reminder_text=ONSITE_CLOSE_REMINDER_TEXT,
-        ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+        ticket_closed_client_text=_ticket_closed_client_text(db, ticket),
         resolve_group_parent_client_text_fn=_group_parent_client_text_override,
     )
     db.commit()
@@ -1388,11 +1393,22 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
         created_at_text = created_at.astimezone(ZoneInfo(settings.app_timezone)).strftime("%d.%m.%Y %H:%M")
     else:
         created_at_text = "неизвестно"
-    restore_client_text = f"Вашу заявку «{ticket.subject}» от {created_at_text} вернули в работу."
+    restore_fallback_text = f"Вашу заявку «{ticket.subject}» от {created_at_text} вернули в работу."
+    try:
+        restore_client_text = render_automatic_message_text(
+            db,
+            "telegram.ticket.restore.client",
+            restore_fallback_text,
+            ticket=ticket,
+            contact=contact,
+            extra={"ticket_created_at": created_at_text},
+        )
+    except Exception:
+        restore_client_text = restore_fallback_text
     _add_message(db, ticket, MessageType.SYSTEM, f"{restore_client_text} Инициатор: {actor_name}", None, agent_visible=True)
     if contact is not None:
         try:
-            send_message(contact.external_chat_id, restore_client_text, remove_keyboard=True)
+            _send_to_telegram_client(db, ticket, restore_client_text, required=False, remove_keyboard=True)
         except Exception:
             pass
 

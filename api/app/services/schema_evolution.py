@@ -605,6 +605,30 @@ def ensure_bot_menu_profiles_tables() -> None:
         conn.execute(text("UPDATE bot_menu_profiles SET is_active = TRUE WHERE is_active IS NULL"))
 
 
+def ensure_automatic_message_templates_table() -> None:
+    with engine.begin() as conn:
+        timestamp_type = "TIMESTAMP"
+        bool_type = "BOOLEAN"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS automatic_message_templates (
+                    id VARCHAR(36) PRIMARY KEY,
+                    key VARCHAR(150) UNIQUE NOT NULL,
+                    body TEXT,
+                    is_overridden {bool_type},
+                    html_enabled {bool_type},
+                    created_at {timestamp_type},
+                    updated_at {timestamp_type}
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_automatic_message_templates_key ON automatic_message_templates(key)"))
+        conn.execute(text("UPDATE automatic_message_templates SET is_overridden = FALSE WHERE is_overridden IS NULL"))
+        conn.execute(text("UPDATE automatic_message_templates SET html_enabled = TRUE WHERE html_enabled IS NULL"))
+
+
 def ensure_ticket_message_columns() -> None:
     required_columns = {
         "agent_visible": "BOOLEAN",

@@ -7,6 +7,7 @@ from sqlalchemy import and_, asc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType, User
+from .automatic_messages import render_automatic_message_for_telegram
 from .telegram_bot import TelegramApiError, send_message
 
 GroupParentAssignedHook = Callable[[Session, Ticket, User], None]
@@ -57,7 +58,16 @@ def notify_client_about_assignee(db: Session, ticket: Ticket, agent: User):
 
     agent_name = html.escape(agent.full_name or "сотрудник")
     try:
-        send_message(contact.external_chat_id, f"Вам ответит <b>{agent_name}</b>", parse_mode="HTML")
+        text, parse_mode = render_automatic_message_for_telegram(
+            db,
+            "telegram.assignment.agent_assigned",
+            f"Вам ответит <b>{agent_name}</b>",
+            ticket=ticket,
+            contact=contact,
+            agent=agent,
+            extra={"agent_full_name": agent.full_name or "сотрудник"},
+        )
+        send_message(contact.external_chat_id, text, parse_mode=parse_mode)
     except TelegramApiError:
         pass
 

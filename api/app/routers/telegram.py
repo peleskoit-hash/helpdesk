@@ -47,6 +47,7 @@ from ..services.assignment import choose_online_agent
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
+from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
 from ..services.telegram_client_close import (
     client_can_close_ticket,
     close_active_ticket_for_contact,
@@ -134,6 +135,58 @@ NO_ACTIVE_TICKET_TEXT = "Активное обращение не найдено
 ALLOWED_ATTACHMENT_TYPES = {"document", "photo", "audio", "video", "animation", "sticker"}
 IMAGE_PREVIEW_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 SUBMENU_MARKER_PREFIX = "__submenu__:"
+
+
+def _automatic_text(
+    db: Session,
+    key: str,
+    fallback: str,
+    *,
+    ticket: Ticket | None = None,
+    contact: TelegramContact | None = None,
+    agent: User | None = None,
+    client_message: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> str:
+    try:
+        return render_automatic_message_text(
+            db,
+            key,
+            fallback,
+            ticket=ticket,
+            contact=contact,
+            agent=agent,
+            client_message=client_message,
+            extra=extra,
+        )
+    except Exception:
+        return fallback
+
+
+def _automatic_telegram_text(
+    db: Session,
+    key: str,
+    fallback: str,
+    *,
+    ticket: Ticket | None = None,
+    contact: TelegramContact | None = None,
+    agent: User | None = None,
+    client_message: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> tuple[str, str | None]:
+    try:
+        return render_automatic_message_for_telegram(
+            db,
+            key,
+            fallback,
+            ticket=ticket,
+            contact=contact,
+            agent=agent,
+            client_message=client_message,
+            extra=extra,
+        )
+    except Exception:
+        return fallback, None
 
 
 def _use_db_buttons() -> bool:
@@ -1077,7 +1130,14 @@ def _fallback_auto_to_support(
     ticket.load_counted = True
     assigned_agent = _ready_ticket_for_distribution(db, ticket, None)
     if notify_client:
-        send_message(external_chat_id, MATERIAL_UNAVAILABLE_TEXT)
+        material_text, material_parse_mode = _automatic_telegram_text(
+            db,
+            "telegram.automation.material_unavailable.client",
+            MATERIAL_UNAVAILABLE_TEXT,
+            ticket=ticket,
+            extra={"reason": reason},
+        )
+        send_message(external_chat_id, material_text, parse_mode=material_parse_mode)
         if assigned_agent is not None:
             notify_client_about_assignee(db, ticket, assigned_agent)
     return assigned_agent
@@ -2079,9 +2139,17 @@ def _process_problem_type_callback(
                 answer_callback_query(callback_id, "\u0423 \u0412\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435")
             _safe_delete_message(external_chat_id, message_id if isinstance(message_id, int) else None)
             markup = client_close_markup() if client_can_close_ticket(db, active_ticket) else None
+            active_ticket_text, active_ticket_parse_mode = _automatic_telegram_text(
+                db,
+                "telegram.start.active_ticket.client",
+                "У Вас уже есть активное обращение. Напишите сообщение, и оно добавится в текущую заявку.",
+                ticket=active_ticket,
+                contact=contact,
+            )
             response = send_message(
                 external_chat_id,
-                "\u0423 \u0412\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435. \u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435, \u0438 \u043e\u043d\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u0441\u044f \u0432 \u0442\u0435\u043a\u0443\u0449\u0443\u044e \u0437\u0430\u044f\u0432\u043a\u0443.",
+                active_ticket_text,
+                parse_mode=active_ticket_parse_mode,
                 reply_markup=markup,
             )
             if markup is not None:
@@ -2153,7 +2221,17 @@ def _process_problem_type_callback(
             if callback_id:
                 answer_callback_query(callback_id, "\u041e\u043f\u0438\u0448\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c")
             task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
-                db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT
+                db,
+                collecting_ticket,
+                button,
+                _automatic_text(
+                    db,
+                    "telegram.task.request_text",
+                    TASK_DESCRIPTION_REQUEST_TEXT,
+                    ticket=collecting_ticket,
+                    contact=contact,
+                    extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES, "button_label": button.label},
+                ),
             )
             response = send_message(
                 external_chat_id,
@@ -2218,7 +2296,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 answer_callback_query_fn=answer_callback_query,
                 safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
                 send_message_fn=send_message,
-                ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+                ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
             )
         confirm = _parse_confirm_callback_data(data)
         if confirm is not None:
@@ -2327,7 +2405,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     if callback_id:
                         answer_callback_query(callback_id, "Опишите задачу одним сообщением")
                     task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
-                        db, collecting_ticket, button, TASK_DESCRIPTION_REQUEST_TEXT
+                        db,
+                        collecting_ticket,
+                        button,
+                        _automatic_text(
+                            db,
+                            "telegram.task.request_text",
+                            TASK_DESCRIPTION_REQUEST_TEXT,
+                            ticket=collecting_ticket,
+                            contact=contact,
+                            extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES, "button_label": button.label},
+                        ),
                     )
                     response = send_message(
                         external_chat_id,
@@ -2346,7 +2434,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 if callback_id:
                     answer_callback_query(callback_id, "Заявка создана")
                 ticket_client_text, ticket_client_parse_mode = _render_client_text_for_telegram(
-                    db, ticket, button, "Заявка создана. Опишите проблему сообщением."
+                    db,
+                    ticket,
+                    button,
+                    _automatic_text(
+                        db,
+                        "telegram.ticket.create.default_client_text",
+                        "Заявка создана. Опишите проблему сообщением.",
+                        ticket=ticket,
+                        contact=contact,
+                        extra={"button_label": button.label},
+                    ),
                 )
                 response = send_message(
                     external_chat_id,
@@ -2433,7 +2531,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             )
         db.commit()
         if notify_client:
-            send_message(external_chat_id, FORBIDDEN_ATTACHMENT_TEXT)
+            send_message(external_chat_id, *_automatic_telegram_text(db, "telegram.attachment.unsupported_type", FORBIDDEN_ATTACHMENT_TEXT, ticket=ticket, contact=contact))
         return {"ok": True, "forbidden_attachment": forbidden_attachment_type}
 
     if text.startswith("/close"):
@@ -2452,8 +2550,21 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         )
         db.commit()
         if notify_client:
-            close_text = TICKET_CLOSED_CLIENT_TEXT if closed else NO_ACTIVE_TICKET_TEXT
-            send_message(external_chat_id, close_text, remove_keyboard=True)
+            if closed:
+                close_text, close_parse_mode = _automatic_telegram_text(
+                    db,
+                    "telegram.ticket.close.client",
+                    TICKET_CLOSED_CLIENT_TEXT,
+                    contact=contact,
+                )
+            else:
+                close_text, close_parse_mode = _automatic_telegram_text(
+                    db,
+                    "telegram.ticket.close.no_active.client",
+                    NO_ACTIVE_TICKET_TEXT,
+                    contact=contact,
+                )
+            send_message(external_chat_id, close_text, parse_mode=close_parse_mode, remove_keyboard=True)
         return {"ok": True, "command": "close", "closed": closed}
 
     if text.startswith("/start"):
@@ -2469,7 +2580,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 notify_client,
                 first_connection_subject=FIRST_CONNECTION_SUBJECT,
                 first_connection_agent_text=FIRST_CONNECTION_AGENT_TEXT,
-                first_connection_client_text=FIRST_CONNECTION_CLIENT_TEXT,
+                first_connection_client_text=_automatic_text(db, "telegram.onboarding.first_connection.client", FIRST_CONNECTION_CLIENT_TEXT, contact=contact),
                 ensure_ticket_for_incoming_fn=_ensure_ticket_for_incoming,
                 append_system_message_fn=append_system_message,
                 user_by_id_fn=lambda _db, _id: _db.execute(select(User).where(User.id == _id)).scalar_one_or_none(),
@@ -2496,9 +2607,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     db.commit()
             else:
                 markup = client_close_markup() if client_can_close_ticket(db, ticket) else None
+                active_ticket_text, active_ticket_parse_mode = _automatic_telegram_text(
+                    db,
+                    "telegram.start.active_ticket.client",
+                    "У Вас уже есть активное обращение. Напишите сообщение, и оно добавится в текущую заявку.",
+                    ticket=ticket,
+                    contact=contact,
+                )
                 response = send_message(
                     external_chat_id,
-                    "У Вас уже есть активное обращение. Напишите сообщение, и оно добавится в текущую заявку.",
+                    active_ticket_text,
+                    parse_mode=active_ticket_parse_mode,
                     reply_markup=markup,
                 )
                 if markup is not None:
@@ -2517,7 +2636,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             remove_client_close_button(db, collecting_ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
             db.commit()
             if notify_client:
-                send_message(external_chat_id, TASK_EXPIRED_TEXT)
+                send_message(external_chat_id, *_automatic_telegram_text(db, "telegram.intake.task_timeout", TASK_EXPIRED_TEXT, ticket=collecting_ticket, contact=contact, extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES}))
             return {"ok": True, "task_pending_expired": True, "ticket_id": collecting_ticket.id}
 
         client_body = text
@@ -2583,7 +2702,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             _create_group_children_from_collecting(db, collecting_ticket, button, client_body, assigned_agent)
         db.commit()
         if notify_client:
-            send_message(external_chat_id, TASK_CREATED_CLIENT_TEXT)
+            try:
+                task_created_text, task_created_parse_mode = _automatic_telegram_text(
+                    db,
+                    "telegram.task.created",
+                    TASK_CREATED_CLIENT_TEXT,
+                    ticket=collecting_ticket,
+                    contact=contact,
+                )
+                send_message(external_chat_id, task_created_text, parse_mode=task_created_parse_mode)
+            except Exception:
+                send_message(external_chat_id, TASK_CREATED_CLIENT_TEXT)
         return {
             "ok": True,
             "ticket_id": collecting_ticket.id,
@@ -2598,9 +2727,9 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         db.commit()
         if notify_client:
             if collecting_ticket is not None and (collecting_ticket.button_config_key or "").startswith(SUBMENU_MARKER_PREFIX):
-                send_message(external_chat_id, PROBLEM_SUBMENU_TEXT)
+                send_message(external_chat_id, *_automatic_telegram_text(db, "telegram.menu.problem_not_selected", PROBLEM_SUBMENU_TEXT, ticket=collecting_ticket, contact=contact))
             else:
-                send_message(external_chat_id, PROBLEM_NOT_SELECTED_TEXT)
+                send_message(external_chat_id, *_automatic_telegram_text(db, "telegram.menu.problem_not_selected", PROBLEM_NOT_SELECTED_TEXT, ticket=collecting_ticket, contact=contact))
         return {"ok": True, "ignored": "problem_type_required"}
 
     ticket = active_ticket
@@ -2657,8 +2786,11 @@ def cleanup_expired_task_intents(db: Session) -> int:
         _remove_menu_keyboard(db, ticket, fallback_chat_id=contact.external_chat_id if contact is not None else None)
         remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         if contact is not None:
-            timeout_text = TASK_EXPIRED_TEXT if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_TEXT
-            send_message(contact.external_chat_id, timeout_text)
+            timeout_key = "telegram.intake.task_timeout" if ticket.workflow_type == TicketWorkflowType.TASK.value else "telegram.intake.menu_timeout"
+            timeout_fallback = TASK_EXPIRED_TEXT if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_TEXT
+            timeout_minutes = TASK_DESCRIPTION_TIMEOUT_MINUTES if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_MINUTES
+            timeout_text, timeout_parse_mode = _automatic_telegram_text(db, timeout_key, timeout_fallback, ticket=ticket, contact=contact, extra={"timeout_minutes": timeout_minutes})
+            send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
     db.commit()
     return len(expired)
 

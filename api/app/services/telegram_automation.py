@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
+from .automatic_messages import render_automatic_message_for_telegram
 from ..services.bitrix_client import BitrixApiError, BitrixConfigError, extract_deal_id, get_deal_phone_lookup, validate_deal_id
 
 BITRIX_LOOKUP_AUTOMATION_KEY = "bitrix_deal_phone_lookup"
@@ -54,7 +55,14 @@ def _handoff_automation_task_to_agent(
     ready_ticket_for_distribution_fn(db, ticket, button)
     db.commit()
     if notify_client:
-        send_message_fn(external_chat_id, AUTOMATION_FALLBACK_CLIENT_TEXT)
+        text, parse_mode = render_automatic_message_for_telegram(
+            db,
+            "telegram.automation.fallback_created",
+            AUTOMATION_FALLBACK_CLIENT_TEXT,
+            ticket=ticket,
+            extra={"reason": "automation_handoff"},
+        )
+        send_message_fn(external_chat_id, text, parse_mode=parse_mode)
     return {
         "ok": True,
         "ticket_id": ticket.id,
@@ -86,7 +94,16 @@ def _process_bitrix_deal_phone_lookup_task(
     if not deal_id or not validate_deal_id(deal_id):
         db.commit()
         if notify_client:
-            send_message_fn(external_chat_id, BITRIX_DEAL_FORMAT_ERROR_TEXT)
+            try:
+                text, parse_mode = render_automatic_message_for_telegram(
+                    db,
+                    "telegram.automation.bitrix_deal_format_error_client",
+                    BITRIX_DEAL_FORMAT_ERROR_TEXT,
+                    ticket=ticket,
+                )
+            except Exception:
+                text, parse_mode = BITRIX_DEAL_FORMAT_ERROR_TEXT, None
+            send_message_fn(external_chat_id, text, parse_mode=parse_mode)
         return {
             "ok": True,
             "ticket_id": ticket.id,

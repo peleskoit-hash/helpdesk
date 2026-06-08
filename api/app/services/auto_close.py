@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 import uuid
@@ -110,7 +110,8 @@ def _send_auto_close_to_client(db: Session, ticket: Ticket) -> None:
     contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
     if contact is None:
         return
-    send_message(contact.external_chat_id, AUTO_CLOSE_CLIENT_TEXT, remove_keyboard=True)
+    text, parse_mode = render_automatic_message_for_telegram(db, "telegram.auto_close.client", AUTO_CLOSE_CLIENT_TEXT, ticket=ticket)
+    send_message(contact.external_chat_id, text, parse_mode=parse_mode, remove_keyboard=True)
 
 
 def cleanup_auto_close_tickets(db: Session) -> int:

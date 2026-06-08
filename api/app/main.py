@@ -22,6 +22,7 @@ from .db import Base, engine, get_db
 from .models import User
 from .routers.mass_notifications import router as mass_notifications_router
 from .routers.settings import router as settings_router
+from .routers.settings_automatic_messages import router as settings_automatic_messages_router
 from .routers.settings_bot_button_items import router as settings_bot_button_items_router
 from .routers.settings_bot_menu_profiles import router as settings_bot_menu_profiles_router
 from .routers.settings_bot_button_structure import router as settings_bot_button_structure_router
@@ -35,6 +36,7 @@ from .services.schema_evolution import (
     ensure_bot_menu_level_layouts_table,
     ensure_bot_menu_profiles_tables,
     ensure_bot_button_settings_table,
+    ensure_automatic_message_templates_table,
     ensure_client_card_field_config_columns,
     ensure_client_profile_columns,
     ensure_telegram_contact_columns,
@@ -62,6 +64,7 @@ app.include_router(tickets_router)
 app.include_router(telegram_router)
 app.include_router(users_router)
 app.include_router(settings_router)
+app.include_router(settings_automatic_messages_router)
 app.include_router(settings_bot_button_items_router)
 app.include_router(settings_bot_menu_profiles_router)
 app.include_router(settings_bot_button_structure_router)
@@ -87,6 +90,7 @@ async def on_startup():
             ensure_ticket_message_columns()
             ensure_ticket_attachment_table()
             ensure_bot_button_settings_table()
+            ensure_automatic_message_templates_table()
             ensure_bot_menu_level_layouts_table()
             ensure_bot_menu_profiles_tables()
             ensure_client_card_field_config_columns()
@@ -266,6 +270,16 @@ def settings_bot_buttons_page(request: Request, db: Session = Depends(get_db)):
     if not user.is_real_admin:
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "settings_bot_buttons.html"))
+
+
+@app.get("/settings/automatic-messages")
+def settings_automatic_messages_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/settings/automatic-messages")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "settings_automatic_messages.html"))
 
 
 @app.get("/statuses")

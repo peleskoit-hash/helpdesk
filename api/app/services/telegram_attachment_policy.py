@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from ..models import MessageType, Ticket, TicketMessage
 from .assignment import append_system_message
+from .automatic_messages import render_automatic_message_for_telegram
 from .telegram_bot import send_message
 
 FORBIDDEN_ATTACHMENT_TEXT = (
@@ -87,4 +88,11 @@ def send_too_large_attachment_client_messages(
             f"Обратите внимание, что файлы больше 20 МБ ({limit_kb} КБ) не будут доставлены в связи с ограничениями Telegram Bot API.",
         )
         append_system_message(db, ticket, TOO_LARGE_ATTACHMENT_WARNING_MARKER, agent_visible=False)
-    send_message(external_chat_id, _too_large_attachment_client_notice(attachment_data))
+    text, parse_mode = render_automatic_message_for_telegram(
+        db,
+        "telegram.attachment.too_large",
+        _too_large_attachment_client_notice(attachment_data),
+        ticket=ticket,
+        extra={"file_name": ((attachment_data or {}).get("original_filename") or (attachment_data or {}).get("source") or "файл"), "file_size": _kb_size((attachment_data or {}).get("file_size"))},
+    )
+    send_message(external_chat_id, text, parse_mode=parse_mode)

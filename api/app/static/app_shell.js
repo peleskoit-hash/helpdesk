@@ -25,6 +25,13 @@
         "/static/settings_bot_buttons.js?v=20260604a",
       ],
     }],
+    ["/settings/automatic-messages", {
+      page: "settings-automatic-messages",
+      scripts: [
+        "/static/bot_buttons_emoji_data.js?v=20260605a",
+        "/static/settings_automatic_messages.js?v=20260605a",
+      ],
+    }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
@@ -268,7 +275,7 @@
     extractShellPayload,
     mountShellPayload,
     getCurrentPage: () => ({ ...current }),
-    version: "20260604d",
+    version: "20260605c",
   };
 
   document.addEventListener("click", (event) => {

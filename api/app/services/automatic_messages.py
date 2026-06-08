@@ -1,0 +1,519 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import datetime
+import re
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models import AutomaticMessageTemplate, TelegramContact, Ticket, User
+from .telegram_text_format import prepare_telegram_html_message
+from .template_fields import template_context
+
+_FIELD_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
+_EMPTY = "не задано"
+
+
+@dataclass(frozen=True)
+class AutomaticMessageDefinition:
+    key: str
+    title: str
+    description: str
+    category: str
+    category_title: str
+    sort_order: int
+    default_text: str
+    audience: str = "client"
+    channel: str = "telegram"
+    html_enabled: bool = True
+    allowed_variables: tuple[str, ...] = ()
+    variable_scopes: tuple[str, ...] = ()
+    explicit_variables: tuple[str, ...] = ()
+    runtime_enabled: bool = False
+
+
+AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
+    AutomaticMessageDefinition(
+        key="telegram.onboarding.first_connection.client",
+        title="Первое подключение клиента",
+        description="Приветствие и объяснение первичного обращения при первом /start",
+        category="start_menu",
+        category_title="Старт и меню",
+        sort_order=10,
+        default_text=(
+            "Здравствуйте, Вы подключаетесь к нашему боту тех. поддержки в первый раз.\n"
+            "Сейчас Ваша заявка будет распределена на свободного (освободившегося) сотрудника.\n"
+            "Будьте готовы сообщить Ваши Фамилию и Имя, а так же отдел к которому Вы относитесь.\n"
+            "Если Вы проходите стажировку, сразу сообщите об этом."
+        ),
+        variable_scopes=("client", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.intake.menu_timeout",
+        title="Таймаут выбора меню",
+        description="Создание заявки прерывается, если клиент не выбрал конечный пункт меню",
+        category="start_menu",
+        category_title="Старт и меню",
+        sort_order=20,
+        default_text=(
+            "Вы не выбрали нужное меню, создание заявки прервано.\n"
+            "Для создания новой нажмите\n/start."
+        ),
+        variable_scopes=("client", "ticket", "timeout", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.menu.problem_not_selected",
+        title="Сообщение без выбранной конечной кнопки",
+        description="Клиент пишет текст, но ещё не выбрал конечную кнопку меню",
+        category="ticket_creation",
+        category_title="Создание заявки",
+        sort_order=10,
+        default_text=(
+            "Сначала выберите конечную проблему в меню. Пока выбор не сделан, сообщение не дойдёт до технической поддержки.\n"
+            "Если у Вас не открыто меню нажмите\n/start"
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.ticket.create.default_client_text",
+        title="Заявка создана",
+        description="Запасной текст после создания заявки, если у кнопки нет своего текста клиенту",
+        category="ticket_creation",
+        category_title="Создание заявки",
+        sort_order=20,
+        default_text="Заявка создана. Опишите проблему сообщением.",
+        variable_scopes=("client", "ticket", "button"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.task.request_text",
+        title="Запрос описания задачи",
+        description="Просьба написать текст после выбора task/group_task кнопки",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=10,
+        default_text=(
+            "Опишите задачу одним сообщением.\n"
+            "Если текст не будет написан в течение {{timeout_minutes}} мин., создание задачи будет отменено."
+        ),
+        variable_scopes=("client", "ticket", "timeout", "button"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.task.created",
+        title="Задача создана",
+        description="Клиент получает текст после того, как задача создана и передана в работу",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=20,
+        default_text="Заявка создана и передана в работу.\n\nДля создания другой нажмите\n /start",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.intake.task_timeout",
+        title="Таймаут описания задачи",
+        description="Создание задачи прерывается, если клиент не написал текст задачи",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=30,
+        default_text=(
+            "Создание заявки было прервано т.к. текст не был написан в течении {{timeout_minutes}} мин.\n\n"
+            "Для создания новой нажмите\n/start"
+        ),
+        variable_scopes=("client", "ticket", "timeout", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.ticket.close.client",
+        title="Обращение закрыто",
+        description="Клиентский текст при обычном закрытии обращения клиентом или сотрудником",
+        category="close_restore",
+        category_title="Закрытие и возврат",
+        sort_order=10,
+        default_text="Ваше обращение закрыто. Если Вам снова будет необходима помощь технической поддержки, нажмите /start.",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.auto_close.client",
+        title="Автоматическое закрытие",
+        description="Сообщение при автоматическом закрытии из-за отсутствия активности",
+        category="close_restore",
+        category_title="Закрытие и возврат",
+        sort_order=20,
+        default_text=(
+            "Ваша заявка закрыта в связи с отсутствием активности в ней, "
+            "если Ваша проблема не была решена, пожалуйста, создайте новую нажав /start"
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.ticket.restore.client",
+        title="Заявка возвращена в работу",
+        description="Клиентский текст при возврате закрытой заявки в работу",
+        category="close_restore",
+        category_title="Закрытие и возврат",
+        sort_order=30,
+        default_text="Вашу заявку «{{ticket_subject}}» от {{ticket_created_at}} вернули в работу.",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.ticket.close.no_active.client",
+        title="Нет активного обращения",
+        description="Клиент нажал /close, но активное обращение не найдено",
+        category="close_restore",
+        category_title="Закрытие и возврат",
+        sort_order=40,
+        default_text="Активное обращение не найдено. Для создания новой заявки нажмите {{start_command}}.",
+        variable_scopes=("client", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.attachment.unsupported_type",
+        title="Неподдерживаемый тип вложения",
+        description="Клиент отправил voice/video или другой тип, который бот не доставляет сотруднику",
+        category="attachments",
+        category_title="Файлы и вложения",
+        sort_order=10,
+        default_text=(
+            "Голосовые и видеосообщения технически не поддерживаются в данном сервисе и не будут доставлены сотруднику тех.поддержки.\n"
+            "Пожалуйста, опишите проблему текстом и/или прикрепите файл/скриншот."
+        ),
+        variable_scopes=("client", "ticket"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.attachment.too_large",
+        title="Слишком большой файл",
+        description="Предупреждение клиента о файле больше лимита Telegram Bot API",
+        category="attachments",
+        category_title="Файлы и вложения",
+        sort_order=20,
+        default_text="Файл «{{file_name}}» имеет размер {{file_size}} КБ и не может быть отправлен.",
+        variable_scopes=("client", "ticket", "attachment"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.start.active_ticket.client",
+        title="Уже есть активное обращение",
+        description="Клиент нажал /start, когда у него уже есть активная заявка",
+        category="start_menu",
+        category_title="Старт и меню",
+        sort_order=30,
+        default_text="У Вас уже есть активное обращение. Напишите сообщение, и оно добавится в текущую заявку.",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.automation.fallback_created",
+        title="Автоматизация создала обращение",
+        description="Запасное сообщение, когда автоматизация не смогла выполнить действие сама",
+        category="automation",
+        category_title="Автоматизация",
+        sort_order=10,
+        default_text="Заявка создана и передана в работу.",
+        variable_scopes=("client", "ticket"),
+        explicit_variables=("reason",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.automation.material_unavailable.client",
+        title="Материал недоступен",
+        description="Автоматическая отправка материала не удалась, обращение передано сотруднику",
+        category="automation",
+        category_title="Автоматизация",
+        sort_order=20,
+        default_text="Материал временно недоступен. Обращение передано сотруднику технической поддержки.",
+        variable_scopes=("client", "ticket"),
+        explicit_variables=("reason",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.automation.bitrix_deal_format_error_client",
+        title="Bitrix: сделка не распознана",
+        description="Клиент отправил некорректный номер или ссылку сделки для автоматизации Bitrix",
+        category="automation",
+        category_title="Автоматизация",
+        sort_order=30,
+        default_text=(
+            "Не удалось распознать сделку.\n\n"
+            "Отправьте одним сообщением номер сделки из 5–7 цифр или ссылку вида:\n"
+            "https://crm.elitesochi.com/crm/deal/show/2450346/"
+        ),
+        variable_scopes=("client", "ticket"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.assignment.agent_assigned",
+        title="Назначен исполнитель",
+        description="Сообщение клиенту о сотруднике, который назначен на заявку",
+        category="assignment",
+        category_title="Распределение и очередь",
+        sort_order=10,
+        default_text="Вам ответит <b>{{agent_full_name}}</b>",
+        variable_scopes=("client", "ticket", "agent"),
+        runtime_enabled=True,
+    ),
+)
+
+_REGISTRY_BY_KEY = {item.key: item for item in AUTOMATIC_MESSAGE_REGISTRY}
+
+VARIABLE_DESCRIPTIONS: dict[str, str] = {
+    "agent_full_name": "ФИО назначенного сотрудника",
+    "agent_name": "Имя назначенного сотрудника",
+    "button_label": "Название выбранной кнопки меню",
+    "client_name": "Имя клиента",
+    "contact_first_name": "Имя клиента из карточки",
+    "contact_full_name": "ФИО клиента из карточки",
+    "contact_last_name": "Фамилия клиента из карточки",
+    "department": "Отдел клиента",
+    "destination": "Направление клиента из поля «Куда?»",
+    "file_name": "Имя файла",
+    "file_size": "Размер файла",
+    "reason": "Причина или техническое описание события",
+    "start_command": "Команда /start",
+    "subject": "Название заявки или задачи",
+    "telegram_display_name": "Имя клиента в Telegram",
+    "telegram_chat_id": "Telegram chat id",
+    "telegram_username": "Username клиента в Telegram",
+    "telegram_user_id": "Telegram user id",
+    "ticket_created_at": "Дата и время создания заявки",
+    "ticket_id": "ID заявки",
+    "ticket_status": "Статус заявки",
+    "ticket_subject": "Название заявки или задачи",
+    "timeout_minutes": "Время ожидания в минутах",
+}
+
+VARIABLE_SCOPES: dict[str, dict[str, object]] = {
+    "client": {
+        "title": "Клиент / Telegram",
+        "variables": (
+            "client_name",
+            "contact_full_name",
+            "contact_first_name",
+            "contact_last_name",
+            "destination",
+            "department",
+            "telegram_display_name",
+            "telegram_username",
+            "telegram_user_id",
+            "telegram_chat_id",
+        ),
+    },
+    "ticket": {
+        "title": "Заявка",
+        "variables": (
+            "ticket_id",
+            "ticket_subject",
+            "subject",
+            "ticket_status",
+            "ticket_created_at",
+        ),
+    },
+    "agent": {
+        "title": "Сотрудник",
+        "variables": (
+            "agent_full_name",
+            "agent_name",
+        ),
+    },
+    "attachment": {
+        "title": "Файлы",
+        "variables": (
+            "file_name",
+            "file_size",
+        ),
+    },
+    "timeout": {
+        "title": "Таймаут",
+        "variables": (
+            "timeout_minutes",
+        ),
+    },
+    "menu": {
+        "title": "Меню / команда",
+        "variables": (
+            "start_command",
+        ),
+    },
+    "button": {
+        "title": "Меню / кнопка",
+        "variables": (
+            "button_label",
+        ),
+    },
+}
+
+
+def _automatic_message_variable_items(definition: AutomaticMessageDefinition) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_variable(name: str, scope: str, scope_title: str) -> None:
+        variable_name = str(name or "").strip()
+        if not variable_name or variable_name in seen:
+            return
+        seen.add(variable_name)
+        result.append(
+            {
+                "name": variable_name,
+                "description": VARIABLE_DESCRIPTIONS.get(variable_name, "Переменная шаблона"),
+                "scope": scope,
+                "scope_title": scope_title,
+            }
+        )
+
+    for scope in definition.variable_scopes:
+        scope_data = VARIABLE_SCOPES.get(scope)
+        if not scope_data:
+            continue
+        scope_title = str(scope_data.get("title") or scope)
+        for variable_name in scope_data.get("variables") or ():
+            add_variable(str(variable_name), scope, scope_title)
+
+    for variable_name in definition.allowed_variables:
+        add_variable(variable_name, "explicit", "Дополнительно")
+    for variable_name in definition.explicit_variables:
+        add_variable(variable_name, "explicit", "Дополнительно")
+
+    return result
+
+
+def get_automatic_message_definition(key: str) -> AutomaticMessageDefinition | None:
+    return _REGISTRY_BY_KEY.get(str(key or "").strip())
+
+
+def list_automatic_message_definitions() -> list[AutomaticMessageDefinition]:
+    return list(AUTOMATIC_MESSAGE_REGISTRY)
+
+
+def _normalize_body(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return normalized if normalized.strip() else None
+
+
+def get_automatic_message_row(db: Session, key: str) -> AutomaticMessageTemplate | None:
+    return db.execute(select(AutomaticMessageTemplate).where(AutomaticMessageTemplate.key == key)).scalar_one_or_none()
+
+
+def get_effective_automatic_message_text(db: Session, key: str, fallback: str | None = None) -> str:
+    definition = get_automatic_message_definition(key)
+    default_text = fallback if fallback is not None else (definition.default_text if definition is not None else "")
+    row = get_automatic_message_row(db, key)
+    if row is not None and bool(row.is_overridden):
+        body = _normalize_body(row.body)
+        if body is not None:
+            return body
+    return default_text or ""
+
+
+def _render_fields(text: str, context: dict[str, object]) -> str:
+    values = {key: str(value) for key, value in context.items() if value is not None}
+    return _FIELD_RE.sub(lambda match: values.get(match.group(1), _EMPTY), text)
+
+
+def render_automatic_message_text(
+    db: Session,
+    key: str,
+    fallback: str | None = None,
+    *,
+    ticket: Ticket | None = None,
+    contact: TelegramContact | None = None,
+    agent: User | None = None,
+    client_message: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> str:
+    base = get_effective_automatic_message_text(db, key, fallback)
+    context = template_context(db, ticket=ticket, contact=contact, agent=agent, client_message=client_message)
+    context.update({
+        "subject": context.get("ticket_subject", _EMPTY),
+        "client_name": context.get("contact_full_name", _EMPTY),
+        "agent_name": context.get("agent_full_name", _EMPTY),
+        "start_command": "/start",
+    })
+    if extra:
+        context.update(extra)
+    return _render_fields(base, context)
+
+
+def render_automatic_message_for_telegram(
+    db: Session,
+    key: str,
+    fallback: str | None = None,
+    *,
+    ticket: Ticket | None = None,
+    contact: TelegramContact | None = None,
+    agent: User | None = None,
+    client_message: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> tuple[str, str | None]:
+    text = render_automatic_message_text(
+        db,
+        key,
+        fallback,
+        ticket=ticket,
+        contact=contact,
+        agent=agent,
+        client_message=client_message,
+        extra=extra,
+    )
+    return prepare_telegram_html_message(text)
+
+
+def serialize_automatic_message(db: Session, definition: AutomaticMessageDefinition) -> dict:
+    row = get_automatic_message_row(db, definition.key)
+    body = _normalize_body(row.body if row is not None else None)
+    is_overridden = bool(row and row.is_overridden and body is not None)
+    variable_items = _automatic_message_variable_items(definition)
+    return {
+        **asdict(definition),
+        "allowed_variables": [item["name"] for item in variable_items],
+        "variable_scopes": list(definition.variable_scopes),
+        "allowed_variable_items": variable_items,
+        "default_text": definition.default_text,
+        "override_text": body if row is not None else None,
+        "effective_text": body if is_overridden else definition.default_text,
+        "is_overridden": is_overridden,
+        "html_enabled": bool(row.html_enabled) if row is not None and row.html_enabled is not None else definition.html_enabled,
+        "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
+    }
+
+
+def upsert_automatic_message_override(db: Session, key: str, body: str | None, *, html_enabled: bool | None = None) -> AutomaticMessageTemplate:
+    definition = get_automatic_message_definition(key)
+    if definition is None:
+        raise KeyError(key)
+    now = datetime.utcnow()
+    row = get_automatic_message_row(db, key)
+    if row is None:
+        row = AutomaticMessageTemplate(
+            id=str(uuid.uuid4()),
+            key=key,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    row.body = _normalize_body(body)
+    row.is_overridden = row.body is not None
+    row.html_enabled = definition.html_enabled if html_enabled is None else bool(html_enabled)
+    row.updated_at = now
+    return row
+
+
+def reset_automatic_message_override(db: Session, key: str) -> None:
+    row = get_automatic_message_row(db, key)
+    if row is None:
+        return
+    row.body = None
+    row.is_overridden = False
+    row.updated_at = datetime.utcnow()

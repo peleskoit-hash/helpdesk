@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from datetime import datetime
@@ -98,6 +98,7 @@ def template_context(
         "telegram_user_id": _value(contact.external_user_id if contact else None),
         "telegram_chat_id": _value(contact.external_chat_id if contact else None),
         "ticket_subject": _value(ticket.subject if ticket else None),
+        "ticket_status": _value(ticket.status if ticket else None),
         "ticket_created_at": _value(_formatted_created_at(ticket)),
         "ticket_id": _value(ticket.id if ticket else None),
         "client_message": _value(client_message or _first_client_message(db, ticket)),
