@@ -12,6 +12,7 @@ from ..auth import CurrentUser
 from ..config import settings
 from ..models import MessageType, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
+from .automatic_messages import render_automatic_message_text
 from .ticket_subject import resolve_ticket_subject
 
 
@@ -104,6 +105,7 @@ def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser)
 
 
 def _format_task_completion_text(
+    db: Session,
     ticket: Ticket,
     client_message: TicketMessage,
     agent_message: TicketMessage,
@@ -117,21 +119,58 @@ def _format_task_completion_text(
     created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
     subject = subject_text or ticket.subject
     agent_text = (agent_message.body or "").strip()
+    client_text = client_message.body or ""
     if agent_text:
-        return (
+        fallback_text = (
             f"По Вашей задаче \"{subject}\" от {created_text}\n"
-            f"\"{client_message.body}\"\n"
+            f"\"{client_text}\"\n"
             "\nПолучен ответ:\n"
             f"{agent_text}"
         )
-    return (
+        if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value:
+            try:
+                return render_automatic_message_text(
+                    db,
+                    "telegram.task.completion.with_answer",
+                    fallback_text,
+                    ticket=ticket,
+                    client_message=client_text,
+                    extra={
+                        "agent_answer": agent_text,
+                        "ticket_created_at": created_text,
+                        "ticket_subject": subject,
+                        "subject": subject,
+                    },
+                )
+            except Exception:
+                return fallback_text
+        return fallback_text
+    fallback_text = (
         f"По Вашей задаче \"{subject}\" от {created_text}\n"
-        f"\"{client_message.body}\"\n"
+        f"\"{client_text}\"\n"
         "\nПолучены файлы от сотрудника:"
     )
+    if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value:
+        try:
+            return render_automatic_message_text(
+                db,
+                "telegram.task.completion.files_only",
+                fallback_text,
+                ticket=ticket,
+                client_message=client_text,
+                extra={
+                    "ticket_created_at": created_text,
+                    "ticket_subject": subject,
+                    "subject": subject,
+                },
+            )
+        except Exception:
+            return fallback_text
+    return fallback_text
 
 
 def _format_task_closed_without_answer_text(
+    db: Session,
     ticket: Ticket,
     client_message: TicketMessage | None,
     *,
@@ -146,7 +185,7 @@ def _format_task_closed_without_answer_text(
     client_text = (client_message.body or "").strip() if client_message is not None else ""
     if not client_text:
         client_text = "(без текста)"
-    return (
+    fallback_text = (
         "Ваша задача:\n"
         f"\"{subject}\" от {created_text}\n"
         "с текстом:\n"
@@ -155,10 +194,27 @@ def _format_task_closed_without_answer_text(
         "Для создания новой нажмите\n"
         "/start"
     )
+    if (ticket.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.NORMAL.value:
+        return fallback_text
+    try:
+        return render_automatic_message_text(
+            db,
+            "telegram.task.closed_without_answer.client",
+            fallback_text,
+            ticket=ticket,
+            client_message=client_text,
+            extra={
+                "ticket_created_at": created_text,
+                "ticket_subject": subject,
+                "subject": subject,
+            },
+        )
+    except Exception:
+        return fallback_text
 
 
 def format_task_closed_without_answer_text(db: Session, ticket: Ticket, client_message: TicketMessage | None) -> str:
-    return _format_task_closed_without_answer_text(ticket, client_message, subject_text=resolve_ticket_subject(db, ticket))
+    return _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=resolve_ticket_subject(db, ticket))
 
 
 def _format_group_task_completion_text(
@@ -438,7 +494,7 @@ def _close_task_without_reply(
         send_to_telegram_client_fn(
             db,
             ticket,
-            _format_task_closed_without_answer_text(ticket, client_message, subject_text=subject_text),
+            _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=subject_text),
             required=False,
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
@@ -598,7 +654,7 @@ def close_ticket_by_actor(
             send_to_telegram_client_fn(
                 db,
                 ticket,
-                _format_task_completion_text(ticket, client_message, last_agent_message, subject_text=subject_text),
+                _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
                 required=False,
             )
             for attachment in message_attachments_fn(db, last_agent_message.id):

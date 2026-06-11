@@ -130,6 +130,59 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
+        key="telegram.task.completion.with_answer",
+        title="Задача завершена с ответом",
+        description="Клиентский текст при закрытии обычной задачи с текстовым ответом сотрудника",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=40,
+        default_text=(
+            "По Вашей задаче \"{{ticket_subject}}\" от {{ticket_created_at}}\n"
+            "\"{{client_message}}\"\n\n"
+            "Получен ответ:\n"
+            "{{agent_answer}}"
+        ),
+        variable_scopes=("client", "ticket"),
+        explicit_variables=("client_message", "agent_answer"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.task.completion.files_only",
+        title="Задача завершена с файлами",
+        description="Клиентский текст при закрытии обычной задачи без текстового ответа, но с файлами сотрудника",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=50,
+        default_text=(
+            "По Вашей задаче \"{{ticket_subject}}\" от {{ticket_created_at}}\n"
+            "\"{{client_message}}\"\n\n"
+            "Получены файлы от сотрудника:"
+        ),
+        variable_scopes=("client", "ticket"),
+        explicit_variables=("client_message",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.task.closed_without_answer.client",
+        title="Задача закрыта без ответа",
+        description="Клиентский текст при удалении или принудительном закрытии обычной задачи без ответа",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=60,
+        default_text=(
+            "Ваша задача:\n"
+            "\"{{ticket_subject}}\" от {{ticket_created_at}}\n"
+            "с текстом:\n"
+            "\"{{client_message}}\"\n"
+            "закрыта без ответа по причине некорректных или неполных данных.\n\n"
+            "Для создания новой нажмите\n"
+            "{{start_command}}"
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        explicit_variables=("client_message",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.ticket.close.client",
         title="Обращение закрыто",
         description="Клиентский текст при обычном закрытии обращения клиентом или сотрудником",
@@ -267,6 +320,7 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
 _REGISTRY_BY_KEY = {item.key: item for item in AUTOMATIC_MESSAGE_REGISTRY}
 
 VARIABLE_DESCRIPTIONS: dict[str, str] = {
+    "agent_answer": "Текст ответа сотрудника",
     "agent_full_name": "ФИО назначенного сотрудника",
     "agent_name": "Имя назначенного сотрудника",
     "button_label": "Название выбранной кнопки меню",
