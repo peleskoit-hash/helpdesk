@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
 from .automatic_messages import render_automatic_message_text
 from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
+from .telegram_text_format import strip_telegram_html
 
 
 def _error(status_code: int, code: str, message: str):
@@ -167,6 +168,8 @@ def apply_wrong_problem(
     payload,
     *,
     actor_user_id: str | None,
+    actor_role: str | None,
+    actor_display_name: str | None,
     wrong_problem_text_template: str,
     get_or_create_client_profile_fn,
     send_to_telegram_client_fn,
@@ -232,16 +235,29 @@ def apply_wrong_problem(
         )
     else:
         response = send_to_telegram_client_fn(db, ticket, hint_text)
+        unfreeze_ticket_on_message_fn(ticket)
+        system_body = (
+            f"Администратор {actor_display_name} подсказал клиенту правильный пункт меню: {target_label}"
+            if actor_role == "admin"
+            else f"Вы подсказали клиенту правильный пункт меню: {target_label}"
+        )
         add_message_fn(
             db,
             ticket,
-            MessageType.AGENT,
-            hint_text,
+            MessageType.SYSTEM,
+            system_body,
             actor_user_id,
+            agent_visible=True,
+        )
+        add_message_fn(
+            db,
+            ticket,
+            MessageType.SYSTEM,
+            f"Клиенту ушёл текст в бота:\n{strip_telegram_html(hint_text)}",
+            actor_user_id,
+            agent_visible=False,
             telegram_message_id=telegram_message_id_from_response_fn(response),
         )
-        unfreeze_ticket_on_message_fn(ticket)
-        add_message_fn(db, ticket, MessageType.SYSTEM, f"Сотрудник подсказал клиенту правильный пункт меню: {target_label}", None)
         remove_client_close_button_fn(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value

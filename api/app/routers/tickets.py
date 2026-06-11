@@ -85,6 +85,7 @@ SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT = (
     "Заявка возвращена в работу.",
     "Подсказка по неверной проблеме отправлена клиенту",
     "Сотрудник подсказал клиенту правильный пункт меню:",
+    "Клиенту ушёл текст в бота:",
     "После завершения задачи клиенту будет отправлена подсказка:",
     "Клиент уведомлен об ограничении размера файлов Telegram Bot API",
 )
@@ -1201,6 +1202,8 @@ def wrong_problem(
         ticket,
         payload,
         actor_user_id=user.id,
+        actor_role=user.role,
+        actor_display_name=_actor_display_name(db, user),
         wrong_problem_text_template=WRONG_PROBLEM_TEXT_TEMPLATE,
         get_or_create_client_profile_fn=_get_or_create_client_profile,
         send_to_telegram_client_fn=_send_to_telegram_client,
