@@ -183,6 +183,23 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
+        key="telegram.wrong_problem.hint.client",
+        title="Подсказка по неверной проблеме",
+        description="Клиентский текст с подсказкой, какой пункт меню выбрать в следующий раз",
+        category="wrong_problem",
+        category_title="Неверная проблема",
+        sort_order=10,
+        default_text=(
+            "Вы выбрали неподходящий раздел меню для решения этой проблемы.\n\n"
+            "В следующий раз для в такой же ситуации выберите:\n"
+            "«{{correct_problem_label}}»\n\n\n"
+            "Это поможет быстрее и точнее решить новую задачу."
+        ),
+        variable_scopes=("client", "ticket"),
+        explicit_variables=("correct_problem_label",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.ticket.close.client",
         title="Обращение закрыто",
         description="Клиентский текст при обычном закрытии обращения клиентом или сотрудником",
@@ -325,6 +342,7 @@ VARIABLE_DESCRIPTIONS: dict[str, str] = {
     "agent_name": "Имя назначенного сотрудника",
     "button_label": "Название выбранной кнопки меню",
     "client_name": "Имя клиента",
+    "correct_problem_label": "Правильный пункт меню, который нужно выбрать в следующий раз",
     "contact_first_name": "Имя клиента из карточки",
     "contact_full_name": "ФИО клиента из карточки",
     "contact_last_name": "Фамилия клиента из карточки",

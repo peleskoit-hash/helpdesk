@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
+from .automatic_messages import render_automatic_message_text
 from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
 
 
@@ -194,12 +195,33 @@ def apply_wrong_problem(
         _error(409, "submenu_not_final", "Выберите конечную кнопку, а не подменю")
 
     target_label = button_full_path_label(config, button.key) or button.label
-    hint_text = wrong_problem_text_template.format(label=target_label)
+    fallback_hint_text = wrong_problem_text_template.format(label=target_label)
+    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    task_kind = ticket.task_kind or TicketTaskKind.NORMAL.value
+    use_automatic_template = (
+        workflow_type == TicketWorkflowType.TICKET.value
+        or (workflow_type == TicketWorkflowType.TASK.value and task_kind == TicketTaskKind.NORMAL.value)
+    )
+    if use_automatic_template:
+        try:
+            hint_text = render_automatic_message_text(
+                db,
+                "telegram.wrong_problem.hint.client",
+                fallback_hint_text,
+                ticket=ticket,
+                extra={
+                    "correct_problem_label": target_label,
+                },
+            )
+        except Exception:
+            hint_text = fallback_hint_text
+    else:
+        hint_text = fallback_hint_text
     ticket.wrong_problem_used_at = datetime.utcnow()
     ticket.wrong_problem_button_key = button.key
     ticket.wrong_problem_label = target_label
 
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TASK.value:
+    if workflow_type == TicketWorkflowType.TASK.value:
         ticket.wrong_problem_hint = hint_text
         add_message_fn(
             db,
