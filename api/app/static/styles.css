@@ -4348,9 +4348,10 @@ body[data-theme="dark"] .verified-no {
 .automatic-message-editor-dialog .bot-text-toolbar {
   align-items: center;
   align-content: flex-start;
-  max-height: 96px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   padding-right: 2px;
+  padding-bottom: 4px;
 }
 
 .automatic-message-editor-dialog .bot-text-toolbar .action {
