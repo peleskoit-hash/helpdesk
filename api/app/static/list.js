@@ -42,6 +42,8 @@ const urlState = readListStateFromUrl();
 let pollTimer = null;
 let unsubscribeSidebar = null;
 let ownsPopState = false;
+let pendingLoadOptions = null;
+let pageEventController = null;
 const state = {
   tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   appliedSearchQuery: urlState.q,
@@ -175,6 +177,21 @@ const el = {
   completionLegacy: document.getElementById("completionLegacy"),
 };
 let pendingBulkAction = null;
+
+function normalizeLoadOptions(options = {}) {
+  return {
+    silent: Boolean(options.silent),
+    historyMode: options.historyMode || null,
+  };
+}
+
+function mergePendingLoadOptions(current, next) {
+  if (!current) return next;
+  return {
+    silent: current.silent && next.silent,
+    historyMode: next.historyMode || current.historyMode || null,
+  };
+}
 
 function updateSearchUi() {
   const draft = (el.searchInput?.value || "").trim();
@@ -898,10 +915,14 @@ async function updateAvailabilityStatus(status) {
 }
 
 async function loadTickets(options = {}) {
-  if (state.isLoading) return;
+  const normalizedOptions = normalizeLoadOptions(options);
+  if (state.isLoading) {
+    pendingLoadOptions = mergePendingLoadOptions(pendingLoadOptions, normalizedOptions);
+    return;
+  }
   state.isLoading = true;
-  const silent = Boolean(options.silent);
-  const historyMode = options.historyMode || null;
+  const silent = normalizedOptions.silent;
+  const historyMode = normalizedOptions.historyMode;
   if (!silent) setStatus("Загружаю список...");
   const base = endpointMap[state.tab];
   const queryParams = new URLSearchParams({
@@ -938,6 +959,11 @@ async function loadTickets(options = {}) {
     if (!silent) setStatus(`Ошибка: ${e.message}`);
   } finally {
     state.isLoading = false;
+    if (pendingLoadOptions) {
+      const nextOptions = pendingLoadOptions;
+      pendingLoadOptions = null;
+      await loadTickets(nextOptions);
+    }
   }
 }
 
@@ -975,6 +1001,9 @@ async function handleListUrlChange() {
 }
 
 function init() {
+  pageEventController?.abort();
+  pageEventController = new AbortController();
+  const pageSignal = pageEventController.signal;
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
   localStorage.setItem("hd_tab", state.tab);
@@ -1003,7 +1032,7 @@ function init() {
       state.selectedTicketIds.clear();
       resetToFirstPage();
       await Promise.all([loadTickets({ historyMode: "push" }), loadCounts()]);
-    });
+    }, { signal: pageSignal });
   });
 
   el.sortButtons.forEach((btn) => {
@@ -1020,23 +1049,23 @@ function init() {
       localStorage.setItem("hd_table_sort_dir", state.tableSortDir);
       refreshSortHeaderUi();
       renderTable();
-    });
+    }, { signal: pageSignal });
   });
 
   el.roleSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
     return;
-  });
+  }, { signal: pageSignal });
 
   el.agentSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
     return;
-  });
+  }, { signal: pageSignal });
 
   el.statusButtons.forEach((btn) => {
     btn.addEventListener("click", async () => {
       await updateAvailabilityStatus(btn.dataset.availabilityStatus);
-    });
+    }, { signal: pageSignal });
   });
 
   // Admin agent filter toggle is handled by shared sidebar.js
@@ -1049,16 +1078,16 @@ function init() {
       else state.selectedTicketIds.add(ticketId);
     }
     renderTable();
-  });
+  }, { signal: pageSignal });
 
-  el.bulkAssignBtn.addEventListener("click", openAssignModal);
+  el.bulkAssignBtn.addEventListener("click", openAssignModal, { signal: pageSignal });
   if (el.bulkCloseBtn) {
-    el.bulkCloseBtn.addEventListener("click", () => openBulkActionModal("close"));
+    el.bulkCloseBtn.addEventListener("click", () => openBulkActionModal("close"), { signal: pageSignal });
   }
   if (el.bulkDeleteBtn) {
-    el.bulkDeleteBtn.addEventListener("click", () => openBulkActionModal("delete"));
+    el.bulkDeleteBtn.addEventListener("click", () => openBulkActionModal("delete"), { signal: pageSignal });
   }
-  el.closeAssignModalBtn.addEventListener("click", closeAssignModal);
+  el.closeAssignModalBtn.addEventListener("click", closeAssignModal, { signal: pageSignal });
   closeOnBackdropClick(el.assignModal, closeAssignModal);
   el.confirmBulkAssignBtn.addEventListener("click", async () => {
     try {
@@ -1068,9 +1097,9 @@ function init() {
     } catch (e) {
       showError(e.message);
     }
-  });
-  if (el.closeBulkActionModalBtn) el.closeBulkActionModalBtn.addEventListener("click", closeBulkActionModal);
-  if (el.cancelBulkActionBtn) el.cancelBulkActionBtn.addEventListener("click", closeBulkActionModal);
+  }, { signal: pageSignal });
+  if (el.closeBulkActionModalBtn) el.closeBulkActionModalBtn.addEventListener("click", closeBulkActionModal, { signal: pageSignal });
+  if (el.cancelBulkActionBtn) el.cancelBulkActionBtn.addEventListener("click", closeBulkActionModal, { signal: pageSignal });
   if (el.confirmBulkActionBtn) {
     el.confirmBulkActionBtn.addEventListener("click", async () => {
       try {
@@ -1079,12 +1108,12 @@ function init() {
       } catch (e) {
         showError(e.message);
       }
-    });
+    }, { signal: pageSignal });
   }
   if (el.bulkActionModal) closeOnBackdropClick(el.bulkActionModal, closeBulkActionModal);
 
-  el.closeErrorModalBtn.addEventListener("click", closeError);
-  el.okErrorBtn.addEventListener("click", closeError);
+  el.closeErrorModalBtn.addEventListener("click", closeError, { signal: pageSignal });
+  el.okErrorBtn.addEventListener("click", closeError, { signal: pageSignal });
   closeOnBackdropClick(el.errorModal, closeError);
   el.copyErrorBtn.addEventListener("click", async () => {
     el.errorText.select();
@@ -1094,33 +1123,33 @@ function init() {
       document.execCommand("copy");
     }
     setStatus("Текст ошибки скопирован");
-  });
+  }, { signal: pageSignal });
 
   el.searchInput.addEventListener("input", () => {
     updateSearchUi();
-  });
+  }, { signal: pageSignal });
   el.searchInput.addEventListener("keydown", async (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
     await applySearchFromInput();
-  });
+  }, { signal: pageSignal });
   if (el.searchClearBtn) {
     el.searchClearBtn.addEventListener("click", async () => {
       await clearSearchQuery();
-    });
+    }, { signal: pageSignal });
   }
 
   el.prevPageBtn.addEventListener("click", async () => {
     if (state.page <= 1) return;
     state.page -= 1;
     await loadTickets({ historyMode: "push" });
-  });
+  }, { signal: pageSignal });
 
   el.nextPageBtn.addEventListener("click", async () => {
     if (state.page >= state.pages) return;
     state.page += 1;
     await loadTickets({ historyMode: "push" });
-  });
+  }, { signal: pageSignal });
 
   pollTimer = window.setInterval(() => {
     if (document.hidden) return;
@@ -1144,7 +1173,7 @@ function init() {
         localStorage.removeItem(COMPLETION_OPEN_STORAGE_KEY);
       }
       renderCompletionStats();
-    });
+    }, { signal: pageSignal });
   }
 }
 
@@ -1177,6 +1206,11 @@ return {
       unsubscribeSidebar();
       unsubscribeSidebar = null;
     }
+    if (pageEventController) {
+      pageEventController.abort();
+      pageEventController = null;
+    }
+    pendingLoadOptions = null;
   },
   onUrlChange: handleListUrlChange,
 };
