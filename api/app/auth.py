@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .db import get_db
 from .models import User
 
@@ -22,9 +23,6 @@ SESSION_USER_ID_KEY = "auth_user_id"
 SESSION_LAST_ACTIVITY_KEY = "last_activity_ts"
 SESSION_LOGIN_TS_KEY = "login_ts"
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
-
-# TODO(remove-before-production): admin session inactivity timeout is disabled for testing convenience.
-DISABLE_ADMIN_IDLE_TIMEOUT = True
 
 
 @dataclass
@@ -93,7 +91,7 @@ def _get_user_by_id(db: Session, user_id: str | None) -> User | None:
 
 
 def _enforce_activity_timeout(request: Request, real_user: User) -> None:
-    if real_user.role == ADMIN_ROLE and DISABLE_ADMIN_IDLE_TIMEOUT:
+    if real_user.role == ADMIN_ROLE and settings.disable_admin_idle_timeout:
         request.session[SESSION_LAST_ACTIVITY_KEY] = int(time.time())
         return
 

@@ -58,7 +58,7 @@ app.add_middleware(
     secret_key=settings.session_secret_key,
     session_cookie=settings.session_cookie_name,
     same_site="lax",
-    https_only=False,
+    https_only=settings.session_cookie_secure,
 )
 app.include_router(tickets_router)
 app.include_router(telegram_router)
@@ -78,6 +78,8 @@ telegram_polling_task: asyncio.Task | None = None
 @app.on_event("startup")
 async def on_startup():
     global telegram_polling_task
+
+    settings.validate_runtime_guards()
 
     last_error = None
     for _ in range(20):
@@ -110,7 +112,8 @@ async def on_startup():
         except TelegramApiError as exc:
             print(f"Telegram command menu setup error: {exc}")
 
-    ensure_initial_seed_data()
+    if settings.initial_seed_enabled_effective:
+        ensure_initial_seed_data()
 
     if settings.telegram_polling_enabled and settings.telegram_bot_token and telegram_polling_task is None:
         telegram_polling_task = asyncio.create_task(telegram_polling_loop())
