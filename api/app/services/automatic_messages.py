@@ -183,6 +183,43 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
+        key="telegram.group_task.completion.with_answers",
+        title="Групповая задача завершена с ответами",
+        description="Клиентский текст при завершении group_task parent, когда по child-задачам есть текстовые ответы",
+        category="group_tasks",
+        category_title="Групповые задачи",
+        sort_order=70,
+        default_text=(
+            'По Вашей задаче "{{ticket_subject}}" от {{ticket_created_at}}\n'
+            '"{{client_message}}"\n\n'
+            'Получены ответы:\n'
+            '{{group_task_answers}}\n\n'
+            'Для создания новой нажмите\n'
+            '{{start_command}}'
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        explicit_variables=("client_message", "group_task_answers"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.group_task.completion.files_only",
+        title="Групповая задача завершена файлами",
+        description="Клиентский текст при завершении group_task parent, когда текстовых ответов нет",
+        category="group_tasks",
+        category_title="Групповые задачи",
+        sort_order=80,
+        default_text=(
+            'По Вашей задаче "{{ticket_subject}}" от {{ticket_created_at}}\n'
+            '"{{client_message}}"\n\n'
+            'Получены файлы от сотрудников.\n\n'
+            'Для создания новой нажмите\n'
+            '{{start_command}}'
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        explicit_variables=("client_message",),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.wrong_problem.hint.client",
         title="Подсказка по неверной проблеме",
         description="Клиентский текст с подсказкой, какой пункт меню выбрать в следующий раз",

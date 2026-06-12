@@ -218,6 +218,7 @@ def format_task_closed_without_answer_text(db: Session, ticket: Ticket, client_m
 
 
 def _format_group_task_completion_text(
+    db: Session,
     ticket: Ticket,
     client_message: TicketMessage,
     answers: list[str],
@@ -230,23 +231,55 @@ def _format_group_task_completion_text(
     local_created_at = created_at.astimezone(ZoneInfo(settings.app_timezone))
     created_text = local_created_at.strftime("%d.%m.%Y, %H:%M")
     subject = subject_text or ticket.subject
+    client_text = client_message.body or ""
+    answers_text = "\n".join(answers)
     if not answers:
-        return (
+        fallback_text = (
             f"По Вашей задаче \"{subject}\" от {created_text}\n"
-            f"\"{client_message.body}\"\n\n"
+            f"\"{client_text}\"\n\n"
             "Получены файлы от сотрудников.\n\n"
             "Для создания новой нажмите\n"
             "/start"
         )
-    return (
+        try:
+            return render_automatic_message_text(
+                db,
+                "telegram.group_task.completion.files_only",
+                fallback_text,
+                ticket=ticket,
+                client_message=client_text,
+                extra={
+                    "ticket_created_at": created_text,
+                    "ticket_subject": subject,
+                    "subject": subject,
+                },
+            )
+        except Exception:
+            return fallback_text
+    fallback_text = (
         f"По Вашей задаче \"{subject}\" от {created_text}\n"
-        f"\"{client_message.body}\"\n\n"
+        f"\"{client_text}\"\n\n"
         "Получены ответы:\n"
-        f"{chr(10).join(answers)}\n\n"
+        f"{answers_text}\n\n"
         "Для создания новой нажмите\n"
         "/start"
     )
-
+    try:
+        return render_automatic_message_text(
+            db,
+            "telegram.group_task.completion.with_answers",
+            fallback_text,
+            ticket=ticket,
+            client_message=client_text,
+            extra={
+                "group_task_answers": answers_text,
+                "ticket_created_at": created_text,
+                "ticket_subject": subject,
+                "subject": subject,
+            },
+        )
+    except Exception:
+        return fallback_text
 
 def _group_parent_children_payload(db: Session, parent: Ticket) -> tuple[list[str], list[TicketAttachment]]:
     # Prefer parent-level aggregated agent messages (they are appended when each child
@@ -358,6 +391,7 @@ def finalize_group_parent_if_ready(
             db,
             parent,
             _format_group_task_completion_text(
+                db,
                 parent,
                 parent_client_message,
                 answers,
@@ -399,6 +433,7 @@ def notify_group_parent_completion_before_delete(
         db,
         parent,
         _format_group_task_completion_text(
+            db,
             parent,
             parent_client_message,
             answers,
@@ -621,6 +656,7 @@ def close_ticket_by_actor(
                 db,
                 ticket,
                 _format_group_task_completion_text(
+                    db,
                     ticket,
                     client_message,
                     answers,
