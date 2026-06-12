@@ -1,4 +1,4 @@
-﻿# Helpdesk (local MVP)
+# Helpdesk (local MVP)
 
 Локальный helpdesk с Telegram-ботом и web-интерфейсом для обработки заявок/задач.
 
@@ -85,6 +85,10 @@ docker compose up --build
 
 - Все файлы проекта в UTF-8.
 - Секреты и токены в документацию не добавлять.
+- Для Windows/dev проект читает локальный `.env`.
+- Для локального dev используйте отдельный dev bot token и перенесите его в локальный `.env` на основе `.env.dev.example`.
+- Для Ubuntu/prod используйте только `.env.prod` с отдельным prod bot token.
+- Запрещено одновременно запускать polling в dev и prod на одном и том же `TELEGRAM_BOT_TOKEN`.
 
 ## Для Codex / локальной разработки
 
