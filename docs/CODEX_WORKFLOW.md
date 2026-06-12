@@ -11,6 +11,7 @@ Set-Location "C:\Users\ES\Downloads\Source\helpdesk"
 If available, do not rediscover root.
 
 Run:
+
 ```powershell
 git status --short
 ```
@@ -19,6 +20,16 @@ If there are unrelated uncommitted files:
 - do not revert them;
 - do not add them;
 - mention them if commit/staging is requested.
+
+## Work mode selection
+
+Before a large task, choose one mode from [docs/CODEX_TOKEN_BUDGET.md](docs/CODEX_TOKEN_BUDGET.md):
+- `MICRO FIX`
+- `NARROW AUDIT`
+- `FEATURE SLICE`
+- `COMMIT / SPLIT COMMIT`
+
+Use the smallest mode that fits the task.
 
 ## Scope discipline
 
@@ -84,42 +95,85 @@ Never commit:
 - `*.pyc`
 - unrelated user changes.
 
+Use selective staging for mixed files. Do not use `git add .` for split commits.
+
 ## Encoding / mojibake
 
 All text files must be UTF-8 without BOM.
 
-Before/after touching Russian text:
+If a task touches user-facing text, Russian strings, UI labels, Telegram messages, HTML templates, JS strings, CSS content text, docs, markdown, or any other text-heavy file, encoding checks are mandatory before the answer and before commit.
+
+Text-risky files include:
+- `*.js`
+- `*.html`
+- `*.css`
+- `*.md`
+- `*.py` when messages/errors/Telegram text/UI strings changed
+- txt button configs
+- templates
+- any files containing Russian text.
+
+Required checks:
+
 ```powershell
-python tools/check_mojibake.py <changed files>
+python tools/check_mojibake.py <changed text files>
 python tools/check_staged_encoding.py
+git diff --check
+node --check <changed js files>
+python -m py_compile <changed py files>
 ```
+
+`check_mojibake.py` does not replace manual diff review. Codex must inspect changed Russian lines in `git diff` and make sure there are no mojibake patterns like `?...`, `?...`, `?...`, `?...`, `?...`, or `????`.
 
 Prefer:
 - `apply_patch` for small edits;
 - explicit UTF-8 when scripting file writes;
-- avoid PowerShell operations that can recode Cyrillic unexpectedly.
+- avoid PowerShell commands that can recode Cyrillic unexpectedly.
+
+File write rules:
+- do not use `Set-Content` / `Out-File` without explicit UTF-8;
+- for scripted writes prefer `Path.write_text(..., encoding="utf-8")`;
+- do not save files as Windows-1251/ANSI;
+- do not add BOM;
+- do not mass-change line endings without need.
+
+Stop rule:
+- if mojibake is visible in diff or encoding is uncertain, do not commit;
+- stop, show the file/line, and propose or make a fix;
+- do not dismiss it as terminal-only until the file/diff is verified safely.
+
+Report rule for text changes:
+- list checked text files;
+- confirm `check_mojibake.py` passed;
+- confirm `check_staged_encoding.py` passed;
+- confirm `git diff` was reviewed for mojibake;
+- confirm no new mojibake strings were found.
 
 ## Checks by area
 
 Backend Python:
+
 ```powershell
 python -m py_compile <changed .py files>
 ```
 
 Frontend JS:
+
 ```powershell
 node --check <changed .js files>
 ```
 
 Docs/HTML/CSS/JS/PY:
+
 ```powershell
 python tools/check_mojibake.py <changed files>
 python tools/check_staged_encoding.py
 ```
 
 Search debug leftovers:
+
 ```powershell
-rg -n "console\.log|debugger|print\(" <changed files>
+rg -n "console\\.log|debugger|print\\(" <changed files>
 ```
 
 ## Manual smoke examples
@@ -157,53 +211,3 @@ Keep concise:
 - commit hash/stat if commit was requested.
 
 If nothing was changed, say so directly.
-## Жёсткое правило для текстоопасных изменений
-
-Если задача меняет пользовательский текст, русские строки, UI labels, Telegram messages, HTML templates, JS strings, CSS с content-текстом, docs или markdown, это текстоопасное изменение. Для него проверки кодировки обязательны перед ответом и перед commit.
-
-Текстоопасными считать:
-- `*.js`;
-- `*.html`;
-- `*.css`;
-- `*.md`;
-- `*.py`, если менялись сообщения, ошибки, Telegram-тексты или UI-строки;
-- txt-конфиги кнопок;
-- templates;
-- любые файлы с русским текстом.
-
-Обязательные проверки:
-```powershell
-python tools/check_mojibake.py <all changed text files>
-python tools/check_staged_encoding.py
-git diff --check
-node --check <changed js files>
-python -m py_compile <changed py files>
-```
-
-`check_mojibake.py` не заменяет ручной просмотр diff. Codex обязан посмотреть добавленные/изменённые русские строки в `git diff` и убедиться, что там нормальная кириллица, а не mojibake-паттерны:
-- кириллическая `Р`/`С` в начале бессмысленных фрагментов;
-- латинские `D-with-stroke`, `N-with-tilde`, `A-with-circumflex` последовательности;
-- двойные UTF-8 артефакты;
-- `????` вместо русских букв.
-
-Правила записи файлов:
-- не использовать `Set-Content` / `Out-File` без явного UTF-8;
-- для небольших правок предпочитать `apply_patch`;
-- для скриптовой записи использовать `Path.write_text(..., encoding="utf-8")`;
-- если PowerShell должен писать файл, явно задавать UTF-8 без BOM;
-- не сохранять файлы в Windows-1251/ANSI;
-- не добавлять BOM;
-- не менять окончания строк массово без необходимости.
-
-Правило остановки:
-- если в diff видны кракозябры или Codex не уверен в кодировке, commit запрещён;
-- нужно остановиться, показать файл/строку и предложить или внести исправление;
-- нельзя объяснять это “терминал так показывает”, пока diff/файл не проверен безопасным способом.
-
-Правило отчёта:
-Если задача затрагивала текст, в итоговом ответе явно написать:
-- какие текстовые файлы проверены;
-- что `check_mojibake.py` прошёл;
-- что `check_staged_encoding.py` прошёл;
-- что `git diff` просмотрен на кракозябры;
-- что новых mojibake-строк не найдено.
