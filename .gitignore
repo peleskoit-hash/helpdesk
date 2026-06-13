@@ -31,3 +31,5 @@ Thumbs.db
 *.zip
 *.7z
 *.rar
+
+backups/
