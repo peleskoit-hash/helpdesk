@@ -444,17 +444,11 @@ def get_bot_button_item(
 ):
     _require_admin(user)
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
-    txt_client_text = _fallback_client_text((menu_type or (row.menu_type if row else "")), button_key)
-    txt_system_text = _fallback_system_text((menu_type or (row.menu_type if row else "")), button_key)
-    txt_automation_key = _fallback_automation_key((menu_type or (row.menu_type if row else "")), button_key)
     automation_registry = get_automation_registry()
     db_automation_key = (row.automation_key or "").strip() if row is not None else ""
-    automation_overridden = bool(row.automation_overridden) if row is not None else False
-    effective_automation_key = db_automation_key if automation_overridden else txt_automation_key
+    effective_automation_key = db_automation_key or None
     automation_meta = automation_registry.get(effective_automation_key) if effective_automation_key else None
-    txt_files = _fallback_direct_files((menu_type or (row.menu_type if row else "")), button_key)
     effective_menu_type = menu_type or (row.menu_type if row else "")
-    txt_conditional_files = _fallback_conditional_files(db, effective_menu_type, button_key)
     if row is None:
         return {
             "button_key": button_key,
@@ -473,16 +467,16 @@ def get_bot_button_item(
             "instruction_text": None,
             "client_text": None,
             "client_text_overridden": False,
-            "client_text_effective": txt_client_text,
-            "client_text_from": "txt",
+            "client_text_effective": None,
+            "client_text_from": "db",
             "system_text": None,
             "system_text_overridden": False,
-            "system_text_effective": txt_system_text,
-            "system_text_from": "txt",
-            "automation_key_effective": txt_automation_key,
+            "system_text_effective": None,
+            "system_text_from": "db",
+            "automation_key_effective": None,
             "automation_key": None,
             "automation_overridden": False,
-            "automation_from": "txt" if txt_automation_key else "none",
+            "automation_from": "none",
             "automation_title": (automation_meta.get("title") if automation_meta else None),
             "automation_description": (automation_meta.get("description") if automation_meta else None),
             "automation_available": bool(automation_meta.get("available")) if automation_meta else False,
@@ -496,23 +490,21 @@ def get_bot_button_item(
             "confirmation_overridden": False,
             "files_overridden": False,
             "files": [],
-            "files_effective": txt_files,
-            "files_from": "txt",
+            "files_effective": [],
+            "files_from": "db",
             "conditional_files_overridden": False,
             "conditional_files": [],
-            "conditional_files_effective": txt_conditional_files,
-            "conditional_files_from": "txt",
+            "conditional_files_effective": [],
+            "conditional_files_from": "db",
             "is_enabled": True,
             "visibility_overridden": False,
         }
-    effective_system_text = row.system_text if row.system_text_overridden else txt_system_text
-    effective_client_text = row.client_text if row.client_text_overridden else ((row.client_text or txt_client_text))
+    effective_system_text = row.system_text
+    effective_client_text = row.client_text
     db_files_raw = row.files_json if isinstance(row.files_json, list) else []
     db_files = [p for p in (_normalize_relative_button_file_path(str(v)) for v in db_files_raw) if p]
-    effective_files = db_files if bool(row.files_overridden) else txt_files
     db_conditional_raw = row.conditional_files_json if isinstance(row.conditional_files_json, list) else []
     db_conditional = [rule for rule in db_conditional_raw if isinstance(rule, dict)]
-    effective_conditional = db_conditional if bool(row.conditional_files_overridden) else txt_conditional_files
     return {
         "button_key": row.button_key,
         "stable_button_id": row.stable_button_id,
@@ -535,15 +527,15 @@ def get_bot_button_item(
         "client_text": row.client_text,
         "client_text_overridden": bool(row.client_text_overridden),
         "client_text_effective": effective_client_text,
-        "client_text_from": "db" if bool(row.client_text_overridden) else "txt",
+        "client_text_from": "db",
         "system_text": row.system_text,
         "system_text_overridden": bool(row.system_text_overridden),
         "system_text_effective": effective_system_text,
-        "system_text_from": "db" if row.system_text_overridden else "txt",
+        "system_text_from": "db",
         "automation_key_effective": effective_automation_key,
         "automation_key": db_automation_key or None,
-        "automation_overridden": automation_overridden,
-        "automation_from": ("db" if automation_overridden else ("txt" if txt_automation_key else "none")),
+        "automation_overridden": bool(row.automation_overridden),
+        "automation_from": ("db" if effective_automation_key else "none"),
         "automation_title": (automation_meta.get("title") if automation_meta else None),
         "automation_description": (automation_meta.get("description") if automation_meta else None),
         "automation_available": bool(automation_meta.get("available")) if automation_meta else False,
@@ -557,12 +549,12 @@ def get_bot_button_item(
         "confirmation_overridden": bool(row.confirmation_overridden),
         "files_overridden": bool(row.files_overridden),
         "files": db_files,
-        "files_effective": effective_files,
-        "files_from": "db" if row.files_overridden else "txt",
+        "files_effective": db_files,
+        "files_from": "db",
         "conditional_files_overridden": bool(row.conditional_files_overridden),
         "conditional_files": db_conditional,
-        "conditional_files_effective": effective_conditional,
-        "conditional_files_from": "db" if row.conditional_files_overridden else "txt",
+        "conditional_files_effective": db_conditional,
+        "conditional_files_from": "db",
         "is_enabled": bool(row.is_enabled) if row.visibility_overridden else True,
         "visibility_overridden": bool(row.visibility_overridden),
     }

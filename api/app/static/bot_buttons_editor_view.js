@@ -486,8 +486,6 @@
                 <button id="addConditionalRuleBtn" type="button" class="action">+ Добавить условие</button>
               </div>
               <div id="conditionalRulesWrap">${renderConditionalRules()}</div>
-              <div class="status">Источник файлов: ${state.filesOverridden ? "из БД (override)" : "fallback из txt"}</div>
-              <div class="status">Источник условий: ${state.conditionalFilesOverridden ? "из БД (override)" : "fallback из txt"}</div>
               ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
             </div>
 
@@ -504,7 +502,6 @@
               <div class="status">Название: ${escapeHtml(state.automationTitle || "не задано")}</div>
               <div class="status">Key: ${escapeHtml(state.automationKey || "не задано")}</div>
               <div class="status">Описание: ${escapeHtml(state.automationDescription || "не задано")}</div>
-              <div class="status">Источник: настройки БД</div>
               <div class="status">Статус: ${escapeHtml(
                 state.automationStatus === "not_found"
                   ? "не найдена"

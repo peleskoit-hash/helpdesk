@@ -65,13 +65,13 @@
 
     state.savedText = String(payload?.instruction_text || "");
     state.editorText = state.savedText;
-    state.savedClientText = String(payload?.client_text ?? payload?.client_text_effective ?? "");
+    state.savedClientText = String(payload?.client_text ?? "");
     state.editorClientText = state.savedClientText;
     const effectiveLabel = String(payload?.button_label_effective || payload?.button_label || leaf.label || "");
     state.savedBotLabel = String(payload?.label_override ?? effectiveLabel);
     state.editorBotLabel = state.savedBotLabel;
 
-    state.savedSystemText = String(payload?.system_text_effective || "");
+    state.savedSystemText = String(payload?.system_text || "");
     state.editorSystemText = state.savedSystemText;
     state.systemTextOverridden = !!payload?.system_text_overridden;
 
@@ -88,25 +88,25 @@
     state.confirmationText = state.savedConfirmationText;
     state.savedFilesOverridden = !!payload?.files_overridden;
     state.filesOverridden = state.savedFilesOverridden;
-    const sourceFiles = state.savedFilesOverridden ? payload?.files : payload?.files_effective;
+    const sourceFiles = payload?.files;
     state.savedSelectedFiles = Array.isArray(sourceFiles) ? sourceFiles : [];
     state.selectedFiles = [...state.savedSelectedFiles];
     state.savedConditionalFilesOverridden = !!payload?.conditional_files_overridden;
     state.conditionalFilesOverridden = state.savedConditionalFilesOverridden;
-    const sourceConditional = state.savedConditionalFilesOverridden ? payload?.conditional_files : payload?.conditional_files_effective;
+    const sourceConditional = payload?.conditional_files;
     const normalizedConditional = Array.isArray(sourceConditional) ? sourceConditional.map(normalizeConditionalRuleForState) : [];
     state.savedConditionalRules = normalizedConditional;
     state.conditionalRules = JSON.parse(JSON.stringify(normalizedConditional));
     state.savedIsEnabled = payload?.is_enabled !== false;
     state.isEnabled = state.savedIsEnabled;
-    state.automationKey = String(payload?.automation_key_effective || "");
+    state.automationKey = String(payload?.automation_key || "");
     state.automationTitle = String(payload?.automation_title || "");
     state.automationDescription = String(payload?.automation_description || "");
     state.automationFrom = String(payload?.automation_from || "none");
     state.automationStatus = String(payload?.automation_status || "not_set");
     state.automationAvailable = !!payload?.automation_available;
     state.automationHandler = String(payload?.automation_handler || "");
-    state.savedAutomationKeyValue = String(payload?.automation_key ?? payload?.automation_key_effective ?? "");
+    state.savedAutomationKeyValue = String(payload?.automation_key ?? "");
     state.automationKeyValue = state.savedAutomationKeyValue;
 
     state.view = "editor";
@@ -243,4 +243,3 @@
 
   global.BotButtonsEditor = Editor;
 })(window);
-

@@ -198,9 +198,9 @@ def resolve_effective_automation_key(
     button_setting_for_ticket_fn,
 ) -> str | None:
     row = button_setting_for_ticket_fn(db, ticket)
-    if row is not None and bool(getattr(row, "automation_overridden", False)):
-        return (getattr(row, "automation_key", None) or "").strip() or None
-    return (getattr(button, "automation_key", None) or "").strip() or None
+    if row is None:
+        return None
+    return (getattr(row, "automation_key", None) or "").strip() or None
 
 
 def process_collecting_ticket_automation(

@@ -993,27 +993,10 @@ def _match_condition(actual: str | None, operator: str, expected: str | None) ->
 
 
 def _resolve_effective_conditional_rules(db: Session, ticket: Ticket, button: ButtonSpec) -> list[dict]:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and bool(row.conditional_files_overridden):
-            if not isinstance(row.conditional_files_json, list):
-                return []
-            return [rule for rule in row.conditional_files_json if isinstance(rule, dict)]
-    result: list[dict] = []
-    for rule in button.file_rules or ():
-        field_name = (rule.get("field") or "").strip()
-        file_name = (rule.get("file") or "").strip()
-        equals = (rule.get("equals") or "").strip()
-        if not field_name or not file_name:
-            continue
-        result.append(
-            {
-                "conditions": [{"field": field_name, "operator": "eq", "value": equals}],
-                "files": [file_name],
-            }
-        )
-    return result
+    row = _resolve_button_setting_row(db, ticket, button)
+    if row is None or not isinstance(row.conditional_files_json, list):
+        return []
+    return [rule for rule in row.conditional_files_json if isinstance(rule, dict)]
 
 
 def _send_file_items(
@@ -1630,6 +1613,22 @@ def _button_setting_for_ticket(db: Session, ticket: Ticket) -> BotButtonSetting 
     return db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
 
 
+def _resolve_button_setting_row(db: Session, ticket: Ticket, button: ButtonSpec | None = None) -> BotButtonSetting | None:
+    keys: list[str] = []
+    for candidate in (
+        (ticket.instruction_button_key or "").strip(),
+        (ticket.button_config_key or "").strip(),
+        ((button.key or "").strip() if button is not None else ""),
+    ):
+        if candidate and candidate not in keys:
+            keys.append(candidate)
+    for key in keys:
+        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
+        if row is not None:
+            return row
+    return None
+
+
 def _apply_button_creation_flags(db: Session, ticket: Ticket):
     setting = _button_setting_for_ticket(db, ticket)
     if setting is None:
@@ -1679,59 +1678,39 @@ def _apply_fixed_assignee_from_setting(db: Session, ticket: Ticket) -> User | No
 
 
 def _resolve_effective_system_text(db: Session, ticket: Ticket, button: ButtonSpec) -> str | None:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and row.system_text_overridden:
-            return (row.system_text or "").strip() or None
-    return (button.system_text or "").strip() or None
+    row = _resolve_button_setting_row(db, ticket, button)
+    if row is None:
+        return None
+    return (row.system_text or "").strip() or None
 
 
 def _resolve_effective_direct_files(db: Session, ticket: Ticket, button: ButtonSpec) -> list[str]:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and bool(row.files_overridden):
-            if not isinstance(row.files_json, list):
-                return []
-            cleaned: list[str] = []
-            for value in row.files_json:
-                item = str(value or "").strip().replace("\\", "/")
-                if not item:
-                    continue
-                cleaned.append(item)
-            return cleaned
-    txt_file = (button.file_path or "").strip()
-    return [txt_file] if txt_file else []
+    row = _resolve_button_setting_row(db, ticket, button)
+    if row is None or not isinstance(row.files_json, list):
+        return []
+    cleaned: list[str] = []
+    for value in row.files_json:
+        item = str(value or "").strip().replace("\\", "/")
+        if not item:
+            continue
+        cleaned.append(item)
+    return cleaned
 
 
 def _resolve_effective_confirmation(ticket: Ticket, button: ButtonSpec, db: Session) -> tuple[bool, str | None]:
-    key = (ticket.instruction_button_key or "").strip()
-    if key:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is not None and bool(row.confirmation_overridden):
-            enabled = bool(row.confirmation_enabled)
-            text_value = (row.confirmation_text or "").strip() or None
-            return enabled, text_value
-    txt = (button.confirmation_text or "").strip() or None
-    return bool(txt), txt
+    row = _resolve_button_setting_row(db, ticket, button)
+    if row is None:
+        return False, None
+    enabled = bool(row.confirmation_enabled)
+    text_value = (row.confirmation_text or "").strip() or None
+    return enabled, text_value
 
 def _resolve_effective_client_text(db: Session, ticket: Ticket, button: ButtonSpec) -> str | None:
-    keys: list[str] = []
-    instruction_key = (ticket.instruction_button_key or "").strip()
-    button_config_key = (ticket.button_config_key or "").strip()
-    button_key = (button.key or "").strip()
-    for candidate in (instruction_key, button_config_key, button_key):
-        if candidate and candidate not in keys:
-            keys.append(candidate)
-    for key in keys:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
-        if row is None or not bool(row.client_text_overridden):
-            continue
-        raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
-        return raw if raw.strip() else None
-    raw_txt = (button.text or "").replace("\r\n", "\n").replace("\r", "\n")
-    return raw_txt if raw_txt.strip() else None
+    row = _resolve_button_setting_row(db, ticket, button)
+    if row is None:
+        return None
+    raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return raw if raw.strip() else None
 
 
 def _render_client_text(db: Session, ticket: Ticket, button: ButtonSpec, fallback: str) -> str:
