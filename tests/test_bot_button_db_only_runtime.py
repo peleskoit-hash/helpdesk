@@ -80,6 +80,30 @@ def _fail_fallback(*args, **kwargs):
     raise AssertionError("TXT fallback should not be used")
 
 
+def _txt_submenu_config():
+    child = ButtonSpec(key="child-a", label="Leaf A", kind="ticket", text="TXT child text")
+    submenu = ButtonSpec(key="submenu-a", label="Submenu", kind="submenu", submenu_key="submenu-key")
+    config = ButtonConfig(
+        menus={
+            "root": MenuSpec(key="root", title="menu-a", rows=((submenu.key,),)),
+            "submenu-key": MenuSpec(key="submenu-key", title="Submenu", text="TXT submenu text", rows=((child.key,),)),
+        },
+        buttons={submenu.key: submenu, child.key: child},
+        root_menu_key="root",
+    )
+    refs = (
+        TerminalButtonRef(
+            source_button_key=child.key,
+            label=child.label,
+            workflow_type="ticket",
+            full_path="Submenu/Leaf A",
+            technical_key="menu-a|ticket|Submenu/Leaf A",
+            instruction_text=None,
+        ),
+    )
+    return config, refs
+
+
 def test_db_client_text_is_used_instead_of_txt():
     session = _session()
     _seed_row(session, client_text="DB client text")
@@ -238,3 +262,132 @@ def test_txt_structure_and_group_task_materialization_still_load(monkeypatch):
     assert len(sources) == 2
     assert warnings == []
     assert any(source.workflow_type == "group_task_child" for source in sources)
+
+
+def test_txt_submenu_runtime_uses_db_text_instead_of_txt(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text="DB submenu text",
+        parent_path="",
+    )
+    config, refs = _txt_submenu_config()
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
+        "menu-a|submenu|Submenu": db.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
+    })
+    monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"chat_id": chat_id, "text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+
+    assert sent["text"] == "DB submenu text"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "btn:child-a"
+
+
+def test_txt_submenu_runtime_empty_db_text_does_not_fallback_to_txt(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text="",
+        parent_path="",
+    )
+    config, refs = _txt_submenu_config()
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
+        "menu-a|submenu|Submenu": db.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
+    })
+    monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+
+    assert sent["text"] == "Выберите тип проблемы"
+
+
+def test_txt_submenu_runtime_without_db_row_does_not_fallback_to_txt(monkeypatch):
+    session = _session()
+    config, refs = _txt_submenu_config()
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {})
+    monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+
+    assert sent["text"] == "Выберите тип проблемы"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
+
+
+def test_db_created_submenu_runtime_uses_db_text(monkeypatch):
+    session = _session()
+    section = _seed_row(
+        session,
+        button_key="menu-a|db|Custom submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Custom submenu",
+        button_label="Custom submenu",
+        client_text="DB created submenu text",
+        parent_path="",
+    )
+    child = _seed_row(
+        session,
+        button_key="menu-a|db|Custom submenu/Leaf",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Custom submenu/Leaf",
+        button_label="Leaf",
+        parent_path="Custom submenu",
+    )
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_db_only(session, "chat-1", menu_name="menu-a", menu_key=section.button_key)
+
+    assert sent["text"] == "DB created submenu text"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"btnid:{child.id}"
+
+
+def test_group_parent_does_not_use_submenu_client_text():
+    session = _session()
+    row = _seed_row(
+        session,
+        button_key="menu-a|group_task|Parent",
+        workflow_type="group_task",
+        button_kind="group_parent",
+        button_path="Parent",
+        button_label="Parent",
+        client_text="Should not be used as submenu text",
+    )
+
+    result = telegram_router._resolve_submenu_client_text(session, "menu-a", menu_key=row.button_key, parent_path="Parent")
+
+    assert result is None

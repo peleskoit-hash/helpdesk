@@ -793,7 +793,9 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
     if back_callback:
         inline_keyboard.append([{"text": "⬅ Назад", "callback_data": back_callback}])
     reply_markup = {"inline_keyboard": inline_keyboard}
-    return send_message(chat_id, text or menu.text or "Выберите тип проблемы", reply_markup=reply_markup)
+    submenu_text = _resolve_submenu_client_text(db, menu_name, menu_key=menu_key, parent_path=parent_path) if menu_key else None
+    message_text = text if text is not None else (submenu_text if menu_key else menu.text)
+    return send_message(chat_id, message_text or "Выберите тип проблемы", reply_markup=reply_markup)
 
 
 def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, menu_key: str | None = None, text: str | None = None) -> dict:
@@ -909,7 +911,9 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
     if back_callback:
         inline_keyboard.append([{"text": "⬅ Назад", "callback_data": back_callback}])
     reply_markup = {"inline_keyboard": inline_keyboard}
-    return send_message(chat_id, text or "Выберите тип проблемы", reply_markup=reply_markup)
+    submenu_text = _resolve_submenu_client_text(db, menu_name, menu_key=menu_key, parent_path=parent_path) if menu_key else None
+    message_text = text if text is not None else submenu_text
+    return send_message(chat_id, message_text or "Выберите тип проблемы", reply_markup=reply_markup)
 
 
 def _field_value_for_rule(db: Session, ticket: Ticket, field_name: str) -> str | None:
@@ -1567,6 +1571,43 @@ def _submenu_path_by_key_or_db(db: Session, menu_name: str, submenu_key: str) ->
         )
     ).scalar_one_or_none()
     return (row.button_path if row is not None else None)
+
+
+def _resolve_submenu_client_text(
+    db: Session,
+    menu_name: str,
+    *,
+    menu_key: str | None,
+    parent_path: str | None = None,
+) -> str | None:
+    if not menu_key:
+        return None
+
+    row: BotButtonSetting | None = None
+    normalized_path = (parent_path or "").strip()
+    if normalized_path:
+        stable_key = build_visibility_button_key(menu_name, "submenu", normalized_path)
+        row = db.execute(
+            select(BotButtonSetting).where(
+                BotButtonSetting.menu_type == menu_name,
+                BotButtonSetting.button_key == stable_key,
+                BotButtonSetting.button_kind == "section",
+                BotButtonSetting.currently_present.is_(True),
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        row = db.execute(
+            select(BotButtonSetting).where(
+                BotButtonSetting.menu_type == menu_name,
+                BotButtonSetting.button_key == menu_key,
+                BotButtonSetting.button_kind == "section",
+                BotButtonSetting.currently_present.is_(True),
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        return None
+    raw = (row.client_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return raw if raw.strip() else None
 
 
 def _resolve_instruction_button_key(db: Session, menu_name: str, button_key: str) -> str | None:
