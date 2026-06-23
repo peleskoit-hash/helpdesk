@@ -43,14 +43,20 @@ def main() -> int:
     mode = "apply" if apply else "dry-run"
     print(f"mode: {mode}")
     print(f"buttons_found: {summary.buttons_found}")
+    print(f"submenus_found: {summary.submenus_found}")
     print(f"rows_to_create: {summary.rows_to_create}")
+    print(f"submenu_rows_to_create: {summary.submenu_rows_to_create}")
     print(f"rows_created: {summary.rows_created}")
     print(f"rows_updated: {summary.rows_updated}")
+    print(f"submenu_text_changes: {summary.submenu_text_changes}")
     for field_name, count in summary.field_changes.items():
         print(f"field_changes.{field_name}: {count}")
     print(f"skipped_overrides: {summary.skipped_overrides}")
+    print(f"submenu_skipped_overrides: {summary.submenu_skipped_overrides}")
     print(f"skipped_db_created_or_archived: {summary.skipped_db_created_or_archived}")
+    print(f"submenu_skipped_db_created: {summary.submenu_skipped_db_created}")
     print(f"skipped_ambiguous: {summary.skipped_ambiguous}")
+    print(f"submenu_skipped_ambiguous: {summary.submenu_skipped_ambiguous}")
     print(f"apply_blocked: {summary.apply_blocked}")
     print(f"warnings: {len(summary.warnings)}")
     for warning in summary.warnings:

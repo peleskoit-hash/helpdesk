@@ -91,6 +91,40 @@ def _patch_group_child_sources(monkeypatch, *, duplicate_match: bool = False):
     monkeypatch.setattr(materialization, "list_terminal_buttons", lambda menu_name: (ref,))
 
 
+def _patch_submenu_sources(monkeypatch, *, duplicate_match: bool = False, submenu_text: str | None = "Подменю текст"):
+    child_a = ButtonSpec(key="child-a", label="Leaf A", kind="ticket", text="Child text")
+    submenu_a = ButtonSpec(key="submenu-a", label="Submenu", kind="submenu", submenu_key="submenu-key-a")
+    buttons = {
+        submenu_a.key: submenu_a,
+        child_a.key: child_a,
+    }
+    menus = {
+        "submenu-key-a": MenuSpec(key="submenu-key-a", title="Submenu", text=submenu_text, rows=((child_a.key,),)),
+        "root": MenuSpec(key="root", title="menu-a", rows=((submenu_a.key,),)),
+    }
+    if duplicate_match:
+        child_b = ButtonSpec(key="child-b", label="Leaf B", kind="ticket", text="Other child")
+        submenu_b = ButtonSpec(key="submenu-b", label="Submenu", kind="submenu", submenu_key="submenu-key-b")
+        buttons[submenu_b.key] = submenu_b
+        buttons[child_b.key] = child_b
+        menus["submenu-key-b"] = MenuSpec(key="submenu-key-b", title="Submenu", text="Dup text", rows=((child_b.key,),))
+        menus["root"] = MenuSpec(key="root", title="menu-a", rows=((submenu_a.key,), (submenu_b.key,)))
+    config = ButtonConfig(menus=menus, buttons=buttons, root_menu_key="root")
+    refs = (
+        TerminalButtonRef(
+            source_button_key=child_a.key,
+            label=child_a.label,
+            workflow_type="ticket",
+            full_path="Submenu/Leaf A",
+            technical_key="menu-a|ticket|Submenu/Leaf A",
+            instruction_text=None,
+        ),
+    )
+    monkeypatch.setattr(materialization, "available_menu_names", lambda: ("menu-a",))
+    monkeypatch.setattr(materialization, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(materialization, "list_terminal_buttons", lambda menu_name: refs)
+
+
 @pytest.fixture
 def txt_button():
     return ButtonSpec(
@@ -265,3 +299,106 @@ def test_apply_is_blocked_when_warnings_exist(monkeypatch):
     assert summary.rows_created == 0
     assert summary.rows_updated == 0
     assert session.execute(select(BotButtonSetting)).scalars().all() == []
+
+
+def test_submenu_text_materializes_into_client_text(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, submenu_text="Текст подменю")
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text=None,
+        client_text_overridden=False,
+    )
+
+    summary = materialization.materialize_bot_button_settings(session, apply=True)
+    row = session.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == "menu-a|submenu|Submenu")).scalar_one()
+
+    assert row.client_text == "Текст подменю"
+    assert row.client_text_overridden is True
+    assert summary.submenus_found == 1
+    assert summary.submenu_text_changes == 1
+
+
+def test_submenu_db_override_is_not_overwritten(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, submenu_text="TXT подменю")
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text="DB подменю",
+        client_text_overridden=True,
+    )
+
+    summary = materialization.materialize_bot_button_settings(session, apply=True)
+    row = session.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == "menu-a|submenu|Submenu")).scalar_one()
+
+    assert row.client_text == "DB подменю"
+    assert summary.submenu_skipped_overrides == 1
+
+
+def test_empty_submenu_text_materializes_as_empty_override(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, submenu_text=None)
+
+    summary = materialization.materialize_bot_button_settings(session, apply=True)
+    row = session.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == "menu-a|submenu|Submenu")).scalar_one()
+
+    assert row.client_text is None
+    assert row.client_text_overridden is True
+    assert summary.submenu_rows_to_create == 1
+    assert summary.submenu_text_changes == 1
+
+
+def test_db_created_submenu_is_skipped(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, submenu_text="TXT подменю")
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        is_db_created=True,
+        client_text=None,
+        client_text_overridden=False,
+    )
+
+    summary = materialization.materialize_bot_button_settings(session, apply=True)
+    row = session.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == "menu-a|submenu|Submenu")).scalar_one()
+
+    assert row.client_text is None
+    assert row.client_text_overridden is False
+    assert summary.submenu_skipped_db_created == 1
+
+
+def test_ambiguous_submenu_mapping_blocks_apply(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, duplicate_match=True)
+
+    summary = materialization.materialize_bot_button_settings(session, apply=True)
+
+    assert summary.apply_blocked is True
+    assert summary.submenu_skipped_ambiguous == 1
+    assert session.execute(select(BotButtonSetting)).scalars().all() == []
+
+
+def test_submenu_second_run_is_idempotent(monkeypatch):
+    session = _session()
+    _patch_submenu_sources(monkeypatch, submenu_text="TXT подменю")
+
+    first = materialization.materialize_bot_button_settings(session, apply=True)
+    second = materialization.materialize_bot_button_settings(session, apply=True)
+
+    assert first.submenu_text_changes == 1
+    assert second.submenu_text_changes == 0
+    assert second.rows_updated == 0
