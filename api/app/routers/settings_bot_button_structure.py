@@ -199,10 +199,10 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
         if row.button_label != button_label and not bool(row.label_overridden):
             row.button_label = button_label
             changed = True
-        if not row.currently_present:
+        if not row.currently_present and not bool(row.is_archived):
             row.currently_present = True
             changed = True
-        if bool(row.is_archived):
+        if bool(row.is_archived) and bool(is_db_created):
             row.is_archived = False
             row.deleted_at = None
             row.deleted_by_user_id = None
@@ -294,7 +294,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
         else:
             autos.append(leaf)
 
-    current_keys = {ref.technical_key for ref in refs}
+    current_keys: set[str] = set()
 
     terminal_by_source: dict[str, BotButtonStructureLeafOut] = {}
     for leaf in [*tickets, *tasks, *autos]:
@@ -304,6 +304,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
             terminal_by_source[leaf.source_button_key] = leaf
 
     def leaf_node(leaf: BotButtonStructureLeafOut) -> dict:
+        current_keys.add(leaf.technical_key)
         return {
             "label": leaf.label,
             "kind": "terminal",
@@ -344,6 +345,8 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
                             parent_path=parent_path,
                             is_db_created=False,
                         )
+                        if not bool(submenu_row.currently_present) or bool(submenu_row.is_archived):
+                            continue
                         current_keys.add(submenu_key)
                         submenu_enabled = True if submenu_row is None or not submenu_row.visibility_overridden else bool(submenu_row.is_enabled)
                         buttons.append(
@@ -373,6 +376,8 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
                             parent_path=parent_path,
                             is_db_created=False,
                         )
+                        if not bool(group_row.currently_present) or bool(group_row.is_archived):
+                            continue
                         current_keys.add(group_key)
                         group_enabled = True if group_row is None or not group_row.visibility_overridden else bool(group_row.is_enabled)
                         child_rows = [{"buttons": [leaf_node(leaf)]} for leaf in (group_map.get(button.label).children if group_map.get(button.label) else [])]

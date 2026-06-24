@@ -439,117 +439,169 @@
     if (!leaf) return;
     const isRemoved = !!leaf.removed;
     const isDbCreated = !!leaf.is_db_created;
+    const isSubmenuEditor = String(leaf.workflow_type || "").trim().toLowerCase() === "submenu";
+    const countNestedChildren = (rows) => (Array.isArray(rows) ? rows : []).reduce((count, row) => {
+      return count + (row?.buttons || []).reduce((inner, node) => {
+        return inner + 1 + countNestedChildren(node?.children_rows);
+      }, 0);
+    }, 0);
+    const nestedChildCount = countNestedChildren(leaf.children_rows);
     const moveOptions = buildMoveCandidates()
       .filter((c) => c.key !== leaf.technical_key)
       .filter((c) => !leaf.workflow_type || c.workflowType === leaf.workflow_type)
       .map((c) => `<option value="${escapeHtml(c.key)}" data-path="${escapeHtml(c.path)}" data-workflow-type="${escapeHtml(c.workflowType)}">${escapeHtml(c.path)}</option>`)
       .join("");
+    const deleteActionHtml = isSubmenuEditor && !isRemoved
+      ? `<div class="bot-editor-section">
+           <div class="bot-removed-title">Удаление подменю</div>
+           <button id="deleteSubmenuBtn" type="button" class="action action-danger">Удалить подменю</button>
+           <div class="status">Будут удалены дочерние элементы: ${escapeHtml(String(nestedChildCount))}</div>
+         </div>`
+      : "";
+    const leftColumnHtml = isSubmenuEditor
+      ? `
+          <div class="bot-editor-section">
+            <label class="field-label">Тип кнопки</label>
+            <input class="input" type="text" value="Подменю" disabled />
+          </div>
+
+          <div class="bot-editor-section">
+            <label class="field-label">Название в боте</label>
+            <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="Введите название раздела в боте" />
+          </div>
+
+          <div class="bot-editor-section">
+            <div class="bot-removed-title">Параметры подменю</div>
+            <label class="status-panel-title admin-agent-header">
+              <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
+              <span>Кнопка активна</span>
+            </label>
+          </div>
+
+          ${deleteActionHtml}
+        `
+      : `
+          <div class="bot-editor-section">
+            <label class="field-label">Название в боте</label>
+            <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="Введите название кнопки/раздела в боте" />
+          </div>
+
+          <div class="bot-editor-section">
+            <div class="bot-removed-title">Параметры создания</div>
+            <label class="status-panel-title admin-agent-header">
+              <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
+              <span>Кнопка активна</span>
+            </label>
+            <label class="status-panel-title admin-agent-header">
+              <input id="fixedAssigneeEnabled" type="checkbox" ${state.fixedAssigneeEnabled ? "checked" : ""} />
+              <span>Фиксированный ответственный</span>
+            </label>
+            <select id="fixedAssigneeUserId" class="input" ${state.fixedAssigneeEnabled ? "" : "disabled"}>
+              ${renderAssigneeOptions()}
+            </select>
+            <label class="status-panel-title admin-agent-header">
+              <input id="freezeOnCreate" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
+              <span>Сразу замораживать при создании</span>
+            </label>
+          </div>
+
+          <div class="bot-editor-section">
+            <label class="field-label">Файлы, отправляемые при создании</label>
+            <div id="botSelectedFilesWrap">${renderSelectedFiles()}</div>
+            <div class="bot-file-actions">
+              <button id="addBotFileBtn" type="button" class="action">Добавить файл</button>
+              <button id="removeBotFileBtn" type="button" class="action">Удалить</button>
+              <button id="addConditionalRuleBtn" type="button" class="action">+ Добавить условие</button>
+            </div>
+            <div id="conditionalRulesWrap">${renderConditionalRules()}</div>
+            ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
+          </div>
+
+          <div class="bot-editor-section">
+            <label class="field-label">Автоматизация</label>
+            <select id="automationKeySelect" class="input">
+              <option value="">Не использовать</option>
+              ${(state.availableAutomations || []).map((a) => {
+                const key = String(a?.key || "");
+                const title = String(a?.title || key || "Без названия");
+                return `<option value="${escapeHtml(key)}" ${state.automationKeyValue === key ? "selected" : ""}>${escapeHtml(title)} (${escapeHtml(key)})</option>`;
+              }).join("")}
+            </select>
+            <div class="status">Название: ${escapeHtml(state.automationTitle || "не задано")}</div>
+            <div class="status">Key: ${escapeHtml(state.automationKey || "не задано")}</div>
+            <div class="status">Описание: ${escapeHtml(state.automationDescription || "не задано")}</div>
+            <div class="status">Статус: ${escapeHtml(
+              state.automationStatus === "not_found"
+                ? "не найдена"
+                : (state.automationStatus === "available"
+                  ? (state.automationAvailable ? "доступна" : "в реестре, но недоступна")
+                  : "не задана")
+            )}</div>
+            ${state.automationHandler ? `<div class="status">Handler: <code>${escapeHtml(state.automationHandler)}</code></div>` : ""}
+          </div>
+        `;
+    const rightColumnHtml = isSubmenuEditor
+      ? `
+          <div class="bot-editor-section">
+            <div class="bot-editor-text-row">
+              <label class="field-label">Текст клиенту</label>
+              <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
+            </div>
+            <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
+          </div>
+        `
+      : `
+          <div class="bot-editor-section">
+            <div class="bot-editor-text-row">
+              <label class="field-label">Инструкция</label>
+              <button id="editInstructionBtn" type="button" class="action">Редактировать</button>
+            </div>
+            <div class="status">Статус: ${escapeHtml(textStatus(state.editorText))}</div>
+          </div>
+
+          <div class="bot-editor-section">
+            <div class="bot-editor-text-row">
+              <label class="field-label">Текст клиенту</label>
+              <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
+            </div>
+            <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
+          </div>
+
+          <div class="bot-editor-section">
+            <div class="bot-editor-text-row">
+              <label class="field-label">Текст системный</label>
+              <button id="editSystemTextBtn" type="button" class="action">Редактировать</button>
+            </div>
+            <div class="status">Статус: ${escapeHtml(textStatus(state.editorSystemText))}</div>
+          </div>
+
+          <div class="bot-editor-section">
+            <label class="status-panel-title admin-agent-header">
+              <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
+              <span>Требовать подтверждение перед созданием</span>
+            </label>
+            <div class="bot-editor-text-row">
+              <label class="field-label">Подтверждение перед созданием</label>
+              <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
+            </div>
+            <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
+            ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
+          </div>
+        `;
 
     el.content.innerHTML = `
       <div class="panel settings-panel bot-instruction-editor">
         <div class="status">Technical key: <code>${escapeHtml(leaf.technical_key)}</code></div>
         ${isRemoved ? '<div class="bot-removed-warning">Эта кнопка отсутствует в текущей структуре и находится в блоке «Удалённые/изменённые».</div>' : ""}
-        ${(!isRemoved && isDbCreated) ? '<div class="bot-editor-inline-actions"><button id="archiveButtonBtn" type="button" class="action action-danger">Удалить из меню</button></div>' : ""}
+        ${(!isRemoved && isDbCreated && !isSubmenuEditor) ? '<div class="bot-editor-inline-actions"><button id="archiveButtonBtn" type="button" class="action action-danger">Удалить из меню</button></div>' : ""}
 
         <div class="bot-editor-grid">
           <div class="bot-editor-col bot-editor-col-left">
-            <div class="bot-editor-section">
-              <label class="field-label">Название в боте</label>
-              <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="Введите название кнопки/раздела в боте" />
-            </div>
-
-            <div class="bot-editor-section">
-              <div class="bot-removed-title">Параметры создания</div>
-              <label class="status-panel-title admin-agent-header">
-                <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
-                <span>Кнопка активна</span>
-              </label>
-              <label class="status-panel-title admin-agent-header">
-                <input id="fixedAssigneeEnabled" type="checkbox" ${state.fixedAssigneeEnabled ? "checked" : ""} />
-                <span>Фиксированный ответственный</span>
-              </label>
-              <select id="fixedAssigneeUserId" class="input" ${state.fixedAssigneeEnabled ? "" : "disabled"}>
-                ${renderAssigneeOptions()}
-              </select>
-              <label class="status-panel-title admin-agent-header">
-                <input id="freezeOnCreate" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
-                <span>Сразу замораживать при создании</span>
-              </label>
-            </div>
-
-            <div class="bot-editor-section">
-              <label class="field-label">Файлы, отправляемые при создании</label>
-              <div id="botSelectedFilesWrap">${renderSelectedFiles()}</div>
-              <div class="bot-file-actions">
-                <button id="addBotFileBtn" type="button" class="action">Добавить файл</button>
-                <button id="removeBotFileBtn" type="button" class="action">Удалить</button>
-                <button id="addConditionalRuleBtn" type="button" class="action">+ Добавить условие</button>
-              </div>
-              <div id="conditionalRulesWrap">${renderConditionalRules()}</div>
-              ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
-            </div>
-
-            <div class="bot-editor-section">
-              <label class="field-label">Автоматизация</label>
-              <select id="automationKeySelect" class="input">
-                <option value="">Не использовать</option>
-                ${(state.availableAutomations || []).map((a) => {
-                  const key = String(a?.key || "");
-                  const title = String(a?.title || key || "Без названия");
-                  return `<option value="${escapeHtml(key)}" ${state.automationKeyValue === key ? "selected" : ""}>${escapeHtml(title)} (${escapeHtml(key)})</option>`;
-                }).join("")}
-              </select>
-              <div class="status">Название: ${escapeHtml(state.automationTitle || "не задано")}</div>
-              <div class="status">Key: ${escapeHtml(state.automationKey || "не задано")}</div>
-              <div class="status">Описание: ${escapeHtml(state.automationDescription || "не задано")}</div>
-              <div class="status">Статус: ${escapeHtml(
-                state.automationStatus === "not_found"
-                  ? "не найдена"
-                  : (state.automationStatus === "available"
-                    ? (state.automationAvailable ? "доступна" : "в реестре, но недоступна")
-                    : "не задана")
-              )}</div>
-              ${state.automationHandler ? `<div class="status">Handler: <code>${escapeHtml(state.automationHandler)}</code></div>` : ""}
-            </div>
+            ${leftColumnHtml}
           </div>
 
           <div class="bot-editor-col bot-editor-col-right">
-            <div class="bot-editor-section">
-              <div class="bot-editor-text-row">
-                <label class="field-label">Инструкция</label>
-                <button id="editInstructionBtn" type="button" class="action">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.editorText))}</div>
-            </div>
-
-            <div class="bot-editor-section">
-              <div class="bot-editor-text-row">
-                <label class="field-label">Текст клиенту</label>
-                <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
-            </div>
-
-            <div class="bot-editor-section">
-              <div class="bot-editor-text-row">
-                <label class="field-label">Текст системный</label>
-                <button id="editSystemTextBtn" type="button" class="action">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.editorSystemText))}</div>
-            </div>
-
-            <div class="bot-editor-section">
-              <label class="status-panel-title admin-agent-header">
-                <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
-                <span>Требовать подтверждение перед созданием</span>
-              </label>
-              <div class="bot-editor-text-row">
-                <label class="field-label">Подтверждение перед созданием</label>
-                <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
-              ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
-            </div>
+            ${rightColumnHtml}
           </div>
         </div>
 
@@ -586,6 +638,7 @@
     const removeBotFileBtn = document.getElementById("removeBotFileBtn");
     const addConditionalRuleBtn = document.getElementById("addConditionalRuleBtn");
     const openNestedBtn = document.getElementById("openNestedBtn");
+    const deleteSubmenuBtn = document.getElementById("deleteSubmenuBtn");
     const saveBtn = document.getElementById("saveInstructionBtn");
 
     botLabelInput?.addEventListener("input", () => {
@@ -687,6 +740,11 @@
       state.levelStack.push({ label: leaf.label, rows: leaf.children_rows, levelKey: leaf.level_key || null, fullPath: leaf.full_path || "", kind: leaf.kind || "" });
       state.view = "level";
       render();
+    });
+    deleteSubmenuBtn?.addEventListener("click", async () => {
+      const message = `Подменю содержит ${nestedChildCount} дочерних элементов.\nПри удалении подменю они также будут удалены из меню.\nВы уверены?`;
+      if (!window.confirm(message)) return;
+      await archiveMenuButton();
     });
     document.querySelectorAll("[data-remove-rule]").forEach((btn) => {
       btn.addEventListener("click", () => {

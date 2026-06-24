@@ -623,6 +623,11 @@ def save_bot_button_instruction(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
+    requested_workflow_type = (workflow_type or "").strip()
+    is_submenu_request = requested_workflow_type == "submenu"
+    effective_workflow_type = "submenu" if is_submenu_request else requested_workflow_type
+    button_path_value = (button_path or "").strip()
+    parent_path_value = button_path_value.rsplit("/", 1)[0] if "/" in button_path_value else ""
     override_label_value = (payload.label_override or "").strip() if payload.label_override is not None else None
     override_label_enabled = bool(payload.label_overridden) if payload.label_overridden is not None else None
     if override_label_enabled is True and not override_label_value:
@@ -675,6 +680,9 @@ def save_bot_button_instruction(
         normalized_conditional = _normalize_conditional_rules(payload_conditional, available_files, conditional_catalog)
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
     now = datetime.utcnow()
+    if row is not None and (row.button_kind or "").strip().lower() == "section":
+        effective_workflow_type = "submenu"
+        is_submenu_request = True
     if row is None:
         row = BotButtonSetting(
             id=str(uuid.uuid4()),
@@ -682,7 +690,7 @@ def save_bot_button_instruction(
             button_key=button_key,
             legacy_button_key=None,
             menu_type=menu_type,
-            workflow_type=workflow_type,
+            workflow_type=effective_workflow_type,
             button_path=button_path,
             button_label=button_label,
             label_override=override_label_value if override_label_enabled else None,
@@ -707,14 +715,19 @@ def save_bot_button_instruction(
             automation_overridden=bool(payload.automation_overridden),
             is_enabled=bool(payload.is_enabled) if payload.is_enabled is not None else True,
             visibility_overridden=bool(payload.visibility_overridden),
+            button_kind="section" if is_submenu_request else "terminal",
+            parent_path=parent_path_value,
             created_at=now,
             updated_at=now,
         )
         db.add(row)
     else:
         row.menu_type = menu_type
-        row.workflow_type = workflow_type
+        row.workflow_type = effective_workflow_type
         row.button_path = button_path
+        if is_submenu_request:
+            row.button_kind = "section"
+        row.parent_path = parent_path_value
         if not bool(row.label_overridden):
             row.button_label = button_label
         row.currently_present = True
@@ -833,7 +846,8 @@ def delete_bot_button_setting(
         db.delete(row)
         db.commit()
         return {"ok": True, "deleted": True, "hard": True}
-    if not bool(row.is_db_created):
+    row_kind = (row.button_kind or "").strip().lower()
+    if not bool(row.is_db_created) and row_kind != "section":
         _error(422, "cannot_delete_txt_button", "Txt-кнопки нельзя удалить из меню, используйте только отключение активности.")
     now = datetime.utcnow()
     row.currently_present = False
@@ -841,13 +855,11 @@ def delete_bot_button_setting(
     row.deleted_at = now
     row.deleted_by_user_id = user.id
     row.updated_at = now
-    row_kind = (row.button_kind or "").strip().lower()
     if row_kind in {"section", "group_parent"}:
         prefix = f"{row.button_path}/"
         descendants = db.execute(
             select(BotButtonSetting).where(
                 BotButtonSetting.menu_type == row.menu_type,
-                BotButtonSetting.is_db_created.is_(True),
                 BotButtonSetting.button_path.like(f"{prefix}%"),
             )
         ).scalars().all()
@@ -871,7 +883,8 @@ def restore_bot_button_setting(
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
     if row is None:
         _error(404, "button_setting_not_found", "Запись кнопки не найдена")
-    if not bool(row.is_db_created):
+    row_kind = (row.button_kind or "").strip().lower()
+    if not bool(row.is_db_created) and row_kind != "section":
         _error(422, "cannot_restore_txt_button", "Восстановление применяется только к элементам, созданным через UI.")
     now = datetime.utcnow()
     row.currently_present = True
@@ -879,13 +892,11 @@ def restore_bot_button_setting(
     row.deleted_at = None
     row.deleted_by_user_id = None
     row.updated_at = now
-    row_kind = (row.button_kind or "").strip().lower()
     if row_kind in {"section", "group_parent"}:
         prefix = f"{row.button_path}/"
         descendants = db.execute(
             select(BotButtonSetting).where(
                 BotButtonSetting.menu_type == row.menu_type,
-                BotButtonSetting.is_db_created.is_(True),
                 BotButtonSetting.button_path.like(f"{prefix}%"),
             )
         ).scalars().all()

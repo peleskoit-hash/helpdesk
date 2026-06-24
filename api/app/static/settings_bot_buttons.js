@@ -220,6 +220,27 @@ async function openParentTaskEditor() {
   });
 }
 
+async function openSubmenuEditor() {
+  const level = currentLevel();
+  if (!level || String(level.kind || "") !== "submenu") return;
+  const technicalKey = String(level.technicalKey || "").trim();
+  if (!technicalKey) {
+    alert("Не удалось определить технический ключ подменю.");
+    return;
+  }
+  if (!confirmDiscard()) return;
+  discardEditorChanges();
+  await openEditor({
+    label: level.label || "Подменю",
+    kind: "submenu",
+    technical_key: technicalKey,
+    workflow_type: level.workflowType || "submenu",
+    full_path: level.fullPath || level.label || "",
+    is_enabled: true,
+    children_rows: Array.isArray(level.rows) ? level.rows : [],
+  });
+}
+
 function isLayoutEditableLevel(level) {
   return BotButtonsLevelView.isLayoutEditableLevel(levelViewCtx(), level);
 }
@@ -291,6 +312,7 @@ function levelViewCtx() {
     discardEditorChanges,
     openEditor,
     openParentTaskEditor,
+    openSubmenuEditor,
     createLevelItem,
     refreshMenuStructure,
     reloadMenuMeta,

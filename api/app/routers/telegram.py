@@ -526,7 +526,11 @@ def _clear_client_menu_keyboards(db: Session, contact: TelegramContact) -> None:
 
 
 def _button_visibility_enabled(row: BotButtonSetting | None) -> bool:
-    if row is None or not bool(row.visibility_overridden):
+    if row is None:
+        return True
+    if not bool(row.currently_present) or bool(row.is_archived):
+        return False
+    if not bool(row.visibility_overridden):
         return True
     return bool(row.is_enabled)
 

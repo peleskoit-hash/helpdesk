@@ -1,6 +1,10 @@
 (function initBotButtonsEditor(global) {
   const Editor = {};
 
+  Editor.isSubmenuLeaf = function isSubmenuLeaf(leaf) {
+    return String(leaf?.workflow_type || "").trim().toLowerCase() === "submenu";
+  };
+
   Editor.hasUnsavedChanges = function hasUnsavedChanges(ctx) {
     const { state } = ctx;
     return (state.editorText || "") !== (state.savedText || "")
@@ -61,6 +65,7 @@
       ...leaf,
       is_db_created: !!payload?.is_db_created,
       is_archived: !!payload?.is_archived,
+      editor_mode: Editor.isSubmenuLeaf(leaf) ? "submenu" : "default",
     };
 
     state.savedText = String(payload?.instruction_text || "");
@@ -125,17 +130,18 @@
     } = ctx;
     const leaf = state.selectedLeaf;
     if (!leaf || !state.selectedMenu) return;
+    const isSubmenu = Editor.isSubmenuLeaf(leaf);
     if (!String(state.editorBotLabel || "").trim()) {
       alert("Название в боте не может быть пустым.");
       return;
     }
-    if (state.fixedAssigneeEnabled && !state.fixedAssigneeUserId) {
+    if (!isSubmenu && state.fixedAssigneeEnabled && !state.fixedAssigneeUserId) {
       alert("Выберите фиксированного ответственного.");
       return;
     }
 
     let conditionalPayload = null;
-    if (state.conditionalFilesOverridden) {
+    if (!isSubmenu && state.conditionalFilesOverridden) {
       const rules = JSON.parse(JSON.stringify(state.conditionalRules || []));
       for (let ridx = 0; ridx < rules.length; ridx += 1) {
         const rule = rules[ridx];
@@ -184,12 +190,16 @@
     }
 
     setStatus("Сохранение...");
-    await api(
-      `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(leaf.workflow_type)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
-      {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+    const requestBody = isSubmenu
+      ? {
+          client_text_overridden: true,
+          client_text: state.editorClientText,
+          label_overridden: true,
+          label_override: state.editorBotLabel,
+          is_enabled: state.isEnabled,
+          visibility_overridden: true,
+        }
+      : {
           instruction_text: state.editorText,
           client_text_overridden: true,
           client_text: state.editorClientText,
@@ -211,7 +221,14 @@
           automation_key: state.automationKeyValue || null,
           is_enabled: state.isEnabled,
           visibility_overridden: true,
-        }),
+        };
+
+    await api(
+      `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(leaf.workflow_type)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
       },
     );
 

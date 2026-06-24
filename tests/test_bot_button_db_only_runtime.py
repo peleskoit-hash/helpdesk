@@ -10,7 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from api.app.db import Base
 from api.app.models import BotButtonSetting
 from api.app.routers import settings_bot_button_items
+from api.app.routers import settings_bot_button_structure
 from api.app.routers import telegram as telegram_router
+from api.app.schemas import BotButtonInstructionUpdate
 from api.app.services import bot_button_materialization as materialization
 from api.app.services import telegram_automation
 from api.app.services.button_config import ButtonConfig, ButtonSpec, MenuSpec, TerminalButtonRef
@@ -98,6 +100,41 @@ def _txt_submenu_config():
             workflow_type="ticket",
             full_path="Submenu/Leaf A",
             technical_key="menu-a|ticket|Submenu/Leaf A",
+            instruction_text=None,
+        ),
+    )
+    return config, refs
+
+
+def _nested_txt_submenu_config():
+    leaf_a = ButtonSpec(key="child-a", label="Leaf A", kind="ticket", text="TXT child text")
+    leaf_b = ButtonSpec(key="child-b", label="Leaf B", kind="task", text="TXT child text B")
+    nested = ButtonSpec(key="submenu-b", label="Nested", kind="submenu", submenu_key="submenu-key-b")
+    submenu = ButtonSpec(key="submenu-a", label="Submenu", kind="submenu", submenu_key="submenu-key-a")
+    config = ButtonConfig(
+        menus={
+            "root": MenuSpec(key="root", title="menu-a", rows=((submenu.key,),)),
+            "submenu-key-a": MenuSpec(key="submenu-key-a", title="Submenu", text="TXT submenu text", rows=((leaf_a.key,), (nested.key,))),
+            "submenu-key-b": MenuSpec(key="submenu-key-b", title="Nested", text="TXT nested text", rows=((leaf_b.key,),)),
+        },
+        buttons={submenu.key: submenu, nested.key: nested, leaf_a.key: leaf_a, leaf_b.key: leaf_b},
+        root_menu_key="root",
+    )
+    refs = (
+        TerminalButtonRef(
+            source_button_key=leaf_a.key,
+            label=leaf_a.label,
+            workflow_type="ticket",
+            full_path="Submenu/Leaf A",
+            technical_key="menu-a|ticket|Submenu/Leaf A",
+            instruction_text=None,
+        ),
+        TerminalButtonRef(
+            source_button_key=leaf_b.key,
+            label=leaf_b.label,
+            workflow_type="task",
+            full_path="Submenu/Nested/Leaf B",
+            technical_key="menu-a|task|Submenu/Nested/Leaf B",
             instruction_text=None,
         ),
     )
@@ -391,3 +428,410 @@ def test_group_parent_does_not_use_submenu_client_text():
     result = telegram_router._resolve_submenu_client_text(session, "menu-a", menu_key=row.button_key, parent_path="Parent")
 
     assert result is None
+
+
+def test_submenu_save_creates_section_row_and_persists_db_text(monkeypatch):
+    session = _session()
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            client_text="Текст подменю",
+            client_text_overridden=True,
+            label_override="Новый раздел",
+            label_overridden=True,
+            is_enabled=False,
+            visibility_overridden=True,
+        ),
+        button_key="menu-a|submenu|Submenu",
+        menu_type="menu-a",
+        workflow_type="submenu",
+        button_path="Root/Submenu",
+        button_label="Submenu",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
+    assert row.workflow_type == "submenu"
+    assert row.button_kind == "section"
+    assert row.parent_path == "Root"
+    assert row.client_text == "Текст подменю"
+    assert row.client_text_overridden is True
+    assert row.label_override == "Новый раздел"
+    assert row.label_overridden is True
+    assert row.is_enabled is False
+    assert row.visibility_overridden is True
+
+
+def test_submenu_empty_client_text_stays_empty_without_txt_fallback(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text="Старый текст",
+        client_text_overridden=True,
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            client_text="",
+            client_text_overridden=True,
+            label_override="Submenu",
+            label_overridden=True,
+        ),
+        button_key="menu-a|submenu|Submenu",
+        menu_type="menu-a",
+        workflow_type="submenu",
+        button_path="Submenu",
+        button_label="Submenu",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    payload = settings_bot_button_items.get_bot_button_item(
+        "menu-a|submenu|Submenu",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+
+    assert payload["client_text"] is None
+    assert payload["client_text_effective"] is None
+    assert payload["client_text_from"] == "db"
+
+
+def test_submenu_save_does_not_change_type_when_query_workflow_differs(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            client_text="Текст",
+            client_text_overridden=True,
+            label_override="Submenu",
+            label_overridden=True,
+        ),
+        button_key="menu-a|submenu|Submenu",
+        menu_type="menu-a",
+        workflow_type="ticket",
+        button_path="Submenu",
+        button_label="Submenu",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
+    assert row.workflow_type == "submenu"
+    assert row.button_kind == "section"
+
+
+def test_disabling_submenu_does_not_delete_children(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        is_db_created=True,
+    )
+    child = _seed_row(
+        session,
+        button_key="menu-a|db|Submenu/Child",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Child",
+        button_label="Child",
+        is_db_created=True,
+        parent_path="Submenu",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            client_text="",
+            client_text_overridden=True,
+            label_override="Submenu",
+            label_overridden=True,
+            is_enabled=False,
+            visibility_overridden=True,
+        ),
+        button_key="menu-a|submenu|Submenu",
+        menu_type="menu-a",
+        workflow_type="submenu",
+        button_path="Submenu",
+        button_label="Submenu",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    session.refresh(child)
+    assert child.currently_present is True
+    assert child.is_archived is False
+
+
+def test_delete_submenu_archives_descendants(monkeypatch):
+    session = _session()
+    parent = _seed_row(
+        session,
+        button_key="menu-a|db|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        is_db_created=True,
+    )
+    child = _seed_row(
+        session,
+        button_key="menu-a|db|Submenu/Child",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Child",
+        button_label="Child",
+        is_db_created=True,
+        parent_path="Submenu",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+
+    result = settings_bot_button_items.delete_bot_button_setting(
+        button_key=parent.button_key,
+        hard=False,
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    session.refresh(parent)
+    session.refresh(child)
+    assert result["ok"] is True
+    assert result["deleted"] is True
+    assert parent.currently_present is False
+    assert parent.is_archived is True
+    assert child.currently_present is False
+    assert child.is_archived is True
+
+
+def test_txt_submenu_can_be_deleted_via_backend_and_archives_recursive_descendants(monkeypatch):
+    session = _session()
+    parent = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        is_db_created=False,
+    )
+    nested = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu/Nested",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu/Nested",
+        button_label="Nested",
+        is_db_created=False,
+        parent_path="Submenu",
+    )
+    child_a = _seed_row(
+        session,
+        button_key="menu-a|ticket|Submenu/Leaf A",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Leaf A",
+        button_label="Leaf A",
+        is_db_created=False,
+        parent_path="Submenu",
+    )
+    child_b = _seed_row(
+        session,
+        button_key="menu-a|task|Submenu/Nested/Leaf B",
+        workflow_type="task",
+        button_kind="terminal",
+        button_path="Submenu/Nested/Leaf B",
+        button_label="Leaf B",
+        is_db_created=False,
+        parent_path="Submenu/Nested",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+
+    result = settings_bot_button_items.delete_bot_button_setting(
+        button_key=parent.button_key,
+        hard=False,
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    for row in (parent, nested, child_a, child_b):
+        session.refresh(row)
+        assert row.currently_present is False
+        assert row.is_archived is True
+    assert result["ok"] is True
+    assert result["deleted"] is True
+
+
+def test_deleted_txt_submenu_disappears_from_telegram_runtime_but_txt_config_stays(monkeypatch):
+    session = _session()
+    parent = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+    )
+    config, refs = _txt_submenu_config()
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: None)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {parent.button_key: parent})
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key=None)
+
+    assert "submenu-key" in config.menus
+    assert config.menus["submenu-key"].text == "TXT submenu text"
+    assert sent["reply_markup"]["inline_keyboard"] == []
+
+
+def test_deleted_txt_submenu_disappears_from_active_settings_tree_recursively(monkeypatch):
+    session = _session()
+    config, refs = _nested_txt_submenu_config()
+    parent = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+    )
+    _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu/Nested",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu/Nested",
+        button_label="Nested",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+        parent_path="Submenu",
+    )
+    _seed_row(
+        session,
+        button_key="menu-a|ticket|Submenu/Leaf A",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Leaf A",
+        button_label="Leaf A",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+        parent_path="Submenu",
+    )
+    _seed_row(
+        session,
+        button_key="menu-a|task|Submenu/Nested/Leaf B",
+        workflow_type="task",
+        button_kind="terminal",
+        button_path="Submenu/Nested/Leaf B",
+        button_label="Leaf B",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+        parent_path="Submenu/Nested",
+    )
+
+    monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
+
+    structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    labels = []
+
+    def walk(rows):
+        for row in rows or []:
+            for node in row.get("buttons", []):
+                labels.append(node.get("label"))
+                walk(node.get("children_rows", []))
+
+    walk(structure.tree_rows)
+
+    assert config.menus["submenu-key-a"].text == "TXT submenu text"
+    assert "Submenu" not in labels
+    assert "Nested" not in labels
+    assert "Leaf A" not in labels
+    assert "Leaf B" not in labels
+
+
+def test_txt_submenu_restore_restores_recursive_descendants(monkeypatch):
+    session = _session()
+    parent = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+    )
+    child = _seed_row(
+        session,
+        button_key="menu-a|ticket|Submenu/Leaf A",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Leaf A",
+        button_label="Leaf A",
+        currently_present=False,
+        is_archived=True,
+        is_db_created=False,
+        parent_path="Submenu",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+
+    result = settings_bot_button_items.restore_bot_button_setting(
+        button_key=parent.button_key,
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    session.refresh(parent)
+    session.refresh(child)
+    assert result["ok"] is True
+    assert result["restored"] is True
+    assert parent.currently_present is True
+    assert parent.is_archived is False
+    assert child.currently_present is True
+    assert child.is_archived is False

@@ -60,6 +60,7 @@
     const removedCount = Array.isArray(ctx.state.menuStructure?.removed_items) ? ctx.state.menuStructure.removed_items.length : 0;
     const canEditLayoutBase = isLayoutEditableLevel(ctx, current);
     const isGroupParentLevel = String(current?.kind || "") === "group_task_parent";
+    const isSubmenuLevel = String(current?.kind || "") === "submenu";
     const addButtonLabel = isGroupParentLevel ? "Создать child task" : "Добавить";
     const canEditLayout = canEditLayoutBase && !isGroupParentLevel;
     const toolbarHtml = canEditLayout
@@ -70,11 +71,13 @@
                <button type="button" id="cancelLayoutBtn" class="action">Отмена</button>`
             : `<button type="button" id="editLayoutBtn" class="action">Изменить порядок</button>
                ${isGroupParentLevel ? `<button type="button" id="editParentTaskBtn" class="action">Редактирование материнской задачи</button>` : ""}
+               ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">Редактировать подменю</button>` : ""}
                <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>`}
         </div>
       `
       : `<div class="bot-layout-toolbar">
            ${isGroupParentLevel ? `<button type="button" id="editParentTaskBtn" class="action">Редактирование материнской задачи</button>` : ""}
+           ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">Редактировать подменю</button>` : ""}
            <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>
          </div>`;
 
@@ -183,6 +186,7 @@
     const editLayoutBtn = document.getElementById("editLayoutBtn");
     const addLevelItemBtn = document.getElementById("addLevelItemBtn");
     const editParentTaskBtn = document.getElementById("editParentTaskBtn");
+    const editSubmenuBtn = document.getElementById("editSubmenuBtn");
     const cancelLayoutBtn = document.getElementById("cancelLayoutBtn");
     const saveLayoutBtn = document.getElementById("saveLayoutBtn");
     editLayoutBtn?.addEventListener("click", () => {
@@ -199,6 +203,11 @@
     editParentTaskBtn?.addEventListener("click", async () => {
       if (typeof ctx.openParentTaskEditor === "function") {
         await ctx.openParentTaskEditor();
+      }
+    });
+    editSubmenuBtn?.addEventListener("click", async () => {
+      if (typeof ctx.openSubmenuEditor === "function") {
+        await ctx.openSubmenuEditor();
       }
     });
     cancelLayoutBtn?.addEventListener("click", () => {
