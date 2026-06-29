@@ -16,13 +16,13 @@
       page: "settings-bot-buttons",
       scripts: [
         "/static/bot_buttons_api.js?v=20260520a",
-        "/static/bot_buttons_files.js?v=20260520a",
+        "/static/bot_buttons_files.js?v=20260629a",
         "/static/bot_buttons_level_view.js?v=20260520a",
-        "/static/bot_buttons_editor.js?v=20260520a",
+        "/static/bot_buttons_editor.js?v=20260629a",
         "/static/bot_buttons_menu_view.js?v=20260521a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/bot_buttons_editor_view.js?v=20260605a",
-        "/static/settings_bot_buttons.js?v=20260604a",
+        "/static/bot_buttons_editor_view.js?v=20260629a",
+        "/static/settings_bot_buttons.js?v=20260629a",
       ],
     }],
     ["/settings/automatic-messages", {

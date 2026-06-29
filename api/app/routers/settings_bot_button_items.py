@@ -10,6 +10,19 @@ from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, ClientCardFieldConfig, User
 from ..schemas import BotButtonInstructionUpdate
+from ..services.button_automation_types import (
+    AUTOMATION_TYPE_NONE,
+    AUTOMATION_TYPE_SEND_FILES,
+    TARGET_WORKFLOW_TYPES,
+    automation_type_from_key,
+    canonical_automation_key_from_type,
+    get_button_automation_meta,
+    is_automation_allowed_for_workflow,
+    is_known_button_automation_key,
+    list_button_automation_types,
+    normalize_automation_type,
+    normalize_workflow_type,
+)
 from ..services.button_config import (
     BUTTON_CONFIG_DIR,
     find_button,
@@ -158,6 +171,26 @@ def _normalize_relative_button_file_path(raw_path: str) -> str | None:
     if not normalized or normalized.startswith("../") or "/../" in normalized or normalized == "..":
         return None
     return normalized
+
+
+def _payload_fields_set(payload: BotButtonInstructionUpdate) -> set[str]:
+    return set(getattr(payload, "model_fields_set", set()) or set())
+
+
+def _resolve_requested_automation_key(
+    payload: BotButtonInstructionUpdate,
+) -> tuple[bool, str | None]:
+    fields_set = _payload_fields_set(payload)
+    type_provided = "automation_type" in fields_set
+    key_provided = "automation_key" in fields_set
+    if not type_provided and not key_provided:
+        return False, None
+
+    type_key = canonical_automation_key_from_type(payload.automation_type) if type_provided else None
+    legacy_key = canonical_automation_key_from_type(payload.automation_key) if key_provided else None
+    if type_provided and key_provided and normalize_automation_type(type_key) != normalize_automation_type(legacy_key):
+        _error(422, "automation_conflict", "automation_type и automation_key конфликтуют между собой")
+    return True, type_key if type_provided else legacy_key
 
 
 def _list_available_button_files() -> list[str]:
@@ -446,10 +479,11 @@ def get_bot_button_item(
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
     automation_registry = get_automation_registry()
     db_automation_key = (row.automation_key or "").strip() if row is not None else ""
+    automation_type = automation_type_from_key(db_automation_key)
     effective_automation_key = db_automation_key or None
-    automation_meta = automation_registry.get(effective_automation_key) if effective_automation_key else None
     effective_menu_type = menu_type or (row.menu_type if row else "")
     if row is None:
+        none_meta = get_button_automation_meta(AUTOMATION_TYPE_NONE, automation_registry)
         return {
             "button_key": button_key,
             "stable_button_id": None,
@@ -473,15 +507,16 @@ def get_bot_button_item(
             "system_text_overridden": False,
             "system_text_effective": None,
             "system_text_from": "db",
+            "automation_type": AUTOMATION_TYPE_NONE,
             "automation_key_effective": None,
             "automation_key": None,
             "automation_overridden": False,
             "automation_from": "none",
-            "automation_title": (automation_meta.get("title") if automation_meta else None),
-            "automation_description": (automation_meta.get("description") if automation_meta else None),
-            "automation_available": bool(automation_meta.get("available")) if automation_meta else False,
-            "automation_handler": (automation_meta.get("handler") if automation_meta else None),
-            "automation_status": ("not_set" if not effective_automation_key else ("available" if automation_meta else "not_found")),
+            "automation_title": (none_meta.get("title") if none_meta else None),
+            "automation_description": (none_meta.get("description") if none_meta else None),
+            "automation_available": bool(none_meta.get("available")) if none_meta else False,
+            "automation_handler": (none_meta.get("handler") if none_meta else None),
+            "automation_status": ("available" if none_meta else "not_found"),
             "fixed_assignee_enabled": False,
             "fixed_assignee_user_id": None,
             "freeze_on_create": False,
@@ -505,6 +540,17 @@ def get_bot_button_item(
     db_files = [p for p in (_normalize_relative_button_file_path(str(v)) for v in db_files_raw) if p]
     db_conditional_raw = row.conditional_files_json if isinstance(row.conditional_files_json, list) else []
     db_conditional = [rule for rule in db_conditional_raw if isinstance(rule, dict)]
+    has_legacy_files = bool(db_files or db_conditional)
+    if effective_automation_key:
+        effective_automation_type = automation_type
+        automation_from = "db"
+    elif has_legacy_files:
+        effective_automation_type = AUTOMATION_TYPE_SEND_FILES
+        automation_from = "legacy_files"
+    else:
+        effective_automation_type = AUTOMATION_TYPE_NONE
+        automation_from = "none"
+    automation_meta = get_button_automation_meta(effective_automation_type, automation_registry)
     return {
         "button_key": row.button_key,
         "stable_button_id": row.stable_button_id,
@@ -532,15 +578,16 @@ def get_bot_button_item(
         "system_text_overridden": bool(row.system_text_overridden),
         "system_text_effective": effective_system_text,
         "system_text_from": "db",
+        "automation_type": effective_automation_type,
         "automation_key_effective": effective_automation_key,
         "automation_key": db_automation_key or None,
         "automation_overridden": bool(row.automation_overridden),
-        "automation_from": ("db" if effective_automation_key else "none"),
+        "automation_from": automation_from,
         "automation_title": (automation_meta.get("title") if automation_meta else None),
         "automation_description": (automation_meta.get("description") if automation_meta else None),
         "automation_available": bool(automation_meta.get("available")) if automation_meta else False,
         "automation_handler": (automation_meta.get("handler") if automation_meta else None),
-        "automation_status": ("not_set" if not effective_automation_key else ("available" if automation_meta else "not_found")),
+        "automation_status": ("available" if automation_meta else "not_found"),
         "fixed_assignee_enabled": bool(row.fixed_assignee_enabled),
         "fixed_assignee_user_id": row.fixed_assignee_user_id,
         "freeze_on_create": bool(row.freeze_on_create),
@@ -574,7 +621,7 @@ def get_bot_button_automations(
 ):
     _require_admin(user)
     registry = get_automation_registry()
-    return {"items": list(registry.values())}
+    return {"items": list_button_automation_types(registry)}
 
 
 @router.get("/bot-buttons/conditional-fields")
@@ -656,11 +703,18 @@ def save_bot_button_instruction(
     else:
         confirmation_text_value = None
     system_value = (payload.system_text or "").strip() or None if payload.system_text is not None else None
-    automation_key_value = (payload.automation_key or "").strip() or None if payload.automation_key is not None else None
-    if automation_key_value is not None:
+    automation_type_requested, automation_key_value = _resolve_requested_automation_key(payload)
+    if automation_type_requested:
         registry = get_automation_registry()
-        if automation_key_value and automation_key_value not in registry:
+        if not is_known_button_automation_key(automation_key_value, registry):
             _error(422, "automation_not_found", "Указанная автоматизация не найдена в реестре")
+        normalized_workflow = normalize_workflow_type(effective_workflow_type)
+        if normalized_workflow in TARGET_WORKFLOW_TYPES and not is_automation_allowed_for_workflow(
+            normalized_workflow,
+            automation_key_value,
+            allow_auto_none=True,
+        ):
+            _error(422, "automation_not_allowed_for_workflow", "Эта автоматизация недоступна для выбранного типа кнопки")
     available_files = set(_list_available_button_files())
     payload_files = payload.files if payload.files is not None else None
     normalized_files: list[str] = []
@@ -711,7 +765,7 @@ def save_bot_button_instruction(
             files_json=normalized_files if payload.files is not None else None,
             conditional_files_overridden=bool(payload.conditional_files_overridden),
             conditional_files_json=normalized_conditional if payload.conditional_files is not None else None,
-            automation_key=automation_key_value,
+            automation_key=automation_key_value if automation_type_requested else None,
             automation_overridden=bool(payload.automation_overridden),
             is_enabled=bool(payload.is_enabled) if payload.is_enabled is not None else True,
             visibility_overridden=bool(payload.visibility_overridden),
@@ -787,7 +841,7 @@ def save_bot_button_instruction(
             row.conditional_files_overridden = bool(payload.conditional_files_overridden)
             if not row.conditional_files_overridden:
                 row.conditional_files_json = None
-        if payload.automation_key is not None:
+        if automation_type_requested:
             row.automation_key = automation_key_value
             row.automation_overridden = True
         if payload.automation_overridden is not None:
@@ -820,6 +874,7 @@ def save_bot_button_instruction(
         "files": row.files_json if isinstance(row.files_json, list) else [],
         "conditional_files_overridden": bool(row.conditional_files_overridden),
         "conditional_files": row.conditional_files_json if isinstance(row.conditional_files_json, list) else [],
+        "automation_type": automation_type_from_key((row.automation_key or "").strip() or None),
         "automation_key": (row.automation_key or "").strip() or None,
         "automation_overridden": bool(row.automation_overridden),
         "is_enabled": bool(row.is_enabled) if row.visibility_overridden else True,

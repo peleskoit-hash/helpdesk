@@ -14,6 +14,7 @@ from api.app.routers import settings_bot_button_structure
 from api.app.routers import telegram as telegram_router
 from api.app.schemas import BotButtonInstructionUpdate
 from api.app.services import bot_button_materialization as materialization
+from api.app.services import button_automation_types
 from api.app.services import telegram_automation
 from api.app.services.button_config import ButtonConfig, ButtonSpec, MenuSpec, TerminalButtonRef
 
@@ -53,6 +54,8 @@ def _seed_row(session, **overrides):
 
 def _ticket(**overrides):
     payload = {
+        "id": "ticket-1",
+        "workflow_type": "ticket",
         "instruction_button_key": "menu-a|ticket|A",
         "button_config_key": None,
     }
@@ -80,6 +83,19 @@ def _button(**overrides):
 
 def _fail_fallback(*args, **kwargs):
     raise AssertionError("TXT fallback should not be used")
+
+
+def _save_button_instruction(session, payload, *, button_key="menu-a|ticket|A", workflow_type="ticket"):
+    return settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(**payload),
+        button_key=button_key,
+        menu_type="menu-a",
+        workflow_type=workflow_type,
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=object(),
+    )
 
 
 def _txt_submenu_config():
@@ -179,6 +195,692 @@ def test_empty_db_automation_key_disables_automation():
     )
 
     assert result is None
+
+
+def test_get_bot_button_item_returns_canonical_automation_type(monkeypatch):
+    session = _session()
+    _seed_row(session, automation_key="send_files")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = settings_bot_button_items.get_bot_button_item(
+        "menu-a|ticket|A",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+
+    assert payload["automation_type"] == "send_files"
+    assert payload["automation_key"] == "send_files"
+
+
+def test_null_automation_reads_as_none():
+    assert button_automation_types.automation_type_from_key(None) == "none"
+    assert button_automation_types.automation_type_from_key("") == "none"
+
+
+def test_save_automation_type_none_persists_null(monkeypatch):
+    session = _session()
+    _seed_row(session, automation_key="bitrix_deal_phone_lookup", automation_overridden=True)
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = _save_button_instruction(
+        session,
+        {
+            "automation_type": "none",
+            "automation_overridden": True,
+        },
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|ticket|A").one()
+    assert payload["automation_type"] == "none"
+    assert row.automation_key is None
+
+
+def test_conflicting_automation_type_and_legacy_key_is_rejected(monkeypatch):
+    session = _session()
+    _seed_row(session)
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "send_files",
+                "automation_key": "bitrix_deal_phone_lookup",
+                "automation_overridden": True,
+            },
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        assert "automation_type и automation_key конфликтуют" in str(getattr(exc, "detail", ""))
+    else:
+        raise AssertionError("Expected conflict error")
+
+
+def test_ticket_plus_bitrix_is_rejected(monkeypatch):
+    session = _session()
+    _seed_row(session)
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "bitrix_deal_phone_lookup",
+                "automation_overridden": True,
+            },
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        assert "недоступна для выбранного типа кнопки" in str(getattr(exc, "detail", ""))
+    else:
+        raise AssertionError("Expected workflow validation error")
+
+
+def test_ticket_plus_message_only_is_rejected(monkeypatch):
+    session = _session()
+    _seed_row(session)
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "message_only",
+                "automation_overridden": True,
+            },
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        assert "недоступна для выбранного типа кнопки" in str(getattr(exc, "detail", ""))
+    else:
+        raise AssertionError("Expected workflow validation error")
+
+
+def test_task_plus_message_only_is_rejected(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|task|A", workflow_type="task")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "message_only",
+                "automation_overridden": True,
+            },
+            button_key="menu-a|task|A",
+            workflow_type="task",
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        assert "недоступна для выбранного типа кнопки" in str(getattr(exc, "detail", ""))
+    else:
+        raise AssertionError("Expected workflow validation error")
+
+
+def test_task_plus_bitrix_is_allowed(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|task|A", workflow_type="task")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = _save_button_instruction(
+        session,
+        {
+            "automation_type": "bitrix_deal_phone_lookup",
+            "automation_overridden": True,
+        },
+        button_key="menu-a|task|A",
+        workflow_type="task",
+    )
+
+    assert payload["automation_type"] == "bitrix_deal_phone_lookup"
+
+
+def test_auto_allowed_types_and_transitional_null(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    for automation_type in ("send_files", "message_only", "none"):
+        payload = _save_button_instruction(
+            session,
+            {
+                "automation_type": automation_type,
+                "automation_overridden": True,
+            },
+            button_key="menu-a|auto|A",
+            workflow_type="auto",
+        )
+        assert payload["automation_type"] == automation_type
+
+
+def test_auto_plus_bitrix_is_rejected_with_workflow_error_code(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "bitrix_deal_phone_lookup",
+                "automation_overridden": True,
+            },
+            button_key="menu-a|auto|A",
+            workflow_type="auto",
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        detail = getattr(exc, "detail", {}) or {}
+        error = detail.get("error", {}) if isinstance(detail, dict) else {}
+        assert error.get("code") == "automation_not_allowed_for_workflow"
+    else:
+        raise AssertionError("Expected workflow validation error")
+
+
+def test_task_switch_from_bitrix_to_send_files_persists_first_files_and_rule(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|task|A",
+        workflow_type="task",
+        automation_key="bitrix_deal_phone_lookup",
+        automation_overridden=True,
+        files_overridden=True,
+        files_json=[],
+        conditional_files_overridden=True,
+        conditional_files_json=[],
+    )
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+    monkeypatch.setattr(
+        settings_bot_button_items,
+        "_list_available_button_files",
+        lambda: ["docs/a.pdf", "docs/b.pdf"],
+    )
+    monkeypatch.setattr(
+        settings_bot_button_items,
+        "_build_conditional_field_catalog",
+        lambda db, menu_type=None: {
+            "location_type": {
+                "type": "select",
+                "label": "Тип локации",
+                "values": ["Офисный", "Удалённый"],
+            }
+        },
+    )
+
+    payload = _save_button_instruction(
+        session,
+        {
+            "automation_type": "send_files",
+            "automation_overridden": True,
+            "files_overridden": True,
+            "files": ["docs/a.pdf"],
+            "conditional_files_overridden": True,
+            "conditional_files": [
+                {
+                    "conditions": [{"field": "location_type", "operator": "eq", "value": "Удалённый"}],
+                    "files": ["docs/b.pdf"],
+                }
+            ],
+        },
+        button_key="menu-a|task|A",
+        workflow_type="task",
+    )
+
+    assert payload["automation_type"] == "send_files"
+    assert payload["files_overridden"] is True
+    assert payload["files"] == ["docs/a.pdf"]
+    assert payload["conditional_files_overridden"] is True
+    assert payload["conditional_files"][0]["files"] == ["docs/b.pdf"]
+
+    item = settings_bot_button_items.get_bot_button_item(
+        "menu-a|task|A",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+    assert item["automation_type"] == "send_files"
+    assert item["files_overridden"] is True
+    assert item["files"] == ["docs/a.pdf"]
+    assert item["conditional_files_overridden"] is True
+    assert item["conditional_files"] == [
+        {
+            "conditions": [{"field": "location_type", "operator": "eq", "value": "Удалённый"}],
+            "files": ["docs/b.pdf"],
+        }
+    ]
+
+
+def test_legacy_conditional_files_are_returned_by_item_api_without_automation_key(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|auto|memo",
+        workflow_type="auto",
+        automation_key=None,
+        automation_overridden=False,
+        files_overridden=True,
+        files_json=[],
+        conditional_files_overridden=True,
+        conditional_files_json=[
+            {
+                "conditions": [{"field": "location_type", "operator": "eq", "value": "Офисный"}],
+                "files": ["office-guide.pdf"],
+            },
+            {
+                "conditions": [{"field": "location_type", "operator": "eq", "value": "Удалённый"}],
+                "files": ["remote-guide.pdf"],
+            },
+        ],
+    )
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    item = settings_bot_button_items.get_bot_button_item(
+        "menu-a|auto|memo",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+
+    assert item["automation_type"] == "send_files"
+    assert item["automation_key"] is None
+    assert item["automation_from"] == "legacy_files"
+    assert item["automation_title"] == "Отправка файлов"
+    assert item["automation_description"]
+    assert item["automation_available"] is True
+    assert item["automation_status"] == "available"
+    assert item["files_overridden"] is True
+    assert item["files"] == []
+    assert item["conditional_files_overridden"] is True
+    assert item["conditional_files"] == [
+        {
+            "conditions": [{"field": "location_type", "operator": "eq", "value": "Офисный"}],
+            "files": ["office-guide.pdf"],
+        },
+        {
+            "conditions": [{"field": "location_type", "operator": "eq", "value": "Удалённый"}],
+            "files": ["remote-guide.pdf"],
+        },
+    ]
+
+
+def test_empty_auto_button_without_files_stays_none(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|auto|empty",
+        workflow_type="auto",
+        automation_key=None,
+        automation_overridden=False,
+        files_overridden=True,
+        files_json=[],
+        conditional_files_overridden=True,
+        conditional_files_json=[],
+    )
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    item = settings_bot_button_items.get_bot_button_item(
+        "menu-a|auto|empty",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+
+    assert item["automation_type"] == "none"
+    assert item["automation_key"] is None
+    assert item["automation_from"] == "none"
+    assert item["automation_title"] == "Не использовать"
+    assert item["automation_description"]
+    assert item["automation_available"] is True
+    assert item["automation_status"] == "available"
+
+
+def test_task_switching_automation_does_not_clear_existing_file_settings(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|task|A",
+        workflow_type="task",
+        automation_key="send_files",
+        automation_overridden=True,
+        files_overridden=True,
+        files_json=["docs/a.pdf"],
+        conditional_files_overridden=True,
+        conditional_files_json=[
+            {
+                "conditions": [{"field": "location_type", "operator": "eq", "value": "Офисный"}],
+                "files": ["docs/b.pdf"],
+            }
+        ],
+    )
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+    monkeypatch.setattr(
+        settings_bot_button_items,
+        "_list_available_button_files",
+        lambda: ["docs/a.pdf", "docs/b.pdf"],
+    )
+    monkeypatch.setattr(
+        settings_bot_button_items,
+        "_build_conditional_field_catalog",
+        lambda db, menu_type=None: {
+            "location_type": {
+                "type": "select",
+                "label": "Тип локации",
+                "values": ["Офисный", "Удалённый"],
+            }
+        },
+    )
+
+    payload = _save_button_instruction(
+        session,
+        {
+            "automation_type": "bitrix_deal_phone_lookup",
+            "automation_overridden": True,
+            "files_overridden": True,
+            "files": ["docs/a.pdf"],
+            "conditional_files_overridden": True,
+            "conditional_files": [
+                {
+                    "conditions": [{"field": "location_type", "operator": "eq", "value": "Офисный"}],
+                    "files": ["docs/b.pdf"],
+                }
+            ],
+        },
+        button_key="menu-a|task|A",
+        workflow_type="task",
+    )
+
+    assert payload["automation_type"] == "bitrix_deal_phone_lookup"
+    assert payload["files"] == ["docs/a.pdf"]
+    assert payload["conditional_files"][0]["files"] == ["docs/b.pdf"]
+
+    item = settings_bot_button_items.get_bot_button_item(
+        "menu-a|task|A",
+        menu_type="menu-a",
+        db=session,
+        user=object(),
+    )
+    assert item["automation_type"] == "bitrix_deal_phone_lookup"
+    assert item["files"] == ["docs/a.pdf"]
+    assert item["conditional_files"] == [
+        {
+            "conditions": [{"field": "location_type", "operator": "eq", "value": "Офисный"}],
+            "files": ["docs/b.pdf"],
+        }
+    ]
+
+
+def test_available_automations_do_not_expose_forward_to_telegram_group(monkeypatch):
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = settings_bot_button_items.get_bot_button_automations(user=object())
+
+    assert "forward_to_telegram_group" not in [item["key"] for item in payload["items"]]
+
+
+def test_forward_to_telegram_group_is_rejected_on_save(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto")
+
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    try:
+        _save_button_instruction(
+            session,
+            {
+                "automation_type": "forward_to_telegram_group",
+                "automation_overridden": True,
+            },
+            button_key="menu-a|auto|A",
+            workflow_type="auto",
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        assert "automation_not_found" in str(getattr(exc, "detail", ""))
+    else:
+        raise AssertionError("Expected unknown automation rejection")
+
+
+def test_ticket_send_files_dispatch_keeps_ticket_open(monkeypatch):
+    session = _session()
+    _seed_row(session, automation_key="send_files")
+    ticket = _ticket(workflow_type="ticket")
+    calls = []
+
+    monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: calls.append("direct") or (True, None))
+    monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: calls.append("rules"))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="ticket"),
+        "chat-1",
+        True,
+    )
+
+    assert result["builtin_automation"] == "send_files"
+    assert result["workflow_type"] == "ticket"
+    assert calls == ["direct", "rules"]
+    assert ticket.workflow_type == "ticket"
+
+
+def test_task_send_files_direct_error_does_not_close_task(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|task|A", workflow_type="task", automation_key="send_files")
+    ticket = _ticket(workflow_type="task", instruction_button_key="menu-a|task|A")
+    calls = []
+
+    monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: calls.append("direct") or (False, "file error"))
+    monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: calls.append("rules"))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="task"),
+        "chat-1",
+        True,
+    )
+
+    assert result["builtin_automation"] == "send_files"
+    assert result["workflow_type"] == "task"
+    assert calls == ["direct", "rules"]
+    assert ticket.workflow_type == "task"
+
+
+def test_auto_send_files_dispatch_sends_text_once_and_completes(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto", automation_key="send_files")
+    ticket = _ticket(workflow_type="auto", instruction_button_key="menu-a|auto|A")
+    sent = []
+    completed = []
+
+    monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("done text", "HTML"))
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, parse_mode=None, **kwargs: sent.append((chat_id, text, parse_mode)))
+    monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: (True, None))
+    monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: sent.append(("rules", None, None)))
+    monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: completed.append("done"))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="auto"),
+        "chat-1",
+        True,
+        default_client_text="fallback",
+    )
+
+    assert result["builtin_automation"] == "send_files"
+    assert result["workflow_type"] == "auto"
+    assert sent[0] == ("chat-1", "done text", "HTML")
+    assert completed == ["done"]
+
+
+def test_auto_send_files_direct_error_handoffs(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto", automation_key="send_files")
+    ticket = _ticket(workflow_type="auto", instruction_button_key="menu-a|auto|A")
+    fallback_calls = []
+
+    monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("done text", None))
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: (False, "file error"))
+    monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: None)
+    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", lambda *args, **kwargs: fallback_calls.append((args, kwargs)) or None)
+    monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not complete")))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="auto"),
+        "chat-1",
+        True,
+    )
+
+    assert result["auto_file_error"] is True
+    assert result["workflow_type"] == "ticket"
+    assert len(fallback_calls) == 1
+
+
+def test_auto_message_only_uses_default_text_and_completes(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto", automation_key="message_only")
+    ticket = _ticket(workflow_type="auto", instruction_button_key="menu-a|auto|A")
+    sent = []
+    completed = []
+
+    monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("fallback", None))
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, parse_mode=None, **kwargs: sent.append((chat_id, text, parse_mode)))
+    monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: completed.append("done"))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="auto"),
+        "chat-1",
+        True,
+        default_client_text="fallback",
+    )
+
+    assert result["builtin_automation"] == "message_only"
+    assert result["workflow_type"] == "auto"
+    assert sent == [("chat-1", "fallback", None)]
+    assert completed == ["done"]
+
+
+def test_auto_message_only_send_failure_handoffs(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto", automation_key="message_only")
+    ticket = _ticket(workflow_type="auto", instruction_button_key="menu-a|auto|A")
+    fallback_calls = []
+
+    monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("fallback", None))
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", lambda *args, **kwargs: fallback_calls.append((args, kwargs)) or None)
+    monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not complete")))
+
+    result = telegram_router._dispatch_builtin_button_automation(
+        session,
+        ticket,
+        _button(kind="auto"),
+        "chat-1",
+        True,
+        default_client_text="fallback",
+    )
+
+    assert result["automation_handoff"] is True
+    assert result["workflow_type"] == "ticket"
+    assert len(fallback_calls) == 1
+
+
+def test_builtin_send_files_does_not_trigger_unknown_registry_handler():
+    session = _session()
+    _seed_row(session, workflow_type="task", automation_key="send_files")
+    messages = []
+
+    result = telegram_automation.process_collecting_ticket_automation(
+        db=session,
+        ticket=_ticket(),
+        button=_button(kind="task"),
+        client_body="hello",
+        telegram_message_id=None,
+        attachment_data=None,
+        attachment_too_large=False,
+        external_chat_id="chat-1",
+        notify_client=True,
+        append_system_message_fn=lambda *args, **kwargs: messages.append((args, kwargs)),
+        append_client_message_fn=lambda *args, **kwargs: None,
+        store_telegram_attachment_fn=lambda *args, **kwargs: None,
+        remove_client_close_button_fn=lambda *args, **kwargs: None,
+        send_message_fn=lambda *args, **kwargs: None,
+        too_large_attachment_system_text_fn=lambda *_: "",
+        send_too_large_attachment_client_messages_fn=lambda *args, **kwargs: None,
+        button_setting_for_ticket_fn=telegram_router._button_setting_for_ticket,
+        append_button_system_text_fn=lambda *args, **kwargs: None,
+        ready_ticket_for_distribution_fn=lambda *args, **kwargs: None,
+    )
+
+    assert result is None
+    assert messages == []
+
+
+def test_task_message_only_reports_unsupported_automation():
+    session = _session()
+    _seed_row(session, workflow_type="task", automation_key="message_only")
+    messages = []
+
+    result = telegram_automation.process_collecting_ticket_automation(
+        db=session,
+        ticket=_ticket(),
+        button=_button(kind="task"),
+        client_body="hello",
+        telegram_message_id=None,
+        attachment_data=None,
+        attachment_too_large=False,
+        external_chat_id="chat-1",
+        notify_client=True,
+        append_system_message_fn=lambda *args, **kwargs: messages.append((args, kwargs)),
+        append_client_message_fn=lambda *args, **kwargs: None,
+        store_telegram_attachment_fn=lambda *args, **kwargs: None,
+        remove_client_close_button_fn=lambda *args, **kwargs: None,
+        send_message_fn=lambda *args, **kwargs: None,
+        too_large_attachment_system_text_fn=lambda *_: "",
+        send_too_large_attachment_client_messages_fn=lambda *args, **kwargs: None,
+        button_setting_for_ticket_fn=telegram_router._button_setting_for_ticket,
+        append_button_system_text_fn=lambda *args, **kwargs: None,
+        ready_ticket_for_distribution_fn=lambda *args, **kwargs: None,
+    )
+
+    assert result is None
+    assert len(messages) == 1
 
 
 def test_empty_db_files_do_not_use_txt_files():

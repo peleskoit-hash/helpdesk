@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -448,6 +448,7 @@ class BotButtonInstructionUpdate(BaseModel):
     files: list[str] | None = None
     conditional_files_overridden: bool | None = None
     conditional_files: list[dict] | None = None
+    automation_type: str | None = None
     automation_key: str | None = None
     automation_overridden: bool | None = None
     is_enabled: bool | None = None

@@ -53,6 +53,8 @@ const state = {
   savedConditionalFilesOverridden: false,
   conditionalRules: [],
   savedConditionalRules: [],
+  loadedSendFilesSnapshot: null,
+  sendFilesProjectionError: "",
   isEnabled: true,
   savedIsEnabled: true,
   automationKey: "",
@@ -62,6 +64,9 @@ const state = {
   automationStatus: "not_set",
   automationAvailable: false,
   automationHandler: "",
+  automationType: "none",
+  automationTypeValue: "none",
+  savedAutomationTypeValue: "none",
   automationKeyValue: "",
   savedAutomationKeyValue: "",
   availableAutomations: [],
@@ -522,6 +527,8 @@ async function loadMenuTypes() {
   state.savedConditionalFilesOverridden = false;
   state.conditionalRules = [];
   state.savedConditionalRules = [];
+  state.loadedSendFilesSnapshot = null;
+  state.sendFilesProjectionError = "";
   state.isEnabled = true;
   state.savedIsEnabled = true;
   state.automationKeyValue = "";
@@ -575,6 +582,8 @@ async function openMenu(menuName) {
   state.savedConditionalRules = [];
   state.conditionalFilesOverridden = false;
   state.savedConditionalFilesOverridden = false;
+  state.loadedSendFilesSnapshot = null;
+  state.sendFilesProjectionError = "";
   const structure = await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(menuName)}/structure`);
   state.preview = {
     kind: null,
@@ -877,6 +886,12 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
       state.availableFiles = Array.isArray(filesPayload?.items) ? filesPayload.items : [];
       const automationsPayload = await api("/api/v1/settings/bot-buttons/automations");
       state.availableAutomations = Array.isArray(automationsPayload?.items) ? automationsPayload.items : [];
+      if (window.BotButtonsEditor?.syncAutomationSelectionMeta) {
+        window.BotButtonsEditor.syncAutomationSelectionMeta(editorCtx());
+      }
+      if (state.view === "editor") {
+        render();
+      }
       await loadMenuTypes();
     })
     .catch((e) => {

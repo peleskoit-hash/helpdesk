@@ -7,9 +7,15 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram
+from .button_automation_types import (
+    AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
+    AUTOMATION_TYPE_SEND_FILES,
+    get_button_automation_meta,
+    is_builtin_button_automation_key,
+)
 from ..services.bitrix_client import BitrixApiError, BitrixConfigError, extract_deal_id, get_deal_phone_lookup, validate_deal_id
 
-BITRIX_LOOKUP_AUTOMATION_KEY = "bitrix_deal_phone_lookup"
+BITRIX_LOOKUP_AUTOMATION_KEY = AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP
 BITRIX_DEAL_FORMAT_ERROR_TEXT = (
     "Не удалось распознать сделку.\n\n"
     "Отправьте одним сообщением номер сделки из 5–7 цифр или ссылку вида:\n"
@@ -203,6 +209,14 @@ def resolve_effective_automation_key(
     return (getattr(row, "automation_key", None) or "").strip() or None
 
 
+def unsupported_automation_message(automation_key: str | None, registry: dict[str, dict] | None = None) -> str:
+    meta = get_button_automation_meta(automation_key, registry or get_automation_registry()) or {}
+    return (
+        f"Автоматизация не найдена или недоступна: "
+        f"{meta.get('key') or automation_key}. Заявка передана сотруднику."
+    )
+
+
 def process_collecting_ticket_automation(
     db: Session,
     ticket: Ticket,
@@ -235,6 +249,16 @@ def process_collecting_ticket_automation(
         button_setting_for_ticket_fn=button_setting_for_ticket_fn,
     )
     if not effective_automation_key:
+        return None
+    if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
+        return None
+    if is_builtin_button_automation_key(effective_automation_key):
+        append_system_message_fn(
+            db,
+            ticket,
+            unsupported_automation_message(effective_automation_key),
+            agent_visible=True,
+        )
         return None
 
     if effective_automation_key == BITRIX_LOOKUP_AUTOMATION_KEY:
@@ -282,7 +306,7 @@ def process_collecting_ticket_automation(
     append_system_message_fn(
         db,
         ticket,
-        f"Автоматизация не найдена или недоступна: {effective_automation_key}. Заявка передана сотруднику.",
+        unsupported_automation_message(effective_automation_key),
         agent_visible=True,
     )
     return None

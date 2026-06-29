@@ -73,8 +73,15 @@ from ..services.telegram_menu_flow import (
     _safe_remove_inline_keyboard,
     _store_menu_message_id,
 )
+from ..services.button_automation_types import (
+    AUTOMATION_TYPE_MESSAGE_ONLY,
+    AUTOMATION_TYPE_SEND_FILES,
+)
 from ..services.telegram_automation import (
+    AUTOMATION_FALLBACK_CLIENT_TEXT,
     process_collecting_ticket_automation,
+    resolve_effective_automation_key,
+    unsupported_automation_message,
 )
 from ..services.telegram_attachment_policy import (
     FORBIDDEN_ATTACHMENT_TEXT,
@@ -1112,6 +1119,10 @@ def _fallback_auto_to_support(
     reason: str,
     external_chat_id: str,
     notify_client: bool,
+    *,
+    client_message_key: str = "telegram.automation.material_unavailable.client",
+    client_message_fallback: str = MATERIAL_UNAVAILABLE_TEXT,
+    client_message_extra: dict | None = None,
 ) -> User | None:
     append_system_message(db, ticket, f"Автоматическая отправка материала не выполнена: {reason}", agent_visible=True)
     ticket.intake_state = TicketIntakeState.READY.value
@@ -1123,16 +1134,182 @@ def _fallback_auto_to_support(
     if notify_client:
         material_text, material_parse_mode = _automatic_telegram_text(
             db,
-            "telegram.automation.material_unavailable.client",
-            MATERIAL_UNAVAILABLE_TEXT,
+            client_message_key,
+            client_message_fallback,
             ticket=ticket,
-            extra={"reason": reason},
+            extra={"reason": reason, **(client_message_extra or {})},
         )
         send_message(external_chat_id, material_text, parse_mode=material_parse_mode)
         if assigned_agent is not None:
             notify_client_about_assignee(db, ticket, assigned_agent)
     return assigned_agent
 
+
+def _dispatch_builtin_button_automation(
+    db: Session,
+    ticket: Ticket,
+    button: ButtonSpec | None,
+    external_chat_id: str,
+    notify_client: bool,
+    *,
+    default_client_text: str | None = None,
+) -> dict | None:
+    effective_automation_key = resolve_effective_automation_key(
+        db,
+        ticket,
+        button,
+        button_setting_for_ticket_fn=_button_setting_for_ticket,
+    )
+    if not effective_automation_key:
+        return None
+
+    workflow_type = (ticket.workflow_type or TicketWorkflowType.TICKET.value).strip().lower()
+
+    if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
+        if workflow_type == TicketWorkflowType.AUTO.value:
+            if notify_client:
+                try:
+                    auto_client_text, auto_client_parse_mode = _render_client_text_for_telegram(
+                        db,
+                        ticket,
+                        button,
+                        default_client_text or AUTO_DONE_TEXT,
+                    )
+                    send_message(external_chat_id, auto_client_text, parse_mode=auto_client_parse_mode)
+                except Exception as exc:
+                    _fallback_auto_to_support(
+                        db,
+                        ticket,
+                        f"\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0438\u0442\u043e\u0433\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435: {type(exc).__name__}",
+                        external_chat_id,
+                        notify_client,
+                        client_message_key="telegram.automation.fallback_created",
+                        client_message_fallback=AUTOMATION_FALLBACK_CLIENT_TEXT,
+                    )
+                    db.commit()
+                    return {
+                        "ok": True,
+                        "ticket_id": ticket.id,
+                        "workflow_type": TicketWorkflowType.TICKET.value,
+                        "automation_handoff": True,
+                    }
+            direct_file_ok, direct_file_error = _send_button_direct_file(db, ticket, button, external_chat_id)
+            _send_button_rule_files(db, ticket, button, external_chat_id)
+            if not direct_file_ok:
+                _fallback_auto_to_support(
+                    db,
+                    ticket,
+                    direct_file_error or "\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
+                    external_chat_id,
+                    notify_client,
+                )
+                db.commit()
+                return {
+                    "ok": True,
+                    "ticket_id": ticket.id,
+                    "workflow_type": TicketWorkflowType.TICKET.value,
+                    "auto_file_error": True,
+                }
+            _complete_auto_ticket(db, ticket, external_chat_id, False)
+            db.commit()
+            return {
+                "ok": True,
+                "ticket_id": ticket.id,
+                "workflow_type": TicketWorkflowType.AUTO.value,
+                "builtin_automation": AUTOMATION_TYPE_SEND_FILES,
+            }
+
+        _send_button_direct_file(db, ticket, button, external_chat_id)
+        _send_button_rule_files(db, ticket, button, external_chat_id)
+        return {
+            "ok": True,
+            "ticket_id": ticket.id,
+            "workflow_type": workflow_type,
+            "builtin_automation": AUTOMATION_TYPE_SEND_FILES,
+        }
+
+    if effective_automation_key == AUTOMATION_TYPE_MESSAGE_ONLY:
+        if workflow_type != TicketWorkflowType.AUTO.value:
+            append_system_message(
+                db,
+                ticket,
+                unsupported_automation_message(effective_automation_key),
+                agent_visible=True,
+            )
+            return {
+                "ok": True,
+                "ticket_id": ticket.id,
+                "workflow_type": workflow_type,
+                "unsupported_automation": True,
+            }
+        if notify_client:
+            try:
+                auto_client_text, auto_client_parse_mode = _render_client_text_for_telegram(
+                    db,
+                    ticket,
+                    button,
+                    default_client_text or AUTO_DONE_TEXT,
+                )
+                send_message(external_chat_id, auto_client_text, parse_mode=auto_client_parse_mode)
+            except Exception as exc:
+                _fallback_auto_to_support(
+                    db,
+                    ticket,
+                    f"\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0438\u0442\u043e\u0433\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435: {type(exc).__name__}",
+                    external_chat_id,
+                    notify_client,
+                    client_message_key="telegram.automation.fallback_created",
+                    client_message_fallback=AUTOMATION_FALLBACK_CLIENT_TEXT,
+                )
+                db.commit()
+                return {
+                    "ok": True,
+                    "ticket_id": ticket.id,
+                    "workflow_type": TicketWorkflowType.TICKET.value,
+                    "automation_handoff": True,
+                }
+        _complete_auto_ticket(db, ticket, external_chat_id, False)
+        db.commit()
+        return {
+            "ok": True,
+            "ticket_id": ticket.id,
+            "workflow_type": TicketWorkflowType.AUTO.value,
+            "builtin_automation": AUTOMATION_TYPE_MESSAGE_ONLY,
+        }
+
+    if workflow_type == TicketWorkflowType.AUTO.value:
+        _fallback_auto_to_support(
+            db,
+            ticket,
+            unsupported_automation_message(effective_automation_key),
+            external_chat_id,
+            notify_client,
+            client_message_key="telegram.automation.fallback_created",
+            client_message_fallback=AUTOMATION_FALLBACK_CLIENT_TEXT,
+        )
+        db.commit()
+        return {
+            "ok": True,
+            "ticket_id": ticket.id,
+            "workflow_type": TicketWorkflowType.TICKET.value,
+            "automation_handoff": True,
+        }
+
+    if workflow_type == TicketWorkflowType.TICKET.value:
+        append_system_message(
+            db,
+            ticket,
+            unsupported_automation_message(effective_automation_key),
+            agent_visible=True,
+        )
+        return {
+            "ok": True,
+            "ticket_id": ticket.id,
+            "workflow_type": workflow_type,
+            "unsupported_automation": True,
+        }
+
+    return None
 
 def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, message_text: str) -> Ticket:
     ticket = _active_ticket_for_client(db, company_id, client_id)
@@ -2214,6 +2391,18 @@ def _process_problem_type_callback(
     if button.kind == "auto":
         collecting_ticket.intake_state = TicketIntakeState.READY.value
         db.commit()
+        builtin_result = _dispatch_builtin_button_automation(
+            db,
+            collecting_ticket,
+            button,
+            external_chat_id,
+            notify_client,
+            default_client_text=AUTO_DONE_TEXT,
+        )
+        if builtin_result is not None:
+            if notify_client and callback_id:
+                answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
+            return builtin_result
         direct_file_ok = True
         direct_file_error = None
         if notify_client:
@@ -2229,7 +2418,7 @@ def _process_problem_type_callback(
             _fallback_auto_to_support(
                 db,
                 collecting_ticket,
-                direct_file_error or "не удалось отправить материал",
+                direct_file_error or "\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
                 external_chat_id,
                 notify_client,
             )
@@ -2398,11 +2587,23 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             if button.kind == "auto":
                 collecting_ticket.intake_state = TicketIntakeState.READY.value
                 db.commit()
+                builtin_result = _dispatch_builtin_button_automation(
+                    db,
+                    collecting_ticket,
+                    button,
+                    external_chat_id,
+                    notify_client,
+                    default_client_text=AUTO_DONE_TEXT,
+                )
+                if builtin_result is not None:
+                    if notify_client and callback_id:
+                        answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
+                    return builtin_result
                 direct_file_ok = True
                 direct_file_error = None
                 if notify_client:
                     if callback_id:
-                        answer_callback_query(callback_id, "Автоматическая заявка обработана")
+                        answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
                     auto_client_text, auto_client_parse_mode = _render_client_text_for_telegram(
                         db, collecting_ticket, button, AUTO_DONE_TEXT
                     )
@@ -2413,7 +2614,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     _fallback_auto_to_support(
                         db,
                         collecting_ticket,
-                        direct_file_error or "не удалось отправить материал",
+                        direct_file_error or "\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
                         external_chat_id,
                         notify_client,
                     )
@@ -2737,6 +2938,14 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 send_message(external_chat_id, task_created_text, parse_mode=task_created_parse_mode)
             except Exception:
                 send_message(external_chat_id, TASK_CREATED_CLIENT_TEXT)
+        _dispatch_builtin_button_automation(
+            db,
+            collecting_ticket,
+            button,
+            external_chat_id,
+            notify_client,
+        )
+        db.commit()
         return {
             "ok": True,
             "ticket_id": collecting_ticket.id,
@@ -2757,6 +2966,16 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         return {"ok": True, "ignored": "problem_type_required"}
 
     ticket = active_ticket
+    had_client_messages = db.execute(
+        select(TicketMessage.id)
+        .where(
+            and_(
+                TicketMessage.ticket_id == ticket.id,
+                TicketMessage.message_type == MessageType.CLIENT.value,
+            )
+        )
+        .limit(1)
+    ).scalar_one_or_none() is not None
     client_message = None
     if text or not attachment_too_large:
         client_message = _append_client_message(db, ticket, text, telegram_message_id)
@@ -2778,6 +2997,21 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         _store_telegram_attachment(db, ticket, client_message, attachment_data, external_chat_id)
     refresh_ticket_auto_close_timer(db, ticket, restart_from_now=False)
     db.commit()
+
+    if not had_client_messages:
+        button = _button_from_callback(
+            db,
+            f"btn:{ticket.button_config_key or ''}",
+            _menu_name_for_ticket_client(db, ticket),
+        )
+        _dispatch_builtin_button_automation(
+            db,
+            ticket,
+            button,
+            external_chat_id,
+            notify_client,
+        )
+        db.commit()
 
     return {"ok": True, "ticket_id": ticket.id}
 

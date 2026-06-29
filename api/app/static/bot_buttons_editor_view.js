@@ -458,6 +458,14 @@
            <div class="status">Будут удалены дочерние элементы: ${escapeHtml(String(nestedChildCount))}</div>
          </div>`
       : "";
+    const workflowType = String(leaf.workflow_type || "").trim().toLowerCase();
+    const visibleAutomations = (state.availableAutomations || []).filter((item) => {
+      const types = Array.isArray(item?.workflow_types) ? item.workflow_types.map((value) => String(value || "").trim().toLowerCase()) : [];
+      return types.includes(workflowType);
+    });
+    const selectedAutomationKnown = visibleAutomations.some((item) => String(item?.key || "") === String(state.automationTypeValue || "none"));
+    const showSendFilesSettings = String(state.automationTypeValue || "none") === "send_files";
+
     const leftColumnHtml = isSubmenuEditor
       ? `
           <div class="bot-editor-section">
@@ -506,38 +514,41 @@
           </div>
 
           <div class="bot-editor-section">
-            <label class="field-label">Файлы, отправляемые при создании</label>
-            <div id="botSelectedFilesWrap">${renderSelectedFiles()}</div>
-            <div class="bot-file-actions">
-              <button id="addBotFileBtn" type="button" class="action">Добавить файл</button>
-              <button id="removeBotFileBtn" type="button" class="action">Удалить</button>
-              <button id="addConditionalRuleBtn" type="button" class="action">+ Добавить условие</button>
-            </div>
-            <div id="conditionalRulesWrap">${renderConditionalRules()}</div>
-            ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
-          </div>
-
-          <div class="bot-editor-section">
             <label class="field-label">Автоматизация</label>
             <select id="automationKeySelect" class="input">
-              <option value="">Не использовать</option>
-              ${(state.availableAutomations || []).map((a) => {
+
+              ${!selectedAutomationKnown && state.automationTypeValue && state.automationTypeValue !== "none"
+                ? `<option value="${escapeHtml(state.automationTypeValue)}" selected>${escapeHtml(state.automationKey || state.automationTypeValue)} (legacy)</option>`
+                : ""}
+              ${visibleAutomations.map((a) => {
                 const key = String(a?.key || "");
                 const title = String(a?.title || key || "Без названия");
-                return `<option value="${escapeHtml(key)}" ${state.automationKeyValue === key ? "selected" : ""}>${escapeHtml(title)} (${escapeHtml(key)})</option>`;
+                return `<option value="${escapeHtml(key)}" ${state.automationTypeValue === key ? "selected" : ""}>${escapeHtml(title)} (${escapeHtml(key)})</option>`;
               }).join("")}
             </select>
             <div class="status">Название: ${escapeHtml(state.automationTitle || "не задано")}</div>
-            <div class="status">Key: ${escapeHtml(state.automationKey || "не задано")}</div>
+            <div class="status">Key: ${escapeHtml(state.automationKey || "none")}</div>
             <div class="status">Описание: ${escapeHtml(state.automationDescription || "не задано")}</div>
             <div class="status">Статус: ${escapeHtml(
-              state.automationStatus === "not_found"
-                ? "не найдена"
-                : (state.automationStatus === "available"
-                  ? (state.automationAvailable ? "доступна" : "в реестре, но недоступна")
-                  : "не задана")
+              state.automationStatus === "not_applied"
+                ? "не применяется"
+                : (state.automationStatus === "not_found"
+                  ? "не найдена"
+                  : (state.automationStatus === "available"
+                    ? (state.automationAvailable ? "доступна" : "в реестре, но недоступна")
+                    : "не задана"))
             )}</div>
             ${state.automationHandler ? `<div class="status">Handler: <code>${escapeHtml(state.automationHandler)}</code></div>` : ""}
+            ${showSendFilesSettings ? `
+              <div class="bot-automation-settings">
+                <label class="field-label">Файлы</label>
+                <div id="botSelectedFilesWrap">${renderSelectedFiles()}</div>
+                <div class="bot-file-actions">
+                  <button id="addBotFileBtn" type="button" class="action">Добавить файл</button>
+                </div>
+              </div>
+            ` : ""}
+            ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
           </div>
         `;
     const rightColumnHtml = isSubmenuEditor
@@ -635,8 +646,6 @@
     const automationKeySelectEl = document.getElementById("automationKeySelect");
     const confirmationEnabledEl = document.getElementById("confirmationEnabled");
     const addBotFileBtn = document.getElementById("addBotFileBtn");
-    const removeBotFileBtn = document.getElementById("removeBotFileBtn");
-    const addConditionalRuleBtn = document.getElementById("addConditionalRuleBtn");
     const openNestedBtn = document.getElementById("openNestedBtn");
     const deleteSubmenuBtn = document.getElementById("deleteSubmenuBtn");
     const saveBtn = document.getElementById("saveInstructionBtn");
@@ -708,7 +717,11 @@
       state.freezeOnCreate = !!freezeOnCreateEl.checked;
     });
     automationKeySelectEl?.addEventListener("change", () => {
-      state.automationKeyValue = String(automationKeySelectEl.value || "");
+      state.automationTypeValue = String(automationKeySelectEl.value || "none");
+      if (global.HelpdeskBotButtonsEditor?.syncAutomationSelectionMeta) {
+        global.HelpdeskBotButtonsEditor.syncAutomationSelectionMeta(ctx);
+      }
+      EditorView.renderEditor(ctx);
     });
     confirmationEnabledEl?.addEventListener("change", () => {
       state.confirmationEnabled = !!confirmationEnabledEl.checked;
@@ -716,24 +729,6 @@
     });
     addBotFileBtn?.addEventListener("click", () => {
       openFilePickerModal();
-    });
-    removeBotFileBtn?.addEventListener("click", () => {
-      const selected = Array.from(document.querySelectorAll(".bot-file-selected:checked")).map((input) => input.value);
-      if (!selected.length) {
-        alert("Выберите файлы в списке, которые хотите удалить.");
-        return;
-      }
-      state.selectedFiles = (state.selectedFiles || []).filter((file) => !selected.includes(file));
-      state.filesOverridden = true;
-      EditorView.renderEditor(ctx);
-    });
-    addConditionalRuleBtn?.addEventListener("click", () => {
-      state.conditionalRules.push({
-        conditions: [{ field: "", operator: "", value: "" }],
-        files: [],
-      });
-      state.conditionalFilesOverridden = true;
-      EditorView.renderEditor(ctx);
     });
     openNestedBtn?.addEventListener("click", () => {
       if (!Array.isArray(leaf.children_rows) || !leaf.children_rows.length) return;
@@ -746,20 +741,34 @@
       if (!window.confirm(message)) return;
       await archiveMenuButton();
     });
-    document.querySelectorAll("[data-remove-rule]").forEach((btn) => {
+    document.querySelectorAll("[data-add-file-condition]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const idx = Number(btn.dataset.removeRule);
-        if (Number.isNaN(idx)) return;
-        state.conditionalRules.splice(idx, 1);
-        state.conditionalFilesOverridden = true;
+        const file = String(btn.dataset.addFileCondition || "");
+        if (!file) return;
+        if (global.BotButtonsFiles?.addConditionToFile) {
+          global.BotButtonsFiles.addConditionToFile(ctx, file);
+        }
         EditorView.renderEditor(ctx);
       });
     });
-    document.querySelectorAll("[data-edit-rule-files]").forEach((btn) => {
+    document.querySelectorAll("[data-remove-file]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const idx = Number(btn.dataset.editRuleFiles);
+        const file = String(btn.dataset.removeFile || "");
+        if (!file) return;
+        if (global.BotButtonsFiles?.removeFileFromState) {
+          global.BotButtonsFiles.removeFileFromState(ctx, file);
+        }
+        EditorView.renderEditor(ctx);
+      });
+    });
+    document.querySelectorAll("[data-remove-file-rule]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.removeFileRule);
         if (Number.isNaN(idx)) return;
-        openConditionalRuleFilesModal(idx);
+        if (global.BotButtonsFiles?.removeConditionalRule) {
+          global.BotButtonsFiles.removeConditionalRule(ctx, idx);
+        }
+        EditorView.renderEditor(ctx);
       });
     });
     document.querySelectorAll("[data-cond-field]").forEach((input) => {
@@ -872,4 +881,3 @@
 
   global.BotButtonsEditorView = EditorView;
 })(window);
-

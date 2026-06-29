@@ -5,6 +5,35 @@
     return String(leaf?.workflow_type || "").trim().toLowerCase() === "submenu";
   };
 
+  Editor.syncAutomationSelectionMeta = function syncAutomationSelectionMeta(ctx) {
+    const { state } = ctx;
+    const selectedType = String(state.automationTypeValue || "none").trim() || "none";
+    state.automationTypeValue = selectedType;
+    const options = Array.isArray(state.availableAutomations) ? state.availableAutomations : [];
+    const selected = options.find((item) => String(item?.key || "") === selectedType) || null;
+    const selectedMeta = selected || (selectedType === "none"
+      ? {
+          key: "none",
+          title: "Не использовать",
+          description: "Автоматизация не применяется.",
+          available: true,
+          handler: "",
+        }
+      : null);
+    state.automationType = selectedType;
+    state.automationKeyValue = selectedType === "none" ? "" : selectedType;
+    state.automationKey = String(selectedMeta?.key || selectedType || "none");
+    state.automationTitle = String(selectedMeta?.title || "");
+    state.automationDescription = String(selectedMeta?.description || "");
+    state.automationAvailable = !!selectedMeta?.available;
+    state.automationHandler = String(selectedMeta?.handler || "");
+    state.automationStatus = selectedType === "none"
+      ? "not_applied"
+      : (selectedMeta
+        ? (selectedMeta.available ? "available" : "not_found")
+        : "not_found");
+  };
+
   Editor.hasUnsavedChanges = function hasUnsavedChanges(ctx) {
     const { state } = ctx;
     return (state.editorText || "") !== (state.savedText || "")
@@ -21,7 +50,7 @@
       || state.conditionalFilesOverridden !== state.savedConditionalFilesOverridden
       || JSON.stringify(state.conditionalRules || []) !== JSON.stringify(state.savedConditionalRules || [])
       || state.isEnabled !== state.savedIsEnabled
-      || (state.automationKeyValue || "") !== (state.savedAutomationKeyValue || "");
+      || (state.automationTypeValue || "none") !== (state.savedAutomationTypeValue || "none");
   };
 
   Editor.confirmDiscard = function confirmDiscard(ctx) {
@@ -45,7 +74,8 @@
     state.conditionalFilesOverridden = !!state.savedConditionalFilesOverridden;
     state.conditionalRules = JSON.parse(JSON.stringify(state.savedConditionalRules || []));
     state.isEnabled = !!state.savedIsEnabled;
-    state.automationKeyValue = state.savedAutomationKeyValue || "";
+    state.automationTypeValue = state.savedAutomationTypeValue || "none";
+    Editor.syncAutomationSelectionMeta(ctx);
   };
 
   Editor.renderAssigneeOptions = function renderAssigneeOptions(ctx) {
@@ -55,6 +85,21 @@
       options.push(`<option value="${escapeHtml(u.id)}" ${u.id === state.fixedAssigneeUserId ? "selected" : ""}>${escapeHtml(u.full_name)} (${escapeHtml(u.role_label || u.role)})</option>`);
     });
     return options.join("");
+  };
+
+  Editor.validateSendFilesProjection = function validateSendFilesProjection(ctx, sourceFiles, sourceConditionalRules) {
+    const helpers = global.BotButtonsFiles || {};
+    if (!helpers.hasProjectionLoss) {
+      return { ok: true, snapshot: null, error: "" };
+    }
+    const result = helpers.hasProjectionLoss(ctx, sourceFiles || [], sourceConditionalRules || []);
+    return {
+      ok: !!result?.equal,
+      snapshot: result?.sourceSnapshot || null,
+      error: result?.equal
+        ? ""
+        : "Редактор не смог безопасно восстановить настройки отправки файлов из сохранённых данных. Сохранение заблокировано, чтобы не затереть условия.",
+    };
   };
 
   Editor.openEditor = async function openEditor(ctx, leaf) {
@@ -104,15 +149,20 @@
     state.conditionalRules = JSON.parse(JSON.stringify(normalizedConditional));
     state.savedIsEnabled = payload?.is_enabled !== false;
     state.isEnabled = state.savedIsEnabled;
-    state.automationKey = String(payload?.automation_key || "");
-    state.automationTitle = String(payload?.automation_title || "");
-    state.automationDescription = String(payload?.automation_description || "");
     state.automationFrom = String(payload?.automation_from || "none");
-    state.automationStatus = String(payload?.automation_status || "not_set");
-    state.automationAvailable = !!payload?.automation_available;
-    state.automationHandler = String(payload?.automation_handler || "");
-    state.savedAutomationKeyValue = String(payload?.automation_key ?? "");
-    state.automationKeyValue = state.savedAutomationKeyValue;
+    const apiType = String(payload?.automation_type || "").trim();
+    const hasLegacyFiles = state.savedSelectedFiles.length > 0 || normalizedConditional.length > 0;
+    const inferredAutomationType = payload?.automation_key
+      ? String(payload.automation_key)
+      : ((apiType && apiType !== "none")
+        ? apiType
+        : (hasLegacyFiles ? "send_files" : "none"));
+    state.savedAutomationTypeValue = String(inferredAutomationType || "none");
+    state.automationTypeValue = state.savedAutomationTypeValue;
+    Editor.syncAutomationSelectionMeta(ctx);
+    const projectionCheck = Editor.validateSendFilesProjection(ctx, state.savedSelectedFiles, normalizedConditional);
+    state.loadedSendFilesSnapshot = projectionCheck.snapshot;
+    state.sendFilesProjectionError = projectionCheck.error;
 
     state.view = "editor";
     render();
@@ -140,9 +190,19 @@
       return;
     }
 
+    const sendFilesPayload = global.BotButtonsFiles?.buildSendFilesPayload
+      ? global.BotButtonsFiles.buildSendFilesPayload(ctx)
+      : {
+          files: [...(state.selectedFiles || [])],
+          conditionalRules: JSON.parse(JSON.stringify(state.conditionalRules || [])),
+        };
+    if (!isSubmenu && state.sendFilesProjectionError) {
+      alert(state.sendFilesProjectionError);
+      return;
+    }
     let conditionalPayload = null;
     if (!isSubmenu && state.conditionalFilesOverridden) {
-      const rules = JSON.parse(JSON.stringify(state.conditionalRules || []));
+      const rules = JSON.parse(JSON.stringify(sendFilesPayload.conditionalRules || []));
       for (let ridx = 0; ridx < rules.length; ridx += 1) {
         const rule = rules[ridx];
         const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
@@ -214,11 +274,11 @@
           confirmation_text: state.confirmationText,
           confirmation_overridden: true,
           files_overridden: state.filesOverridden,
-          files: state.filesOverridden ? (state.selectedFiles || []) : null,
+          files: state.filesOverridden ? (sendFilesPayload.files || []) : null,
           conditional_files_overridden: state.conditionalFilesOverridden,
           conditional_files: conditionalPayload,
           automation_overridden: true,
-          automation_key: state.automationKeyValue || null,
+          automation_type: state.automationTypeValue || "none",
           is_enabled: state.isEnabled,
           visibility_overridden: true,
         };
@@ -243,10 +303,18 @@
     state.savedConfirmationEnabled = state.confirmationEnabled;
     state.savedConfirmationText = state.confirmationText;
     state.savedFilesOverridden = state.filesOverridden;
-    state.savedSelectedFiles = [...(state.selectedFiles || [])];
+    state.selectedFiles = [...(sendFilesPayload.files || [])];
+    state.savedSelectedFiles = [...(sendFilesPayload.files || [])];
     state.savedConditionalFilesOverridden = state.conditionalFilesOverridden;
-    state.savedConditionalRules = JSON.parse(JSON.stringify(state.conditionalRules || []));
+    state.conditionalRules = JSON.parse(JSON.stringify(sendFilesPayload.conditionalRules || []));
+    state.savedConditionalRules = JSON.parse(JSON.stringify(sendFilesPayload.conditionalRules || []));
+    {
+      const projectionCheck = Editor.validateSendFilesProjection(ctx, state.savedSelectedFiles, state.savedConditionalRules);
+      state.loadedSendFilesSnapshot = projectionCheck.snapshot;
+      state.sendFilesProjectionError = projectionCheck.error;
+    }
     state.savedIsEnabled = state.isEnabled;
+    state.savedAutomationTypeValue = state.automationTypeValue;
     state.savedAutomationKeyValue = state.automationKeyValue;
 
     await refreshMenuStructure();
