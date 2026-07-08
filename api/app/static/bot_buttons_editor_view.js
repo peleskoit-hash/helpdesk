@@ -440,15 +440,18 @@
     const editorHelpers = global.BotButtonsEditor || {};
     const isRemoved = !!leaf.removed;
     const isDbCreated = !!leaf.is_db_created;
-    const editorWorkflowType = String(state.editorWorkflowType || leaf.workflow_type || "").trim().toLowerCase();
+    const resolvedLeafWorkflowType = typeof editorHelpers.resolveLeafWorkflowType === "function"
+      ? editorHelpers.resolveLeafWorkflowType(leaf)
+      : String(leaf.workflow_type || "").trim().toLowerCase();
+    const editorWorkflowType = String(state.editorWorkflowType || resolvedLeafWorkflowType || "").trim().toLowerCase();
     const isSubmenuEditor = editorWorkflowType === "submenu";
     const workflowTypeOptions = typeof editorHelpers.getWorkflowTypeOptions === "function"
       ? editorHelpers.getWorkflowTypeOptions(leaf)
       : [];
     const canChangeWorkflowType = workflowTypeOptions.length > 0;
     const workflowTypeLabel = typeof editorHelpers.getWorkflowTypeLabel === "function"
-      ? editorHelpers.getWorkflowTypeLabel(editorWorkflowType || leaf.workflow_type)
-      : (editorWorkflowType || leaf.workflow_type || "");
+      ? editorHelpers.getWorkflowTypeLabel(editorWorkflowType || resolvedLeafWorkflowType)
+      : (editorWorkflowType || resolvedLeafWorkflowType || "");
     const countNestedChildren = (rows) => (Array.isArray(rows) ? rows : []).reduce((count, row) => {
       return count + (row?.buttons || []).reduce((inner, node) => {
         return inner + 1 + countNestedChildren(node?.children_rows);
@@ -457,7 +460,7 @@
     const nestedChildCount = countNestedChildren(leaf.children_rows);
     const moveOptions = buildMoveCandidates()
       .filter((c) => c.key !== leaf.technical_key)
-      .filter((c) => !leaf.workflow_type || c.workflowType === leaf.workflow_type)
+      .filter((c) => !resolvedLeafWorkflowType || c.workflowType === resolvedLeafWorkflowType)
       .map((c) => `<option value="${escapeHtml(c.key)}" data-path="${escapeHtml(c.path)}" data-workflow-type="${escapeHtml(c.workflowType)}">${escapeHtml(c.path)}</option>`)
       .join("");
     const deleteActionHtml = isSubmenuEditor && !isRemoved
@@ -678,7 +681,7 @@
       state.editorBotLabel = botLabelInput.value;
     });
     workflowTypeSelectEl?.addEventListener("change", () => {
-      const previous = String(state.editorWorkflowType || leaf.workflow_type || "").trim().toLowerCase();
+      const previous = String(state.editorWorkflowType || resolvedLeafWorkflowType || "").trim().toLowerCase();
       const nextValue = String(workflowTypeSelectEl.value || "").trim().toLowerCase();
       if (typeof editorHelpers.applyWorkflowTypeDraft !== "function") return;
       const changed = editorHelpers.applyWorkflowTypeDraft(ctx, nextValue);

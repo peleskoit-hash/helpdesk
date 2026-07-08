@@ -22,6 +22,7 @@ from ..services.button_config import (
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+EDITABLE_WORKFLOW_TYPES = {"ticket", "task", "auto"}
 
 
 def _error(status_code: int, code: str, message: str):
@@ -31,6 +32,21 @@ def _error(status_code: int, code: str, message: str):
 def _require_admin(user: CurrentUser) -> None:
     if not is_admin(user):
         _error(403, "admin_only", "????????? ???????? ?????? ??????????????")
+
+
+def _normalize_workflow_type(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _effective_registry_workflow_type(row: BotButtonSetting | None, fallback_workflow_type: str) -> str:
+    fallback = _normalize_workflow_type(fallback_workflow_type)
+    if row is None:
+        return fallback
+    current = _normalize_workflow_type(row.workflow_type)
+    kind = str(row.button_kind or "terminal").strip().lower()
+    if kind == "terminal" and current in EDITABLE_WORKFLOW_TYPES and fallback in EDITABLE_WORKFLOW_TYPES:
+        return current
+    return fallback or current
 
 
 def _normalize_level_layout(raw: object) -> list[dict]:
@@ -157,6 +173,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
         is_db_created: bool = False,
     ) -> BotButtonSetting:
         row = settings_rows.get(button_key)
+        effective_workflow_type = _effective_registry_workflow_type(row, workflow_type)
         if row is None:
             stable_id = str(uuid.uuid4())
             row = BotButtonSetting(
@@ -165,7 +182,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
                 button_key=button_key,
                 legacy_button_key=None,
                 menu_type=menu_name,
-                workflow_type=workflow_type,
+                workflow_type=effective_workflow_type,
                 button_path=button_path,
                 button_label=button_label,
                 label_override=None,
@@ -190,8 +207,8 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
         if row.menu_type != menu_name:
             row.menu_type = menu_name
             changed = True
-        if row.workflow_type != workflow_type:
-            row.workflow_type = workflow_type
+        if row.workflow_type != effective_workflow_type:
+            row.workflow_type = effective_workflow_type
             changed = True
         if row.button_path != button_path:
             row.button_path = button_path
@@ -239,7 +256,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
         is_enabled = True if setting_row is None or not setting_row.visibility_overridden else bool(setting_row.is_enabled)
         leaf = BotButtonStructureLeafOut(
             label=_effective_label(setting_row, ref.label),
-            workflow_type=ref.workflow_type,  # type: ignore[arg-type]
+            workflow_type=_effective_registry_workflow_type(setting_row, ref.workflow_type),  # type: ignore[arg-type]
             full_path=ref.full_path,
             technical_key=ref.technical_key,
             source_button_key=ref.source_button_key,
@@ -1056,11 +1073,12 @@ def _sync_bot_buttons_from_txt(
                 continue
 
             changed = False
+            effective_workflow_type = _effective_registry_workflow_type(row, ref.workflow_type)
             if row.menu_type != menu_name:
                 row.menu_type = menu_name
                 changed = True
-            if row.workflow_type != ref.workflow_type:
-                row.workflow_type = ref.workflow_type
+            if row.workflow_type != effective_workflow_type:
+                row.workflow_type = effective_workflow_type
                 changed = True
             if row.button_path != ref.full_path:
                 row.button_path = ref.full_path

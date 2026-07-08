@@ -1285,6 +1285,52 @@ def test_existing_terminal_button_can_change_type_between_ticket_task_and_auto(m
     assert row.button_kind == "terminal"
 
 
+def test_structure_build_keeps_saved_editable_workflow_type_override(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|ticket|A",
+        workflow_type="task",
+        button_kind="terminal",
+        button_path="A",
+        button_label="A",
+    )
+    config = ButtonConfig(
+        menus={"root": MenuSpec(key="root", title="menu-a", rows=(("txt-a",),))},
+        buttons={"txt-a": ButtonSpec(key="txt-a", label="A", kind="ticket", text="TXT text")},
+        root_menu_key="root",
+    )
+    refs = (
+        TerminalButtonRef(
+            source_button_key="txt-a",
+            label="A",
+            workflow_type="ticket",
+            full_path="A",
+            technical_key="menu-a|ticket|A",
+            instruction_text=None,
+        ),
+    )
+    monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+
+    structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|ticket|A").one()
+    payload = settings_bot_button_items.get_bot_button_item(
+        "menu-a|ticket|A",
+        menu_type="menu-a",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    assert structure.tree_rows[0]["buttons"][0]["technical_key"] == "menu-a|ticket|A"
+    assert structure.tree_rows[0]["buttons"][0]["workflow_type"] == "task"
+    assert row.button_key == "menu-a|ticket|A"
+    assert row.workflow_type == "task"
+    assert payload["workflow_type"] == "task"
+
+
 def test_group_parent_save_with_same_workflow_keeps_group_parent_button_kind(monkeypatch):
     session = _session()
     _seed_row(session, button_key="menu-a|group_task|A", workflow_type="group_task", button_kind="group_parent")

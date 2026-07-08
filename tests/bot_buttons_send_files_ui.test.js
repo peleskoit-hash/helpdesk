@@ -144,6 +144,54 @@ test('submenu workflow type does not expose editable transition options', () => 
   );
 });
 
+test('workflow type options fallback to technical_key ticket when workflow_type is absent', () => {
+  const options = Array.from(editorHelpers.getWorkflowTypeOptions({
+    technical_key: 'menu-a|ticket|A',
+  }));
+  assert.deepEqual(options.map((item) => item.value), ['ticket', 'task', 'auto']);
+});
+
+test('workflow type options fallback to technical_key task when workflow_type is absent', () => {
+  const options = Array.from(editorHelpers.getWorkflowTypeOptions({
+    technical_key: 'menu-a|task|A',
+  }));
+  assert.deepEqual(options.map((item) => item.value), ['ticket', 'task', 'auto']);
+});
+
+test('workflow type options fallback to technical_key auto when workflow_type is absent', () => {
+  const options = Array.from(editorHelpers.getWorkflowTypeOptions({
+    technical_key: 'menu-a|auto|A',
+  }));
+  assert.deepEqual(options.map((item) => item.value), ['ticket', 'task', 'auto']);
+});
+
+test('workflow type options fallback to technical_key submenu when workflow_type is absent', () => {
+  assert.deepEqual(
+    Array.from(editorHelpers.getWorkflowTypeOptions({ technical_key: 'menu-a|submenu|A' })),
+    [],
+  );
+});
+
+test('workflow type options fallback to technical_key group_task when workflow_type is absent', () => {
+  assert.deepEqual(
+    Array.from(editorHelpers.getWorkflowTypeOptions({ technical_key: 'menu-a|group_task|A' })),
+    [],
+  );
+});
+
+test('workflow type options fallback to system technical key returns no editable options', () => {
+  assert.deepEqual(
+    Array.from(editorHelpers.getWorkflowTypeOptions({ technical_key: '__system__|first_connection' })),
+    [],
+  );
+});
+
+test('workflow type label uses russian label for ticket resolved from technical_key fallback', () => {
+  const workflowType = editorHelpers.resolveLeafWorkflowType({ technical_key: 'menu-a|ticket|A' });
+  assert.equal(workflowType, 'ticket');
+  assert.equal(editorHelpers.getWorkflowTypeLabel(workflowType), '\u0417\u0430\u044f\u0432\u043a\u0430');
+});
+
 test('splits legacy multi-file conditional rule per file without data loss', () => {
   const ctx = ctxFor({
     conditionalRules: [
@@ -430,6 +478,30 @@ function loadEditorHelpers() {
 
 const editorHelpers = loadEditorHelpers();
 
+function loadEditorViewHelpers(editorApi = editorHelpers) {
+  const source = fs.readFileSync('api/app/static/bot_buttons_editor_view.js', 'utf8');
+  const window = {
+    BotButtonsEditor: editorApi,
+    BotButtonsFiles: helpers,
+  };
+  const document = {
+    getElementById() {
+      return {
+        addEventListener() {},
+        value: '',
+        checked: false,
+        disabled: false,
+      };
+    },
+    querySelectorAll() { return []; },
+  };
+  const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object, Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 } });
+  vm.runInContext(source, context);
+  return window.BotButtonsEditorView;
+}
+
+const editorViewHelpers = loadEditorViewHelpers();
+
 function loadSystemTicketHelpers() {
   const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
   const registerCalls = [];
@@ -478,6 +550,129 @@ test('send_files metadata sync uses automationTypeValue as source of truth', () 
   assert.equal(state.automationKey, 'send_files');
   assert.equal(state.automationTitle, '\u041e\u0442\u043f\u0440\u0430\u0432\u043a\u0430 \u0444\u0430\u0439\u043b\u043e\u0432');
   assert.equal(state.automationStatus, 'available');
+});
+
+test('editor view renders workflow type select for ticket key fallback without explicit workflow_type', () => {
+  const content = { innerHTML: '' };
+  editorViewHelpers.renderEditor({
+    state: {
+      selectedLeaf: {
+        technical_key: 'menu-a|ticket|A',
+        label: 'A',
+        full_path: 'A',
+        children_rows: [],
+        removed: false,
+        is_db_created: false,
+      },
+      editorWorkflowType: '',
+      editorBotLabel: 'A',
+      editorText: '',
+      editorClientText: '',
+      editorSystemText: '',
+      confirmationEnabled: false,
+      confirmationText: '',
+      fixedAssigneeEnabled: false,
+      fixedAssigneeUserId: '',
+      freezeOnCreate: false,
+      isEnabled: true,
+      automationTypeValue: 'none',
+      availableAutomations: [
+        { key: 'none', title: '\u041d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c', description: '', available: true, handler: '', workflow_types: ['ticket', 'task', 'auto'] },
+      ],
+      automationTitle: '',
+      automationKey: 'none',
+      automationDescription: '',
+      automationStatus: 'not_applied',
+      automationAvailable: true,
+      automationHandler: '',
+      selectedFiles: [],
+      conditionalRules: [],
+    },
+    el: { content },
+    escapeHtml(value) { return String(value); },
+    renderSelectedFiles() { return ''; },
+    renderConditionalRules() { return ''; },
+    buildMoveCandidates() { return []; },
+    renderAssigneeOptions() { return ''; },
+    openFilePickerModal() {},
+    openConditionalRuleFilesModal() {},
+    fieldMeta() { return null; },
+    fieldLabel(value) { return String(value || ''); },
+    OPERATOR_OPTIONS: { text: [], select: [], number: [], bool: [] },
+    render() {},
+    saveInstruction() {},
+    archiveMenuButton() {},
+    restoreRemovedSetting() {},
+    deleteRemovedSetting() {},
+    moveRemovedSetting() {},
+    hasAnyStoredSettings() { return false; },
+  });
+
+  assert.match(content.innerHTML, /id="editorWorkflowTypeSelect"/);
+  assert.match(content.innerHTML, /\u0417\u0430\u044f\u0432\u043a\u0430/);
+  assert.match(content.innerHTML, /\u0417\u0430\u0434\u0430\u0447\u0430/);
+  assert.match(content.innerHTML, /\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430/);
+});
+
+test('editor view prefers saved workflow_type over technical_key fallback when rendering select', () => {
+  const content = { innerHTML: '' };
+  editorViewHelpers.renderEditor({
+    state: {
+      selectedLeaf: {
+        technical_key: 'menu-a|ticket|A',
+        workflow_type: 'task',
+        label: 'A',
+        full_path: 'A',
+        children_rows: [],
+        removed: false,
+        is_db_created: false,
+      },
+      editorWorkflowType: 'task',
+      editorBotLabel: 'A',
+      editorText: '',
+      editorClientText: '',
+      editorSystemText: '',
+      confirmationEnabled: false,
+      confirmationText: '',
+      fixedAssigneeEnabled: false,
+      fixedAssigneeUserId: '',
+      freezeOnCreate: false,
+      isEnabled: true,
+      automationTypeValue: 'none',
+      availableAutomations: [
+        { key: 'none', title: '\u041d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c', description: '', available: true, handler: '', workflow_types: ['ticket', 'task', 'auto'] },
+      ],
+      automationTitle: '',
+      automationKey: 'none',
+      automationDescription: '',
+      automationStatus: 'not_applied',
+      automationAvailable: true,
+      automationHandler: '',
+      selectedFiles: [],
+      conditionalRules: [],
+    },
+    el: { content },
+    escapeHtml(value) { return String(value); },
+    renderSelectedFiles() { return ''; },
+    renderConditionalRules() { return ''; },
+    buildMoveCandidates() { return []; },
+    renderAssigneeOptions() { return ''; },
+    openFilePickerModal() {},
+    openConditionalRuleFilesModal() {},
+    fieldMeta() { return null; },
+    fieldLabel(value) { return String(value || ''); },
+    OPERATOR_OPTIONS: { text: [], select: [], number: [], bool: [] },
+    render() {},
+    saveInstruction() {},
+    archiveMenuButton() {},
+    restoreRemovedSetting() {},
+    deleteRemovedSetting() {},
+    moveRemovedSetting() {},
+    hasAnyStoredSettings() { return false; },
+  });
+
+  assert.match(content.innerHTML, /<option value="task" selected>/);
+  assert.doesNotMatch(content.innerHTML, /<option value="ticket" selected>/);
 });
 
 test('frontend fallback resolves send_files when api returns none but legacy conditional files exist', () => {

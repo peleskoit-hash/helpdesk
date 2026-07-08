@@ -15,6 +15,16 @@
     return String(value || "").trim().toLowerCase();
   };
 
+  Editor.resolveLeafWorkflowType = function resolveLeafWorkflowType(leaf) {
+    const directWorkflowType = Editor.normalizeWorkflowType(leaf?.workflow_type);
+    if (directWorkflowType) return directWorkflowType;
+    const rawKey = String(leaf?.technical_key || leaf?.button_key || "").trim();
+    if (!rawKey || rawKey === SYSTEM_FIRST_CONNECTION_BUTTON_KEY) return "";
+    const parts = rawKey.split("|");
+    if (parts.length < 3) return "";
+    return Editor.normalizeWorkflowType(parts[1]);
+  };
+
   Editor.getWorkflowTypeLabel = function getWorkflowTypeLabel(value) {
     const normalized = Editor.normalizeWorkflowType(value);
     return WORKFLOW_TYPE_LABELS[normalized] || normalized || "-";
@@ -37,7 +47,7 @@
   Editor.canChangeWorkflowType = function canChangeWorkflowType(leaf) {
     const technicalKey = String(leaf?.technical_key || leaf?.button_key || "").trim();
     if (!technicalKey || technicalKey === SYSTEM_FIRST_CONNECTION_BUTTON_KEY) return false;
-    return Editor.isEditableWorkflowType(leaf?.workflow_type);
+    return Editor.isEditableWorkflowType(Editor.resolveLeafWorkflowType(leaf));
   };
 
   Editor.getWorkflowTypeOptions = function getWorkflowTypeOptions(leaf) {
@@ -51,7 +61,9 @@
   Editor.applyWorkflowTypeDraft = function applyWorkflowTypeDraft(ctx, nextWorkflowType) {
     const { state } = ctx;
     const nextType = Editor.normalizeWorkflowType(nextWorkflowType);
-    const currentType = Editor.normalizeWorkflowType(state.editorWorkflowType || state.savedWorkflowType || state.selectedLeaf?.workflow_type);
+    const currentType = Editor.normalizeWorkflowType(
+      state.editorWorkflowType || state.savedWorkflowType || Editor.resolveLeafWorkflowType(state.selectedLeaf)
+    );
     if (!nextType || nextType === currentType) return true;
     if (!Editor.canChangeWorkflowType(state.selectedLeaf) || !Editor.isEditableWorkflowType(nextType)) return false;
     const currentLabel = Editor.getWorkflowTypeLabel(currentType);
@@ -71,7 +83,7 @@
   };
 
   Editor.isSubmenuLeaf = function isSubmenuLeaf(leaf) {
-    return String(leaf?.workflow_type || "").trim().toLowerCase() === "submenu";
+    return Editor.resolveLeafWorkflowType(leaf) === "submenu";
   };
 
   Editor.syncAutomationSelectionMeta = function syncAutomationSelectionMeta(ctx) {
@@ -144,7 +156,7 @@
     state.conditionalFilesOverridden = !!state.savedConditionalFilesOverridden;
     state.conditionalRules = JSON.parse(JSON.stringify(state.savedConditionalRules || []));
     state.isEnabled = !!state.savedIsEnabled;
-    state.editorWorkflowType = state.savedWorkflowType || state.selectedLeaf?.workflow_type || "";
+    state.editorWorkflowType = state.savedWorkflowType || Editor.resolveLeafWorkflowType(state.selectedLeaf);
     state.automationTypeValue = state.savedAutomationTypeValue || "none";
     Editor.syncAutomationSelectionMeta(ctx);
   };
@@ -179,9 +191,10 @@
     const payload = await api(`/api/v1/settings/bot-buttons/item?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu || "")}`);
     state.selectedLeaf = {
       ...leaf,
+      workflow_type: Editor.resolveLeafWorkflowType({ ...leaf, workflow_type: payload?.workflow_type || leaf?.workflow_type }),
       is_db_created: !!payload?.is_db_created,
       is_archived: !!payload?.is_archived,
-      editor_mode: Editor.isSubmenuLeaf(leaf) ? "submenu" : "default",
+      editor_mode: Editor.isSubmenuLeaf({ ...leaf, workflow_type: payload?.workflow_type || leaf?.workflow_type }) ? "submenu" : "default",
     };
 
     state.savedText = String(payload?.instruction_text || "");
@@ -220,7 +233,7 @@
     state.conditionalRules = JSON.parse(JSON.stringify(normalizedConditional));
     state.savedIsEnabled = payload?.is_enabled !== false;
     state.isEnabled = state.savedIsEnabled;
-    state.savedWorkflowType = Editor.normalizeWorkflowType(payload?.workflow_type || leaf?.workflow_type);
+    state.savedWorkflowType = Editor.resolveLeafWorkflowType({ ...leaf, workflow_type: payload?.workflow_type || leaf?.workflow_type });
     state.editorWorkflowType = state.savedWorkflowType;
     state.automationFrom = String(payload?.automation_from || "none");
     const apiType = String(payload?.automation_type || "").trim();
@@ -253,7 +266,7 @@
     } = ctx;
     const leaf = state.selectedLeaf;
     if (!leaf || !state.selectedMenu) return;
-    const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || leaf.workflow_type);
+    const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || Editor.resolveLeafWorkflowType(leaf));
     const isSubmenu = requestWorkflowType === "submenu";
     if (!String(state.editorBotLabel || "").trim()) {
       alert("Название в боте не может быть пустым.");
