@@ -8,14 +8,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting
+from api.app.models import BotButtonSetting, MessageType, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
+from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
 from api.app.routers import telegram as telegram_router
 from api.app.schemas import BotButtonInstructionUpdate
 from api.app.services import bot_button_materialization as materialization
 from api.app.services import button_automation_types
 from api.app.services import telegram_automation
+from api.app.services.system_tickets import FIRST_CONNECTION_BUTTON_KEY, FIRST_CONNECTION_TITLE, SYSTEM_MENU_TYPE
+from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.button_config import ButtonConfig, ButtonSpec, MenuSpec, TerminalButtonRef
 
 
@@ -1537,3 +1540,127 @@ def test_txt_submenu_restore_restores_recursive_descendants(monkeypatch):
     assert parent.is_archived is False
     assert child.currently_present is True
     assert child.is_archived is False
+
+
+def test_first_connection_can_close_after_agent_reply_without_verified_profile():
+    session = _session()
+    ticket = Ticket(
+        id="ticket-first",
+        company_id="company-1",
+        client_id="client-1",
+        subject="Первое подключение к боту",
+        status=TicketStatus.PENDING.value,
+        workflow_type=TicketWorkflowType.TICKET.value,
+    )
+    session.add(ticket)
+    session.add(
+        TicketMessage(
+            id="message-agent",
+            ticket_id=ticket.id,
+            message_type=MessageType.AGENT.value,
+            body="Ответ клиенту",
+            author_user_id="agent-1",
+            agent_visible=True,
+        )
+    )
+    session.commit()
+    sent = []
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="agent-1", role="agent"),
+        is_admin_fn=lambda actor: False,
+        get_or_create_client_profile_fn=lambda _db, _client_id: SimpleNamespace(is_verified=False),
+        last_agent_message_fn=lambda db, t: db.query(TicketMessage).filter_by(ticket_id=t.id, message_type=MessageType.AGENT.value).first(),
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda _db, _ticket, text, **kwargs: sent.append((text, kwargs)),
+        actor_display_name_fn=lambda *_: "Agent",
+        add_message_fn=lambda db, t, message_type, body, author_user_id, **kwargs: db.add(TicketMessage(
+            id=str(uuid.uuid4()),
+            ticket_id=t.id,
+            message_type=message_type.value if hasattr(message_type, "value") else message_type,
+            body=body,
+            author_user_id=author_user_id,
+            agent_visible=kwargs.get("agent_visible", True),
+        )),
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+
+    assert result == "closed"
+    assert ticket.status == TicketStatus.CLOSED.value
+    assert sent == [("closed", {"required": False, "remove_keyboard": True})]
+
+
+def test_first_connection_system_api_materializes_and_preserves_partial_payload():
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+    first = settings_bot_button_items.get_first_connection_system_ticket(db=session, user=admin)
+    assert first["button_key"] == FIRST_CONNECTION_BUTTON_KEY
+    assert first["button_label"] == FIRST_CONNECTION_TITLE
+    assert first["subject_effective"]
+
+    settings_bot_button_items.save_first_connection_system_ticket(
+        settings_bot_button_items.FirstConnectionSystemUpdate(
+            subject="Custom subject",
+            client_text="Custom client",
+            system_text="Custom system",
+        ),
+        db=session,
+        user=admin,
+    )
+    settings_bot_button_items.save_first_connection_system_ticket(
+        settings_bot_button_items.FirstConnectionSystemUpdate(client_text=""),
+        db=session,
+        user=admin,
+    )
+    row = session.query(BotButtonSetting).filter_by(button_key=FIRST_CONNECTION_BUTTON_KEY).one()
+    assert row.label_override == "Custom subject"
+    assert row.client_text == "Custom client"
+    assert row.system_text == "Custom system"
+    assert row.workflow_type == "ticket"
+
+
+def test_menu_types_list_excludes_system_menu_after_first_connection_materialization(monkeypatch):
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+    settings_bot_button_items.get_first_connection_system_ticket(db=session, user=admin)
+    _seed_row(session, menu_type="menu-a", button_key="menu-a|ticket|A", button_path="A", button_label="A")
+    _seed_row(session, menu_type="menu-b", button_key="menu-b|ticket|B", button_path="B", button_label="B")
+
+    config = ButtonConfig(
+        menus={"root": MenuSpec(key="root", title="menu", rows=tuple())},
+        buttons={},
+        root_menu_key="root",
+    )
+    monkeypatch.setattr(settings_bot_menu_profiles, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_menu_profiles, "available_menu_names", lambda: ("menu-a", "menu-b"))
+    monkeypatch.setattr(settings_bot_menu_profiles, "load_button_config", lambda menu_name: config)
+
+    items = settings_bot_menu_profiles.list_bot_button_menu_types(db=session, user=admin)
+    menu_names = [item.menu_name for item in items]
+
+    assert SYSTEM_MENU_TYPE not in menu_names
+    assert "menu-a" in menu_names
+    assert "menu-b" in menu_names
+
+
+def test_first_connection_system_row_cannot_be_deleted_as_regular_button():
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+    settings_bot_button_items.get_first_connection_system_ticket(db=session, user=admin)
+
+    try:
+        settings_bot_button_items.delete_bot_button_setting(
+            button_key=FIRST_CONNECTION_BUTTON_KEY,
+            hard=True,
+            db=session,
+            user=admin,
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+    else:
+        raise AssertionError("system first connection row must not be deletable through regular endpoint")

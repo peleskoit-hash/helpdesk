@@ -111,7 +111,7 @@ const el = {
   quotePreviewAuthor: document.getElementById("quotePreviewAuthor"),
   quotePreviewText: document.getElementById("quotePreviewText"),
   clearQuoteBtn: document.getElementById("clearQuoteBtn"),
-  messageInput: document.getElementById("messageInput"),
+  messageInput: document.getElementById("ticketMessageBody"),
   replyFilesInput: document.getElementById("replyFilesInput"),
   selectedFilesList: document.getElementById("selectedFilesList"),
   addFilesBtn: document.getElementById("addFilesBtn"),

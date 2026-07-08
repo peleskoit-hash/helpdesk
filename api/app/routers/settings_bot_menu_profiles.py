@@ -11,6 +11,7 @@ from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, BotMenuProfile, ClientCardFieldConfig, ClientProfile
 from ..schemas import BotButtonMenuTypeOut, BotMenuCreatePayload, BotMenuDestinationPayload
 from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, available_menu_names, load_button_config
+from ..services.system_tickets import is_system_menu_type
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -72,6 +73,8 @@ def _menu_profile_map(db: Session) -> dict[str, BotMenuProfile]:
 def _menu_bindings_map(db: Session) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for row in db.execute(select(BotMenuDestinationBinding).order_by(BotMenuDestinationBinding.destination_value.asc())).scalars().all():
+        if is_system_menu_type(row.menu_type):
+            continue
         result.setdefault(row.menu_type, []).append(row.destination_value)
     return result
 
@@ -151,16 +154,22 @@ def list_bot_button_menu_types(
     menu_names: list[str] = []
     seen_menu_names: set[str] = set()
     for name in available_menu_names():
-        if name and name not in seen_menu_names:
+        if name and not is_system_menu_type(name) and name not in seen_menu_names:
             menu_names.append(name)
             seen_menu_names.add(name)
     extra_names = set(profiles.keys())
-    extra_names.update(row[0] for row in db.execute(select(BotButtonSetting.menu_type).distinct()).all() if row[0])
+    extra_names.update(
+        row[0]
+        for row in db.execute(select(BotButtonSetting.menu_type).distinct()).all()
+        if row[0] and not is_system_menu_type(row[0])
+    )
     for name in sorted(extra_names):
-        if name and name not in seen_menu_names:
+        if name and not is_system_menu_type(name) and name not in seen_menu_names:
             menu_names.append(name)
             seen_menu_names.add(name)
     for menu_name in menu_names:
+        if is_system_menu_type(menu_name):
+            continue
         profile = profiles.get(menu_name)
         if profile is not None and not bool(profile.is_active):
             continue
@@ -236,6 +245,8 @@ def list_archived_bot_button_menu_types(
     bindings = _menu_bindings_map(db)
     result: list[BotButtonMenuTypeOut] = []
     for profile in profiles:
+        if is_system_menu_type(profile.menu_type):
+            continue
         buttons_count = db.execute(
             select(BotButtonSetting.id).where(BotButtonSetting.menu_type == profile.menu_type)
         ).all()

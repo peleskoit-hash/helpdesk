@@ -581,11 +581,6 @@ def close_ticket_by_actor(
     if ticket.status == TicketStatus.CLOSED.value:
         return "already_closed"
 
-    if ticket.subject == "Первое подключение к боту":
-        profile = get_or_create_client_profile_fn(db, ticket.client_id)
-        if not profile.is_verified and not is_admin_action:
-            _error(409, "first_connection_not_verified", "Нельзя закрыть первое подключение, пока карточка клиента не верифицирована")
-
     last_agent_message = last_agent_message_fn(db, ticket)
     if last_agent_message is None and is_admin_action and force_without_agent_reply_for_task:
         if workflow_type == TicketWorkflowType.TASK.value:

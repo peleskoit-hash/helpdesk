@@ -95,6 +95,7 @@ from ..services.telegram_onboarding import (
     process_first_connection_start,
     telegram_contact_by_chat_id,
 )
+from ..services.system_tickets import FirstConnectionDefaults, first_connection_values
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
@@ -168,6 +169,14 @@ def _automatic_text(
         )
     except Exception:
         return fallback
+
+
+def _first_connection_defaults(db: Session, contact: TelegramContact | None = None) -> FirstConnectionDefaults:
+    return FirstConnectionDefaults(
+        subject=FIRST_CONNECTION_SUBJECT,
+        client_text=_automatic_text(db, "telegram.onboarding.first_connection.client", FIRST_CONNECTION_CLIENT_TEXT, contact=contact),
+        system_text=FIRST_CONNECTION_AGENT_TEXT,
+    )
 
 
 def _automatic_telegram_text(
@@ -2798,14 +2807,15 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         has_destination = bool((profile.destination or "").strip()) if profile is not None else False
         needs_onboarding = bool(profile is None or not profile.is_verified or not has_destination)
         if ticket is None and needs_onboarding:
+            first_connection_config = first_connection_values(db, _first_connection_defaults(db, contact))
             return process_first_connection_start(
                 db,
                 contact,
                 external_chat_id,
                 notify_client,
-                first_connection_subject=FIRST_CONNECTION_SUBJECT,
-                first_connection_agent_text=FIRST_CONNECTION_AGENT_TEXT,
-                first_connection_client_text=_automatic_text(db, "telegram.onboarding.first_connection.client", FIRST_CONNECTION_CLIENT_TEXT, contact=contact),
+                first_connection_subject=first_connection_config["subject"],
+                first_connection_agent_text=first_connection_config["system_text"],
+                first_connection_client_text=first_connection_config["client_text"],
                 ensure_ticket_for_incoming_fn=_ensure_ticket_for_incoming,
                 append_system_message_fn=append_system_message,
                 user_by_id_fn=lambda _db, _id: _db.execute(select(User).where(User.id == _id)).scalar_one_or_none(),

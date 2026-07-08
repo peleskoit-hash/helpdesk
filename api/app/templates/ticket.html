@@ -137,8 +137,8 @@
                 </div>
                 <button id="clearQuoteBtn" type="button" class="quote-clear" title="Отменить цитирование">×</button>
               </div>
-              <textarea id="messageInput" placeholder="Текст ответа/комментария"></textarea>
-              <input id="replyFilesInput" type="file" multiple hidden />
+              <textarea id="ticketMessageBody" name="ticket_message_body" autocomplete="off" autocapitalize="sentences" spellcheck="true" placeholder="Текст ответа/комментария"></textarea>
+              <input id="replyFilesInput" name="ticket_reply_files" type="file" multiple autocomplete="off" hidden />
               <div id="selectedFilesList" class="selected-files hidden"></div>
               <div class="btn-row">
                 <button id="modeReplyBtn" class="action primary">Ответ</button>

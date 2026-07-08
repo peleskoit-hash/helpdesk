@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from collections import defaultdict
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -100,10 +101,11 @@ def process_first_connection_start(
         contact.client_id,
         first_connection_subject,
     )
+    template_values = defaultdict(str, {"username_text": "@username"})
     append_system_message_fn(
         db,
         ticket,
-        first_connection_agent_text.format(username_text="@username"),
+        first_connection_agent_text.format_map(template_values),
         agent_visible=True,
     )
 

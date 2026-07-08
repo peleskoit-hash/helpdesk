@@ -192,13 +192,10 @@
     const hasAnyMessage = card.messages.length > 0;
     const greetedByMessage = card.messages.some((m) => m.message_type === "agent" && /^добр/i.test((m.body || "").trim()));
     const greeted = greetedByMessage || Boolean(card.greeting_used);
-    const isFirstConnection = card.subject === "Первое подключение к боту";
-    const firstConnectionVerified = Boolean(card.client_profile?.is_verified);
-
     const workflowType = card.workflow_type || "ticket";
     const isGreetingFlow = workflowType !== "task" && workflowType !== "auto";
     const showGreeting = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed() && !greeted;
-    const showClose = !isReadonly && !isClosed && (!isFirstConnection || firstConnectionVerified) && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
+    const showClose = !isReadonly && !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
     const showFreezeToggle = !isReadonly && !isClosed;
     const canRestore = state.role === "admin" || (card.closed_by_user_id && card.closed_by_user_id === state.userId);
     const canRestoreFlow = workflowType !== "task" && workflowType !== "auto";

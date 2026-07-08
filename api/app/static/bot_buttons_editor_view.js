@@ -879,5 +879,7 @@
     closeTextEditorModal();
   };
 
+  EditorView.openTextEditorModal = openTextEditorModal;
+
   global.BotButtonsEditorView = EditorView;
 })(window);

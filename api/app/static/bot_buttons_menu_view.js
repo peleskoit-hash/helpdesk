@@ -1,5 +1,7 @@
 (function initBotButtonsMenuView(global) {
   const MenuView = {};
+  const SYSTEM_TICKETS_TITLE = "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0437\u0430\u044f\u0432\u043a\u0438";
+  const FIRST_CONNECTION_TITLE = "\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443";
 
   MenuView.buildPreviewFromNode = function buildPreviewFromNode(ctx, node) {
     const { state } = ctx;
@@ -124,6 +126,11 @@
     const title = item.display_name || item.menu_name || "Меню";
     const destinations = Array.isArray(item.destinations) ? item.destinations : [];
     return `${title} (${destinations.length ? destinations.join(", ") : "не привязано"})`;
+  };
+
+  MenuView.isSystemMenuTypeRecord = function isSystemMenuTypeRecord(item) {
+    const menuName = String(item?.menu_name || "").trim();
+    return !!menuName && menuName.startsWith("__system__");
   };
 
   MenuView.selectedMenuInfo = function selectedMenuInfo(ctx) {
@@ -260,9 +267,9 @@
   };
 
   MenuView.renderMenuTypes = function renderMenuTypes(ctx) {
-    const { state, el, escapeHtml, renderRightPanel, confirmDiscard, discardEditorChanges, openMenu, api, setStatus, loadMenuTypes } = ctx;
-    const items = state.menuTypes || [];
-    const archived = state.archivedMenuTypes || [];
+    const { state, el, escapeHtml, renderRightPanel, confirmDiscard, discardEditorChanges, openMenu, api, setStatus, loadMenuTypes, systemTicketLoadError } = ctx;
+    const items = (state.menuTypes || []).filter((item) => !MenuView.isSystemMenuTypeRecord(item));
+    const archived = (state.archivedMenuTypes || []).filter((item) => !MenuView.isSystemMenuTypeRecord(item));
     if (!items.length && !archived.length) {
       el.content.innerHTML = `<div class="status settings-empty">Типы меню не найдены</div>`;
       return;
@@ -285,6 +292,7 @@
           ${archived.length ? `
           <div class="bot-buttons-archive-bottom">
             <div class="bot-menu-bindings-title">Архив меню</div>
+            ${systemTicketLoadError ? `<div class="status">${escapeHtml(systemTicketLoadError)}</div>` : ""}
             <div class="bot-buttons-level-list">
               ${archived.map((item) => `
                 <div class="bot-removed-row">
@@ -296,6 +304,15 @@
               `).join("")}
             </div>
           </div>` : ""}
+          <div class="bot-buttons-archive-bottom">
+            <div class="bot-menu-bindings-title">${SYSTEM_TICKETS_TITLE}</div>
+            ${systemTicketLoadError ? `<div class="status">${escapeHtml(systemTicketLoadError)}</div>` : ""}
+            <div class="bot-buttons-level-list">
+              <button type="button" id="openFirstConnectionSystemBtn" data-system-ticket-key="first-connection" class="bot-buttons-level-item">
+                ${FIRST_CONNECTION_TITLE}
+              </button>
+            </div>
+          </div>
         </div>
         <div class="bot-buttons-split-right" id="botButtonsRightPanel">
           ${renderRightPanel()}
@@ -306,7 +323,6 @@
     document.getElementById("createMenuTypeBtn")?.addEventListener("click", async () => {
       await MenuView.createMenuType(ctx);
     });
-
     el.content.querySelectorAll("[data-menu-name]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!confirmDiscard()) return;
@@ -330,5 +346,8 @@
   };
 
   global.BotButtonsMenuView = MenuView;
+  global.BotButtonsMenuViewSystemText = {
+    SYSTEM_TICKETS_TITLE,
+    FIRST_CONNECTION_TITLE,
+  };
 })(window);
-

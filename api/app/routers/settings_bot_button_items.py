@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,8 +31,32 @@ from ..services.button_config import (
     load_button_config,
 )
 from ..services.telegram_automation import get_automation_registry
+from ..services.system_tickets import (
+    FIRST_CONNECTION_BUTTON_KEY,
+    FirstConnectionDefaults,
+    first_connection_values,
+    materialize_first_connection_row,
+)
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+
+
+class FirstConnectionSystemUpdate(BaseModel):
+    subject: str | None = None
+    client_text: str | None = None
+    system_text: str | None = None
+    instruction_text: str | None = None
+    is_enabled: bool | None = None
+
+
+def _first_connection_defaults() -> FirstConnectionDefaults:
+    from .telegram import FIRST_CONNECTION_AGENT_TEXT, FIRST_CONNECTION_CLIENT_TEXT, FIRST_CONNECTION_SUBJECT
+
+    return FirstConnectionDefaults(
+        subject=FIRST_CONNECTION_SUBJECT,
+        client_text=FIRST_CONNECTION_CLIENT_TEXT,
+        system_text=FIRST_CONNECTION_AGENT_TEXT,
+    )
 
 CONDITIONAL_COMMON_KEYS: list[str] = [
     "employee_type",
@@ -468,6 +493,83 @@ def _build_conditional_field_catalog(db: Session, menu_type: str | None = None) 
     return catalog
 
 
+@router.get("/bot-buttons/system/first-connection")
+def get_first_connection_system_ticket(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    defaults = _first_connection_defaults()
+    row = materialize_first_connection_row(db, defaults)
+    values = first_connection_values(db, defaults)
+    db.commit()
+    return {
+        "button_key": FIRST_CONNECTION_BUTTON_KEY,
+        "workflow_type": row.workflow_type,
+        "button_label": row.button_label,
+        "button_path": row.button_path,
+        "subject": row.label_override,
+        "subject_effective": values["subject"],
+        "subject_overridden": bool(row.label_overridden),
+        "client_text": row.client_text,
+        "client_text_effective": values["client_text"],
+        "client_text_overridden": bool(row.client_text_overridden),
+        "system_text": row.system_text,
+        "system_text_effective": values["system_text"],
+        "system_text_overridden": bool(row.system_text_overridden),
+        "instruction_text": row.instruction_text,
+        "is_enabled": bool(row.is_enabled) if row.visibility_overridden else True,
+        "visibility_overridden": bool(row.visibility_overridden),
+    }
+
+
+@router.put("/bot-buttons/system/first-connection")
+def save_first_connection_system_ticket(
+    payload: FirstConnectionSystemUpdate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    defaults = _first_connection_defaults()
+    row = materialize_first_connection_row(db, defaults)
+    fields_set = set(getattr(payload, "model_fields_set", set()) or set())
+
+    if "subject" in fields_set and payload.subject is not None:
+        value = payload.subject.strip()
+        if value:
+            row.label_override = value
+            row.label_overridden = True
+    if "client_text" in fields_set and payload.client_text is not None:
+        value = payload.client_text.strip()
+        if value:
+            row.client_text = value
+            row.client_text_overridden = True
+    if "system_text" in fields_set and payload.system_text is not None:
+        value = payload.system_text.strip()
+        if value:
+            row.system_text = value
+            row.system_text_overridden = True
+            row.instruction_text = value
+    if "instruction_text" in fields_set and payload.instruction_text is not None:
+        value = payload.instruction_text.strip()
+        if value:
+            row.instruction_text = value
+    if "is_enabled" in fields_set and payload.is_enabled is not None:
+        row.is_enabled = bool(payload.is_enabled)
+        row.visibility_overridden = True
+
+    row.updated_at = datetime.utcnow()
+    values = first_connection_values(db, defaults)
+    db.commit()
+    return {
+        "ok": True,
+        "button_key": FIRST_CONNECTION_BUTTON_KEY,
+        "subject_effective": values["subject"],
+        "client_text_effective": values["client_text"],
+        "system_text_effective": values["system_text"],
+    }
+
+
 @router.get("/bot-buttons/item")
 def get_bot_button_item(
     button_key: str,
@@ -894,6 +996,8 @@ def delete_bot_button_setting(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
+    if button_key == FIRST_CONNECTION_BUTTON_KEY:
+        _error(422, "system_button_not_deletable", "System ticket cannot be deleted through regular bot button endpoint")
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
     if row is None:
         return {"ok": True, "deleted": False}

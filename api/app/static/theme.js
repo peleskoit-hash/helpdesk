@@ -1,15 +1,16 @@
 const THEME_STORAGE_KEY = "hd_theme";
+let themeToggleButton = null;
+let themeToggleClickHandler = null;
 
 function applyTheme(theme) {
   const normalized = theme === "dark" ? "dark" : "light";
   document.body.dataset.theme = normalized;
   localStorage.setItem(THEME_STORAGE_KEY, normalized);
 
-  const button = document.getElementById("themeToggleBtn");
-  if (button) {
+  document.querySelectorAll("#themeToggleBtn").forEach((button) => {
     button.textContent = normalized === "dark" ? "Светлая тема" : "Тёмная тема";
     button.setAttribute("aria-pressed", normalized === "dark" ? "true" : "false");
-  }
+  });
 }
 
 function initThemeToggle() {
@@ -17,15 +18,22 @@ function initThemeToggle() {
   applyTheme(savedTheme);
 
   const button = document.getElementById("themeToggleBtn");
-  if (!button) return;
-
-  button.addEventListener("click", () => {
-    const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
-    applyTheme(nextTheme);
-  });
+  if (themeToggleButton && themeToggleButton !== button && themeToggleClickHandler) {
+    themeToggleButton.removeEventListener("click", themeToggleClickHandler);
+  }
+  if (button && button !== themeToggleButton) {
+    themeToggleClickHandler = () => {
+      const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
+      applyTheme(nextTheme);
+    };
+    button.addEventListener("click", themeToggleClickHandler);
+    themeToggleButton = button;
+  }
 
   const logoutForms = document.querySelectorAll("form[action='/logout']");
   logoutForms.forEach((form) => {
+    if (form.dataset.themeLogoutBound === "1") return;
+    form.dataset.themeLogoutBound = "1";
     form.addEventListener("submit", () => {
       localStorage.removeItem("hd_role");
       localStorage.removeItem("hd_user_role");
@@ -43,3 +51,8 @@ if (document.readyState === "loading") {
 } else {
   initThemeToggle();
 }
+
+window.HelpdeskTheme = {
+  applyTheme,
+  initThemeToggle,
+};
