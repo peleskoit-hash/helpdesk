@@ -1,5 +1,74 @@
 (function initBotButtonsEditor(global) {
   const Editor = {};
+  const SYSTEM_FIRST_CONNECTION_BUTTON_KEY = "__system__|first_connection";
+  const EDITABLE_WORKFLOW_TYPES = ["ticket", "task", "auto"];
+  const WORKFLOW_TYPE_LABELS = {
+    ticket: "\u0417\u0430\u044f\u0432\u043a\u0430",
+    task: "\u0417\u0430\u0434\u0430\u0447\u0430",
+    auto: "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430",
+    submenu: "\u041f\u043e\u0434\u043c\u0435\u043d\u044e",
+    group_task: "\u0413\u0440\u0443\u043f\u043f\u043e\u0432\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430",
+    group_task_child: "\u0414\u043e\u0447\u0435\u0440\u043d\u044f\u044f \u0437\u0430\u0434\u0430\u0447\u0430",
+  };
+
+  Editor.normalizeWorkflowType = function normalizeWorkflowType(value) {
+    return String(value || "").trim().toLowerCase();
+  };
+
+  Editor.getWorkflowTypeLabel = function getWorkflowTypeLabel(value) {
+    const normalized = Editor.normalizeWorkflowType(value);
+    return WORKFLOW_TYPE_LABELS[normalized] || normalized || "-";
+  };
+
+  Editor.isEditableWorkflowType = function isEditableWorkflowType(value) {
+    return EDITABLE_WORKFLOW_TYPES.includes(Editor.normalizeWorkflowType(value));
+  };
+
+  Editor.isAutomationAllowedForWorkflowType = function isAutomationAllowedForWorkflowType(workflowType, automationType) {
+    const workflow = Editor.normalizeWorkflowType(workflowType);
+    const automation = String(automationType || "none").trim() || "none";
+    if (!Editor.isEditableWorkflowType(workflow) || automation === "none") return true;
+    if (workflow === "ticket") return automation === "send_files";
+    if (workflow === "task") return automation === "send_files" || automation === "bitrix_deal_phone_lookup";
+    if (workflow === "auto") return automation === "send_files" || automation === "message_only";
+    return true;
+  };
+
+  Editor.canChangeWorkflowType = function canChangeWorkflowType(leaf) {
+    const technicalKey = String(leaf?.technical_key || leaf?.button_key || "").trim();
+    if (!technicalKey || technicalKey === SYSTEM_FIRST_CONNECTION_BUTTON_KEY) return false;
+    return Editor.isEditableWorkflowType(leaf?.workflow_type);
+  };
+
+  Editor.getWorkflowTypeOptions = function getWorkflowTypeOptions(leaf) {
+    if (!Editor.canChangeWorkflowType(leaf)) return [];
+    return EDITABLE_WORKFLOW_TYPES.map((value) => ({
+      value,
+      label: Editor.getWorkflowTypeLabel(value),
+    }));
+  };
+
+  Editor.applyWorkflowTypeDraft = function applyWorkflowTypeDraft(ctx, nextWorkflowType) {
+    const { state } = ctx;
+    const nextType = Editor.normalizeWorkflowType(nextWorkflowType);
+    const currentType = Editor.normalizeWorkflowType(state.editorWorkflowType || state.savedWorkflowType || state.selectedLeaf?.workflow_type);
+    if (!nextType || nextType === currentType) return true;
+    if (!Editor.canChangeWorkflowType(state.selectedLeaf) || !Editor.isEditableWorkflowType(nextType)) return false;
+    const currentLabel = Editor.getWorkflowTypeLabel(currentType);
+    const nextLabel = Editor.getWorkflowTypeLabel(nextType);
+    const confirmed = window.confirm(
+      `\u0412\u044b \u043c\u0435\u043d\u044f\u0435\u0442\u0435 \u0442\u0438\u043f \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044e\u0449\u0435\u0439 \u043a\u043d\u043e\u043f\u043a\u0438 \u0441 "${currentLabel}" \u043d\u0430 "${nextLabel}".\n\n` +
+      `\u0427\u0430\u0441\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0445 \u043c\u043e\u0436\u0435\u0442 \u0441\u0442\u0430\u0442\u044c \u043d\u0435\u043f\u0440\u0438\u043c\u0435\u043d\u0438\u043c\u043e\u0439 \u0434\u043b\u044f \u043d\u043e\u0432\u043e\u0433\u043e \u0442\u0438\u043f\u0430. \u0422\u0430\u043a\u0438\u0435 \u043f\u043e\u043b\u044f \u0431\u0443\u0434\u0443\u0442 \u043e\u0447\u0438\u0449\u0435\u043d\u044b \u0438\u043b\u0438 \u043d\u0435 \u0431\u0443\u0434\u0443\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b.\n\n` +
+      `\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c?`
+    );
+    if (!confirmed) return false;
+    state.editorWorkflowType = nextType;
+    if (!Editor.isAutomationAllowedForWorkflowType(nextType, state.automationTypeValue)) {
+      state.automationTypeValue = "none";
+      Editor.syncAutomationSelectionMeta(ctx);
+    }
+    return true;
+  };
 
   Editor.isSubmenuLeaf = function isSubmenuLeaf(leaf) {
     return String(leaf?.workflow_type || "").trim().toLowerCase() === "submenu";
@@ -50,6 +119,7 @@
       || state.conditionalFilesOverridden !== state.savedConditionalFilesOverridden
       || JSON.stringify(state.conditionalRules || []) !== JSON.stringify(state.savedConditionalRules || [])
       || state.isEnabled !== state.savedIsEnabled
+      || Editor.normalizeWorkflowType(state.editorWorkflowType) !== Editor.normalizeWorkflowType(state.savedWorkflowType)
       || (state.automationTypeValue || "none") !== (state.savedAutomationTypeValue || "none");
   };
 
@@ -74,6 +144,7 @@
     state.conditionalFilesOverridden = !!state.savedConditionalFilesOverridden;
     state.conditionalRules = JSON.parse(JSON.stringify(state.savedConditionalRules || []));
     state.isEnabled = !!state.savedIsEnabled;
+    state.editorWorkflowType = state.savedWorkflowType || state.selectedLeaf?.workflow_type || "";
     state.automationTypeValue = state.savedAutomationTypeValue || "none";
     Editor.syncAutomationSelectionMeta(ctx);
   };
@@ -149,6 +220,8 @@
     state.conditionalRules = JSON.parse(JSON.stringify(normalizedConditional));
     state.savedIsEnabled = payload?.is_enabled !== false;
     state.isEnabled = state.savedIsEnabled;
+    state.savedWorkflowType = Editor.normalizeWorkflowType(payload?.workflow_type || leaf?.workflow_type);
+    state.editorWorkflowType = state.savedWorkflowType;
     state.automationFrom = String(payload?.automation_from || "none");
     const apiType = String(payload?.automation_type || "").trim();
     const hasLegacyFiles = state.savedSelectedFiles.length > 0 || normalizedConditional.length > 0;
@@ -180,7 +253,8 @@
     } = ctx;
     const leaf = state.selectedLeaf;
     if (!leaf || !state.selectedMenu) return;
-    const isSubmenu = Editor.isSubmenuLeaf(leaf);
+    const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || leaf.workflow_type);
+    const isSubmenu = requestWorkflowType === "submenu";
     if (!String(state.editorBotLabel || "").trim()) {
       alert("Название в боте не может быть пустым.");
       return;
@@ -250,6 +324,11 @@
     }
 
     setStatus("Сохранение...");
+    if (!isSubmenu && !Editor.isAutomationAllowedForWorkflowType(requestWorkflowType, state.automationTypeValue)) {
+      state.automationTypeValue = "none";
+      Editor.syncAutomationSelectionMeta(ctx);
+    }
+
     const requestBody = isSubmenu
       ? {
           client_text_overridden: true,
@@ -284,7 +363,7 @@
         };
 
     await api(
-      `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(leaf.workflow_type)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
+      `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(requestWorkflowType)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
       {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -314,6 +393,13 @@
       state.sendFilesProjectionError = projectionCheck.error;
     }
     state.savedIsEnabled = state.isEnabled;
+    state.savedWorkflowType = requestWorkflowType;
+    state.editorWorkflowType = requestWorkflowType;
+    state.selectedLeaf = {
+      ...state.selectedLeaf,
+      workflow_type: requestWorkflowType,
+      editor_mode: isSubmenu ? "submenu" : "default",
+    };
     state.savedAutomationTypeValue = state.automationTypeValue;
     state.savedAutomationKeyValue = state.automationKeyValue;
 

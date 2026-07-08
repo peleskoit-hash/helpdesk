@@ -1215,7 +1215,7 @@ def test_submenu_empty_client_text_stays_empty_without_txt_fallback(monkeypatch)
     assert payload["client_text_from"] == "db"
 
 
-def test_submenu_save_does_not_change_type_when_query_workflow_differs(monkeypatch):
+def test_submenu_save_rejects_type_change_when_query_workflow_differs(monkeypatch):
     session = _session()
     _seed_row(
         session,
@@ -1229,25 +1229,246 @@ def test_submenu_save_does_not_change_type_when_query_workflow_differs(monkeypat
     monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
     monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
 
-    settings_bot_button_items.save_bot_button_instruction(
+    try:
+        settings_bot_button_items.save_bot_button_instruction(
+            BotButtonInstructionUpdate(
+                client_text="\u0422\u0435\u043a\u0441\u0442",
+                client_text_overridden=True,
+                label_override="Submenu",
+                label_overridden=True,
+            ),
+            button_key="menu-a|submenu|Submenu",
+            menu_type="menu-a",
+            workflow_type="ticket",
+            button_path="Submenu",
+            button_label="Submenu",
+            db=session,
+            user=SimpleNamespace(id="admin-1"),
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        detail = getattr(exc, "detail", {}) or {}
+        error = detail.get("error", {}) if isinstance(detail, dict) else {}
+        assert error.get("code") == "button_type_change_forbidden"
+        assert error.get("message") == "\u041d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f \u043f\u043e\u0434\u043c\u0435\u043d\u044e \u0447\u0435\u0440\u0435\u0437 \u0440\u0435\u0434\u0430\u043a\u0442\u043e\u0440 \u043a\u043d\u043e\u043f\u043a\u0438"
+    else:
+        raise AssertionError("Expected submenu type transition rejection")
+
+
+def test_existing_terminal_button_can_change_type_between_ticket_task_and_auto(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|ticket|A", workflow_type="ticket", button_kind="terminal")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = settings_bot_button_items.save_bot_button_instruction(
         BotButtonInstructionUpdate(
-            client_text="Текст",
-            client_text_overridden=True,
-            label_override="Submenu",
+            instruction_text="Task instruction",
+            label_override="A",
             label_overridden=True,
+            automation_type="send_files",
+            automation_overridden=True,
         ),
-        button_key="menu-a|submenu|Submenu",
+        button_key="menu-a|ticket|A",
         menu_type="menu-a",
-        workflow_type="ticket",
-        button_path="Submenu",
-        button_label="Submenu",
+        workflow_type="task",
+        button_path="A",
+        button_label="A",
         db=session,
         user=SimpleNamespace(id="admin-1"),
     )
 
-    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
-    assert row.workflow_type == "submenu"
-    assert row.button_kind == "section"
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|ticket|A").one()
+    assert payload["ok"] is True
+    assert row.workflow_type == "task"
+    assert row.button_kind == "terminal"
+
+
+def test_group_parent_save_with_same_workflow_keeps_group_parent_button_kind(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|group_task|A", workflow_type="group_task", button_kind="group_parent")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+            client_text="\u0422\u0435\u043a\u0441\u0442",
+            client_text_overridden=True,
+        ),
+        button_key="menu-a|group_task|A",
+        menu_type="menu-a",
+        workflow_type="group_task",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|group_task|A").one()
+    assert row.workflow_type == "group_task"
+    assert row.button_kind == "group_parent"
+
+
+def test_group_task_child_save_with_same_workflow_keeps_terminal_child_button_kind(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|group_task_child|A", workflow_type="group_task_child", button_kind="terminal")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+            instruction_text="Child instruction",
+        ),
+        button_key="menu-a|group_task_child|A",
+        menu_type="menu-a",
+        workflow_type="group_task_child",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|group_task_child|A").one()
+    assert row.workflow_type == "group_task_child"
+    assert row.button_kind == "terminal"
+
+
+def test_type_change_clears_incompatible_existing_automation_when_frontend_does_not_send_replacement(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|auto|A",
+        workflow_type="auto",
+        button_kind="terminal",
+        automation_key="message_only",
+        automation_overridden=True,
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
+
+    payload = settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            instruction_text="Ticket instruction",
+            label_override="A",
+            label_overridden=True,
+        ),
+        button_key="menu-a|auto|A",
+        menu_type="menu-a",
+        workflow_type="ticket",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|auto|A").one()
+    assert row.workflow_type == "ticket"
+    assert row.automation_key is None
+    assert payload["automation_type"] == "none"
+
+
+def test_existing_terminal_button_cannot_change_type_to_submenu(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|ticket|A", workflow_type="ticket", button_kind="terminal")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    try:
+        settings_bot_button_items.save_bot_button_instruction(
+            BotButtonInstructionUpdate(
+                label_override="A",
+                label_overridden=True,
+            ),
+            button_key="menu-a|ticket|A",
+            menu_type="menu-a",
+            workflow_type="submenu",
+            button_path="A",
+            button_label="A",
+            db=session,
+            user=SimpleNamespace(id="admin-1"),
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        detail = getattr(exc, "detail", {}) or {}
+        error = detail.get("error", {}) if isinstance(detail, dict) else {}
+        assert error.get("code") == "button_type_change_forbidden"
+        assert error.get("message") == "\u0420\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0430 \u0441\u043c\u0435\u043d\u0430 \u0442\u0438\u043f\u0430 \u0442\u043e\u043b\u044c\u043a\u043e \u043c\u0435\u0436\u0434\u0443 \u0417\u0430\u044f\u0432\u043a\u043e\u0439, \u0417\u0430\u0434\u0430\u0447\u0435\u0439 \u0438 \u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0435\u0439"
+    else:
+        raise AssertionError("Expected submenu transition rejection")
+
+
+def test_system_first_connection_cannot_change_type_via_regular_button_endpoint(monkeypatch):
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+    settings_bot_button_items.get_first_connection_system_ticket(db=session, user=admin)
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    try:
+        settings_bot_button_items.save_bot_button_instruction(
+            BotButtonInstructionUpdate(
+                label_override="System",
+                label_overridden=True,
+            ),
+            button_key=FIRST_CONNECTION_BUTTON_KEY,
+            menu_type="menu-a",
+            workflow_type="task",
+            button_path="System",
+            button_label="System",
+            db=session,
+            user=admin,
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 422
+        detail = getattr(exc, "detail", {}) or {}
+        error = detail.get("error", {}) if isinstance(detail, dict) else {}
+        assert error.get("code") == "system_button_type_change_forbidden"
+        assert error.get("message") == "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0439 \u0437\u0430\u044f\u0432\u043a\u0435 \u043d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f"
+    else:
+        raise AssertionError("Expected system type transition rejection")
+
+
+def test_system_row_save_with_same_workflow_keeps_system_button_kind(monkeypatch):
+    session = _session()
+    _seed_row(
+        session,
+        button_key="menu-a|system|A",
+        workflow_type="system",
+        button_kind="system",
+        button_path="A",
+        button_label="A",
+    )
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+        ),
+        button_key="menu-a|system|A",
+        menu_type="menu-a",
+        workflow_type="system",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|system|A").one()
+    assert row.workflow_type == "system"
+    assert row.button_kind == "system"
 
 
 def test_disabling_submenu_does_not_delete_children(monkeypatch):

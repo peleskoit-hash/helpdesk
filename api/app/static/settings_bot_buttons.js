@@ -108,6 +108,8 @@ const state = {
   savedBotLabel: "",
   editorSystemText: "",
   savedSystemText: "",
+  editorWorkflowType: "",
+  savedWorkflowType: "",
   systemTextOverridden: false,
 
   fixedAssigneeEnabled: false,
@@ -786,6 +788,8 @@ async function loadMenuTypes() {
   state.savedBotLabel = "";
   state.editorSystemText = "";
   state.savedSystemText = "";
+  state.editorWorkflowType = "";
+  state.savedWorkflowType = "";
   state.systemTextOverridden = false;
   state.fixedAssigneeEnabled = false;
   state.savedFixedAssigneeEnabled = false;

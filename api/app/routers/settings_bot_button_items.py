@@ -113,6 +113,13 @@ TEXT_OPERATORS = {"eq", "ne", "contains", "not_contains", "empty", "not_empty"}
 SELECT_OPERATORS = {"eq", "ne", "empty", "not_empty"}
 NUMBER_OPERATORS = {"eq", "ne", "gt", "lt", "gte", "lte", "empty", "not_empty"}
 BOOL_OPERATORS = {"eq", "is_true", "is_false"}
+EDITABLE_EXISTING_WORKFLOW_TYPES = {"ticket", "task", "auto"}
+ERROR_SYSTEM_BUTTON_TYPE_CHANGE_FORBIDDEN = "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0439 \u0437\u0430\u044f\u0432\u043a\u0435 \u043d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f"
+ERROR_SUBMENU_TYPE_CHANGE_FORBIDDEN = "\u041d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f \u043f\u043e\u0434\u043c\u0435\u043d\u044e \u0447\u0435\u0440\u0435\u0437 \u0440\u0435\u0434\u0430\u043a\u0442\u043e\u0440 \u043a\u043d\u043e\u043f\u043a\u0438"
+ERROR_GROUP_TASK_TYPE_CHANGE_FORBIDDEN = "\u041d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f \u0433\u0440\u0443\u043f\u043f\u043e\u0432\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0438 \u0447\u0435\u0440\u0435\u0437 \u0440\u0435\u0434\u0430\u043a\u0442\u043e\u0440 \u043a\u043d\u043e\u043f\u043a\u0438"
+ERROR_GROUP_TASK_CHILD_TYPE_CHANGE_FORBIDDEN = "\u041d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f \u0434\u043e\u0447\u0435\u0440\u043d\u0435\u0439 \u0437\u0430\u0434\u0430\u0447\u0438 \u0447\u0435\u0440\u0435\u0437 \u0440\u0435\u0434\u0430\u043a\u0442\u043e\u0440 \u043a\u043d\u043e\u043f\u043a\u0438"
+ERROR_UNKNOWN_BUTTON_TYPE_CHANGE_FORBIDDEN = "\u041d\u0435\u043b\u044c\u0437\u044f \u043c\u0435\u043d\u044f\u0442\u044c \u0442\u0438\u043f \u044d\u0442\u043e\u0439 \u043a\u043d\u043e\u043f\u043a\u0438"
+ERROR_DISALLOWED_WORKFLOW_TYPE_CHANGE = "\u0420\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0430 \u0441\u043c\u0435\u043d\u0430 \u0442\u0438\u043f\u0430 \u0442\u043e\u043b\u044c\u043a\u043e \u043c\u0435\u0436\u0434\u0443 \u0417\u0430\u044f\u0432\u043a\u043e\u0439, \u0417\u0430\u0434\u0430\u0447\u0435\u0439 \u0438 \u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0435\u0439"
 
 
 def _error(status_code: int, code: str, message: str):
@@ -200,6 +207,35 @@ def _normalize_relative_button_file_path(raw_path: str) -> str | None:
 
 def _payload_fields_set(payload: BotButtonInstructionUpdate) -> set[str]:
     return set(getattr(payload, "model_fields_set", set()) or set())
+
+
+def _validate_existing_button_workflow_transition(row: BotButtonSetting, requested_workflow_type: str) -> str:
+    current_workflow = normalize_workflow_type(row.workflow_type)
+    requested_workflow = normalize_workflow_type(requested_workflow_type)
+    row_kind = (row.button_kind or "").strip().lower()
+    if row.button_key == FIRST_CONNECTION_BUTTON_KEY or row_kind == "system":
+        if requested_workflow and requested_workflow != current_workflow:
+            _error(422, "system_button_type_change_forbidden", ERROR_SYSTEM_BUTTON_TYPE_CHANGE_FORBIDDEN)
+        return current_workflow
+    if current_workflow == "submenu" or row_kind == "section":
+        if requested_workflow and requested_workflow != "submenu":
+            _error(422, "button_type_change_forbidden", ERROR_SUBMENU_TYPE_CHANGE_FORBIDDEN)
+        return "submenu"
+    if current_workflow == "group_task" or row_kind == "group_parent":
+        if requested_workflow and requested_workflow != current_workflow:
+            _error(422, "button_type_change_forbidden", ERROR_GROUP_TASK_TYPE_CHANGE_FORBIDDEN)
+        return current_workflow
+    if current_workflow == "group_task_child":
+        if requested_workflow and requested_workflow != current_workflow:
+            _error(422, "button_type_change_forbidden", ERROR_GROUP_TASK_CHILD_TYPE_CHANGE_FORBIDDEN)
+        return current_workflow
+    if current_workflow not in EDITABLE_EXISTING_WORKFLOW_TYPES:
+        if requested_workflow and requested_workflow != current_workflow:
+            _error(422, "button_type_change_forbidden", ERROR_UNKNOWN_BUTTON_TYPE_CHANGE_FORBIDDEN)
+        return current_workflow
+    if requested_workflow not in EDITABLE_EXISTING_WORKFLOW_TYPES:
+        _error(422, "button_type_change_forbidden", ERROR_DISALLOWED_WORKFLOW_TYPE_CHANGE)
+    return requested_workflow
 
 
 def _resolve_requested_automation_key(
@@ -836,9 +872,11 @@ def save_bot_button_instruction(
         normalized_conditional = _normalize_conditional_rules(payload_conditional, available_files, conditional_catalog)
     row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
     now = datetime.utcnow()
-    if row is not None and (row.button_kind or "").strip().lower() == "section":
-        effective_workflow_type = "submenu"
-        is_submenu_request = True
+    workflow_type_changed = False
+    if row is not None:
+        effective_workflow_type = _validate_existing_button_workflow_transition(row, requested_workflow_type)
+        is_submenu_request = effective_workflow_type == "submenu"
+        workflow_type_changed = normalize_workflow_type(row.workflow_type) != normalize_workflow_type(effective_workflow_type)
     if row is None:
         row = BotButtonSetting(
             id=str(uuid.uuid4()),
@@ -881,8 +919,10 @@ def save_bot_button_instruction(
         row.menu_type = menu_type
         row.workflow_type = effective_workflow_type
         row.button_path = button_path
-        if is_submenu_request:
+        if effective_workflow_type == "submenu":
             row.button_kind = "section"
+        elif effective_workflow_type in EDITABLE_EXISTING_WORKFLOW_TYPES:
+            row.button_kind = "terminal"
         row.parent_path = parent_path_value
         if not bool(row.label_overridden):
             row.button_label = button_label
@@ -945,6 +985,13 @@ def save_bot_button_instruction(
                 row.conditional_files_json = None
         if automation_type_requested:
             row.automation_key = automation_key_value
+            row.automation_overridden = True
+        elif workflow_type_changed and not is_automation_allowed_for_workflow(
+            effective_workflow_type,
+            row.automation_key,
+            allow_auto_none=True,
+        ):
+            row.automation_key = None
             row.automation_overridden = True
         if payload.automation_overridden is not None:
             row.automation_overridden = bool(payload.automation_overridden)

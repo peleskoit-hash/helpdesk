@@ -64,6 +64,86 @@ test('hydrates unconditional and conditional files into file-centric entries', (
   assert.equal(entries[1].rules.length, 1);
 });
 
+test('workflow type draft change resets incompatible automation and discard restores saved type', () => {
+  const confirmations = [];
+  const editorSource = fs.readFileSync('api/app/static/bot_buttons_editor.js', 'utf8');
+  const window = {
+    BotButtonsFiles: helpers,
+    confirm(message) {
+      confirmations.push(message);
+      return true;
+    },
+  };
+  const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
+  vm.runInContext(editorSource, context);
+  const localEditorHelpers = window.BotButtonsEditor;
+  const state = {
+    selectedLeaf: { technical_key: 'menu-a|auto|A', workflow_type: 'auto' },
+    savedWorkflowType: 'auto',
+    editorWorkflowType: 'auto',
+    automationTypeValue: 'message_only',
+    availableAutomations: [
+      { key: 'none', title: '\u041d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c', description: '', available: true, handler: '' },
+      { key: 'message_only', title: '\u0422\u043e\u043b\u044c\u043a\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435', description: '', available: true, handler: '' },
+    ],
+    automationType: 'message_only',
+    automationKeyValue: 'message_only',
+    automationKey: 'message_only',
+    automationTitle: '\u0422\u043e\u043b\u044c\u043a\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435',
+    automationDescription: '',
+    automationAvailable: true,
+    automationHandler: '',
+    automationStatus: 'available',
+    editorText: '',
+    savedText: '',
+    editorBotLabel: '',
+    savedBotLabel: '',
+    editorClientText: '',
+    savedClientText: '',
+    editorSystemText: '',
+    savedSystemText: '',
+    fixedAssigneeEnabled: false,
+    savedFixedAssigneeEnabled: false,
+    fixedAssigneeUserId: '',
+    savedFixedAssigneeUserId: '',
+    freezeOnCreate: false,
+    savedFreezeOnCreate: false,
+    confirmationEnabled: false,
+    savedConfirmationEnabled: false,
+    confirmationText: '',
+    savedConfirmationText: '',
+    filesOverridden: false,
+    savedFilesOverridden: false,
+    selectedFiles: [],
+    savedSelectedFiles: [],
+    conditionalFilesOverridden: false,
+    savedConditionalFilesOverridden: false,
+    conditionalRules: [],
+    savedConditionalRules: [],
+    isEnabled: true,
+    savedIsEnabled: true,
+    savedAutomationTypeValue: 'message_only',
+  };
+  const ctx = { state };
+
+  assert.equal(localEditorHelpers.applyWorkflowTypeDraft(ctx, 'ticket'), true);
+  assert.equal(state.editorWorkflowType, 'ticket');
+  assert.equal(state.automationTypeValue, 'none');
+  assert.equal(confirmations.length, 1);
+  assert.equal(localEditorHelpers.hasUnsavedChanges(ctx), true);
+
+  localEditorHelpers.discardEditorChanges(ctx);
+  assert.equal(state.editorWorkflowType, 'auto');
+  assert.equal(state.automationTypeValue, 'message_only');
+});
+
+test('submenu workflow type does not expose editable transition options', () => {
+  assert.deepEqual(
+    Array.from(editorHelpers.getWorkflowTypeOptions({ technical_key: 'menu-a|submenu|A', workflow_type: 'submenu' })),
+    [],
+  );
+});
+
 test('splits legacy multi-file conditional rule per file without data loss', () => {
   const ctx = ctxFor({
     conditionalRules: [
@@ -342,7 +422,7 @@ test('projection loss detector catches empty UI state for non-empty legacy condi
 
 function loadEditorHelpers() {
   const editorSource = fs.readFileSync('api/app/static/bot_buttons_editor.js', 'utf8');
-  const window = { BotButtonsFiles: helpers };
+  const window = { BotButtonsFiles: helpers, confirm: () => true };
   const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
   vm.runInContext(editorSource, context);
   return window.BotButtonsEditor;
