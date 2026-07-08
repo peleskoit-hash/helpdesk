@@ -64,6 +64,174 @@ test('hydrates unconditional and conditional files into file-centric entries', (
   assert.equal(entries[1].rules.length, 1);
 });
 
+function loadLevelViewHelpers() {
+  const source = fs.readFileSync('api/app/static/bot_buttons_level_view.js', 'utf8');
+  const window = {};
+  const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object, Number, Math });
+  vm.runInContext(source, context);
+  return window.BotButtonsLevelView;
+}
+
+const levelViewHelpers = loadLevelViewHelpers();
+
+function layoutButton(key, label = key) {
+  return { technical_key: key, label };
+}
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function renderLayoutEditHtml() {
+  const source = fs.readFileSync('api/app/static/bot_buttons_level_view.js', 'utf8');
+  const content = {
+    innerHTML: '',
+    querySelectorAll() { return []; },
+  };
+  const document = {
+    getElementById() { return null; },
+  };
+  const window = {};
+  const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object, Number, Math });
+  vm.runInContext(source, context);
+  context.window.BotButtonsLevelView.renderLevel({
+    state: {
+      view: 'level',
+      selectedMenu: 'menu-a',
+      layoutEditMode: true,
+      layoutDraftRows: [
+        { columns: 2, buttons: [layoutButton('a', 'A'), layoutButton('b', 'B')] },
+      ],
+      levelStack: [
+        {
+          label: 'Menu A',
+          rows: [{ buttons: [layoutButton('a', 'A'), layoutButton('b', 'B')] }],
+          levelKey: 'menu-a|level|__root__',
+          fullPath: '',
+          kind: 'root',
+        },
+      ],
+      menuStructure: { removed_items: [] },
+    },
+    el: { content },
+    renderMenuBindingsPanel() { return ''; },
+    renderRightPanel() { return ''; },
+    escapeHtml(value) { return String(value); },
+    buildPreviewFromNode(node) { return node; },
+    loadPreviewItem() {},
+    confirmDiscard() { return true; },
+    discardEditorChanges() {},
+    openEditor() {},
+    createLevelItem() {},
+    openParentTaskEditor() {},
+    openSubmenuEditor() {},
+    refreshMenuStructure() {},
+    reloadMenuMeta() {},
+    loadMenuTypes() {},
+    saveLabelOverrideForNode() {},
+    api() {},
+    setStatus() {},
+  });
+  return content.innerHTML;
+}
+
+test('layout draft changes button order inside the same row', () => {
+  const draft = [
+    { columns: 3, buttons: [layoutButton('a'), layoutButton('b'), layoutButton('c')] },
+  ];
+
+  const moved = levelViewHelpers.moveDraftButton(draft, 0, 2, 0, 0);
+
+  assert.equal(moved, true);
+  assert.deepEqual(draft[0].buttons.map((item) => item.technical_key), ['c', 'a', 'b']);
+});
+
+test('layout draft moves button to another row', () => {
+  const draft = [
+    { columns: 2, buttons: [layoutButton('a'), layoutButton('b')] },
+    { columns: 1, buttons: [layoutButton('c')] },
+  ];
+
+  const moved = levelViewHelpers.moveDraftButton(draft, 0, 1, 1, null);
+
+  assert.equal(moved, true);
+  assert.deepEqual(draft.map((row) => row.buttons.map((item) => item.technical_key)), [['a'], ['c', 'b']]);
+});
+
+test('layout draft refuses fourth button in a row', () => {
+  const draft = [
+    { columns: 1, buttons: [layoutButton('a')] },
+    { columns: 3, buttons: [layoutButton('b'), layoutButton('c'), layoutButton('d')] },
+  ];
+
+  const moved = levelViewHelpers.moveDraftButton(draft, 0, 0, 1, null);
+
+  assert.equal(moved, false);
+  assert.deepEqual(draft.map((row) => row.buttons.map((item) => item.technical_key)), [['a'], ['b', 'c', 'd']]);
+});
+
+test('layout draft creates a new row between existing rows', () => {
+  const draft = [
+    { columns: 2, buttons: [layoutButton('a'), layoutButton('b')] },
+    { columns: 1, buttons: [layoutButton('c')] },
+  ];
+
+  const moved = levelViewHelpers.moveDraftButtonToNewRow(draft, 0, 1, 1);
+
+  assert.equal(moved, true);
+  assert.deepEqual(plain(draft.map((row) => row.buttons.map((item) => item.technical_key))), [['a'], ['b'], ['c']]);
+});
+
+test('layout draft normalizes empty rows away', () => {
+  const rows = levelViewHelpers.normalizeDraftRows([
+    { columns: 1, buttons: [] },
+    { columns: 2, buttons: [layoutButton('a'), layoutButton('b')] },
+    { columns: 1, buttons: [] },
+  ]);
+
+  assert.deepEqual(plain(rows.map((row) => row.buttons.map((item) => item.technical_key))), [['a', 'b']]);
+});
+
+test('layout cancel exits edit mode and drops draft rows', () => {
+  const state = {
+    layoutEditMode: true,
+    layoutDraftRows: [{ columns: 1, buttons: [layoutButton('a')] }],
+  };
+
+  assert.equal(levelViewHelpers.cancelLayoutEdit(state), true);
+  assert.equal(state.layoutEditMode, false);
+  assert.deepEqual(plain(state.layoutDraftRows), []);
+});
+
+test('layout save serializes expected payload rows', () => {
+  const rows = [
+    { columns: 3, buttons: [layoutButton('c'), layoutButton('a'), layoutButton('b')] },
+    { columns: 1, buttons: [layoutButton('d')] },
+  ];
+
+  assert.deepEqual(plain(levelViewHelpers.serializeLayoutRows(rows)), [
+    { columns: 3, button_keys: ['c', 'a', 'b'] },
+    { columns: 1, button_keys: ['d'] },
+  ]);
+});
+
+test('layout edit source blocks normal editor opening while drag mode is active', () => {
+  const source = fs.readFileSync('api/app/static/bot_buttons_level_view.js', 'utf8');
+  assert.match(source, /if \(ctx\.state\.layoutEditMode\) return;/);
+  assert.match(source, /data-layout-drag-button/);
+});
+
+test('layout edit markup has mode shell and no old row controls', () => {
+  const html = renderLayoutEditHtml();
+
+  assert.match(html, /bot-layout-edit-shell/);
+  assert.match(html, /bot-layout-mode-badge/);
+  assert.match(html, /\u0420\u0435\u0436\u0438\u043c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043e\u0440\u044f\u0434\u043a\u0430/);
+  assert.match(html, /data-layout-drag-button/);
+  assert.match(html, /data-layout-new-row-before/);
+  assert.doesNotMatch(html, /data-layout-row|data-layout-add-row|data-layout-del-row|bot-layout-row-head|bot-layout-cols/);
+});
+
 test('workflow type draft change resets incompatible automation and discard restores saved type', () => {
   const confirmations = [];
   const editorSource = fs.readFileSync('api/app/static/bot_buttons_editor.js', 'utf8');

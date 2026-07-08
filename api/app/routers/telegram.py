@@ -99,6 +99,7 @@ from ..services.system_tickets import FirstConnectionDefaults, first_connection_
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
+MAX_LAYOUT_ROW_BUTTONS = 3
 
 
 FIRST_CONNECTION_SUBJECT = "Первое подключение к боту"
@@ -569,7 +570,7 @@ def _normalize_layout_rows(raw: object) -> list[dict]:
             cols = int(row.get("columns", 1))
         except Exception:
             cols = 1
-        cols = 2 if cols == 2 else 1
+        cols = cols if cols in {1, 2, 3} else 1
         keys: list[str] = []
         keys_raw = row.get("button_keys")
         if isinstance(keys_raw, list):
@@ -577,7 +578,7 @@ def _normalize_layout_rows(raw: object) -> list[dict]:
                 key = str(item or "").strip()
                 if key and key not in keys:
                     keys.append(key)
-        normalized.append({"columns": cols, "button_keys": keys[:2]})
+        normalized.append({"columns": cols, "button_keys": keys[:MAX_LAYOUT_ROW_BUTTONS]})
     return normalized
 
 
@@ -612,7 +613,7 @@ def _apply_layout_to_markup_rows(rows: list[list[dict]], layout_rows: list[dict]
                 continue
             row_items.append(item)
             used.add(key)
-            if len(row_items) >= 2:
+            if len(row_items) >= MAX_LAYOUT_ROW_BUTTONS:
                 break
         if row_items:
             result.append(row_items)

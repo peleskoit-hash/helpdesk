@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting, MessageType, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
 from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
@@ -1931,3 +1931,120 @@ def test_first_connection_system_row_cannot_be_deleted_as_regular_button():
         assert getattr(exc, "status_code", None) == 422
     else:
         raise AssertionError("system first connection row must not be deletable through regular endpoint")
+
+
+def _layout_config():
+    buttons = {
+        key: ButtonSpec(key=f"btn-{key.lower()}", label=key, kind="ticket", text=f"Text {key}")
+        for key in ("A", "B", "C", "D")
+    }
+    config = ButtonConfig(
+        menus={
+            "root": MenuSpec(
+                key="root",
+                title="menu-a",
+                rows=((buttons["A"].key,), (buttons["B"].key,), (buttons["C"].key,), (buttons["D"].key,)),
+            )
+        },
+        buttons={button.key: button for button in buttons.values()},
+        root_menu_key="root",
+    )
+    refs = tuple(
+        TerminalButtonRef(
+            source_button_key=button.key,
+            label=button.label,
+            workflow_type="ticket",
+            full_path=button.label,
+            technical_key=f"menu-a|ticket|{button.label}",
+            instruction_text=None,
+        )
+        for button in buttons.values()
+    )
+    return config, refs
+
+
+def _patch_layout_config(monkeypatch, config, refs):
+    monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
+
+
+def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
+    session = _session()
+    config, refs = _layout_config()
+    _patch_layout_config(monkeypatch, config, refs)
+    level_key = "menu-a|level|__root__"
+
+    result = settings_bot_button_structure.save_bot_button_level_layout(
+        menu_type="menu-a",
+        level_key=level_key,
+        payload={
+            "rows": [
+                {"columns": 3, "button_keys": ["menu-a|ticket|C", "menu-a|ticket|A", "menu-a|ticket|B"]},
+                {"columns": 1, "button_keys": ["menu-a|ticket|D"]},
+            ]
+        },
+        db=session,
+        user=SimpleNamespace(id="admin-1", role="admin"),
+    )
+
+    row = session.query(BotMenuLevelLayout).filter_by(menu_type="menu-a", level_key=level_key).one()
+    structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    layout_labels = [[node["label"] for node in item["buttons"]] for item in structure.tree_rows]
+    assert result["rows"][0]["button_keys"] == ["menu-a|ticket|C", "menu-a|ticket|A", "menu-a|ticket|B"]
+    assert row.layout_json[0]["columns"] == 3
+    assert layout_labels[:2] == [["C", "A", "B"], ["D"]]
+
+
+def test_bot_button_layout_rejects_unknown_duplicate_and_too_wide_rows(monkeypatch):
+    session = _session()
+    config, refs = _layout_config()
+    _patch_layout_config(monkeypatch, config, refs)
+    level_key = "menu-a|level|__root__"
+    cases = [
+        ({"rows": [{"columns": 1, "button_keys": ["menu-a|ticket|Z"]}]}, "unknown_button_key"),
+        ({"rows": [{"columns": 2, "button_keys": ["menu-a|ticket|A", "menu-a|ticket|A"]}]}, "duplicate_button_key"),
+        (
+            {"rows": [{"columns": 3, "button_keys": ["menu-a|ticket|A", "menu-a|ticket|B", "menu-a|ticket|C", "menu-a|ticket|D"]}]},
+            "layout_row_too_wide",
+        ),
+    ]
+
+    for payload, expected_code in cases:
+        try:
+            settings_bot_button_structure.save_bot_button_level_layout(
+                menu_type="menu-a",
+                level_key=level_key,
+                payload=payload,
+                db=session,
+                user=SimpleNamespace(id="admin-1", role="admin"),
+            )
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 422
+            detail = getattr(exc, "detail", {}) or {}
+            error = detail.get("error", {}) if isinstance(detail, dict) else {}
+            assert error.get("code") == expected_code
+        else:
+            raise AssertionError(f"Expected layout validation error: {expected_code}")
+
+
+def test_bot_button_layout_normalizes_empty_rows(monkeypatch):
+    session = _session()
+    config, refs = _layout_config()
+    _patch_layout_config(monkeypatch, config, refs)
+
+    result = settings_bot_button_structure.save_bot_button_level_layout(
+        menu_type="menu-a",
+        level_key="menu-a|level|__root__",
+        payload={
+            "rows": [
+                {"columns": 1, "button_keys": []},
+                ["menu-a|ticket|B"],
+                [],
+            ]
+        },
+        db=session,
+        user=SimpleNamespace(id="admin-1", role="admin"),
+    )
+
+    assert result["rows"] == [{"columns": 1, "button_keys": ["menu-a|ticket|B"]}]
