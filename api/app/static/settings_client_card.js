@@ -43,6 +43,7 @@ const uiText = {
   deleteField: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u043e\u043b\u0435",
   systemField: "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0435 \u043f\u043e\u043b\u0435",
   blockSaved: "\u0411\u043b\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
+  colorSaved: "\u0426\u0432\u0435\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
   blockMoved: "\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u0431\u043b\u043e\u043a\u043e\u0432 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
   fieldMoved: "\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u043f\u043e\u043b\u0435\u0439 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
   blockDeleted: "\u0411\u043b\u043e\u043a \u0443\u0434\u0430\u043b\u0451\u043d",
@@ -279,6 +280,29 @@ function syncEditFieldOptionsVisibility() {
   el.editFieldOptionsWrap.classList.toggle("hidden", el.editFieldType.value !== "select");
 }
 
+function blockPayloadFromDom(blockId) {
+  const title = el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="title"]`).value.trim();
+  const colorInput = el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="color_scheme"]`);
+  const color = state.pendingBlockColors.get(blockId) || colorInput?.value || fallbackColorHex;
+  const active = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="is_active"]`).checked);
+  return { title, color_scheme: color, is_active: active };
+}
+
+async function saveBlock(blockId, statusText = uiText.blockSaved) {
+  try {
+    await api(`/api/v1/settings/client-card/blocks/${blockId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(blockPayloadFromDom(blockId)),
+    });
+    state.pendingBlockColors.delete(blockId);
+    await loadClientCardConfig();
+    setStatus(statusText);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
 async function moveBlock(blockId, direction) {
   try {
     const config = await api(`/api/v1/settings/client-card/blocks/${blockId}/move`, {
@@ -421,24 +445,7 @@ function renderClientCardSettings() {
   });
 
   el.clientCardSettings.querySelectorAll("[data-save-block-id]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.saveBlockId;
-      const title = el.clientCardSettings.querySelector(`[data-block-id="${id}"][data-prop="title"]`).value.trim();
-      const color = state.pendingBlockColors.get(id) || el.clientCardSettings.querySelector(`[data-block-id="${id}"][data-prop="color_scheme"]`)?.value || fallbackColorHex;
-      const active = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${id}"][data-prop="is_active"]`).checked);
-      try {
-        await api(`/api/v1/settings/client-card/blocks/${id}`, {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title, color_scheme: color, is_active: active }),
-        });
-        state.pendingBlockColors.delete(id);
-        await loadClientCardConfig();
-        setStatus(uiText.blockSaved);
-      } catch (e) {
-        showError(e.message);
-      }
-    });
+    btn.addEventListener("click", () => saveBlock(btn.dataset.saveBlockId, uiText.blockSaved));
   });
 
   el.clientCardSettings.querySelectorAll("[data-prop='color_scheme']").forEach((input) => {
@@ -451,6 +458,7 @@ function renderClientCardSettings() {
       if (hex) hex.textContent = color.toUpperCase();
       if (card) applySettingsBlockColor(card, color);
     });
+    input.addEventListener("change", () => saveBlock(input.dataset.blockId, uiText.colorSaved));
   });
 
   el.clientCardSettings.querySelectorAll("[data-move-block-id]").forEach((btn) => {

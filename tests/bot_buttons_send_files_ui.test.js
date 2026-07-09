@@ -109,14 +109,35 @@ test('settings client card color helpers normalize named, hex, and invalid color
   assert.match(settingsClientCardSource, /card\.style\.background = safeColor/);
 });
 
-test('settings client card keeps draft block color through local rerenders until save', () => {
+test('settings client card keeps draft block color through local rerenders and saves on color change', () => {
   assert.match(settingsClientCardSource, /pendingBlockColors: new Map\(\)/);
   assert.match(settingsClientCardSource, /function currentBlockColor/);
   assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(block\.id\) \|\| colorToHex\(block\.color_scheme\)/);
   assert.match(settingsClientCardSource, /state\.pendingBlockColors\.set\(id, color\)/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(id\) \|\|/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(id\)/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(blockId\) \|\|/);
+  assert.match(settingsClientCardSource, /input\.addEventListener\("change", \(\) => saveBlock\(input\.dataset\.blockId, uiText\.colorSaved\)\)/);
   assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(blockId\)/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(blockId\)/);
+});
+
+test('settings client card color input previews locally without direct patch', () => {
+  const inputHandlerSource = sourceBetween(settingsClientCardSource, 'input.addEventListener("input"', 'input.addEventListener("change"');
+  assert.match(inputHandlerSource, /state\.pendingBlockColors\.set\(id, color\)/);
+  assert.match(inputHandlerSource, /hex\.textContent = color\.toUpperCase\(\)/);
+  assert.match(inputHandlerSource, /applySettingsBlockColor\(card, color\)/);
+  assert.doesNotMatch(inputHandlerSource, /PATCH|api\(|saveBlock\(/);
+});
+
+test('settings client card save block sends current color and keeps pending on errors', () => {
+  const payloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'async function saveBlock');
+  assert.match(payloadSource, /state\.pendingBlockColors\.get\(blockId\) \|\| colorInput\?\.value \|\| fallbackColorHex/);
+  assert.match(payloadSource, /return \{ title, color_scheme: color, is_active: active \}/);
+
+  const saveSource = sourceBetween(settingsClientCardSource, 'async function saveBlock', 'async function moveBlock');
+  assert.match(saveSource, /method: "PATCH"/);
+  assert.match(saveSource, /body: JSON\.stringify\(blockPayloadFromDom\(blockId\)\)/);
+  assert.match(saveSource, /state\.pendingBlockColors\.delete\(blockId\)/);
+  assert.match(saveSource, /catch \(e\) \{\s+showError\(e\.message\);\s+\}/);
 });
 
 test('settings client card block header separates content and reorder actions', () => {
