@@ -1681,6 +1681,10 @@ button.action:disabled {
   background: #f5efff;
 }
 
+.client-card-block-custom-color {
+  background: var(--client-card-block-bg, #f3f5f7);
+}
+
 .client-section {
   border: 1px solid #dce5ef;
   border-radius: 8px;
@@ -2640,6 +2644,10 @@ body[data-theme="dark"] .client-card-block-purple {
   background: rgba(70, 50, 104, 0.5);
 }
 
+body[data-theme="dark"] .client-card-block-custom-color {
+  background: var(--client-card-block-bg, rgba(38, 47, 62, 0.56));
+}
+
 body[data-theme="dark"] .status-panel,
 body[data-theme="dark"] .admin-agent-filter,
 body[data-theme="dark"] .freeze-box,
@@ -3521,6 +3529,10 @@ body[data-theme="dark"] .verified-no {
   background: linear-gradient(135deg, rgba(237,233,254,0.78), rgba(221,214,254,0.52));
 }
 
+.client-card-settings-block.compact.client-card-color-custom {
+  background: var(--client-card-settings-block-bg, #e5e7eb);
+}
+
 .client-card-accordion-head {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -3563,18 +3575,29 @@ body[data-theme="dark"] .verified-no {
   font-size: 12px;
 }
 
+.client-card-content-actions,
+.client-card-reorder-actions,
 .client-card-accordion-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.client-card-content-actions {
+  justify-content: flex-start;
+}
+
+.client-card-reorder-actions,
+.client-card-accordion-actions {
   justify-content: flex-end;
 }
 
 .client-card-block-editor {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 2fr) auto;
   gap: 8px;
+  align-items: end;
 }
 
 .client-card-block-editor label {
@@ -3591,6 +3614,30 @@ body[data-theme="dark"] .verified-no {
   background: rgba(255, 255, 255, 0.84);
 }
 
+.client-card-color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.client-card-block-editor .client-card-color-input {
+  width: 36px;
+  min-width: 36px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.client-card-color-hex {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .client-card-accordion-body {
   margin-top: 10px;
 }
@@ -3602,7 +3649,7 @@ body[data-theme="dark"] .verified-no {
 
 .client-card-field-row {
   display: grid;
-  grid-template-columns: 30px minmax(200px, 1fr) 70px auto;
+  grid-template-columns: 30px minmax(200px, 1fr) auto;
   gap: 10px;
   align-items: center;
   border: 1px solid rgba(15, 23, 42, 0.1);
@@ -3640,6 +3687,44 @@ body[data-theme="dark"] .verified-no {
   font-weight: 700;
   font-size: 12px;
   color: #334155;
+}
+
+.client-card-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.client-card-system-note {
+  border: 1px solid rgba(37, 99, 235, 0.24);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #1d4ed8;
+  background: rgba(219, 234, 254, 0.75);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.action.danger {
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.86);
+}
+
+.action.danger:hover:not(:disabled) {
+  background: rgba(254, 202, 202, 0.92);
+}
+
+@media (max-width: 760px) {
+  .client-card-block-editor,
+  .client-card-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .client-card-field-actions {
+    justify-content: flex-start;
+  }
 }
 
 #editClientCardFieldModal .modal-dialog {

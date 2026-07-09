@@ -45,6 +45,20 @@ function ctxFor(stateOverrides = {}) {
 }
 
 const helpers = loadHelpers();
+const settingsClientCardSource = fs.readFileSync('api/app/static/settings_client_card.js', 'utf8');
+const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_client_card.html', 'utf8');
+const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
+const ticketTemplate = fs.readFileSync('api/app/templates/ticket.html', 'utf8');
+const managementUsersTemplate = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
+const appShellSource = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
+
+function sourceBetween(source, start, end) {
+  const startIndex = source.indexOf(start);
+  assert.notEqual(startIndex, -1, `missing start marker: ${start}`);
+  const endIndex = source.indexOf(end, startIndex);
+  assert.notEqual(endIndex, -1, `missing end marker: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
 
 function loadManagementUsersHelpers() {
   const source = fs.readFileSync('api/app/static/management_users.js', 'utf8');
@@ -71,6 +85,89 @@ function loadManagementUsersHelpers() {
 }
 
 const managementUsersHelpers = loadManagementUsersHelpers();
+
+test('settings client card UI hides manual order controls in the main block and field editor', () => {
+  assert.doesNotMatch(settingsClientCardSource, /data-prop="sort_order"/);
+  assert.doesNotMatch(settingsClientCardSource, /client-card-field-order/);
+  assert.doesNotMatch(settingsClientCardTemplate, /editFieldSortOrder/);
+});
+
+test('settings client card UI exposes move actions and a compact color picker', () => {
+  assert.match(settingsClientCardSource, /data-move-block-id/);
+  assert.match(settingsClientCardSource, /data-move-field-id/);
+  assert.match(settingsClientCardSource, /type="color"/);
+  assert.match(settingsClientCardSource, /data-color-hex/);
+  assert.doesNotMatch(settingsClientCardSource, /client-card-color-chip/);
+  assert.doesNotMatch(settingsClientCardSource, /aria-pressed/);
+});
+
+test('settings client card color helpers normalize named, hex, and invalid colors', () => {
+  assert.match(settingsClientCardSource, /blue: "#dbeafe"/);
+  assert.match(settingsClientCardSource, /function isHexColor/);
+  assert.match(settingsClientCardSource, /function colorToHex/);
+  assert.match(settingsClientCardSource, /return fallbackColorHex/);
+  assert.match(settingsClientCardSource, /card\.style\.background = safeColor/);
+});
+
+test('settings client card keeps draft block color through local rerenders until save', () => {
+  assert.match(settingsClientCardSource, /pendingBlockColors: new Map\(\)/);
+  assert.match(settingsClientCardSource, /function currentBlockColor/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(block\.id\) \|\| colorToHex\(block\.color_scheme\)/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.set\(id, color\)/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(id\) \|\|/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(id\)/);
+  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(blockId\)/);
+});
+
+test('settings client card block header separates content and reorder actions', () => {
+  assert.match(settingsClientCardSource, /client-card-content-actions/);
+  assert.match(settingsClientCardSource, /client-card-reorder-actions/);
+  const contentActions = sourceBetween(settingsClientCardSource, '<div class="client-card-content-actions">', '<div class="client-card-accordion-meta">');
+  const reorderActions = sourceBetween(settingsClientCardSource, '<div class="client-card-reorder-actions">', '<div class="client-card-block-editor">');
+  assert.match(contentActions, /data-toggle-block-id/);
+  assert.match(contentActions, /data-save-block-id/);
+  assert.doesNotMatch(contentActions, /data-move-block-id/);
+  assert.match(reorderActions, /data-move-block-id/);
+  assert.doesNotMatch(reorderActions, /data-save-block-id/);
+});
+
+test('ticket client card safely applies hex block colors for ticket and management views', () => {
+  assert.match(ticketClientCardSource, /function isHexColor/);
+  assert.match(ticketClientCardSource, /client-card-block-custom-color/);
+  assert.match(ticketClientCardSource, /--client-card-block-bg/);
+  assert.match(ticketClientCardSource, /\^#\[0-9a-fA-F\]\{6\}\$/);
+});
+
+test('client card script cache busting is updated for changed JS files', () => {
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260709b/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260709b/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260709b/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260709b/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20260709b/);
+});
+
+test('settings client card UI exposes delete actions only for custom config entries', () => {
+  assert.match(settingsClientCardSource, /isCustomBlock/);
+  assert.match(settingsClientCardSource, /data-delete-block-id/);
+  assert.match(settingsClientCardSource, /data-delete-field-id/);
+  assert.match(settingsClientCardSource, /field\.is_system \? ""/);
+});
+
+test('settings client card edit modal locks existing field key and block', () => {
+  assert.match(settingsClientCardSource, /el\.editFieldKey\.disabled = true/);
+  assert.match(settingsClientCardSource, /el\.editFieldBlockKey\.disabled = true/);
+});
+
+test('settings client card edit save does not send block key for existing fields', () => {
+  const saveFieldSource = sourceBetween(settingsClientCardSource, 'async function saveFieldFromModal()', 'function syncCreateFieldOptionsVisibility()');
+  assert.doesNotMatch(saveFieldSource, /block_key/);
+});
+
+test('settings client card create field modal still uses block select', () => {
+  assert.match(settingsClientCardTemplate, /id="newClientCardFieldBlock"/);
+  assert.match(settingsClientCardSource, /newClientCardFieldBlock\.innerHTML/);
+  assert.match(settingsClientCardSource, /block_key: el\.newClientCardFieldBlock\.value/);
+});
 
 test('hydrates unconditional and conditional files into file-centric entries', () => {
   const ctx = ctxFor({

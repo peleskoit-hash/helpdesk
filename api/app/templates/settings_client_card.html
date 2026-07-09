@@ -143,7 +143,7 @@
           <label>Видимость <input id="editFieldVisible" type="checkbox" /></label>
           <label>Редактируемое <input id="editFieldEditable" type="checkbox" /></label>
           <label>Обязательное <input id="editFieldRequired" type="checkbox" /></label>
-          <label>Порядок <input id="editFieldSortOrder" type="number" /></label>
+          <div id="editFieldSystemNote" class="client-card-system-note hidden"></div>
           <label>Блок
             <select id="editFieldBlockKey"></select>
           </label>
@@ -157,6 +157,7 @@
         </div>
       </div>
       <div class="modal-foot">
+        <button id="deleteEditClientCardFieldBtn" type="button" class="action danger hidden">&#1059;&#1076;&#1072;&#1083;&#1080;&#1090;&#1100; &#1087;&#1086;&#1083;&#1077;</button>
         <button id="saveEditClientCardFieldBtn" type="button" class="action primary">Сохранить</button>
       </div>
     </div>
@@ -184,11 +185,9 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260629d"></script>
-  <script src="/static/settings_client_card.js?v=20260603b"></script>
+  <script src="/static/settings_client_card.js?v=20260709b"></script>
 </body>
 </html>
-
-
 
 
 

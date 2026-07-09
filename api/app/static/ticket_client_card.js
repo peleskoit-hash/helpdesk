@@ -74,6 +74,17 @@
     return `client-card-block-${known.has(value) ? value : "gray"}`;
   }
 
+  function isHexColor(value) {
+    return /^#[0-9a-fA-F]{6}$/.test(String(value || "").trim());
+  }
+
+  function applyClientCardBlockColor(blockEl, colorScheme) {
+    const color = String(colorScheme || "").trim();
+    if (!isHexColor(color)) return;
+    blockEl.classList.add("client-card-block-custom-color");
+    blockEl.style.setProperty("--client-card-block-bg", color.toLowerCase());
+  }
+
   function getClientFieldValue(profile, key) {
     if (!profile || !key) return null;
     if (key === "telegram_username") return profile.telegram_username || null;
@@ -164,6 +175,7 @@
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
       const blockEl = document.createElement("div");
       blockEl.className = `client-card-block ${clientCardColorClass(block.color_scheme)}`;
+      applyClientCardBlockColor(blockEl, block.color_scheme);
 
       let renderedFields = 0;
       for (const field of fields) {
@@ -429,4 +441,3 @@
     saveClientProfile,
   };
 })(window);
-

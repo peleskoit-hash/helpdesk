@@ -270,7 +270,7 @@ class CompletionStatsOut(BaseModel):
     legacy: int | None = None
 
 
-ClientCardColorScheme = Literal["blue", "green", "yellow", "red", "gray", "purple"]
+ClientCardColorScheme = str
 
 
 class ClientCardFieldConfigOut(BaseModel):
@@ -319,9 +319,15 @@ class ClientCardFieldUpdate(BaseModel):
     options: list[str] | None = None
 
 
+class ClientCardMovePayload(BaseModel):
+    direction: Literal["up", "down"]
+
+
 class ClientCardBlockCreate(BaseModel):
     title: str = Field(min_length=1)
     color_scheme: ClientCardColorScheme = "gray"
+    sort_order: int = 1000
+    is_active: bool = True
 
 
 class ClientCardFieldCreate(BaseModel):
@@ -332,6 +338,7 @@ class ClientCardFieldCreate(BaseModel):
     is_editable: bool = True
     is_required: bool = False
     options: list[str] | None = None
+    sort_order: int | None = None
 
 
 class MassNotificationRecipientOut(BaseModel):
