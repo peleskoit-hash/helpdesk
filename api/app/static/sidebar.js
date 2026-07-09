@@ -171,6 +171,20 @@
     });
   }
 
+  function ensureManagementSection() {
+    if (qs("#sidebarManagementLink")) return;
+    const massLink = qs('a.settings-link[href="/mass-notifications"]');
+    if (!massLink || !massLink.parentNode) return;
+
+    massLink.id = "sidebarManagementLink";
+    massLink.href = "/management";
+    massLink.innerHTML = "<span>\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435</span>";
+    massLink.classList.toggle(
+      "active",
+      window.location.pathname === "/mass-notifications" || window.location.pathname.startsWith("/management"),
+    );
+  }
+
   function renderUserDisplay() {
     const nameNode = qs("#sidebarUserDisplayName");
     if (nameNode && state.fullName) {
@@ -392,6 +406,7 @@
   }
 
   function renderFromCurrentState() {
+    ensureManagementSection();
     positionUserStatsByRole();
     renderAdminVisibility();
     renderCounts();

@@ -42,10 +42,73 @@ def create_client_and_contact(
     return contact
 
 
-def telegram_contact_by_chat_id(db: Session, external_chat_id: str) -> TelegramContact | None:
+def _is_negative_chat_id(external_chat_id: str | None) -> bool:
+    return str(external_chat_id or "").strip().startswith("-")
+
+
+def _is_private_chat_id_for_user(external_chat_id: str | None, external_user_id: str | None) -> bool:
+    chat_id = str(external_chat_id or "").strip()
+    user_id = str(external_user_id or "").strip()
+    if not chat_id or chat_id.startswith("-"):
+        return False
+    if user_id and chat_id == user_id:
+        return True
+    return chat_id.isdigit()
+
+
+def _should_update_contact_chat_id(current_chat_id: str | None, incoming_chat_id: str | None, external_user_id: str | None) -> bool:
+    current = str(current_chat_id or "").strip()
+    incoming = str(incoming_chat_id or "").strip()
+    if not incoming:
+        return False
+    if not current:
+        return True
+    current_private = _is_private_chat_id_for_user(current, external_user_id)
+    incoming_private = _is_private_chat_id_for_user(incoming, external_user_id)
+    if current_private and _is_negative_chat_id(incoming):
+        return False
+    if _is_negative_chat_id(current) and incoming_private:
+        return True
+    if current_private and incoming_private:
+        return current != incoming
+    return current != incoming
+
+
+def telegram_contact_by_chat_id(db: Session, external_chat_id: str, company_id: str | None = None) -> TelegramContact | None:
+    stmt = select(TelegramContact).where(TelegramContact.external_chat_id == external_chat_id)
+    if company_id is not None:
+        stmt = stmt.where(TelegramContact.company_id == company_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def telegram_contact_by_user_id(db: Session, company_id: str, external_user_id: str) -> TelegramContact | None:
+    if not external_user_id:
+        return None
     return db.execute(
-        select(TelegramContact).where(TelegramContact.external_chat_id == external_chat_id)
+        select(TelegramContact)
+        .where(
+            TelegramContact.company_id == company_id,
+            TelegramContact.external_user_id == external_user_id,
+        )
+        .order_by(TelegramContact.updated_at.desc(), TelegramContact.created_at.asc(), TelegramContact.id.asc())
+        .limit(1)
     ).scalar_one_or_none()
+
+
+def _refresh_contact_from_user(
+    contact: TelegramContact,
+    *,
+    external_chat_id: str,
+    username: str | None,
+    display_name: str,
+) -> TelegramContact:
+    if _should_update_contact_chat_id(contact.external_chat_id, external_chat_id, contact.external_user_id):
+        contact.external_chat_id = external_chat_id
+    contact.external_username = username
+    if display_name:
+        contact.external_display_name = display_name
+    contact.updated_at = datetime.utcnow()
+    return contact
 
 
 def get_or_create_contact_from_user(
@@ -58,7 +121,24 @@ def get_or_create_contact_from_user(
     display_name = " ".join(x for x in [from_user.get("first_name"), from_user.get("last_name")] if x).strip()
     username = (from_user.get("username") or "").strip() or None
 
-    contact = telegram_contact_by_chat_id(db, external_chat_id)
+    chat_contact = telegram_contact_by_chat_id(db, external_chat_id, company_id=company_id)
+    contact = telegram_contact_by_user_id(db, company_id, external_user_id)
+    if contact is not None:
+        if chat_contact is not None and chat_contact.id != contact.id:
+            return _refresh_contact_from_user(
+                contact,
+                external_chat_id=contact.external_chat_id,
+                username=username,
+                display_name=display_name,
+            )
+        return _refresh_contact_from_user(
+            contact,
+            external_chat_id=external_chat_id,
+            username=username,
+            display_name=display_name,
+        )
+
+    contact = chat_contact
 
     if contact is None:
         return create_client_and_contact(
@@ -70,11 +150,14 @@ def get_or_create_contact_from_user(
             username=username,
         )
 
-    contact.updated_at = datetime.utcnow()
-    contact.external_username = username
-    if display_name:
-        contact.external_display_name = display_name
-    return contact
+    if external_user_id and contact.external_user_id != external_user_id:
+        contact.external_user_id = external_user_id
+    return _refresh_contact_from_user(
+        contact,
+        external_chat_id=external_chat_id,
+        username=username,
+        display_name=display_name,
+    )
 
 
 def process_first_connection_start(

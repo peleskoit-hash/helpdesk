@@ -34,6 +34,14 @@
     }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
+    ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],
+    ["/management/users", {
+      page: "management-users",
+      scripts: [
+        "/static/ticket_client_card.js?v=20260522a",
+        "/static/management_users.js?v=20260709a",
+      ],
+    }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
   ]);
   const dynamicShellRoutes = [
@@ -188,6 +196,8 @@
       const linkUrl = new URL(href, window.location.origin);
       const active = linkUrl.pathname === "/settings"
         ? url.pathname.startsWith("/settings")
+        : linkUrl.pathname === "/management"
+          ? url.pathname.startsWith("/management") || url.pathname === "/mass-notifications"
         : linkUrl.pathname === url.pathname;
       link.classList.toggle("active", active);
     });

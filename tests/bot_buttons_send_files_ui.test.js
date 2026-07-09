@@ -46,6 +46,32 @@ function ctxFor(stateOverrides = {}) {
 
 const helpers = loadHelpers();
 
+function loadManagementUsersHelpers() {
+  const source = fs.readFileSync('api/app/static/management_users.js', 'utf8');
+  const window = {
+    HelpdeskAppShell: { registerPage() {} },
+    clearTimeout() {},
+    setTimeout() { return 1; },
+  };
+  const context = vm.createContext({
+    window,
+    console,
+    JSON,
+    Array,
+    Set,
+    Map,
+    String,
+    Object,
+    Number,
+    Date,
+    URLSearchParams,
+  });
+  vm.runInContext(source, context);
+  return window.ManagementUsersPage;
+}
+
+const managementUsersHelpers = loadManagementUsersHelpers();
+
 test('hydrates unconditional and conditional files into file-centric entries', () => {
   const ctx = ctxFor({
     selectedFiles: ['docs/a.pdf'],
@@ -62,6 +88,122 @@ test('hydrates unconditional and conditional files into file-centric entries', (
   assert.deepEqual(Array.from(entries, (entry) => entry.file), ['docs/a.pdf', 'docs/b.pdf']);
   assert.equal(entries[0].rules.length, 0);
   assert.equal(entries[1].rules.length, 1);
+});
+
+test('management users helper builds searchable all and blocked list urls', () => {
+  assert.equal(
+    managementUsersHelpers.buildUsersUrl({ query: '@ivan', filter: 'all', limit: 50, offset: 100 }),
+    '/api/v1/management/users?limit=50&offset=100&q=%40ivan',
+  );
+  assert.equal(
+    managementUsersHelpers.buildUsersUrl({ query: '9001', filter: 'blocked', limit: 25, offset: 50 }),
+    '/api/v1/management/users?limit=25&offset=50&q=9001&blocked=true',
+  );
+});
+
+test('management users helper renders pagination summary', () => {
+  assert.equal(managementUsersHelpers.paginationSummary(0, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 1\u201350 \u0438\u0437 120');
+  assert.equal(managementUsersHelpers.paginationSummary(50, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 51\u2013100 \u0438\u0437 120');
+  assert.equal(managementUsersHelpers.paginationSummary(100, 50, 120, 20), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 101\u2013120 \u0438\u0437 120');
+  assert.equal(managementUsersHelpers.paginationSummary(0, 50, 0, 0), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 0\u20130 \u0438\u0437 0');
+});
+
+test('management users search is triggered by button or enter, not input event', () => {
+  const source = fs.readFileSync('api/app/static/management_users.js', 'utf8');
+  assert.match(source, /searchBtn\?\.addEventListener\("click"/);
+  assert.match(source, /search\?\.addEventListener\("keydown"/);
+  assert.match(source, /event\.key !== "Enter"/);
+  assert.doesNotMatch(source, /addEventListener\("input"/);
+  assert.match(source, /state\.offset = 0;/);
+  assert.match(source, /nextBtn\?\.addEventListener\("click"/);
+  assert.match(source, /prevBtn\?\.addEventListener\("click"/);
+  assert.match(source, /state\.offset \+= state\.limit/);
+});
+
+test('management users helper keeps optional empty cells readable', () => {
+  assert.equal(managementUsersHelpers.formatCell(null), '\u2014');
+  assert.equal(managementUsersHelpers.formatCell(''), '\u2014');
+  assert.equal(managementUsersHelpers.formatCell(' Ivan '), 'Ivan');
+});
+
+test('management routes and single admin sidebar entry are registered', () => {
+  const appShell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
+  const sidebar = fs.readFileSync('api/app/static/sidebar.js', 'utf8');
+  assert.match(appShell, /"\/management"/);
+  assert.match(appShell, /"\/management\/users"/);
+  assert.match(appShell, /management-home/);
+  assert.match(appShell, /management-users/);
+  assert.match(sidebar, /sidebarManagementLink/);
+  assert.match(sidebar, /href = "\/management"/);
+  assert.match(sidebar, /\\u0423\\u043f\\u0440\\u0430\\u0432\\u043b\\u0435\\u043d\\u0438\\u0435/);
+  assert.doesNotMatch(sidebar, /sidebar-management-links/);
+  assert.doesNotMatch(sidebar, /href = "\/management\/users"/);
+});
+
+test('management page contains users and mass notification tiles', () => {
+  const management = fs.readFileSync('api/app/templates/management.html', 'utf8');
+  assert.match(management, /href="\/management\/users"/);
+  assert.match(management, /href="\/mass-notifications"/);
+  assert.match(management, /&#1055;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;/);
+  assert.match(management, /&#1052;&#1072;&#1089;&#1089;&#1086;&#1074;&#1099;&#1077; &#1086;&#1087;&#1086;&#1074;&#1077;&#1097;&#1077;&#1085;&#1080;&#1103;/);
+});
+
+test('management users table does not expose chat id in telegram summary', () => {
+  const html = managementUsersHelpers.tableRowHtml({
+    client_id: 'client-1',
+    telegram_display_name: 'Ivan TG',
+    telegram_username: 'belfiss',
+    telegram_user_id: '453920478',
+    telegram_chat_id: '-5267117449',
+    display_name: 'Ivan',
+    legacy_phone: '+7000',
+    internal_number: '4455',
+    last_activity_at: null,
+  });
+  assert.match(html, /Ivan TG/);
+  assert.match(html, /@belfiss/);
+  assert.match(html, /TG ID: 453920478/);
+  assert.match(html, /4455/);
+  assert.doesNotMatch(html, /\+7000/);
+  assert.doesNotMatch(html, /-5267117449/);
+});
+
+test('management users table shows dash for empty internal number', () => {
+  const html = managementUsersHelpers.tableRowHtml({
+    client_id: 'client-1',
+    telegram_display_name: 'Ivan TG',
+    telegram_username: 'belfiss',
+    telegram_user_id: '453920478',
+    display_name: 'Ivan',
+    internal_number: '',
+    last_activity_at: null,
+  });
+  assert.match(html, /\u2014/);
+});
+
+test('management users template labels internal number and verification columns', () => {
+  const template = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
+  assert.match(template, /&#1042;&#1085;&#1091;&#1090;&#1088;&#1077;&#1085;&#1085;&#1080;&#1081; &#1085;&#1086;&#1084;&#1077;&#1088;/);
+  assert.match(template, /&#1042;&#1077;&#1088;&#1080;&#1092;&#1080;&#1082;&#1072;&#1094;&#1080;&#1103;/);
+  assert.doesNotMatch(template, /&#1058;&#1077;&#1083;&#1077;&#1092;&#1086;&#1085;/);
+});
+
+test('management users template contains pagination controls', () => {
+  const template = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
+  assert.match(template, /id="managementUsersPageSummary"/);
+  assert.match(template, /id="managementUsersPrevBtn"/);
+  assert.match(template, /id="managementUsersNextBtn"/);
+  assert.match(template, /&#1053;&#1072;&#1079;&#1072;&#1076;/);
+  assert.match(template, /&#1044;&#1072;&#1083;&#1077;&#1077;/);
+});
+
+test('settings users label is renamed for admins and agents', () => {
+  const settingsHome = fs.readFileSync('api/app/templates/settings.html', 'utf8');
+  const settingsUsers = fs.readFileSync('api/app/templates/settings_users.html', 'utf8');
+  assert.doesNotMatch(settingsHome, /Настройка пользователей/);
+  assert.doesNotMatch(settingsUsers, /Настройка пользователей/);
+  assert.match(settingsHome, /&#1040;&#1076;&#1084;&#1080;&#1085;&#1086;&#1074;\/&#1040;&#1075;&#1077;&#1085;&#1090;&#1086;&#1074;/);
+  assert.match(settingsUsers, /&#1040;&#1076;&#1084;&#1080;&#1085;&#1086;&#1074;\/&#1040;&#1075;&#1077;&#1085;&#1090;&#1086;&#1074;/);
 });
 
 function loadLevelViewHelpers() {

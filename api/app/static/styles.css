@@ -209,6 +209,94 @@ body[data-sidebar-ready="0"] .admin-select-col {
   padding-bottom: 12px;
 }
 
+.management-users-page {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 16px;
+  min-width: 0;
+}
+
+.management-users-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.management-users-head h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.management-eyebrow {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.management-users-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.management-users-search {
+  flex: 1 1 420px;
+  max-width: 680px;
+}
+
+.management-users-search input {
+  min-width: 220px;
+}
+
+.management-users-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.management-users-filters .action.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(231, 241, 255, 0.9);
+}
+
+.management-users-table table {
+  min-width: 880px;
+}
+
+.management-user-row {
+  cursor: pointer;
+}
+
+.management-user-row:hover {
+  background: rgba(231, 241, 255, 0.58);
+}
+
+.management-user-primary {
+  font-weight: 800;
+}
+
+.management-user-muted {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.management-users-empty {
+  padding: 12px;
+}
+
+.management-home-panel {
+  min-height: 0;
+}
+
 .settings-table th,
 .settings-table td {
   white-space: nowrap;
