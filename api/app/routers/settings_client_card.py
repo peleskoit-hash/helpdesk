@@ -85,8 +85,18 @@ def _block_out(block: ClientCardBlockConfig, fields: list[ClientCardFieldConfigO
         color_scheme=block.color_scheme,
         sort_order=block.sort_order,
         is_active=bool(block.is_active),
+        show_in_card=block.show_in_card is not False,
+        show_in_editor=block.show_in_editor is not False,
+        show_title=block.show_title is not False,
         fields=fields or [],
     )
+
+
+def _field_visible_in_editor(field: ClientCardFieldConfig) -> bool:
+    value = getattr(field, "is_visible_in_editor", None)
+    if value is None:
+        return (not bool(field.is_system)) and bool(field.is_editable)
+    return bool(value)
 
 
 def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
@@ -98,6 +108,7 @@ def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
         block_key=field.block_key,
         sort_order=field.sort_order,
         is_visible=bool(field.is_visible),
+        is_visible_in_editor=_field_visible_in_editor(field),
         is_editable=bool(field.is_editable),
         is_required=bool(field.is_required),
         is_system=bool(field.is_system),
@@ -180,6 +191,12 @@ def update_client_card_block(
         block.sort_order = payload.sort_order
     if payload.is_active is not None:
         block.is_active = payload.is_active
+    if payload.show_in_card is not None:
+        block.show_in_card = payload.show_in_card
+    if payload.show_in_editor is not None:
+        block.show_in_editor = payload.show_in_editor
+    if payload.show_title is not None:
+        block.show_title = payload.show_title
     block.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(block)
@@ -247,6 +264,10 @@ def update_client_card_field(
     if field.is_system:
         if payload.field_type is not None and payload.field_type != field.field_type:
             _error(403, "readonly_system_field_type", "Тип системного поля нельзя изменять")
+        if payload.is_editable is not None and payload.is_editable != field.is_editable:
+            _error(403, "readonly_system_field_editable", "System field editable flag cannot be changed")
+        if payload.is_required is not None and payload.is_required != field.is_required:
+            _error(403, "readonly_system_field_required", "System field required flag cannot be changed")
     if payload.label is not None:
         label = payload.label.strip()
         if not label:
@@ -261,6 +282,8 @@ def update_client_card_field(
         field.sort_order = payload.sort_order
     if payload.is_visible is not None:
         field.is_visible = payload.is_visible
+    if payload.is_visible_in_editor is not None:
+        field.is_visible_in_editor = payload.is_visible_in_editor
     if payload.is_editable is not None:
         field.is_editable = payload.is_editable
     if payload.is_required is not None:
@@ -346,6 +369,9 @@ def create_client_card_block(
         color_scheme=_normalize_color_scheme(payload.color_scheme),
         sort_order=payload.sort_order,
         is_active=payload.is_active,
+        show_in_card=payload.show_in_card,
+        show_in_editor=payload.show_in_editor,
+        show_title=payload.show_title,
         created_at=now,
         updated_at=now,
     )
@@ -389,6 +415,7 @@ def create_client_card_field(
         block_key=payload.block_key,
         sort_order=sort_order,
         is_visible=payload.is_visible,
+        is_visible_in_editor=payload.is_visible_in_editor,
         is_editable=payload.is_editable,
         is_required=payload.is_required,
         is_system=False,

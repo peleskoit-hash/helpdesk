@@ -8,6 +8,9 @@
           color_scheme: "blue",
           sort_order: 10,
           is_active: true,
+          show_in_card: true,
+          show_in_editor: true,
+          show_title: true,
           fields: [
             { key: "telegram_username", label: "@username", field_type: "readonly", sort_order: 10, is_visible: true, is_editable: false, is_system: true },
             { key: "telegram_display_name", label: "Имя в TG", field_type: "readonly", sort_order: 20, is_visible: true, is_editable: false, is_system: true },
@@ -19,6 +22,9 @@
           color_scheme: "green",
           sort_order: 20,
           is_active: true,
+          show_in_card: true,
+          show_in_editor: true,
+          show_title: true,
           fields: [
             { key: "last_name", label: "Фамилия", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
             { key: "contact_name", label: "Имя", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
@@ -30,6 +36,9 @@
           color_scheme: "blue",
           sort_order: 30,
           is_active: true,
+          show_in_card: true,
+          show_in_editor: true,
+          show_title: true,
           fields: [
             { key: "destination", label: "Куда..?", field_type: "select", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
             { key: "sand_owner", label: "Чей песок", field_type: "select", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
@@ -47,6 +56,9 @@
           color_scheme: "yellow",
           sort_order: 40,
           is_active: true,
+          show_in_card: true,
+          show_in_editor: true,
+          show_title: true,
           fields: [
             { key: "internal_number", label: "Внутренний номер", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
             { key: "bitrix_login", label: "Логин Bitrix", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
@@ -60,6 +72,9 @@
           color_scheme: "red",
           sort_order: 50,
           is_active: true,
+          show_in_card: true,
+          show_in_editor: true,
+          show_title: true,
           fields: [
             { key: "is_verified", label: "Верификация", field_type: "checkbox", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
           ],
@@ -83,6 +98,26 @@
     if (!isHexColor(color)) return;
     blockEl.classList.add("client-card-block-custom-color");
     blockEl.style.setProperty("--client-card-block-bg", color.toLowerCase());
+  }
+
+  function blockShownInCard(block) {
+    return block && block.is_active !== false && block.show_in_card !== false;
+  }
+
+  function blockShownInEditor(block) {
+    return block && block.is_active !== false && block.show_in_editor !== false;
+  }
+
+  function blockShowsTitle(block) {
+    return block?.show_title !== false;
+  }
+
+  function fieldShownInCard(field) {
+    return field && field.is_visible !== false;
+  }
+
+  function fieldShownInEditor(field) {
+    return field && field.is_visible_in_editor !== false;
   }
 
   function getClientFieldValue(profile, key) {
@@ -166,16 +201,22 @@
     if (!el.clientDynamicCard) return;
     el.clientDynamicCard.innerHTML = "";
     const blocks = (config?.blocks || [])
-      .filter((block) => block && block.is_active !== false)
+      .filter(blockShownInCard)
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
     for (const block of blocks) {
       const fields = (block.fields || [])
-        .filter((field) => field && field.is_visible !== false)
+        .filter(fieldShownInCard)
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
       const blockEl = document.createElement("div");
       blockEl.className = `client-card-block ${clientCardColorClass(block.color_scheme)}`;
       applyClientCardBlockColor(blockEl, block.color_scheme);
+      if (blockShowsTitle(block)) {
+        const titleEl = document.createElement("div");
+        titleEl.className = "client-card-block-title";
+        titleEl.textContent = block.title || block.key || "";
+        blockEl.appendChild(titleEl);
+      }
 
       let renderedFields = 0;
       for (const field of fields) {
@@ -199,7 +240,7 @@
         renderedFields += 1;
       }
 
-      if (renderedFields > 0 || block.key === "verification") {
+      if (renderedFields > 0) {
         el.clientDynamicCard.appendChild(blockEl);
       }
     }
@@ -254,70 +295,6 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
     return (rawValue ?? "").toString().trim() || null;
-  }
-
-  function renderCustomFieldsEditor(ctx, profile) {
-    const { el, state } = ctx;
-    if (!el.customFieldsContainer || !el.customFieldsSection) return;
-    el.customFieldsContainer.innerHTML = "";
-    const blocks = (state.clientCardViewConfig?.blocks || [])
-      .filter((block) => block && block.is_active !== false)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-    const editableFields = [];
-    for (const block of blocks) {
-      for (const field of block.fields || []) {
-        if (!field || field.is_system || field.is_editable === false) continue;
-        editableFields.push(field);
-      }
-    }
-    el.customFieldsSection.classList.toggle("hidden", editableFields.length === 0);
-    const customValues = profile?.custom_fields || {};
-    for (const field of editableFields) {
-      const wrap = document.createElement("label");
-      wrap.className = "custom-field-editor";
-      const title = document.createElement("span");
-      title.textContent = field.label || field.key;
-      wrap.appendChild(title);
-      const fieldType = String(field.field_type || "text").toLowerCase();
-      const currentValue = customValues[field.key];
-      let inputEl = null;
-      if (fieldType === "textarea") {
-        inputEl = document.createElement("textarea");
-        inputEl.rows = 3;
-        inputEl.value = currentValue ?? "";
-      } else if (fieldType === "select") {
-        inputEl = document.createElement("select");
-        const emptyOption = document.createElement("option");
-        emptyOption.value = "";
-        emptyOption.textContent = "Не выбрано";
-        inputEl.appendChild(emptyOption);
-        const options = Array.isArray(field.options) ? field.options : [];
-        for (const optionValue of options) {
-          const option = document.createElement("option");
-          option.value = optionValue;
-          option.textContent = optionValue;
-          inputEl.appendChild(option);
-        }
-        inputEl.value = currentValue ?? "";
-      } else if (fieldType === "checkbox") {
-        inputEl = document.createElement("input");
-        inputEl.type = "checkbox";
-        inputEl.checked = Boolean(currentValue);
-      } else {
-        inputEl = document.createElement("input");
-        if (fieldType === "number") inputEl.type = "number";
-        else if (fieldType === "date") inputEl.type = "date";
-        else if (fieldType === "url") inputEl.type = "url";
-        else if (fieldType === "phone") inputEl.type = "tel";
-        else if (fieldType === "password") inputEl.type = "password";
-        else inputEl.type = "text";
-        inputEl.value = currentValue ?? "";
-      }
-      inputEl.dataset.customFieldKey = field.key;
-      inputEl.dataset.customFieldType = fieldType;
-      wrap.appendChild(inputEl);
-      el.customFieldsContainer.appendChild(wrap);
-    }
   }
 
   function buildDepartmentMetaPayload(ctx) {
@@ -426,6 +403,131 @@
     } catch (e) {
       ctx.showError(e.message);
     }
+  }
+
+  function fieldValueForEditor(profile, field) {
+    if (!field) return null;
+    if (String(field.key || "").startsWith("custom_")) {
+      return (profile?.custom_fields || {})[field.key] ?? null;
+    }
+    return getClientFieldValue(profile, field.key);
+  }
+
+  function renderReadonlyEditorField(field, value) {
+    const wrap = document.createElement("div");
+    wrap.className = "custom-field-editor readonly-copyable";
+    const title = document.createElement("span");
+    title.textContent = field.label || field.key;
+    wrap.appendChild(title);
+    const valueRow = document.createElement("div");
+    valueRow.className = "readonly-copyable-row";
+    const valueEl = renderClientFieldValue(field, value);
+    if (valueEl.textContent.trim() === "") valueEl.textContent = "-";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "action";
+    button.textContent = "\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c";
+    button.addEventListener("click", async () => {
+      const text = String(value ?? "").trim();
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    });
+    valueRow.appendChild(valueEl);
+    valueRow.appendChild(button);
+    wrap.appendChild(valueRow);
+    return wrap;
+  }
+
+  function renderEditableCustomField(field, currentValue) {
+    const wrap = document.createElement("label");
+    wrap.className = "custom-field-editor";
+    const title = document.createElement("span");
+    title.textContent = field.label || field.key;
+    wrap.appendChild(title);
+    const fieldType = String(field.field_type || "text").toLowerCase();
+    let inputEl = null;
+    if (fieldType === "textarea") {
+      inputEl = document.createElement("textarea");
+      inputEl.rows = 3;
+      inputEl.value = currentValue ?? "";
+    } else if (fieldType === "select") {
+      inputEl = document.createElement("select");
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = "\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e";
+      inputEl.appendChild(emptyOption);
+      const options = Array.isArray(field.options) ? field.options : [];
+      for (const optionValue of options) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        option.textContent = optionValue;
+        inputEl.appendChild(option);
+      }
+      inputEl.value = currentValue ?? "";
+    } else if (fieldType === "checkbox") {
+      inputEl = document.createElement("input");
+      inputEl.type = "checkbox";
+      inputEl.checked = Boolean(currentValue);
+    } else {
+      inputEl = document.createElement("input");
+      if (fieldType === "number") inputEl.type = "number";
+      else if (fieldType === "date") inputEl.type = "date";
+      else if (fieldType === "url") inputEl.type = "url";
+      else if (fieldType === "phone") inputEl.type = "tel";
+      else if (fieldType === "password") inputEl.type = "password";
+      else inputEl.type = "text";
+      inputEl.value = currentValue ?? "";
+    }
+    inputEl.dataset.customFieldKey = field.key;
+    inputEl.dataset.customFieldType = fieldType;
+    wrap.appendChild(inputEl);
+    return wrap;
+  }
+
+  function renderCustomFieldsEditor(ctx, profile) {
+    const { el, state } = ctx;
+    if (!el.customFieldsContainer || !el.customFieldsSection) return;
+    el.customFieldsContainer.innerHTML = "";
+    const blocks = (state.clientCardViewConfig?.blocks || [])
+      .filter(blockShownInEditor)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    let renderedFields = 0;
+    for (const block of blocks) {
+      const fields = (block.fields || [])
+        .filter(fieldShownInEditor)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      if (!fields.length) continue;
+      const blockWrap = document.createElement("div");
+      blockWrap.className = "custom-field-editor-block";
+      if (blockShowsTitle(block)) {
+        const title = document.createElement("div");
+        title.className = "client-card-block-title";
+        title.textContent = block.title || block.key || "";
+        blockWrap.appendChild(title);
+      }
+      for (const field of fields) {
+        const currentValue = fieldValueForEditor(profile, field);
+        if (!field.is_system && field.is_editable !== false) {
+          blockWrap.appendChild(renderEditableCustomField(field, currentValue));
+        } else {
+          blockWrap.appendChild(renderReadonlyEditorField(field, currentValue));
+        }
+        renderedFields += 1;
+      }
+      el.customFieldsContainer.appendChild(blockWrap);
+    }
+    el.customFieldsSection.classList.toggle("hidden", renderedFields === 0);
   }
 
   global.TicketClientCard = {

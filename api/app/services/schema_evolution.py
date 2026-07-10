@@ -52,17 +52,24 @@ def ensure_client_profile_columns() -> None:
 
 
 def ensure_client_card_field_config_columns() -> None:
-    required_columns = {
+    field_required_columns = {
         "is_required": "BOOLEAN",
+        "is_visible_in_editor": "BOOLEAN",
         "options_json": "JSONB",
+    }
+    block_required_columns = {
+        "show_in_card": "BOOLEAN",
+        "show_in_editor": "BOOLEAN",
+        "show_title": "BOOLEAN",
     }
     with engine.begin() as conn:
         dialect = conn.dialect.name
-        existing: set[str] = set()
         if dialect == "sqlite":
             rows = conn.execute(text("PRAGMA table_info(client_card_field_configs)")).mappings().all()
-            existing = {row["name"] for row in rows}
-            required_columns["options_json"] = "TEXT"
+            field_existing = {row["name"] for row in rows}
+            rows = conn.execute(text("PRAGMA table_info(client_card_block_configs)")).mappings().all()
+            block_existing = {row["name"] for row in rows}
+            field_required_columns["options_json"] = "TEXT"
         else:
             rows = conn.execute(
                 text(
@@ -73,11 +80,36 @@ def ensure_client_card_field_config_columns() -> None:
                     """
                 )
             ).fetchall()
-            existing = {row[0] for row in rows}
-        for column_name, column_type in required_columns.items():
-            if column_name not in existing:
+            field_existing = {row[0] for row in rows}
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'client_card_block_configs'
+                    """
+                )
+            ).fetchall()
+            block_existing = {row[0] for row in rows}
+        for column_name, column_type in field_required_columns.items():
+            if column_name not in field_existing:
                 conn.execute(text(f"ALTER TABLE client_card_field_configs ADD COLUMN {column_name} {column_type}"))
+        for column_name, column_type in block_required_columns.items():
+            if column_name not in block_existing:
+                conn.execute(text(f"ALTER TABLE client_card_block_configs ADD COLUMN {column_name} {column_type}"))
         conn.execute(text("UPDATE client_card_field_configs SET is_required = FALSE WHERE is_required IS NULL"))
+        conn.execute(
+            text(
+                """
+                UPDATE client_card_field_configs
+                SET is_visible_in_editor = CASE WHEN is_system = FALSE THEN TRUE ELSE FALSE END
+                WHERE is_visible_in_editor IS NULL
+                """
+            )
+        )
+        conn.execute(text("UPDATE client_card_block_configs SET show_in_card = TRUE WHERE show_in_card IS NULL"))
+        conn.execute(text("UPDATE client_card_block_configs SET show_in_editor = TRUE WHERE show_in_editor IS NULL"))
+        conn.execute(text("UPDATE client_card_block_configs SET show_title = TRUE WHERE show_title IS NULL"))
         if dialect == "sqlite":
             conn.execute(text("UPDATE client_card_field_configs SET options_json = NULL WHERE options_json = ''"))
 

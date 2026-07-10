@@ -36,6 +36,9 @@ const uiText = {
   title: "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0431\u043b\u043e\u043a\u0430",
   blockColor: "\u0426\u0432\u0435\u0442 \u0431\u043b\u043e\u043a\u0430",
   activeLabel: "\u0410\u043a\u0442\u0438\u0432\u0435\u043d",
+  showInCard: "\u0412 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435",
+  showInEditor: "\u0412 \u043e\u043a\u043d\u0435 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f",
+  showTitle: "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435",
   moveUp: "\u0412\u044b\u0448\u0435",
   moveDown: "\u041d\u0438\u0436\u0435",
   edit: "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c",
@@ -73,6 +76,7 @@ const el = {
   newClientCardFieldType: document.getElementById("newClientCardFieldType"),
   newClientCardFieldBlock: document.getElementById("newClientCardFieldBlock"),
   newClientCardFieldVisible: document.getElementById("newClientCardFieldVisible"),
+  newClientCardFieldVisibleInEditor: document.getElementById("newClientCardFieldVisibleInEditor"),
   newClientCardFieldEditable: document.getElementById("newClientCardFieldEditable"),
   newClientCardFieldRequired: document.getElementById("newClientCardFieldRequired"),
   newClientCardFieldOptionsWrap: document.getElementById("newClientCardFieldOptionsWrap"),
@@ -82,6 +86,7 @@ const el = {
   saveEditClientCardFieldBtn: document.getElementById("saveEditClientCardFieldBtn"),
   editFieldLabel: document.getElementById("editFieldLabel"),
   editFieldVisible: document.getElementById("editFieldVisible"),
+  editFieldVisibleInEditor: document.getElementById("editFieldVisibleInEditor"),
   editFieldEditable: document.getElementById("editFieldEditable"),
   editFieldRequired: document.getElementById("editFieldRequired"),
   editFieldSystemNote: document.getElementById("editFieldSystemNote"),
@@ -192,6 +197,7 @@ function openEditFieldModal(fieldId) {
   el.editFieldLabel.value = field.label || "";
   el.editFieldLabel.readOnly = false;
   el.editFieldVisible.checked = Boolean(field.is_visible);
+  el.editFieldVisibleInEditor.checked = field.is_visible_in_editor !== false;
   el.editFieldEditable.checked = Boolean(field.is_editable);
   el.editFieldRequired.checked = Boolean(field.is_required);
   el.editFieldKey.value = field.key || "";
@@ -240,6 +246,7 @@ async function saveFieldFromModal() {
   const payload = {
     label: el.editFieldLabel.value.trim(),
     is_visible: Boolean(el.editFieldVisible.checked),
+    is_visible_in_editor: Boolean(el.editFieldVisibleInEditor.checked),
   };
 
   if (!isSystem) {
@@ -285,7 +292,10 @@ function blockPayloadFromDom(blockId) {
   const colorInput = el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="color_scheme"]`);
   const color = state.pendingBlockColors.get(blockId) || colorInput?.value || fallbackColorHex;
   const active = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="is_active"]`).checked);
-  return { title, color_scheme: color, is_active: active };
+  const showInCard = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="show_in_card"]`).checked);
+  const showInEditor = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="show_in_editor"]`).checked);
+  const showTitle = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="show_title"]`).checked);
+  return { title, color_scheme: color, is_active: active, show_in_card: showInCard, show_in_editor: showInEditor, show_title: showTitle };
 }
 
 async function saveBlock(blockId, statusText = uiText.blockSaved) {
@@ -407,6 +417,15 @@ function renderClientCardSettings() {
         <label class="checkbox-label">${uiText.activeLabel}
           <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="is_active" ${block.is_active ? "checked" : ""} />
         </label>
+        <label class="checkbox-label">${uiText.showInCard}
+          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_card" ${block.show_in_card !== false ? "checked" : ""} />
+        </label>
+        <label class="checkbox-label">${uiText.showInEditor}
+          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_editor" ${block.show_in_editor !== false ? "checked" : ""} />
+        </label>
+        <label class="checkbox-label">${uiText.showTitle}
+          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_title" ${block.show_title !== false ? "checked" : ""} />
+        </label>
       </div>
 
       <div class="client-card-accordion-body ${expanded ? "" : "hidden"}">
@@ -415,6 +434,7 @@ function renderClientCardSettings() {
             <div class="client-card-field-row">
               <div class="client-card-field-visible">
                 <input type="checkbox" ${field.is_visible ? "checked" : ""} disabled />
+                <input type="checkbox" ${field.is_visible_in_editor !== false ? "checked" : ""} disabled />
               </div>
               <div class="client-card-field-main">
                 <div class="client-card-field-label">${escapeHtml(field.label)}</div>
@@ -508,6 +528,7 @@ function openCreateFieldModal() {
   el.newClientCardFieldLabel.value = "";
   el.newClientCardFieldType.value = "text";
   el.newClientCardFieldVisible.checked = true;
+  el.newClientCardFieldVisibleInEditor.checked = true;
   el.newClientCardFieldEditable.checked = true;
   el.newClientCardFieldRequired.checked = false;
   el.newClientCardFieldOptions.value = "";
@@ -538,6 +559,7 @@ async function createField() {
         field_type: fieldType,
         block_key: el.newClientCardFieldBlock.value,
         is_visible: Boolean(el.newClientCardFieldVisible.checked),
+        is_visible_in_editor: Boolean(el.newClientCardFieldVisibleInEditor.checked),
         is_editable: Boolean(el.newClientCardFieldEditable.checked),
         is_required: Boolean(el.newClientCardFieldRequired.checked),
         options,

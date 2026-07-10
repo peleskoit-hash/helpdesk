@@ -48,6 +48,8 @@ const helpers = loadHelpers();
 const settingsClientCardSource = fs.readFileSync('api/app/static/settings_client_card.js', 'utf8');
 const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_client_card.html', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
+const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
+const managementUsersSource = fs.readFileSync('api/app/static/management_users.js', 'utf8');
 const ticketTemplate = fs.readFileSync('api/app/templates/ticket.html', 'utf8');
 const managementUsersTemplate = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
 const appShellSource = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
@@ -131,7 +133,7 @@ test('settings client card color input previews locally without direct patch', (
 test('settings client card save block sends current color and keeps pending on errors', () => {
   const payloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'async function saveBlock');
   assert.match(payloadSource, /state\.pendingBlockColors\.get\(blockId\) \|\| colorInput\?\.value \|\| fallbackColorHex/);
-  assert.match(payloadSource, /return \{ title, color_scheme: color, is_active: active \}/);
+  assert.match(payloadSource, /return \{ title, color_scheme: color, is_active: active, show_in_card: showInCard, show_in_editor: showInEditor, show_title: showTitle \}/);
 
   const saveSource = sourceBetween(settingsClientCardSource, 'async function saveBlock', 'async function moveBlock');
   assert.match(saveSource, /method: "PATCH"/);
@@ -160,11 +162,11 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260709b/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260709b/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260709b/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260709b/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20260709b/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260709c/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260709c/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260709c/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260709c/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20260709c/);
 });
 
 test('settings client card UI exposes delete actions only for custom config entries', () => {
@@ -182,6 +184,78 @@ test('settings client card edit modal locks existing field key and block', () =>
 test('settings client card edit save does not send block key for existing fields', () => {
   const saveFieldSource = sourceBetween(settingsClientCardSource, 'async function saveFieldFromModal()', 'function syncCreateFieldOptionsVisibility()');
   assert.doesNotMatch(saveFieldSource, /block_key/);
+});
+
+test('settings client card supports separate card and editor visibility flags', () => {
+  assert.match(settingsClientCardTemplate, /id="newClientCardFieldVisibleInEditor"/);
+  assert.match(settingsClientCardTemplate, /id="editFieldVisibleInEditor"/);
+  assert.match(settingsClientCardSource, /editFieldVisibleInEditor\.checked = field\.is_visible_in_editor !== false/);
+  assert.match(settingsClientCardSource, /is_visible_in_editor: Boolean\(el\.editFieldVisibleInEditor\.checked\)/);
+  assert.match(settingsClientCardSource, /is_visible_in_editor: Boolean\(el\.newClientCardFieldVisibleInEditor\.checked\)/);
+});
+
+test('settings client card block save sends separate display mode flags', () => {
+  const blockPayloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'async function saveBlock');
+  assert.match(settingsClientCardSource, /data-prop="show_in_card"/);
+  assert.match(settingsClientCardSource, /data-prop="show_in_editor"/);
+  assert.match(settingsClientCardSource, /data-prop="show_title"/);
+  assert.match(blockPayloadSource, /show_in_card: showInCard/);
+  assert.match(blockPayloadSource, /show_in_editor: showInEditor/);
+  assert.match(blockPayloadSource, /show_title: showTitle/);
+});
+
+test('ticket client card renderer separates card and editor visibility modes', () => {
+  assert.match(ticketClientCardSource, /function blockShownInCard/);
+  assert.match(ticketClientCardSource, /block\.show_in_card !== false/);
+  assert.match(ticketClientCardSource, /function blockShownInEditor/);
+  assert.match(ticketClientCardSource, /block\.show_in_editor !== false/);
+  assert.match(ticketClientCardSource, /function fieldShownInCard/);
+  assert.match(ticketClientCardSource, /field\.is_visible !== false/);
+  assert.match(ticketClientCardSource, /function fieldShownInEditor/);
+  assert.match(ticketClientCardSource, /field\.is_visible_in_editor !== false/);
+});
+
+test('ticket client card editor renders readonly copyable fields without payload dataset', () => {
+  assert.match(ticketClientCardSource, /function renderReadonlyEditorField/);
+  assert.match(ticketClientCardSource, /readonly-copyable/);
+  assert.match(ticketClientCardSource, /navigator\.clipboard\.writeText/);
+  const readonlySource = sourceBetween(ticketClientCardSource, 'function renderReadonlyEditorField', 'function renderEditableCustomField');
+  assert.doesNotMatch(readonlySource, /dataset\.customFieldKey/);
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+  assert.ok(payloadSource.includes('querySelectorAll("[data-custom-field-key]")'));
+});
+
+test('ticket client card custom fields editor is exported and used by shared modal flow', () => {
+  assert.equal((ticketClientCardSource.match(/function renderCustomFieldsEditor/g) || []).length, 1);
+  const exportSource = ticketClientCardSource.slice(ticketClientCardSource.indexOf('global.TicketClientCard = {'));
+  assert.match(exportSource, /renderCustomFieldsEditor/);
+  const fillModalSource = sourceBetween(ticketClientCardSource, 'function fillModal', 'function parseCustomFieldValueForPayload');
+  assert.match(fillModalSource, /renderCustomFieldsEditor\(ctx, profile\)/);
+});
+
+test('ticket and management users pages use the shared TicketClientCard modal renderer', () => {
+  assert.match(ticketPageSource, /return TicketClientCard\.fillModal\(clientCardCtx\(\), profile\)/);
+  assert.match(ticketPageSource, /return TicketClientCard\.renderCustomFieldsEditor\(clientCardCtx\(\), profile\)/);
+  assert.match(managementUsersSource, /window\.TicketClientCard\.fillModal\(clientCardCtx\(root\), profile \|\| \{\}\)/);
+  assert.doesNotMatch(managementUsersSource, /function renderCustomFieldsEditor/);
+});
+
+test('verification block title renders through common client card config mechanics', () => {
+  const defaultConfigSource = sourceBetween(ticketClientCardSource, 'function defaultClientCardViewConfig()', 'function clientCardColorClass');
+  const renderSource = sourceBetween(ticketClientCardSource, 'function renderClientDynamicCard', 'function fillClientPanel');
+  const seedSource = fs.readFileSync('api/app/services/seed_data.py', 'utf8');
+  assert.match(defaultConfigSource, /key: "verification"/);
+  assert.match(defaultConfigSource, /key: "verification"[\s\S]*show_in_card: true/);
+  assert.match(defaultConfigSource, /key: "verification"[\s\S]*show_title: true/);
+  assert.match(defaultConfigSource, /key: "is_verified"[\s\S]*is_visible: true/);
+  assert.match(seedSource, /"key": "verification"[\s\S]*"is_active": True/);
+  assert.match(seedSource, /show_in_card=True/);
+  assert.match(seedSource, /show_title=True/);
+  assert.match(renderSource, /\.filter\(blockShownInCard\)/);
+  assert.match(renderSource, /\.filter\(fieldShownInCard\)/);
+  assert.match(renderSource, /if \(blockShowsTitle\(block\)\)/);
+  assert.match(renderSource, /client-card-block-title/);
+  assert.doesNotMatch(renderSource, /block\.key === "verification"/);
 });
 
 test('settings client card create field modal still uses block select', () => {

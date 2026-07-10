@@ -50,6 +50,7 @@ def _field(key: str, label: str, block_key: str, sort_order: int, *, is_system: 
         block_key=block_key,
         sort_order=sort_order,
         is_visible=True,
+        is_visible_in_editor=not is_system,
         is_editable=not is_system,
         is_required=False,
         is_system=is_system,
@@ -210,6 +211,28 @@ def test_patch_block_accepts_named_color():
     assert session.get(ClientCardBlockConfig, block.id).color_scheme == "blue"
 
 
+def test_block_visibility_flags_serialize_and_patch_independently():
+    session = _session()
+    block = _block("custom_block_123", "123", 10)
+    session.add(block)
+    session.commit()
+
+    result = settings_client_card.update_client_card_block(
+        block.id,
+        ClientCardBlockUpdate(show_in_card=False, show_in_editor=True, show_title=False),
+        db=session,
+        user=_admin(),
+    )
+    payload = settings_client_card.get_client_card_config(db=session, user=_admin())
+
+    assert result.show_in_card is False
+    assert result.show_in_editor is True
+    assert result.show_title is False
+    assert payload.blocks[0].show_in_card is False
+    assert payload.blocks[0].show_in_editor is True
+    assert payload.blocks[0].show_title is False
+
+
 def test_patch_block_accepts_hex_color_and_serializes_it():
     session = _session()
     block = _block("custom_block_123", "123", 10)
@@ -261,6 +284,72 @@ def test_create_field_still_accepts_selected_block_key():
 
     assert result.block_key == block.key
     assert result.key.startswith("custom_note")
+
+
+def test_patch_field_updates_card_and_editor_visibility_independently():
+    session = _session()
+    block = _block("custom_block_123", "123", 10)
+    custom_field = _field("custom_note", "Note", block.key, 10, is_system=False)
+    session.add_all([block, custom_field])
+    session.commit()
+
+    result = settings_client_card.update_client_card_field(
+        custom_field.id,
+        ClientCardFieldUpdate(is_visible=False, is_visible_in_editor=True),
+        db=session,
+        user=_admin(),
+    )
+    payload = settings_client_card.get_client_card_config(db=session, user=_admin())
+
+    assert result.is_visible is False
+    assert result.is_visible_in_editor is True
+    assert payload.blocks[0].fields[0].is_visible is False
+    assert payload.blocks[0].fields[0].is_visible_in_editor is True
+
+
+def test_patch_system_field_can_change_editor_visibility_but_not_editable():
+    session = _session()
+    block = _block("tg", "Telegram", 10)
+    system_field = _field("telegram_username", "@username", block.key, 10, is_system=True)
+    session.add_all([block, system_field])
+    session.commit()
+
+    result = settings_client_card.update_client_card_field(
+        system_field.id,
+        ClientCardFieldUpdate(is_visible_in_editor=True),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.is_visible_in_editor is True
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            system_field.id,
+            ClientCardFieldUpdate(is_editable=True),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["error"]["code"] == "readonly_system_field_editable"
+    assert session.get(ClientCardFieldConfig, system_field.id).is_editable is False
+
+
+def test_create_field_sets_editor_visibility_and_selected_block_key():
+    session = _session()
+    block = _block("custom_block_123", "123", 10)
+    session.add(block)
+    session.commit()
+
+    result = settings_client_card.create_client_card_field(
+        ClientCardFieldCreate(label="Hidden Note", field_type="text", block_key=block.key, is_visible=False, is_visible_in_editor=True),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.block_key == block.key
+    assert result.is_visible is False
+    assert result.is_visible_in_editor is True
 
 
 def test_move_block_recalculates_sort_order_with_step_ten():

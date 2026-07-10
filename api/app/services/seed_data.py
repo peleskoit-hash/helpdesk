@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
@@ -94,6 +94,9 @@ def ensure_client_card_defaults() -> None:
                         color_scheme=block["color_scheme"],
                         sort_order=block["sort_order"],
                         is_active=block["is_active"],
+                        show_in_card=True,
+                        show_in_editor=True,
+                        show_title=True,
                         created_at=now,
                         updated_at=now,
                     )
@@ -109,6 +112,7 @@ def ensure_client_card_defaults() -> None:
                         block_key=block_key,
                         sort_order=sort_order,
                         is_visible=is_visible,
+                        is_visible_in_editor=not is_system,
                         is_editable=is_editable,
                         is_system=is_system,
                         created_at=now,

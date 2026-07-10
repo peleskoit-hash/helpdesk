@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
@@ -53,12 +53,13 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
         .order_by(ClientCardBlockConfig.sort_order.asc(), ClientCardBlockConfig.created_at.asc())
     ).scalars().all()
     fields = db.execute(
-        select(ClientCardFieldConfig)
-        .where(ClientCardFieldConfig.is_visible.is_(True))
-        .order_by(ClientCardFieldConfig.sort_order.asc(), ClientCardFieldConfig.created_at.asc())
+        select(ClientCardFieldConfig).order_by(ClientCardFieldConfig.sort_order.asc(), ClientCardFieldConfig.created_at.asc())
     ).scalars().all()
     fields_by_block: dict[str, list[ClientCardFieldConfigOut]] = {}
     for field in fields:
+        field_visible_in_editor = getattr(field, "is_visible_in_editor", None)
+        if field_visible_in_editor is None:
+            field_visible_in_editor = (not bool(field.is_system)) and bool(field.is_editable)
         fields_by_block.setdefault(field.block_key, []).append(
             ClientCardFieldConfigOut(
                 id=field.id,
@@ -68,6 +69,7 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 block_key=field.block_key,
                 sort_order=field.sort_order,
                 is_visible=bool(field.is_visible),
+                is_visible_in_editor=bool(field_visible_in_editor),
                 is_editable=bool(field.is_editable),
                 is_required=bool(field.is_required),
                 is_system=bool(field.is_system),
@@ -83,6 +85,9 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 color_scheme=block.color_scheme,
                 sort_order=block.sort_order,
                 is_active=bool(block.is_active),
+                show_in_card=block.show_in_card is not False,
+                show_in_editor=block.show_in_editor is not False,
+                show_title=block.show_title is not False,
                 fields=fields_by_block.get(block.key, []),
             )
             for block in blocks

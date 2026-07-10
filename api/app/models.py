@@ -249,6 +249,9 @@ class ClientCardBlockConfig(Base):
     color_scheme: Mapped[str] = mapped_column(String(40), default="gray")
     sort_order: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_in_card: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_in_editor: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_title: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -263,6 +266,7 @@ class ClientCardFieldConfig(Base):
     block_key: Mapped[str] = mapped_column(String(100))
     sort_order: Mapped[int] = mapped_column(default=0)
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_visible_in_editor: Mapped[bool] = mapped_column(Boolean, default=True)
     is_editable: Mapped[bool] = mapped_column(Boolean, default=True)
     is_required: Mapped[bool] = mapped_column(Boolean, default=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=True)

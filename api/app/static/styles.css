@@ -3784,6 +3784,23 @@ body[data-theme="dark"] .verified-no {
   gap: 4px;
 }
 
+.custom-field-editor-block {
+  display: grid;
+  gap: 8px;
+}
+
+.readonly-copyable-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.readonly-copyable .client-card-field-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .bot-removed-warning {
   border: 1px solid rgba(173, 124, 31, 0.35);
   background: rgba(255, 245, 214, 0.78);

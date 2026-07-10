@@ -281,6 +281,7 @@ class ClientCardFieldConfigOut(BaseModel):
     block_key: str
     sort_order: int
     is_visible: bool
+    is_visible_in_editor: bool = True
     is_editable: bool
     is_required: bool = False
     is_system: bool
@@ -294,6 +295,9 @@ class ClientCardBlockConfigOut(BaseModel):
     color_scheme: str
     sort_order: int
     is_active: bool
+    show_in_card: bool = True
+    show_in_editor: bool = True
+    show_title: bool = True
     fields: list[ClientCardFieldConfigOut] = Field(default_factory=list)
 
 
@@ -306,6 +310,9 @@ class ClientCardBlockUpdate(BaseModel):
     color_scheme: ClientCardColorScheme | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+    show_in_card: bool | None = None
+    show_in_editor: bool | None = None
+    show_title: bool | None = None
 
 
 class ClientCardFieldUpdate(BaseModel):
@@ -314,6 +321,7 @@ class ClientCardFieldUpdate(BaseModel):
     block_key: str | None = None
     sort_order: int | None = None
     is_visible: bool | None = None
+    is_visible_in_editor: bool | None = None
     is_editable: bool | None = None
     is_required: bool | None = None
     options: list[str] | None = None
@@ -328,6 +336,9 @@ class ClientCardBlockCreate(BaseModel):
     color_scheme: ClientCardColorScheme = "gray"
     sort_order: int = 1000
     is_active: bool = True
+    show_in_card: bool = True
+    show_in_editor: bool = True
+    show_title: bool = True
 
 
 class ClientCardFieldCreate(BaseModel):
@@ -335,6 +346,7 @@ class ClientCardFieldCreate(BaseModel):
     field_type: Literal["text", "textarea", "number", "date", "checkbox", "select", "phone", "url", "password"]
     block_key: str = Field(min_length=1)
     is_visible: bool = True
+    is_visible_in_editor: bool = True
     is_editable: bool = True
     is_required: bool = False
     options: list[str] | None = None
