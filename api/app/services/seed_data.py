@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ..db import SessionLocal
-from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, Company, Ticket, TicketStatus, User
+from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, Company, Ticket, TicketStatus, User
 
 
 def ensure_test_agents() -> None:
@@ -79,6 +79,36 @@ def ensure_client_card_defaults() -> None:
         ("is_verified", "Верификация", "checkbox", "verification", 10, True, True, True),
     ]
 
+    default_rules = [
+        {
+            "technical_key": "show_sand_owner_for_sand",
+            "name": "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430 \u043f\u0435\u0441\u043a\u0430",
+            "sort_order": 10,
+            "condition_field_key": "destination",
+            "condition_operator": "equals",
+            "condition_value": "\u041f\u0435\u0441\u043e\u043a",
+            "actions_json": [{"target_type": "field", "target_key": "sand_owner", "action": "show", "scope": "editor"}],
+        },
+        {
+            "technical_key": "show_sales_group_for_sales",
+            "name": "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0433\u0440\u0443\u043f\u043f\u0443 \u043f\u0440\u043e\u0434\u0430\u0436",
+            "sort_order": 20,
+            "condition_field_key": "destination",
+            "condition_operator": "equals",
+            "condition_value": "\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
+            "actions_json": [{"target_type": "field", "target_key": "sales_group", "action": "show", "scope": "editor"}],
+        },
+        {
+            "technical_key": "show_anydesk_for_remote",
+            "name": "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c AnyDesk \u0434\u043b\u044f \u0443\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0445",
+            "sort_order": 30,
+            "condition_field_key": "location_type",
+            "condition_operator": "equals",
+            "condition_value": "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
+            "actions_json": [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "editor"}],
+        },
+    ]
+
     with SessionLocal() as db:
         has_blocks = db.execute(select(ClientCardBlockConfig.id).limit(1)).first() is not None
         has_fields = db.execute(select(ClientCardFieldConfig.id).limit(1)).first() is not None
@@ -121,6 +151,50 @@ def ensure_client_card_defaults() -> None:
                 )
         if not has_blocks or not has_fields:
             db.commit()
+        for rule in default_rules:
+            existing = db.execute(
+                select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == rule["technical_key"])
+            ).scalar_one_or_none()
+            if existing is not None:
+                continue
+            existing_without_key = db.execute(
+                select(ClientCardRuleConfig).where(
+                    ClientCardRuleConfig.is_system.is_(True),
+                    ClientCardRuleConfig.technical_key.is_(None),
+                    ClientCardRuleConfig.condition_field_key == rule["condition_field_key"],
+                    ClientCardRuleConfig.condition_operator == rule["condition_operator"],
+                    ClientCardRuleConfig.condition_value == rule["condition_value"],
+                )
+            ).scalars().all()
+            matched = next(
+                (
+                    item
+                    for item in existing_without_key
+                    if item.actions_json == rule["actions_json"]
+                ),
+                None,
+            )
+            if matched is not None:
+                matched.technical_key = rule["technical_key"]
+                matched.updated_at = now
+                continue
+            db.add(
+                ClientCardRuleConfig(
+                    id=str(uuid.uuid4()),
+                    technical_key=rule["technical_key"],
+                    name=rule["name"],
+                    is_active=True,
+                    is_system=True,
+                    sort_order=rule["sort_order"],
+                    condition_field_key=rule["condition_field_key"],
+                    condition_operator=rule["condition_operator"],
+                    condition_value=rule["condition_value"],
+                    actions_json=rule["actions_json"],
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        db.commit()
 
 
 def ensure_initial_seed_data() -> None:

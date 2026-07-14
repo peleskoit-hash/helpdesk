@@ -113,6 +113,61 @@ def ensure_client_card_field_config_columns() -> None:
         if dialect == "sqlite":
             conn.execute(text("UPDATE client_card_field_configs SET options_json = NULL WHERE options_json = ''"))
 
+        actions_type = "TEXT" if dialect == "sqlite" else "JSONB"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS client_card_rule_configs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    technical_key VARCHAR(100) UNIQUE,
+                    name VARCHAR(200) NOT NULL,
+                    is_active BOOLEAN,
+                    is_system BOOLEAN,
+                    sort_order INTEGER,
+                    condition_field_key VARCHAR(100) NOT NULL,
+                    condition_operator VARCHAR(40) NOT NULL,
+                    condition_value VARCHAR(500),
+                    actions_json {actions_type},
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        if dialect == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(client_card_rule_configs)")).mappings().all()
+            rule_existing = {row["name"] for row in rows}
+        else:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'client_card_rule_configs'
+                    """
+                )
+            ).fetchall()
+            rule_existing = {row[0] for row in rows}
+        rule_required_columns = {
+            "technical_key": "VARCHAR(100)",
+            "is_system": "BOOLEAN",
+            "sort_order": "INTEGER",
+            "condition_value": "VARCHAR(500)",
+            "actions_json": actions_type,
+        }
+        for column_name, column_type in rule_required_columns.items():
+            if column_name not in rule_existing:
+                conn.execute(text(f"ALTER TABLE client_card_rule_configs ADD COLUMN {column_name} {column_type}"))
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_client_card_rule_configs_technical_key "
+                "ON client_card_rule_configs (technical_key)"
+            )
+        )
+        conn.execute(text("UPDATE client_card_rule_configs SET is_active = TRUE WHERE is_active IS NULL"))
+        conn.execute(text("UPDATE client_card_rule_configs SET is_system = FALSE WHERE is_system IS NULL"))
+        conn.execute(text("UPDATE client_card_rule_configs SET sort_order = 1000 WHERE sort_order IS NULL"))
+
 
 def ensure_telegram_contact_columns() -> None:
     required_columns = {

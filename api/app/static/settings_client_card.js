@@ -4,6 +4,7 @@ const state = {
   clientCard: { blocks: [] },
   expandedBlocks: new Set(),
   editingFieldId: null,
+  editingRuleId: null,
   pendingBlockColors: new Map(),
 };
 
@@ -55,6 +56,8 @@ const uiText = {
   deleteBlockConfirmSuffix: "\u00bb \u0438 \u0432\u0441\u0435 \u0435\u0433\u043e \u043f\u043e\u043b\u044f?",
   deleteFieldConfirmPrefix: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u043e\u043b\u0435 \u00ab",
   deleteFieldConfirmSuffix: "\u00bb?",
+  rulesSaved: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e",
+  ruleDeleted: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u043e",
 };
 
 const el = {
@@ -64,6 +67,22 @@ const el = {
   addClientCardFieldBtn: document.getElementById("addClientCardFieldBtn"),
   clientCardSettings: document.getElementById("clientCardSettings"),
   emptyClientCardText: document.getElementById("emptyClientCardText"),
+  addClientCardRuleBtn: document.getElementById("addClientCardRuleBtn"),
+  clientCardRules: document.getElementById("clientCardRules"),
+  emptyClientCardRulesText: document.getElementById("emptyClientCardRulesText"),
+  clientCardRuleModal: document.getElementById("clientCardRuleModal"),
+  clientCardRuleModalTitle: document.getElementById("clientCardRuleModalTitle"),
+  closeClientCardRuleModalBtn: document.getElementById("closeClientCardRuleModalBtn"),
+  saveClientCardRuleBtn: document.getElementById("saveClientCardRuleBtn"),
+  deleteClientCardRuleBtn: document.getElementById("deleteClientCardRuleBtn"),
+  ruleName: document.getElementById("ruleName"),
+  ruleActive: document.getElementById("ruleActive"),
+  ruleConditionField: document.getElementById("ruleConditionField"),
+  ruleOperator: document.getElementById("ruleOperator"),
+  ruleValueWrap: document.getElementById("ruleValueWrap"),
+  ruleValue: document.getElementById("ruleValue"),
+  ruleActions: document.getElementById("ruleActions"),
+  addRuleActionBtn: document.getElementById("addRuleActionBtn"),
   createClientCardBlockModal: document.getElementById("createClientCardBlockModal"),
   closeCreateClientCardBlockModalBtn: document.getElementById("closeCreateClientCardBlockModalBtn"),
   saveCreateClientCardBlockBtn: document.getElementById("saveCreateClientCardBlockBtn"),
@@ -180,6 +199,14 @@ function findFieldById(fieldId) {
   return null;
 }
 
+function allClientCardFields() {
+  return (state.clientCard.blocks || []).flatMap((block) => block.fields || []);
+}
+
+function findRuleById(ruleId) {
+  return (state.clientCard.rules || []).find((rule) => rule.id === ruleId) || null;
+}
+
 function isCustomBlock(block) {
   return block && !systemBlockKeys.has(block.key) && String(block.key || "").startsWith("custom_block_");
 }
@@ -187,6 +214,200 @@ function isCustomBlock(block) {
 function setClientCardAndRender(config) {
   if (config) state.clientCard = config;
   renderClientCardSettings();
+  renderClientCardRules();
+}
+
+function fieldOptionsHtml(selectedKey = "") {
+  return allClientCardFields()
+    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)} (${escapeHtml(field.key)})</option>`)
+    .join("");
+}
+
+function blockOptionsHtml(selectedKey = "") {
+  return (state.clientCard.blocks || [])
+    .map((block) => `<option value="${escapeHtml(block.key)}" ${block.key === selectedKey ? "selected" : ""}>${escapeHtml(block.title || block.key)} (${escapeHtml(block.key)})</option>`)
+    .join("");
+}
+
+function syncRuleValueVisibility() {
+  const needsValue = el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals";
+  el.ruleValueWrap.classList.toggle("hidden", !needsValue);
+}
+
+function ruleActionOptions(targetType, scope, selected = "show") {
+  const allowed = targetType === "block" || scope !== "editor"
+    ? ["show", "hide"]
+    : ["show", "hide", "readonly", "editable", "required", "optional"];
+  const labels = {
+    show: "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c",
+    hide: "\u0421\u043a\u0440\u044b\u0442\u044c",
+    readonly: "readonly",
+    editable: "editable",
+    required: "\u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
+    optional: "\u041d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
+  };
+  const safeSelected = allowed.includes(selected) ? selected : allowed[0];
+  return allowed
+    .map((value) => `<option value="${value}" ${value === safeSelected ? "selected" : ""}>${labels[value]}</option>`)
+    .join("");
+}
+
+function ruleActionRowHtml(action = {}, index = 0) {
+  const targetType = action.target_type || "field";
+  const scope = action.scope || "editor";
+  const targetKey = action.target_key || "";
+  return `
+    <div class="client-card-rule-action-row" data-rule-action-row>
+      <label>\u0422\u0438\u043f \u0446\u0435\u043b\u0438
+        <select data-rule-action-prop="target_type">
+          <option value="field" ${targetType === "field" ? "selected" : ""}>\u041f\u043e\u043b\u0435</option>
+          <option value="block" ${targetType === "block" ? "selected" : ""}>\u0411\u043b\u043e\u043a</option>
+        </select>
+      </label>
+      <label data-rule-field-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_field">${fieldOptionsHtml(targetKey)}</select></label>
+      <label data-rule-block-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_block">${blockOptionsHtml(targetKey)}</select></label>
+      <label>\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435<select data-rule-action-prop="action">${ruleActionOptions(targetType, scope, action.action || "show")}</select></label>
+      <label>Scope
+        <select data-rule-action-prop="scope">
+          <option value="editor" ${scope === "editor" ? "selected" : ""}>\u041e\u043a\u043d\u043e \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f</option>
+          <option value="card" ${scope === "card" ? "selected" : ""}>\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430</option>
+          <option value="both" ${scope === "both" ? "selected" : ""}>\u041e\u0431\u0430</option>
+        </select>
+      </label>
+      <button class="action danger ${index === 0 ? "hidden" : ""}" type="button" data-remove-rule-action>&times;</button>
+    </div>
+  `;
+}
+
+function syncRuleActionRow(row) {
+  const targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
+  const scope = row.querySelector('[data-rule-action-prop="scope"]').value;
+  row.querySelector("[data-rule-field-target-wrap]").classList.toggle("hidden", targetType === "block");
+  row.querySelector("[data-rule-block-target-wrap]").classList.toggle("hidden", targetType !== "block");
+  const actionSelect = row.querySelector('[data-rule-action-prop="action"]');
+  actionSelect.innerHTML = ruleActionOptions(targetType, scope, actionSelect.value);
+}
+
+function syncRuleActionRows() {
+  el.ruleActions.querySelectorAll("[data-rule-action-row]").forEach((row, index) => {
+    syncRuleActionRow(row);
+    row.querySelector("[data-remove-rule-action]").classList.toggle("hidden", index === 0 && el.ruleActions.querySelectorAll("[data-rule-action-row]").length === 1);
+  });
+}
+
+function renderRuleActions(actions = []) {
+  const rows = actions.length ? actions : [{ target_type: "field", target_key: "", action: "show", scope: "editor" }];
+  el.ruleActions.innerHTML = rows.map(ruleActionRowHtml).join("");
+  syncRuleActionRows();
+}
+
+function collectRuleActions() {
+  const actions = [];
+  el.ruleActions.querySelectorAll("[data-rule-action-row]").forEach((row) => {
+    const targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
+    actions.push({
+      target_type: targetType,
+      target_key: targetType === "block"
+        ? row.querySelector('[data-rule-action-prop="target_block"]').value
+        : row.querySelector('[data-rule-action-prop="target_field"]').value,
+      action: row.querySelector('[data-rule-action-prop="action"]').value,
+      scope: row.querySelector('[data-rule-action-prop="scope"]').value,
+    });
+  });
+  if (!actions.length) throw new Error("\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u043d\u043e \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435");
+  return actions;
+}
+
+function openRuleModal(ruleId = null) {
+  const rule = ruleId ? findRuleById(ruleId) : null;
+  state.editingRuleId = rule?.id || null;
+  el.clientCardRuleModalTitle.textContent = rule ? "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u0430" : "\u041d\u043e\u0432\u043e\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u043e";
+  el.ruleName.value = rule?.name || "";
+  el.ruleActive.checked = rule?.is_active !== false;
+  el.ruleConditionField.innerHTML = fieldOptionsHtml(rule?.condition_field_key || "");
+  el.ruleOperator.value = rule?.condition_operator || "equals";
+  el.ruleValue.value = rule?.condition_value || "";
+  renderRuleActions(rule?.actions || []);
+  el.deleteClientCardRuleBtn.classList.toggle("hidden", !rule || rule.is_system);
+  syncRuleValueVisibility();
+  el.clientCardRuleModal.classList.remove("hidden");
+  el.ruleName.focus();
+}
+
+function closeRuleModal() {
+  state.editingRuleId = null;
+  el.clientCardRuleModal.classList.add("hidden");
+}
+
+function rulePayloadFromModal() {
+  const name = el.ruleName.value.trim();
+  if (!name) throw new Error("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u0430 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e");
+  return {
+    name,
+    is_active: Boolean(el.ruleActive.checked),
+    condition_field_key: el.ruleConditionField.value,
+    condition_operator: el.ruleOperator.value,
+    condition_value: (el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals") ? (el.ruleValue.value.trim() || null) : null,
+    actions: collectRuleActions(),
+  };
+}
+
+async function saveRuleFromModal() {
+  try {
+    const payload = rulePayloadFromModal();
+    const path = state.editingRuleId ? `/api/v1/settings/client-card/rules/${state.editingRuleId}` : "/api/v1/settings/client-card/rules";
+    await api(path, {
+      method: state.editingRuleId ? "PATCH" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    closeRuleModal();
+    await loadClientCardConfig();
+    setStatus(uiText.rulesSaved);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function toggleRule(ruleId, isActive) {
+  try {
+    await api(`/api/v1/settings/client-card/rules/${ruleId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    });
+    await loadClientCardConfig();
+    setStatus(uiText.rulesSaved);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function moveRule(ruleId, direction) {
+  try {
+    await api(`/api/v1/settings/client-card/rules/${ruleId}/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ direction }),
+    });
+    await loadClientCardConfig();
+    setStatus(uiText.rulesSaved);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function deleteRule(ruleId) {
+  const rule = findRuleById(ruleId);
+  if (!rule || rule.is_system) return;
+  try {
+    const config = await api(`/api/v1/settings/client-card/rules/${ruleId}`, { method: "DELETE" });
+    closeRuleModal();
+    setClientCardAndRender(config);
+    setStatus(uiText.ruleDeleted);
+  } catch (e) {
+    showError(e.message);
+  }
 }
 
 function openEditFieldModal(fieldId) {
@@ -502,11 +723,57 @@ function renderClientCardSettings() {
   });
 }
 
+function renderClientCardRules() {
+  const rules = state.clientCard.rules || [];
+  if (!el.clientCardRules) return;
+  el.clientCardRules.innerHTML = "";
+  el.emptyClientCardRulesText.classList.toggle("hidden", rules.length > 0);
+  for (const rule of rules) {
+    const actions = rule.actions || [];
+    const row = document.createElement("div");
+    row.className = "client-card-rule-row";
+    row.innerHTML = `
+      <div class="client-card-field-main">
+        <div class="client-card-field-label">${escapeHtml(rule.name)}</div>
+        <div class="client-card-field-meta">
+          <span>${rule.is_active ? uiText.active : uiText.inactive}</span>
+          ${rule.is_system ? `<span>${uiText.systemField}</span>` : ""}
+          <span>${escapeHtml(rule.condition_field_key)} ${escapeHtml(rule.condition_operator)} ${escapeHtml(rule.condition_value || "")}</span>
+          <span>${actions.map((action) => `${escapeHtml(action.action || "")} ${escapeHtml(action.target_key || "")} (${escapeHtml(action.scope || "editor")})`).join("; ")}</span>
+        </div>
+      </div>
+      <div class="client-card-field-actions">
+        <label class="checkbox-label">${uiText.activeLabel}
+          <input type="checkbox" data-toggle-rule-id="${escapeHtml(rule.id)}" ${rule.is_active ? "checked" : ""} />
+        </label>
+        <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="up">\u2191</button>
+        <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="down">\u2193</button>
+        <button class="action" type="button" data-edit-rule-id="${escapeHtml(rule.id)}">${uiText.edit}</button>
+        ${rule.is_system ? "" : `<button class="action danger" type="button" data-delete-rule-id="${escapeHtml(rule.id)}">${uiText.deleteField}</button>`}
+      </div>
+    `;
+    el.clientCardRules.appendChild(row);
+  }
+  el.clientCardRules.querySelectorAll("[data-edit-rule-id]").forEach((btn) => {
+    btn.addEventListener("click", () => openRuleModal(btn.dataset.editRuleId));
+  });
+  el.clientCardRules.querySelectorAll("[data-delete-rule-id]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteRule(btn.dataset.deleteRuleId));
+  });
+  el.clientCardRules.querySelectorAll("[data-toggle-rule-id]").forEach((input) => {
+    input.addEventListener("change", () => toggleRule(input.dataset.toggleRuleId, input.checked));
+  });
+  el.clientCardRules.querySelectorAll("[data-move-rule-id]").forEach((btn) => {
+    btn.addEventListener("click", () => moveRule(btn.dataset.moveRuleId, btn.dataset.direction));
+  });
+}
+
 async function loadClientCardConfig() {
   el.emptyClientCardText.classList.remove("hidden");
   el.emptyClientCardText.textContent = "Загрузка настроек карточки...";
   state.clientCard = await api("/api/v1/settings/client-card");
   renderClientCardSettings();
+  renderClientCardRules();
   if (!(state.clientCard.blocks || []).length) {
     el.emptyClientCardText.classList.remove("hidden");
     el.emptyClientCardText.textContent = "Блоки карточки пока не настроены";
@@ -595,6 +862,7 @@ const handlePageKeydown = (e) => {
     closeCreateModal();
     closeCreateFieldModal();
     closeEditFieldModal();
+    closeRuleModal();
     closeError();
   }
 };
@@ -609,6 +877,7 @@ const handlePageKeydown = (e) => {
   });
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
   el.addClientCardFieldBtn.addEventListener("click", openCreateFieldModal);
+  el.addClientCardRuleBtn.addEventListener("click", () => openRuleModal());
   el.closeCreateClientCardBlockModalBtn.addEventListener("click", closeCreateModal);
   el.saveCreateClientCardBlockBtn.addEventListener("click", createBlock);
   el.closeCreateClientCardFieldModalBtn.addEventListener("click", closeCreateFieldModal);
@@ -617,6 +886,27 @@ const handlePageKeydown = (e) => {
   el.editFieldType.addEventListener("change", syncEditFieldOptionsVisibility);
   el.closeEditClientCardFieldModalBtn.addEventListener("click", closeEditFieldModal);
   el.saveEditClientCardFieldBtn.addEventListener("click", saveFieldFromModal);
+  el.closeClientCardRuleModalBtn.addEventListener("click", closeRuleModal);
+  el.saveClientCardRuleBtn.addEventListener("click", saveRuleFromModal);
+  el.deleteClientCardRuleBtn.addEventListener("click", () => {
+    if (state.editingRuleId) deleteRule(state.editingRuleId);
+  });
+  el.ruleOperator.addEventListener("change", syncRuleValueVisibility);
+  el.addRuleActionBtn.addEventListener("click", () => {
+    el.ruleActions.insertAdjacentHTML("beforeend", ruleActionRowHtml({}, el.ruleActions.querySelectorAll("[data-rule-action-row]").length));
+    syncRuleActionRows();
+  });
+  el.ruleActions.addEventListener("change", (event) => {
+    if (event.target.matches("[data-rule-action-prop]")) syncRuleActionRows();
+  });
+  el.ruleActions.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-remove-rule-action]");
+    if (!btn) return;
+    const rows = el.ruleActions.querySelectorAll("[data-rule-action-row]");
+    if (rows.length <= 1) return;
+    btn.closest("[data-rule-action-row]").remove();
+    syncRuleActionRows();
+  });
   el.deleteEditClientCardFieldBtn.addEventListener("click", () => {
     if (state.editingFieldId) deleteField(state.editingFieldId);
   });
@@ -624,6 +914,7 @@ const handlePageKeydown = (e) => {
   closeOnBackdropClick(el.createClientCardBlockModal, closeCreateModal);
   closeOnBackdropClick(el.createClientCardFieldModal, closeCreateFieldModal);
   closeOnBackdropClick(el.editClientCardFieldModal, closeEditFieldModal);
+  closeOnBackdropClick(el.clientCardRuleModal, closeRuleModal);
   closeOnBackdropClick(el.errorModal, closeError);
 
   el.closeErrorModalBtn.addEventListener("click", closeError);

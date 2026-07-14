@@ -930,29 +930,35 @@ def update_client_profile(
     profile = _get_or_create_client_profile(db, t.client_id)
     contact = _telegram_contact_for_client(db, t.client_id)
 
-    profile.contact_name = payload.contact_name
-    profile.last_name = payload.last_name
-    profile.email = payload.email
-    profile.phone = payload.phone
-    profile.verification_status = payload.verification_status
-    profile.is_verified = bool(payload.is_verified)
-    profile.destination = payload.destination
-    profile.sand_owner = payload.sand_owner
-    profile.sales_group = payload.sales_group
-    profile.department = payload.department
-    profile.first_department = payload.first_department
-    profile.group_name = payload.group_name
-    profile.employee_type = payload.employee_type
-    profile.location_type = payload.location_type
-    profile.anydesk = payload.anydesk
-    profile.internal_number = payload.internal_number
-    profile.external_user_id = payload.external_user_id
-    profile.bitrix_login = payload.bitrix_login
-    profile.bitrix_password = payload.bitrix_password
-    profile.bitrix_id = payload.bitrix_id
-    if payload.custom_fields is not None:
+    data = payload.model_dump(exclude_unset=True)
+    for field in [
+        "contact_name",
+        "last_name",
+        "email",
+        "phone",
+        "verification_status",
+        "destination",
+        "sand_owner",
+        "sales_group",
+        "department",
+        "first_department",
+        "group_name",
+        "employee_type",
+        "location_type",
+        "anydesk",
+        "internal_number",
+        "external_user_id",
+        "bitrix_login",
+        "bitrix_password",
+        "bitrix_id",
+    ]:
+        if field in data:
+            setattr(profile, field, data[field])
+    if "is_verified" in data:
+        profile.is_verified = bool(data["is_verified"])
+    if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
-        incoming = payload.custom_fields or {}
+        incoming = data["custom_fields"] or {}
         if not isinstance(incoming, dict):
             _error(422, "invalid_custom_fields_payload", "custom_fields должен быть объектом")
         unknown_keys = [key for key in incoming.keys() if key not in custom_fields_map]
@@ -964,12 +970,19 @@ def update_client_profile(
             field = custom_fields_map[key]
             if not field.is_editable:
                 _error(403, "readonly_custom_field", f"Поле '{field.label}' недоступно для редактирования")
-            normalized_custom[key] = _normalize_custom_field_value(field, value)
+            if value is None:
+                normalized_custom.pop(key, None)
+                continue
+            normalized = _normalize_custom_field_value(field, value)
+            if normalized is None:
+                normalized_custom.pop(key, None)
+            else:
+                normalized_custom[key] = normalized
         profile.custom_fields = normalized_custom
     profile.updated_at = datetime.utcnow()
 
-    if t.client and payload.contact_name:
-        t.client.display_name = payload.contact_name
+    if t.client and data.get("contact_name"):
+        t.client.display_name = data["contact_name"]
 
     db.commit()
     db.refresh(profile)

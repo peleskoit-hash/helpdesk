@@ -301,8 +301,55 @@ class ClientCardBlockConfigOut(BaseModel):
     fields: list[ClientCardFieldConfigOut] = Field(default_factory=list)
 
 
+ClientCardRuleOperator = Literal["equals", "not_equals", "is_empty", "is_not_empty"]
+ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "required", "optional"]
+ClientCardRuleTargetType = Literal["field", "block"]
+ClientCardRuleScope = Literal["card", "editor", "both"]
+
+
+class ClientCardRuleAction(BaseModel):
+    target_type: ClientCardRuleTargetType = "field"
+    target_key: str = Field(min_length=1)
+    action: ClientCardRuleActionType
+    scope: ClientCardRuleScope = "editor"
+
+
+class ClientCardRuleConfigOut(BaseModel):
+    id: str
+    technical_key: str | None = None
+    name: str
+    is_active: bool
+    is_system: bool = False
+    sort_order: int
+    condition_field_key: str
+    condition_operator: ClientCardRuleOperator
+    condition_value: str | None = None
+    actions: list[ClientCardRuleAction] = Field(default_factory=list)
+
+
 class ClientCardConfigResponse(BaseModel):
     blocks: list[ClientCardBlockConfigOut] = Field(default_factory=list)
+    rules: list[ClientCardRuleConfigOut] = Field(default_factory=list)
+
+
+class ClientCardRuleCreate(BaseModel):
+    name: str = Field(min_length=1)
+    is_active: bool = True
+    sort_order: int = 1000
+    condition_field_key: str = Field(min_length=1)
+    condition_operator: ClientCardRuleOperator
+    condition_value: str | None = None
+    actions: list[ClientCardRuleAction] = Field(min_length=1)
+
+
+class ClientCardRuleUpdate(BaseModel):
+    name: str | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+    condition_field_key: str | None = None
+    condition_operator: ClientCardRuleOperator | None = None
+    condition_value: str | None = None
+    actions: list[ClientCardRuleAction] | None = None
 
 
 class ClientCardBlockUpdate(BaseModel):

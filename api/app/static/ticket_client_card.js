@@ -80,6 +80,38 @@
           ],
         },
       ],
+      rules: [
+        {
+          name: "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430 \u043f\u0435\u0441\u043a\u0430",
+          is_active: true,
+          is_system: true,
+          sort_order: 10,
+          condition_field_key: "destination",
+          condition_operator: "equals",
+          condition_value: "\u041f\u0435\u0441\u043e\u043a",
+          actions: [{ target_type: "field", target_key: "sand_owner", action: "show", scope: "editor" }],
+        },
+        {
+          name: "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u0433\u0440\u0443\u043f\u043f\u0443 \u043f\u0440\u043e\u0434\u0430\u0436",
+          is_active: true,
+          is_system: true,
+          sort_order: 20,
+          condition_field_key: "destination",
+          condition_operator: "equals",
+          condition_value: "\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
+          actions: [{ target_type: "field", target_key: "sales_group", action: "show", scope: "editor" }],
+        },
+        {
+          name: "\u041f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c AnyDesk \u0434\u043b\u044f \u0443\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0445",
+          is_active: true,
+          is_system: true,
+          sort_order: 30,
+          condition_field_key: "location_type",
+          condition_operator: "equals",
+          condition_value: "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
+          actions: [{ target_type: "field", target_key: "anydesk", action: "show", scope: "editor" }],
+        },
+      ],
     };
   }
 
@@ -118,6 +150,318 @@
 
   function fieldShownInEditor(field) {
     return field && field.is_visible_in_editor !== false;
+  }
+
+  function activeEditorRuleFieldTargets(config) {
+    const targets = new Set();
+    for (const rule of config?.rules || []) {
+      if (!rule || rule.is_active === false) continue;
+      for (const action of rule.actions || []) {
+        const scope = action.scope || "editor";
+        if (action.target_type === "field" && (scope === "editor" || scope === "both")) {
+          targets.add(action.target_key);
+        }
+      }
+    }
+    return targets;
+  }
+
+  function activeEditorRuleBlockTargets(config) {
+    const targets = new Set();
+    for (const rule of config?.rules || []) {
+      if (!rule || rule.is_active === false) continue;
+      for (const action of rule.actions || []) {
+        const scope = action.scope || "editor";
+        if (action.target_type === "block" && (scope === "editor" || scope === "both")) {
+          targets.add(action.target_key);
+        }
+      }
+    }
+    return targets;
+  }
+
+  function fieldShownInEditorOrRuleTarget(field, ruleTargets) {
+    return fieldShownInEditor(field) || (!field?.is_system && ruleTargets.has(field?.key));
+  }
+
+  function blockShownInEditorOrRuleTarget(block, ruleTargets) {
+    return blockShownInEditor(block) || ruleTargets.has(block?.key);
+  }
+
+  const systemFieldControls = {
+    contact_name: { control: "fContactName" },
+    last_name: { control: "fLastName" },
+    destination: { control: "fDestination" },
+    sand_owner: { control: "fSandOwner", wrap: "fSandOwnerWrap" },
+    sales_group: { control: "fSalesGroup", wrap: "fSalesGroupWrap" },
+    location_type: { control: "fLocationType" },
+    anydesk: { control: "fAnydesk", wrap: "fAnydeskWrap" },
+    internal_number: { control: "fInternalNumber" },
+    bitrix_login: { control: "fBitrixLogin" },
+    bitrix_password: { control: "fBitrixPassword" },
+    bitrix_id: { control: "fBitrixId" },
+    is_verified: { control: "fIsVerified" },
+  };
+
+  function ensureRuleState(ctx) {
+    if (!ctx.state.clientCardRuleState) {
+      ctx.state.clientCardRuleState = { hidden: new Set(), hiddenBlocks: new Set(), readonly: new Set(), required: new Set() };
+    }
+    if (!ctx.state.clientCardRuleState.hiddenBlocks) ctx.state.clientCardRuleState.hiddenBlocks = new Set();
+    return ctx.state.clientCardRuleState;
+  }
+
+  function fieldEditorNodes(ctx, key) {
+    const spec = systemFieldControls[key] || {};
+    const control = spec.control ? ctx.el[spec.control] : null;
+    const wrap = spec.wrap ? ctx.el[spec.wrap] : (control ? control.closest("label") : null);
+    if (control || wrap) return { control, wrap };
+    const escapedKey = selectorKey(key);
+    const dynamic = ctx.el.customFieldsContainer?.querySelector(`[data-client-card-field-key="${escapedKey}"]`);
+    const dynamicControl = dynamic?.querySelector("[data-custom-field-key]");
+    return { control: dynamicControl || null, wrap: dynamic || null };
+  }
+
+  function selectorKey(key) {
+    return window.CSS?.escape ? window.CSS.escape(key) : String(key).replaceAll('"', '\\"');
+  }
+
+  function fieldEditorValue(ctx, key) {
+    const { control } = fieldEditorNodes(ctx, key);
+    if (control) {
+      if (control.type === "checkbox") return control.checked;
+      return control.value;
+    }
+    return fieldValueForEditor(ctx.state.clientCardRuleProfile || ctx.state.card?.client_profile || {}, { key });
+  }
+
+  function normalizeRuleValue(value) {
+    return String(value ?? "").trim();
+  }
+
+  function ruleMatches(ctx, rule) {
+    const current = normalizeRuleValue(fieldEditorValue(ctx, rule.condition_field_key));
+    const expected = normalizeRuleValue(rule.condition_value);
+    if (rule.condition_operator === "equals") return current === expected;
+    if (rule.condition_operator === "not_equals") return current !== expected;
+    if (rule.condition_operator === "is_empty") return current === "";
+    if (rule.condition_operator === "is_not_empty") return current !== "";
+    return false;
+  }
+
+  function resetClientCardRuleOverlay(ctx) {
+    const state = ensureRuleState(ctx);
+    state.hidden = new Set();
+    state.hiddenBlocks = new Set();
+    state.readonly = new Set();
+    state.required = new Set();
+    const keys = new Set(Object.keys(systemFieldControls));
+    for (const block of ctx.state.clientCardViewConfig?.blocks || []) {
+      for (const field of block.fields || []) {
+        if (field?.key) keys.add(field.key);
+      }
+    }
+    for (const key of keys) {
+      const { control, wrap } = fieldEditorNodes(ctx, key);
+      if (wrap) {
+        if (wrap.dataset.clientCardBaseHidden === undefined) {
+          wrap.dataset.clientCardBaseHidden = wrap.classList.contains("hidden") ? "1" : "0";
+        }
+        const baseHidden = wrap.dataset.clientCardBaseHidden === "1";
+        wrap.classList.toggle("hidden", baseHidden);
+        if (baseHidden) state.hidden.add(key);
+      }
+      if (control) {
+        control.readOnly = false;
+        control.disabled = false;
+        control.required = false;
+      }
+    }
+    const blockEls = ctx.el.customFieldsContainer?.querySelectorAll("[data-client-card-block-key]") || [];
+    blockEls.forEach((blockEl) => {
+      if (blockEl.dataset.clientCardBaseHidden === undefined) {
+        blockEl.dataset.clientCardBaseHidden = blockEl.classList.contains("hidden") ? "1" : "0";
+      }
+      const baseHidden = blockEl.dataset.clientCardBaseHidden === "1";
+      blockEl.classList.toggle("hidden", baseHidden);
+      if (baseHidden) {
+        state.hiddenBlocks.add(blockEl.dataset.clientCardBlockKey);
+      }
+    });
+  }
+
+  function fieldBlockKey(ctx, key) {
+    for (const block of ctx.state.clientCardViewConfig?.blocks || []) {
+      if ((block.fields || []).some((field) => field?.key === key)) return block.key;
+    }
+    return null;
+  }
+
+  function syncFieldEditorVisibility(ctx, key) {
+    const { wrap } = fieldEditorNodes(ctx, key);
+    if (wrap) wrap.classList.toggle("hidden", isRuntimeFieldHidden(ctx, key));
+  }
+
+  function syncBlockEditorVisibility(ctx, blockKey) {
+    const state = ensureRuleState(ctx);
+    const block = ctx.el.customFieldsContainer?.querySelector(`[data-client-card-block-key="${selectorKey(blockKey)}"]`);
+    if (block) block.classList.toggle("hidden", state.hiddenBlocks.has(blockKey));
+    const configBlock = findClientCardBlock(ctx.state.clientCardViewConfig, blockKey);
+    for (const field of configBlock?.fields || []) {
+      syncFieldEditorVisibility(ctx, field.key);
+    }
+  }
+
+  function applyClientCardRuleAction(ctx, action) {
+    if (!action) return;
+    const scope = action.scope || "editor";
+    if (scope !== "editor" && scope !== "both") return;
+    const key = action.target_key;
+    const state = ensureRuleState(ctx);
+    if (action.target_type === "block") {
+      if (action.action !== "show" && action.action !== "hide") return;
+      if (action.action === "hide") state.hiddenBlocks.add(key);
+      else state.hiddenBlocks.delete(key);
+      syncBlockEditorVisibility(ctx, key);
+      return;
+    }
+    if (action.target_type !== "field") return;
+    if (action.action !== "show" && action.action !== "hide" && scope !== "editor") return;
+    const { control, wrap } = fieldEditorNodes(ctx, key);
+    if (action.action === "show") {
+      state.hidden.delete(key);
+      syncFieldEditorVisibility(ctx, key);
+    } else if (action.action === "hide") {
+      state.hidden.add(key);
+      syncFieldEditorVisibility(ctx, key);
+    } else if (action.action === "readonly") {
+      state.readonly.add(key);
+      if (control) {
+        if (control.type === "checkbox" || control.tagName === "SELECT") control.disabled = true;
+        else control.readOnly = true;
+      }
+    } else if (action.action === "editable") {
+      state.readonly.delete(key);
+      if (control) {
+        control.disabled = false;
+        control.readOnly = false;
+      }
+    } else if (action.action === "required") {
+      state.required.add(key);
+      if (control) control.required = true;
+    } else if (action.action === "optional") {
+      state.required.delete(key);
+      if (control) control.required = false;
+    }
+  }
+
+  function applyClientCardRules(ctx) {
+    resetClientCardRuleOverlay(ctx);
+    const rules = (ctx.state.clientCardViewConfig?.rules || [])
+      .filter((rule) => rule && rule.is_active !== false)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    for (const rule of rules) {
+      if (!ruleMatches(ctx, rule)) continue;
+      for (const action of rule.actions || []) {
+        applyClientCardRuleAction(ctx, action);
+      }
+    }
+  }
+
+  function bindClientCardRuleInputs(ctx) {
+    const rules = ctx.state.clientCardViewConfig?.rules || [];
+    const conditionKeys = new Set(rules.map((rule) => rule?.condition_field_key).filter(Boolean));
+    for (const key of conditionKeys) {
+      const { control } = fieldEditorNodes(ctx, key);
+      if (!control || control.dataset.clientCardRuleBound === "1") continue;
+      control.dataset.clientCardRuleBound = "1";
+      control.addEventListener("change", () => applyClientCardRules(ctx));
+      control.addEventListener("input", () => applyClientCardRules(ctx));
+    }
+  }
+
+  function isRuntimeFieldHidden(ctx, key) {
+    const state = ensureRuleState(ctx);
+    const blockKey = fieldBlockKey(ctx, key);
+    return state.hidden.has(key) || (blockKey ? state.hiddenBlocks.has(blockKey) : false);
+  }
+
+  function isRuntimeFieldReadonly(ctx, key) {
+    return ensureRuleState(ctx).readonly.has(key);
+  }
+
+  function validateClientCardRuleRequirements(ctx) {
+    const required = ensureRuleState(ctx).required;
+    for (const key of required) {
+      if (isRuntimeFieldHidden(ctx, key)) continue;
+      const value = fieldEditorValue(ctx, key);
+      if (typeof value === "boolean") continue;
+      if (normalizeRuleValue(value) === "") {
+        const field = findClientCardField(ctx.state.clientCardViewConfig, key);
+        throw new Error(`\u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u0435 \u043f\u043e\u043b\u0435: ${field?.label || key}`);
+      }
+    }
+  }
+
+  function findClientCardField(config, key) {
+    for (const block of config?.blocks || []) {
+      for (const field of block.fields || []) {
+        if (field?.key === key) return field;
+      }
+    }
+    return null;
+  }
+
+  function findClientCardBlock(config, key) {
+    return (config?.blocks || []).find((block) => block?.key === key) || null;
+  }
+
+  function cardRuleMatches(profile, rule) {
+    const value = normalizeRuleValue(getClientFieldValue(profile, rule.condition_field_key));
+    const expected = normalizeRuleValue(rule.condition_value);
+    if (rule.condition_operator === "equals") return value === expected;
+    if (rule.condition_operator === "not_equals") return value !== expected;
+    if (rule.condition_operator === "is_empty") return value === "";
+    if (rule.condition_operator === "is_not_empty") return value !== "";
+    return false;
+  }
+
+  function applyClientCardRulesToCardConfig(config, profile) {
+    const effectiveConfig = {
+      ...(config || {}),
+      blocks: (config?.blocks || []).map((block) => ({
+        ...block,
+        fields: (block.fields || []).map((field) => ({ ...field })),
+      })),
+    };
+    const blocksByKey = new Map(effectiveConfig.blocks.map((block) => [block.key, block]));
+    const fieldsByKey = new Map();
+    for (const block of effectiveConfig.blocks) {
+      for (const field of block.fields || []) {
+        fieldsByKey.set(field.key, field);
+      }
+    }
+    const rules = (effectiveConfig.rules || [])
+      .filter((rule) => rule && rule.is_active !== false)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    for (const rule of rules) {
+      if (!cardRuleMatches(profile, rule)) continue;
+      for (const action of rule.actions || []) {
+        const scope = action.scope || "editor";
+        if (scope !== "card" && scope !== "both") continue;
+        const shouldShow = action.action === "show";
+        const shouldHide = action.action === "hide";
+        if (!shouldShow && !shouldHide) continue;
+        if (action.target_type === "block") {
+          const block = blocksByKey.get(action.target_key);
+          if (block) block.show_in_card = shouldShow;
+        } else {
+          const field = fieldsByKey.get(action.target_key);
+          if (field) field.is_visible = shouldShow;
+        }
+      }
+    }
+    return effectiveConfig;
   }
 
   function getClientFieldValue(profile, key) {
@@ -200,7 +544,8 @@
     const { el } = ctx;
     if (!el.clientDynamicCard) return;
     el.clientDynamicCard.innerHTML = "";
-    const blocks = (config?.blocks || [])
+    const effectiveConfig = applyClientCardRulesToCardConfig(config, profile);
+    const blocks = (effectiveConfig?.blocks || [])
       .filter(blockShownInCard)
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
@@ -252,24 +597,12 @@
   }
 
   function syncDynamicModalFields(ctx) {
-    const { el } = ctx;
-    const destination = el.fDestination.value;
-    const isSand = destination === "Песок";
-    const isSales = destination === "Отдел Продаж";
-
-    el.fSandOwnerWrap.classList.toggle("hidden", !isSand);
-    el.fSalesGroupWrap.classList.toggle("hidden", !isSales);
-
-    if (!isSand) el.fSandOwner.value = "";
-    if (!isSales) el.fSalesGroup.value = "";
-
-    const isRemote = el.fLocationType.value === "Удалённый";
-    el.fAnydeskWrap.classList.toggle("hidden", !isRemote);
-    if (!isRemote) el.fAnydesk.value = "";
+    applyClientCardRules(ctx);
   }
 
   function fillModal(ctx, profile) {
     const { el } = ctx;
+    ctx.state.clientCardRuleProfile = profile || {};
     ctx.setControlValue(el.fContactName, profile.contact_name);
     ctx.setControlValue(el.fLastName, profile.last_name);
     ctx.setControlValue(el.fDestination, profile.destination);
@@ -283,7 +616,8 @@
     ctx.setControlValue(el.fBitrixId, profile.bitrix_id);
     el.fIsVerified.checked = Boolean(profile.is_verified);
     renderCustomFieldsEditor(ctx, profile);
-    syncDynamicModalFields(ctx);
+    bindClientCardRuleInputs(ctx);
+    applyClientCardRules(ctx);
   }
 
   function parseCustomFieldValueForPayload(fieldType, rawValue) {
@@ -335,8 +669,9 @@
 
   function getModalPayload(ctx) {
     const { el } = ctx;
+    validateClientCardRuleRequirements(ctx);
     const locationType = el.fLocationType.value.trim() || null;
-    const anydesk = locationType === "Удалённый" ? (el.fAnydesk.value.trim() || null) : null;
+    const anydesk = el.fAnydesk.value.trim() || null;
     const departmentMeta = buildDepartmentMetaPayload(ctx);
 
     const custom_fields = {};
@@ -344,6 +679,7 @@
       const customInputs = el.customFieldsContainer.querySelectorAll("[data-custom-field-key]");
       customInputs.forEach((input) => {
         const key = input.dataset.customFieldKey;
+        if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) return;
         const fieldType = input.dataset.customFieldType || "text";
         let rawValue = null;
         if (input.type === "checkbox") rawValue = input.checked;
@@ -352,12 +688,9 @@
       });
     }
 
-    return {
+    const payload = {
       contact_name: el.fContactName.value.trim() || null,
       last_name: el.fLastName.value.trim() || null,
-      email: null,
-      phone: null,
-      verification_status: null,
       is_verified: el.fIsVerified.checked,
       destination: el.fDestination.value.trim() || null,
       sand_owner: el.fSandOwner.value.trim() || null,
@@ -365,16 +698,20 @@
       department: departmentMeta.department,
       first_department: departmentMeta.first_department,
       group_name: departmentMeta.group_name,
-      employee_type: null,
       location_type: locationType,
       anydesk,
       internal_number: el.fInternalNumber.value.trim() || null,
-      external_user_id: null,
       bitrix_login: el.fBitrixLogin.value.trim() || null,
       bitrix_password: el.fBitrixPassword.value.trim() || null,
       bitrix_id: el.fBitrixId.value.trim() || null,
       custom_fields,
     };
+    for (const key of Object.keys(payload)) {
+      if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) {
+        delete payload[key];
+      }
+    }
+    return payload;
   }
 
   function openClientModal(ctx) {
@@ -416,6 +753,7 @@
   function renderReadonlyEditorField(field, value) {
     const wrap = document.createElement("div");
     wrap.className = "custom-field-editor readonly-copyable";
+    wrap.dataset.clientCardFieldKey = field.key;
     const title = document.createElement("span");
     title.textContent = field.label || field.key;
     wrap.appendChild(title);
@@ -452,6 +790,7 @@
   function renderEditableCustomField(field, currentValue) {
     const wrap = document.createElement("label");
     wrap.className = "custom-field-editor";
+    wrap.dataset.clientCardFieldKey = field.key;
     const title = document.createElement("span");
     title.textContent = field.label || field.key;
     wrap.appendChild(title);
@@ -499,17 +838,21 @@
     const { el, state } = ctx;
     if (!el.customFieldsContainer || !el.customFieldsSection) return;
     el.customFieldsContainer.innerHTML = "";
+    const blockRuleTargets = activeEditorRuleBlockTargets(state.clientCardViewConfig);
     const blocks = (state.clientCardViewConfig?.blocks || [])
-      .filter(blockShownInEditor)
+      .filter((block) => blockShownInEditorOrRuleTarget(block, blockRuleTargets))
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    const ruleTargets = activeEditorRuleFieldTargets(state.clientCardViewConfig);
     let renderedFields = 0;
     for (const block of blocks) {
       const fields = (block.fields || [])
-        .filter(fieldShownInEditor)
+        .filter((field) => fieldShownInEditorOrRuleTarget(field, ruleTargets))
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
       if (!fields.length) continue;
       const blockWrap = document.createElement("div");
       blockWrap.className = "custom-field-editor-block";
+      blockWrap.dataset.clientCardBlockKey = block.key;
+      if (!blockShownInEditor(block)) blockWrap.classList.add("hidden");
       if (blockShowsTitle(block)) {
         const title = document.createElement("div");
         title.className = "client-card-block-title";
@@ -518,11 +861,15 @@
       }
       for (const field of fields) {
         const currentValue = fieldValueForEditor(profile, field);
+        const baseHidden = !fieldShownInEditor(field);
+        let fieldEl;
         if (!field.is_system && field.is_editable !== false) {
-          blockWrap.appendChild(renderEditableCustomField(field, currentValue));
+          fieldEl = renderEditableCustomField(field, currentValue);
         } else {
-          blockWrap.appendChild(renderReadonlyEditorField(field, currentValue));
+          fieldEl = renderReadonlyEditorField(field, currentValue);
         }
+        if (baseHidden) fieldEl.classList.add("hidden");
+        blockWrap.appendChild(fieldEl);
         renderedFields += 1;
       }
       el.customFieldsContainer.appendChild(blockWrap);

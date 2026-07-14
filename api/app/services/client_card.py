@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientProfile
-from ..schemas import ClientCardBlockConfigOut, ClientCardConfigResponse, ClientCardFieldConfigOut, ClientProfileOut
+from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientProfile
+from ..schemas import ClientCardBlockConfigOut, ClientCardConfigResponse, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientProfileOut
 
 
 def _error(status_code: int, code: str, message: str):
@@ -91,7 +91,26 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 fields=fields_by_block.get(block.key, []),
             )
             for block in blocks
-        ]
+        ],
+        rules=[
+            ClientCardRuleConfigOut(
+                id=rule.id,
+                technical_key=rule.technical_key,
+                name=rule.name,
+                is_active=bool(rule.is_active),
+                is_system=bool(rule.is_system),
+                sort_order=rule.sort_order,
+                condition_field_key=rule.condition_field_key,
+                condition_operator=rule.condition_operator,
+                condition_value=rule.condition_value,
+                actions=rule.actions_json or [],
+            )
+            for rule in db.execute(
+                select(ClientCardRuleConfig)
+                .where(ClientCardRuleConfig.is_active.is_(True))
+                .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())
+            ).scalars().all()
+        ],
     )
 
 

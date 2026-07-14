@@ -275,6 +275,23 @@ class ClientCardFieldConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ClientCardRuleConfig(Base):
+    __tablename__ = "client_card_rule_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    technical_key: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(200))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(default=0)
+    condition_field_key: Mapped[str] = mapped_column(String(100))
+    condition_operator: Mapped[str] = mapped_column(String(40))
+    condition_value: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    actions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class BotButtonSetting(Base):
     __tablename__ = "bot_button_settings"
 

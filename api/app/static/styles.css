@@ -3801,6 +3801,36 @@ body[data-theme="dark"] .verified-no {
   overflow-wrap: anywhere;
 }
 
+.client-card-rules-head,
+.client-card-rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-card-rules {
+  display: grid;
+  gap: 8px;
+}
+
+.client-card-rule-row {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.client-card-rule-actions,
+.client-card-rule-action-row {
+  display: grid;
+  gap: 10px;
+}
+
+.client-card-rule-action-row {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+}
+
 .bot-removed-warning {
   border: 1px solid rgba(173, 124, 31, 0.35);
   background: rgba(255, 245, 214, 0.78);

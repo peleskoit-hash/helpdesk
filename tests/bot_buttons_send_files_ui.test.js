@@ -162,11 +162,11 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260709c/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260709c/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260709c/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260709c/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20260709c/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260710a/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260710a/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260710a/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260710a/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20260710a/);
 });
 
 test('settings client card UI exposes delete actions only for custom config entries', () => {
@@ -223,6 +223,118 @@ test('ticket client card editor renders readonly copyable fields without payload
   assert.doesNotMatch(readonlySource, /dataset\.customFieldKey/);
   const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
   assert.ok(payloadSource.includes('querySelectorAll("[data-custom-field-key]")'));
+});
+
+test('settings client card UI contains configurable rules section and form', () => {
+  assert.match(settingsClientCardTemplate, /id="clientCardRules"/);
+  assert.match(settingsClientCardTemplate, /id="addClientCardRuleBtn"/);
+  assert.match(settingsClientCardTemplate, /id="ruleConditionField"/);
+  assert.match(settingsClientCardTemplate, /id="ruleOperator"/);
+  assert.match(settingsClientCardTemplate, /id="ruleValue"/);
+  assert.match(settingsClientCardTemplate, /id="ruleActions"/);
+  assert.match(settingsClientCardTemplate, /id="addRuleActionBtn"/);
+  assert.match(settingsClientCardSource, /\/api\/v1\/settings\/client-card\/rules/);
+  assert.match(settingsClientCardSource, /function renderRuleActions/);
+  assert.match(settingsClientCardSource, /function collectRuleActions/);
+  assert.match(settingsClientCardSource, /function ruleActionOptions/);
+  assert.match(settingsClientCardSource, /data-rule-action-row/);
+  assert.match(settingsClientCardSource, /target_type: targetType/);
+  assert.match(settingsClientCardSource, /condition_value: \(el\.ruleOperator\.value === "equals" \|\| el\.ruleOperator\.value === "not_equals"\) \? \(el\.ruleValue\.value\.trim\(\) \|\| null\) : null/);
+  assert.match(settingsClientCardSource, /actions: collectRuleActions\(\)/);
+  assert.match(settingsClientCardSource, /\/api\/v1\/settings\/client-card\/rules\/\$\{ruleId\}\/move/);
+});
+
+test('ticket client card runtime applies configurable rules and filters payload', () => {
+  assert.match(ticketClientCardSource, /function applyClientCardRules/);
+  assert.match(ticketClientCardSource, /function applyClientCardRulesToCardConfig/);
+  assert.match(ticketClientCardSource, /function activeEditorRuleFieldTargets/);
+  assert.match(ticketClientCardSource, /function activeEditorRuleBlockTargets/);
+  assert.match(ticketClientCardSource, /function fieldShownInEditorOrRuleTarget/);
+  assert.match(ticketClientCardSource, /function blockShownInEditorOrRuleTarget/);
+  assert.match(ticketClientCardSource, /!\(?field\?\.is_system/);
+  assert.match(ticketClientCardSource, /function ruleMatches/);
+  assert.match(ticketClientCardSource, /function bindClientCardRuleInputs/);
+  assert.match(ticketClientCardSource, /addEventListener\("change", \(\) => applyClientCardRules\(ctx\)\)/);
+  assert.match(ticketClientCardSource, /function validateClientCardRuleRequirements/);
+  assert.match(ticketClientCardSource, /scope !== "card" && scope !== "both"/);
+  assert.match(ticketClientCardSource, /action\.action !== "show" && action\.action !== "hide" && scope !== "editor"/);
+  assert.match(ticketClientCardSource, /data-client-card-block-key/);
+  assert.match(ticketClientCardSource, /function syncBlockEditorVisibility/);
+  assert.match(ticketClientCardSource, /state\.hiddenBlocks\.add\(key\)/);
+  assert.match(ticketClientCardSource, /state\.hiddenBlocks\.delete\(key\)/);
+  assert.match(ticketClientCardSource, /const configBlock = findClientCardBlock\(ctx\.state\.clientCardViewConfig, blockKey\)/);
+  assert.match(ticketClientCardSource, /for \(const field of configBlock\?\.fields \|\| \[\]\)/);
+  assert.match(ticketClientCardSource, /blockShownInEditorOrRuleTarget\(block, blockRuleTargets\)/);
+  assert.match(ticketClientCardSource, /if \(!blockShownInEditor\(block\)\) blockWrap\.classList\.add\("hidden"\)/);
+  assert.match(ticketClientCardSource, /ctx\.state\.clientCardRuleProfile = profile \|\| \{\}/);
+  assert.match(ticketClientCardSource, /if \(baseHidden\) state\.hidden\.add\(key\)/);
+  assert.match(ticketClientCardSource, /if \(baseHidden\) fieldEl\.classList\.add\("hidden"\)/);
+  assert.match(ticketClientCardSource, /const effectiveConfig = applyClientCardRulesToCardConfig\(config, profile\)/);
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+  assert.match(payloadSource, /validateClientCardRuleRequirements\(ctx\)/);
+  assert.match(payloadSource, /isRuntimeFieldHidden\(ctx, key\) \|\| isRuntimeFieldReadonly\(ctx, key\)/);
+  assert.match(payloadSource, /for \(const key of Object\.keys\(payload\)\)/);
+  assert.match(payloadSource, /delete payload\[key\]/);
+});
+
+test('ticket client card block hide then field show still excludes field from payload', () => {
+  const ensureSource = sourceBetween(ticketClientCardSource, 'function ensureRuleState', 'function fieldEditorNodes');
+  const blockActionSource = sourceBetween(ticketClientCardSource, 'if (action.target_type === "block")', 'if (action.target_type !== "field")');
+  const fieldActionSource = sourceBetween(ticketClientCardSource, 'if (action.action === "show")', '} else if (action.action === "readonly")');
+  const hiddenSource = sourceBetween(ticketClientCardSource, 'function isRuntimeFieldHidden', 'function isRuntimeFieldReadonly');
+
+  assert.match(ensureSource, /hiddenBlocks: new Set\(\)/);
+  assert.match(blockActionSource, /state\.hiddenBlocks\.add\(key\)/);
+  assert.doesNotMatch(blockActionSource, /state\.hidden\.add\(field\.key\)/);
+  assert.match(fieldActionSource, /state\.hidden\.delete\(key\)/);
+  assert.match(hiddenSource, /state\.hidden\.has\(key\) \|\| \(blockKey \? state\.hiddenBlocks\.has\(blockKey\) : false\)/);
+});
+
+test('ticket client card field hide then block show keeps field-level hidden overlay', () => {
+  const blockActionSource = sourceBetween(ticketClientCardSource, 'if (action.target_type === "block")', 'if (action.target_type !== "field")');
+  const fieldActionSource = sourceBetween(ticketClientCardSource, 'if (action.action === "show")', '} else if (action.action === "readonly")');
+  const syncSource = sourceBetween(ticketClientCardSource, 'function syncBlockEditorVisibility', 'function applyClientCardRuleAction');
+
+  assert.match(fieldActionSource, /state\.hidden\.add\(key\)/);
+  assert.match(blockActionSource, /state\.hiddenBlocks\.delete\(key\)/);
+  assert.doesNotMatch(blockActionSource, /state\.hidden\.delete\(field\.key\)/);
+  assert.match(syncSource, /syncFieldEditorVisibility\(ctx, field\.key\)/);
+});
+
+test('ticket client card base-hidden block plus base-visible field becomes visible on matching show block rule', () => {
+  const resetSource = sourceBetween(ticketClientCardSource, 'function resetClientCardRuleOverlay', 'function fieldBlockKey');
+  const hiddenSource = sourceBetween(ticketClientCardSource, 'function isRuntimeFieldHidden', 'function isRuntimeFieldReadonly');
+  const blockActionSource = sourceBetween(ticketClientCardSource, 'if (action.target_type === "block")', 'if (action.target_type !== "field")');
+
+  assert.doesNotMatch(resetSource, /state\.hidden\.add\(field\.key\)/);
+  assert.match(resetSource, /state\.hiddenBlocks\.add\(blockEl\.dataset\.clientCardBlockKey\)/);
+  assert.match(blockActionSource, /state\.hiddenBlocks\.delete\(key\)/);
+  assert.match(hiddenSource, /return state\.hidden\.has\(key\) \|\| \(blockKey \? state\.hiddenBlocks\.has\(blockKey\) : false\)/);
+});
+
+test('ticket client card modal payload omits system fields that are not edited by the modal', () => {
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+  for (const key of ['email', 'phone', 'verification_status', 'employee_type', 'external_user_id']) {
+    assert.doesNotMatch(payloadSource, new RegExp(`${key}:\\s*null`));
+  }
+});
+
+test('settings client card rule move buttons use escaped arrows without mojibake', () => {
+  assert.match(settingsClientCardSource, /data-direction="up">\\u2191<\/button>/);
+  assert.match(settingsClientCardSource, /data-direction="down">\\u2193<\/button>/);
+  assert.doesNotMatch(settingsClientCardSource, /\u0442\u0416|\u0432\u2020/);
+});
+
+test('AnyDesk visibility is represented by default rule config without renderer hardcode', () => {
+  const defaultConfigSource = sourceBetween(ticketClientCardSource, 'function defaultClientCardViewConfig()', 'function clientCardColorClass');
+  const syncSource = sourceBetween(ticketClientCardSource, 'function syncDynamicModalFields', 'function fillModal');
+  const seedSource = fs.readFileSync('api/app/services/seed_data.py', 'utf8');
+  assert.match(defaultConfigSource, /condition_field_key: "location_type"/);
+  assert.match(defaultConfigSource, /condition_value: "\\u0423\\u0434\\u0430\\u043b\\u0451\\u043d\\u043d\\u044b\\u0439"/);
+  assert.match(defaultConfigSource, /target_key: "anydesk"/);
+  assert.match(seedSource, /"condition_field_key": "location_type"/);
+  assert.match(seedSource, /"target_key": "anydesk"/);
+  assert.doesNotMatch(syncSource, /Удал|\\u0423\\u0434\\u0430\\u043b|anydesk|fAnydesk/);
 });
 
 test('ticket client card custom fields editor is exported and used by shared modal flow', () => {
