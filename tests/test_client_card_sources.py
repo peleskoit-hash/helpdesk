@@ -12,11 +12,12 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardSourceConfig, ClientProfile
-from api.app.routers import settings_client_card
-from api.app.schemas import ClientCardSourceCreate, ClientCardSourceTestRequest, ClientCardSourceUpdate
+from api.app.models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile, Ticket, TicketStatus
+from api.app.routers import settings_client_card, tickets
+from api.app.schemas import ClientCardSourceCreate, ClientCardSourceRunRequest, ClientCardSourceTestRequest, ClientCardSourceUpdate
 from api.app.services import schema_evolution
 from api.app.services import client_card_sources as sources
+from api.app.services.client_card_derivation import apply_client_card_source_manual_run
 from api.app.services.client_card_sources import (
     ClientCardSourceConfigError,
     ClientCardSourceHttpError,
@@ -829,3 +830,234 @@ def test_mocked_transport_http_400_is_source_error():
         )
 
     assert exc.value.status == 404
+
+
+def _client_with_profile(session, **profile_overrides):
+    client = Client(id=str(uuid.uuid4()), company_id="company-1", display_name="Before")
+    profile_data = {
+        "id": str(uuid.uuid4()),
+        "client_id": client.id,
+        "contact_name": "Before",
+        "last_name": "Keep",
+        "internal_number": "42",
+        "custom_fields": {"custom_note": "old"},
+    }
+    profile_data.update(profile_overrides)
+    profile = ClientProfile(**profile_data)
+    session.add_all([client, profile])
+    session.commit()
+    return client, profile
+
+
+def test_manual_source_run_success_missing_null_and_no_save_rules(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client, profile = _client_with_profile(session, contact_name="Before", last_name="Keep")
+    source = _source(
+        mapping_json=[
+            {"response_path": "data.name", "target_key": "contact_name"},
+            {"response_path": "data.last", "target_key": "last_name"},
+            {"response_path": "data.note", "target_key": "custom_note"},
+            {"response_path": "data.missing", "target_key": "internal_number"},
+        ]
+    )
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="Would run on save",
+        is_active=True,
+        is_system=False,
+        sort_order=1,
+        condition_field_key="",
+        condition_operator="always",
+        condition_value=None,
+        actions_json=[{"target_type": "field", "target_key": "last_name", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Rule"}],
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add_all([source, rule])
+    session.commit()
+
+    monkeypatch.setattr(
+        sources,
+        "execute_source",
+        lambda source, context: SimpleNamespace(http_status=200, payload={"data": {"name": "After", "last": None, "note": "new"}}, duration_ms=7),
+    )
+
+    result = apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    session.commit()
+    session.refresh(profile)
+
+    assert result.changed_keys == {"contact_name", "last_name", "custom_note"}
+    assert profile.contact_name == "After"
+    assert profile.last_name is None
+    assert profile.internal_number == "42"
+    assert profile.custom_fields == {"custom_note": "new"}
+
+
+def test_manual_source_run_rejects_inactive_and_missing_source():
+    session = _session()
+    _seed_fields(session)
+    client, _profile = _client_with_profile(session)
+    source = _source(is_active=False)
+    session.add(source)
+    session.commit()
+
+    with pytest.raises(HTTPException) as inactive_exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    assert inactive_exc.value.status_code == 409
+    assert inactive_exc.value.detail["error"]["code"] == "source_inactive"
+
+    with pytest.raises(HTTPException) as missing_exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=str(uuid.uuid4()))
+    assert missing_exc.value.status_code == 404
+    assert missing_exc.value.detail["error"]["code"] == "source_not_found"
+
+
+def test_manual_source_run_uses_client_profile_edit_rights():
+    session = _session()
+    _seed_fields(session)
+    client, _profile = _client_with_profile(session)
+    source = _source()
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id="company-1",
+        client_id=client.id,
+        subject="Test",
+        status=TicketStatus.NEW.value,
+        assignee_id="agent-1",
+        agent_visible=True,
+    )
+    session.add_all([source, ticket])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.run_client_profile_source(
+            ticket.id,
+            ClientCardSourceRunRequest(source_id=source.id),
+            db=session,
+            user=SimpleNamespace(id="viewer-1", role="chiki_piki"),
+        )
+    assert exc.value.status_code == 403
+
+
+def test_manual_source_run_typed_normalization_and_atomic_mapping_failure(monkeypatch):
+    session = _session()
+    session.add_all([_block(), _field("contact_name"), _field("custom_note", is_system=False, field_type="number")])
+    session.commit()
+    client, profile = _client_with_profile(session, contact_name="Before", custom_fields={"custom_note": 1})
+    source = _source(
+        url_template="https://api.example.com",
+        mapping_json=[
+            {"response_path": "data.name", "target_key": "contact_name"},
+            {"response_path": "data.note", "target_key": "custom_note"},
+        ],
+    )
+    session.add(source)
+    session.commit()
+
+    monkeypatch.setattr(
+        sources,
+        "execute_source",
+        lambda source, context: SimpleNamespace(http_status=200, payload={"data": {"name": "After", "note": "bad-number"}}, duration_ms=7),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    assert exc.value.status_code == 422
+    session.rollback()
+    session.refresh(profile)
+    assert profile.contact_name == "Before"
+    assert profile.custom_fields == {"custom_note": 1}
+
+    monkeypatch.setattr(
+        sources,
+        "execute_source",
+        lambda source, context: SimpleNamespace(http_status=200, payload={"data": {"name": "After", "note": "12"}}, duration_ms=7),
+    )
+    apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    session.commit()
+    session.refresh(profile)
+    assert profile.contact_name == "After"
+    assert profile.custom_fields == {"custom_note": 12}
+
+
+def test_manual_source_run_source_error_does_not_mutate_profile(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client, profile = _client_with_profile(session, contact_name="Before")
+    source = _source()
+    session.add(source)
+    session.commit()
+
+    def fail(_source, _context):
+        raise sources.ClientCardSourceHttpError("boom", status=500)
+
+    monkeypatch.setattr(sources, "execute_source", fail)
+
+    with pytest.raises(HTTPException) as exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    assert exc.value.status_code == 502
+    session.rollback()
+    session.refresh(profile)
+    assert profile.contact_name == "Before"
+
+
+def test_manual_source_run_executes_http_outside_db_transaction(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client, _profile = _client_with_profile(session)
+    source = _source()
+    session.add(source)
+    session.commit()
+    observed = {}
+
+    def fake_execute(_source, _context):
+        observed["in_transaction"] = session.in_transaction()
+        return SimpleNamespace(http_status=200, payload={"data": {"user": {"name": "After"}}}, duration_ms=1)
+
+    monkeypatch.setattr(sources, "execute_source", fake_execute)
+    apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+
+    assert observed["in_transaction"] is False
+
+
+def test_manual_source_run_concurrent_profile_change_returns_409(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client, profile = _client_with_profile(session)
+    source = _source()
+    session.add(source)
+    session.commit()
+
+    def fake_execute(_source, _context):
+        current = session.get(ClientProfile, profile.id)
+        current.updated_at = datetime.utcnow()
+        session.commit()
+        return SimpleNamespace(http_status=200, payload={"data": {"user": {"name": "After"}}}, duration_ms=1)
+
+    monkeypatch.setattr(sources, "execute_source", fake_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    assert exc.value.status_code == 409
+
+
+def test_manual_source_run_creates_missing_profile(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client = Client(id=str(uuid.uuid4()), company_id="company-1", display_name="Before")
+    source = _source()
+    session.add_all([client, source])
+    session.commit()
+
+    monkeypatch.setattr(
+        sources,
+        "execute_source",
+        lambda source, context: SimpleNamespace(http_status=200, payload={"data": {"user": {"name": "Created"}}}, duration_ms=1),
+    )
+
+    result = apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    session.commit()
+
+    assert result.profile.contact_name == "Created"
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one().contact_name == "Created"

@@ -3831,6 +3831,30 @@ body[data-theme="dark"] .verified-no {
   grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
 }
 
+.client-card-source-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) minmax(120px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.client-card-source-row input,
+.client-card-source-row select,
+#clientCardSourceModal textarea {
+  min-width: 0;
+  width: 100%;
+}
+
+#clientCardSourceModal .modal-dialog {
+  width: min(880px, 94vw);
+}
+
+@media (max-width: 760px) {
+  .client-card-source-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .bot-removed-warning {
   border: 1px solid rgba(173, 124, 31, 0.35);
   background: rgba(255, 245, 214, 0.78);

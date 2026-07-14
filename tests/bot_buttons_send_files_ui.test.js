@@ -62,6 +62,30 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+function loadSettingsClientCardHelpers() {
+  const helperSource = [
+    sourceBetween(settingsClientCardSource, 'const complexTemplateValuePlaceholder', 'function keyValueRowHtml'),
+    sourceBetween(settingsClientCardSource, 'function canTestSourceEditor', 'function syncSourceTestAvailability'),
+    sourceBetween(settingsClientCardSource, 'function computeRuleActionUiState', 'function ruleActionOptions'),
+    'window.__settingsClientCardHelpers = { analyzeTemplateObject, serializeTemplateRows, computeRuleActionUiState, canTestSourceEditor, complexTemplateValuePlaceholder };',
+  ].join('\n');
+  const window = {};
+  const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
+  vm.runInContext(helperSource, context);
+  return window.__settingsClientCardHelpers;
+}
+
+function loadTicketClientCardHelpers() {
+  const helperSource = [
+    sourceBetween(ticketClientCardSource, 'function populateManualSourceSelect', 'function openManualSourceRun'),
+    'window.__ticketClientCardHelpers = { populateManualSourceSelect };',
+  ].join('\n');
+  const window = {};
+  const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
+  vm.runInContext(helperSource, context);
+  return window.__ticketClientCardHelpers;
+}
+
 function loadManagementUsersHelpers() {
   const source = fs.readFileSync('api/app/static/management_users.js', 'utf8');
   const window = {
@@ -87,6 +111,8 @@ function loadManagementUsersHelpers() {
 }
 
 const managementUsersHelpers = loadManagementUsersHelpers();
+const settingsClientCardHelpers = loadSettingsClientCardHelpers();
+const ticketClientCardHelpers = loadTicketClientCardHelpers();
 
 test('settings client card UI hides manual order controls in the main block and field editor', () => {
   assert.doesNotMatch(settingsClientCardSource, /data-prop="sort_order"/);
@@ -360,6 +386,182 @@ test('ticket and management users pages use the shared TicketClientCard modal re
   assert.match(ticketPageSource, /return TicketClientCard\.renderCustomFieldsEditor\(clientCardCtx\(\), profile\)/);
   assert.match(managementUsersSource, /window\.TicketClientCard\.fillModal\(clientCardCtx\(root\), profile \|\| \{\}\)/);
   assert.doesNotMatch(managementUsersSource, /function renderCustomFieldsEditor/);
+});
+
+test('client card settings renders source list and source editor controls', () => {
+  assert.match(settingsClientCardTemplate, /id="clientCardSources"/);
+  assert.match(settingsClientCardTemplate, /id="addClientCardSourceBtn"/);
+  assert.match(settingsClientCardTemplate, /id="clientCardSourceModal"/);
+  assert.match(settingsClientCardTemplate, /id="sourceQueryRows"/);
+  assert.match(settingsClientCardTemplate, /id="sourceHeaderRows"/);
+  assert.match(settingsClientCardTemplate, /id="sourceBodyJson"/);
+  assert.match(settingsClientCardTemplate, /id="sourceMappingRows"/);
+  assert.match(settingsClientCardTemplate, /CLIENT_CARD_SOURCE_SECRET_&lt;NAME&gt;/);
+  assert.match(settingsClientCardSource, /function renderClientCardSources/);
+  assert.match(settingsClientCardSource, /\/api\/v1\/settings\/client-card\/sources/);
+  assert.match(settingsClientCardSource, /function sourcePayloadFromModal/);
+  assert.match(settingsClientCardSource, /function analyzeTemplateObject/);
+  assert.match(settingsClientCardSource, /function serializeTemplateRows/);
+  assert.match(settingsClientCardSource, /function parseBodyJson/);
+  assert.match(settingsClientCardSource, /function collectMappingRows/);
+  assert.match(settingsClientCardTemplate, /id="sourceQueryComplexNotice"/);
+  assert.match(settingsClientCardTemplate, /id="sourceHeaderComplexNotice"/);
+});
+
+test('client card source editor supports template insertion, dependency context and preview rendering', () => {
+  assert.match(settingsClientCardSource, /sourceInsertUrlFieldBtn/);
+  assert.match(settingsClientCardSource, /sourceInsertBodyFieldBtn/);
+  assert.match(settingsClientCardSource, /insertAtCursor\(el\.sourceUrl, `\{\{\$\{el\.sourceInsertUrlField\.value\}\}\}`\)/);
+  assert.match(settingsClientCardSource, /function sourceTemplateRefs/);
+  assert.match(settingsClientCardSource, /function renderSourceTestContext/);
+  assert.match(settingsClientCardSource, /data-source-test-field/);
+  assert.match(settingsClientCardSource, /function renderSourceTestResult/);
+  assert.match(settingsClientCardSource, /missing_response_paths/);
+  assert.match(settingsClientCardSource, /\/test`/);
+});
+
+test('source editor helper detects nested query and header values without object-string corruption', () => {
+  const query = settingsClientCardHelpers.analyzeTemplateObject({
+    flat: 'value',
+    nested: { deep: 'x' },
+    list: [1, 2],
+  });
+  const headers = settingsClientCardHelpers.analyzeTemplateObject({
+    token: '{{secret:API}}',
+    extra: { region: 'ru' },
+  });
+
+  assert.deepEqual(Array.from(query.complexKeys), ['nested', 'list']);
+  assert.deepEqual(Array.from(headers.complexKeys), ['extra']);
+  assert.equal(query.rows.find((row) => row.key === 'flat').value, 'value');
+  assert.equal(query.rows.find((row) => row.key === 'nested').value, settingsClientCardHelpers.complexTemplateValuePlaceholder);
+  assert.equal(query.rows.some((row) => String(row.value).includes('[object Object]')), false);
+});
+
+test('source editor serialization keeps flat values and blocks unresolved complex rows', () => {
+  const complexPlaceholder = settingsClientCardHelpers.complexTemplateValuePlaceholder;
+  const makeRow = (key, value, isComplex = false) => ({
+    querySelector(selector) {
+      if (selector === '[data-source-row-key]') return { value: key };
+      if (selector === '[data-source-row-value]') return { value, dataset: { sourceComplexValue: isComplex ? '1' : '0' } };
+      return null;
+    },
+  });
+  const container = {
+    querySelectorAll() {
+      return [
+        makeRow('flat', 'value'),
+        makeRow('nested', complexPlaceholder, true),
+        makeRow('token', '{{contact_name}}'),
+      ];
+    },
+  };
+
+  const serialized = settingsClientCardHelpers.serializeTemplateRows(container, '[data-source-query-row]');
+  assert.deepEqual(JSON.parse(JSON.stringify(serialized.value)), { flat: 'value', token: '{{contact_name}}' });
+  assert.deepEqual(Array.from(serialized.unresolvedKeys), ['nested']);
+});
+
+test('source editor test availability blocks unsaved and new sources', () => {
+  assert.equal(settingsClientCardHelpers.canTestSourceEditor({ editingSourceId: 'source-1', sourceEditorDirty: false }), true);
+  assert.equal(settingsClientCardHelpers.canTestSourceEditor({ editingSourceId: 'source-1', sourceEditorDirty: true }), false);
+  assert.equal(settingsClientCardHelpers.canTestSourceEditor({ editingSourceId: null, sourceEditorDirty: false }), false);
+  assert.match(settingsClientCardSource, /\\u0421\\u043d\\u0430\\u0447\\u0430\\u043b\\u0430 \\u0441\\u043e\\u0445\\u0440\\u0430\\u043d\\u0438\\u0442\\u0435 \\u0438\\u0437\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f/);
+});
+
+test('lookup_source rule action auto-forces save scope and restores non-save scope on switch back', () => {
+  const lookupState = settingsClientCardHelpers.computeRuleActionUiState({
+    targetType: 'field',
+    scope: 'editor',
+    action: 'lookup_source',
+    valueType: 'literal',
+    previousNonSaveScope: 'editor',
+  });
+  const showState = settingsClientCardHelpers.computeRuleActionUiState({
+    targetType: lookupState.targetType,
+    scope: lookupState.scope,
+    action: 'show',
+    valueType: 'literal',
+    previousNonSaveScope: lookupState.previousNonSaveScope,
+  });
+  const setValueState = settingsClientCardHelpers.computeRuleActionUiState({
+    targetType: 'field',
+    scope: 'editor',
+    action: 'set_value',
+    valueType: 'field',
+    previousNonSaveScope: 'both',
+  });
+
+  assert.equal(lookupState.scope, 'save');
+  assert.equal(lookupState.targetType, 'field');
+  assert.equal(lookupState.isLookupSource, true);
+  assert.equal(showState.scope, 'editor');
+  assert.equal(showState.isLookupSource, false);
+  assert.equal(setValueState.scope, 'save');
+  assert.equal(setValueState.showSourceField, true);
+  assert.match(settingsClientCardSource, /scopeSelect\.disabled = uiState\.isLookupSource/);
+  assert.match(settingsClientCardSource, /row\.dataset\.previousNonSaveScope = uiState\.previousNonSaveScope/);
+});
+
+test('lookup_source rule action uses source_id and hides set_value controls', () => {
+  assert.match(settingsClientCardSource, /lookup_source: "\\u041f\\u043e\\u043b\\u0443\\u0447\\u0438\\u0442\\u044c/);
+  assert.match(settingsClientCardSource, /data-rule-action-prop="source_id"/);
+  assert.match(settingsClientCardSource, /sourceOptionsHtml\(sourceId\)/);
+  assert.match(settingsClientCardSource, /item\.source_id = row\.querySelector\('\[data-rule-action-prop="source_id"\]'\)\.value/);
+  assert.match(settingsClientCardSource, /delete item\.target_type/);
+  assert.match(settingsClientCardSource, /data-rule-lookup-source-wrap/);
+});
+
+test('manual source selector creates safe option text for stored HTML payload', () => {
+  const selectEl = {
+    innerHTML: 'stale',
+    options: [],
+    appendChild(node) {
+      this.options.push(node);
+    },
+  };
+  const doc = {
+    createElement(tag) {
+      assert.equal(tag, 'option');
+      return { value: '', textContent: '', innerHTML: '' };
+    },
+  };
+
+  ticketClientCardHelpers.populateManualSourceSelect(selectEl, [
+    { id: '1', name: '<img src=x onerror=alert(1)>', technical_key: 'x' },
+  ], doc);
+
+  assert.equal(selectEl.innerHTML, '');
+  assert.equal(selectEl.options.length, 1);
+  assert.equal(selectEl.options[0].value, '1');
+  assert.equal(selectEl.options[0].textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(selectEl.options[0].innerHTML, '');
+});
+
+test('manual source run UI is shared by ticket and management users', () => {
+  assert.match(ticketTemplate, /id="runClientSourceBtn"/);
+  assert.match(ticketTemplate, /id="clientSourceRunModal"/);
+  assert.match(managementUsersTemplate, /id="runClientSourceBtn"/);
+  assert.match(managementUsersTemplate, /id="clientSourceRunModal"/);
+  assert.match(ticketClientCardSource, /function bindManualSourceRun/);
+  assert.match(ticketClientCardSource, /function runManualSource/);
+  assert.match(ticketClientCardSource, /source_id: sourceId/);
+  assert.match(ticketPageSource, /manualSourceRunPath: \(\) => `\/api\/v1\/tickets\/\$\{state\.ticketId\}\/client-profile\/source-run`/);
+  assert.match(managementUsersSource, /manualSourceRunPath: \(\) => `\/api\/v1\/management\/users\/\$\{encodeURIComponent\(state\.selectedClientId\)\}\/profile\/source-run`/);
+  assert.match(managementUsersSource, /loadUsers\(root\)\.catch/);
+});
+
+test('tickets source-run readonly error line stays in unicode escapes and blocks mojibake regression', () => {
+  const ticketsRouterSource = fs.readFileSync('api/app/routers/tickets.py', 'utf8');
+  const readonlyRoleLine = ticketsRouterSource
+    .split('\n')
+    .find((line) => line.includes('\"readonly_role\"') && line.includes('\\u041d\\u0435\\u0442'));
+  assert.ok(readonlyRoleLine);
+  assert.match(
+    ticketsRouterSource,
+    /_error\(403, "readonly_role", "\\u041d\\u0435\\u0442 \\u043f\\u0440\\u0430\\u0432 \\u043d\\u0430 \\u0440\\u0435\\u0434\\u0430\\u043a\\u0442\\u0438\\u0440\\u043e\\u0432\\u0430\\u043d\\u0438\\u0435 \\u043a\\u0430\\u0440\\u0442\\u043e\\u0447\\u043a\\u0438 \\u043a\\u043b\\u0438\\u0435\\u043d\\u0442\\u0430"\)/,
+  );
+  assert.doesNotMatch(readonlyRoleLine, /[\u2568\u2564\u00D0\u00D1]|\u0420[\u045F\u040E\u045C]|\?\?\?|\u0442\u0416/);
 });
 
 test('verification block title renders through common client card config mechanics', () => {

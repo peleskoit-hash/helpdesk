@@ -541,6 +541,7 @@ def _serialize_client_card_config(db: Session) -> ClientCardConfigResponse:
     return ClientCardConfigResponse(
         blocks=[_block_out(block, fields_by_block.get(block.key, [])) for block in blocks],
         rules=[_rule_out(rule) for rule in _ordered_rules(db)],
+        sources=[_source_out(source) for source in _ordered_sources(db)],
     )
 
 

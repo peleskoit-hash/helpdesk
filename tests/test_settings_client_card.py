@@ -452,6 +452,44 @@ def _source_config(**overrides):
     return ClientCardSourceConfig(**data)
 
 
+def test_runtime_client_card_view_config_exposes_only_safe_source_summary():
+    session = _session()
+    now = datetime.utcnow()
+    company = Company(id=str(uuid.uuid4()), name="Company")
+    user = User(id="admin-1", company_id=company.id, full_name="Admin", role="admin")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        subject="Subject",
+        status=TicketStatus.NEW.value,
+        created_at=now,
+        updated_at=now,
+    )
+    source = _source_config(
+        technical_key="lookup",
+        name="Lookup",
+        url_template="https://api.example.com/users/{{internal_number}}",
+        query_template_json={"q": "{{contact_name}}"},
+        headers_template_json={"Authorization": "{{secret:TOKEN}}"},
+        body_template_json={"name": "{{contact_name}}"},
+        mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+    )
+    session.add_all([company, user, client, ticket, source])
+    session.commit()
+
+    runtime_payload = tickets.get_client_card_view_config(ticket.id, db=session, user=_admin())
+    source_payload = runtime_payload.sources[0].model_dump()
+
+    assert source_payload == {
+        "id": source.id,
+        "name": "Lookup",
+        "technical_key": "lookup",
+        "is_active": True,
+    }
+
+
 def test_create_rule_accepts_always_set_value_action_schema():
     session = _session()
     block = _block("department", "Department", 10)

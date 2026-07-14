@@ -596,6 +596,74 @@
   function fillClientPanel(ctx, profile) {
     const effectiveConfig = ctx.state.clientCardViewConfig || defaultClientCardViewConfig();
     renderClientDynamicCard(ctx, profile, effectiveConfig);
+    syncManualSourceRunControl(ctx);
+  }
+
+  function activeManualSources(ctx) {
+    return (ctx.state.clientCardViewConfig?.sources || []).filter((source) => source && source.is_active !== false);
+  }
+
+  function syncManualSourceRunControl(ctx) {
+    const button = ctx.el.runClientSourceBtn;
+    if (!button) return;
+    button.classList.toggle("hidden", activeManualSources(ctx).length === 0);
+  }
+
+  function closeManualSourceRun(ctx) {
+    ctx.el.clientSourceRunModal?.classList.add("hidden");
+  }
+
+  function populateManualSourceSelect(selectEl, sources, doc = document) {
+    if (!selectEl) return;
+    selectEl.innerHTML = "";
+    for (const source of sources || []) {
+      const option = doc.createElement("option");
+      option.value = source.id || "";
+      option.textContent = source.name || source.technical_key || source.id || "";
+      selectEl.appendChild(option);
+    }
+  }
+
+  function openManualSourceRun(ctx) {
+    const sources = activeManualSources(ctx);
+    if (!sources.length || !ctx.el.clientSourceRunSelect) return;
+    populateManualSourceSelect(ctx.el.clientSourceRunSelect, sources);
+    if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "";
+    ctx.el.clientSourceRunModal?.classList.remove("hidden");
+  }
+
+  async function runManualSource(ctx) {
+    const sourceId = ctx.el.clientSourceRunSelect?.value || "";
+    if (!sourceId || !ctx.manualSourceRunPath) return;
+    const button = ctx.el.runSelectedClientSourceBtn;
+    try {
+      if (button) button.disabled = true;
+      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u044e...";
+      const profile = await ctx.api(ctx.manualSourceRunPath(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source_id: sourceId }),
+      });
+      ctx.onManualSourceSuccess?.(profile);
+      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "\u0413\u043e\u0442\u043e\u0432\u043e";
+      ctx.setStatus?.("\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0430 \u0438\u0437 source");
+    } catch (error) {
+      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = error.message || "\u041e\u0448\u0438\u0431\u043a\u0430 source";
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function bindManualSourceRun(ctx) {
+    const button = ctx.el.runClientSourceBtn;
+    if (!button || button.dataset.clientSourceRunBound === "1") return;
+    button.dataset.clientSourceRunBound = "1";
+    button.addEventListener("click", () => openManualSourceRun(ctx));
+    ctx.el.closeClientSourceRunModalBtn?.addEventListener("click", () => closeManualSourceRun(ctx));
+    ctx.el.runSelectedClientSourceBtn?.addEventListener("click", () => runManualSource(ctx));
+    if (ctx.closeOnBackdropClick && ctx.el.clientSourceRunModal) {
+      ctx.closeOnBackdropClick(ctx.el.clientSourceRunModal, () => closeManualSourceRun(ctx));
+    }
   }
 
   function syncDynamicModalFields(ctx) {
@@ -850,5 +918,10 @@
     openClientModal,
     closeClientModal,
     saveClientProfile,
+    syncManualSourceRunControl,
+    openManualSourceRun,
+    closeManualSourceRun,
+    bindManualSourceRun,
+    populateManualSourceSelect,
   };
 })(window);

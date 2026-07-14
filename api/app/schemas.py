@@ -339,6 +339,20 @@ class ClientCardRuleConfigOut(BaseModel):
 class ClientCardConfigResponse(BaseModel):
     blocks: list[ClientCardBlockConfigOut] = Field(default_factory=list)
     rules: list[ClientCardRuleConfigOut] = Field(default_factory=list)
+    sources: list["ClientCardSourceConfigOut"] = Field(default_factory=list)
+
+
+class ClientCardSourceRuntimeOut(BaseModel):
+    id: str
+    technical_key: str | None = None
+    name: str
+    is_active: bool
+
+
+class ClientCardRuntimeConfigResponse(BaseModel):
+    blocks: list[ClientCardBlockConfigOut] = Field(default_factory=list)
+    rules: list[ClientCardRuleConfigOut] = Field(default_factory=list)
+    sources: list[ClientCardSourceRuntimeOut] = Field(default_factory=list)
 
 
 class ClientCardRuleCreate(BaseModel):
@@ -415,6 +429,10 @@ class ClientCardSourceTestResponse(BaseModel):
     mapped_values: dict = Field(default_factory=dict)
     missing_response_paths: list[str] = Field(default_factory=list)
     duration_ms: int
+
+
+class ClientCardSourceRunRequest(BaseModel):
+    source_id: str = Field(min_length=1)
 
 
 class ClientCardBlockUpdate(BaseModel):

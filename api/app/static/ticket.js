@@ -64,6 +64,12 @@ const el = {
   clientDynamicCard: document.getElementById("clientDynamicCard"),
 
   editClientBtn: document.getElementById("editClientBtn"),
+  runClientSourceBtn: document.getElementById("runClientSourceBtn"),
+  clientSourceRunModal: document.getElementById("clientSourceRunModal"),
+  closeClientSourceRunModalBtn: document.getElementById("closeClientSourceRunModalBtn"),
+  clientSourceRunSelect: document.getElementById("clientSourceRunSelect"),
+  runSelectedClientSourceBtn: document.getElementById("runSelectedClientSourceBtn"),
+  clientSourceRunStatus: document.getElementById("clientSourceRunStatus"),
   clientModal: document.getElementById("clientModal"),
   closeClientModalBtn: document.getElementById("closeClientModalBtn"),
   saveClientBtn: document.getElementById("saveClientBtn"),
@@ -284,8 +290,14 @@ function clientCardCtx() {
     api,
     setStatus,
     showError,
+    closeOnBackdropClick,
     isBlank,
     setControlValue,
+    manualSourceRunPath: () => `/api/v1/tickets/${state.ticketId}/client-profile/source-run`,
+    onManualSourceSuccess: (profile) => {
+      if (state.card) state.card.client_profile = profile;
+      fillClientPanel(profile);
+    },
   };
 }
 
@@ -773,6 +785,14 @@ async function saveClientProfile() {
   return TicketClientCard.saveClientProfile(clientCardCtx());
 }
 
+function syncManualSourceRunControl() {
+  return TicketClientCard.syncManualSourceRunControl?.(clientCardCtx());
+}
+
+function bindManualSourceRun() {
+  return TicketClientCard.bindManualSourceRun?.(clientCardCtx());
+}
+
 function hideMessageContextMenu() {
   if (typeof TicketMessageView.hideMessageContextMenu === "function") {
     return TicketMessageView.hideMessageContextMenu(messageViewCtx());
@@ -892,6 +912,7 @@ async function loadCard(options = {}) {
       ? cardConfig
       : defaultClientCardViewConfig();
     renderCard();
+    syncManualSourceRunControl();
     applyComposeModeUi();
     focusMessageInputIfAvailable();
     setStatus("Карточка загружена");
@@ -1115,6 +1136,7 @@ function init() {
     }
   });
   closeOnBackdropClick(el.errorModal, closeError);
+  bindManualSourceRun();
 
   el.fDestination.addEventListener("change", syncDynamicModalFields);
   el.fLocationType.addEventListener("change", syncDynamicModalFields);
@@ -1130,6 +1152,10 @@ function init() {
     }
     if (e.key === "Escape" && !el.clientModal.classList.contains("hidden")) {
       closeClientModal();
+      return;
+    }
+    if (e.key === "Escape" && el.clientSourceRunModal && !el.clientSourceRunModal.classList.contains("hidden")) {
+      TicketClientCard.closeManualSourceRun?.(clientCardCtx());
       return;
     }
     if (e.key === "Escape" && !el.wrongProblemModal.classList.contains("hidden")) {

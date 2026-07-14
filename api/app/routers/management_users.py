@@ -11,14 +11,14 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import Client, ClientProfile, TelegramContact, Ticket
-from ..schemas import ClientCardConfigResponse, ClientProfileOut, ClientProfileUpdate
+from ..schemas import ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate
 from ..services.client_card import (
     _client_card_view_config,
     _custom_field_map,
     _normalize_custom_field_value,
     _profile_out,
 )
-from ..services.client_card_derivation import apply_client_card_profile_save_pipeline
+from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
 
 
 router = APIRouter(prefix="/api/v1/management/users", tags=["management-users"])
@@ -218,7 +218,7 @@ def list_management_users(
     }
 
 
-@router.get("/client-card-view-config", response_model=ClientCardConfigResponse)
+@router.get("/client-card-view-config", response_model=ClientCardRuntimeConfigResponse)
 def get_client_card_config(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
@@ -278,6 +278,31 @@ def update_management_user_profile(
     db.commit()
     db.refresh(profile)
     contact = _telegram_contact_for_client(db, client_id)
+    return _profile_out(
+        profile,
+        contact.external_username if contact else None,
+        contact.external_display_name if contact else None,
+    )
+
+
+@router.post("/{client_id}/profile/source-run", response_model=ClientProfileOut)
+def run_management_user_profile_source(
+    client_id: str,
+    payload: ClientCardSourceRunRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    client = db.get(Client, client_id)
+    if client is None:
+        _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
+    contact = _telegram_contact_for_client(db, client_id)
+    result = apply_client_card_source_manual_run(db, client_id=client_id, source_id=payload.source_id)
+    profile = result.profile
+    if "contact_name" in result.changed_keys and profile.contact_name:
+        client.display_name = profile.contact_name
+    db.commit()
+    db.refresh(profile)
     return _profile_out(
         profile,
         contact.external_username if contact else None,

@@ -108,6 +108,7 @@
         <aside class="panel ticket-side">
           <div class="card-head">
             <div class="client-headline">
+              <button id="runClientSourceBtn" type="button" class="action edit-client-btn hidden" title="&#1054;&#1073;&#1085;&#1086;&#1074;&#1080;&#1090;&#1100; &#1080;&#1079; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1072;">&#8635;</button>
               <span style="font-weight:700;">Клиент</span>
               <button id="editClientBtn" type="button" class="action edit-client-btn" title="Редактировать клиента">✎</button>
             </div>
@@ -341,6 +342,22 @@
       <div class="modal-foot">
         <button id="cancelAdminActionBtn" type="button" class="action">Отмена</button>
         <button id="confirmAdminActionBtn" type="button" class="action primary">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="clientSourceRunModal" class="modal hidden">
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">&#1054;&#1073;&#1085;&#1086;&#1074;&#1080;&#1090;&#1100; &#1080;&#1079; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1072;</div>
+        <button id="closeClientSourceRunModalBtn" type="button" class="action">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1100;</button>
+      </div>
+      <div class="modal-body">
+        <label>Source<select id="clientSourceRunSelect"></select></label>
+        <div id="clientSourceRunStatus" class="status"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="runSelectedClientSourceBtn" type="button" class="action primary">&#1047;&#1072;&#1087;&#1091;&#1089;&#1090;&#1080;&#1090;&#1100;</button>
       </div>
     </div>
   </div>

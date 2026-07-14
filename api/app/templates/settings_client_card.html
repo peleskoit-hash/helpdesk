@@ -71,6 +71,14 @@
           <div id="clientCardRules" class="client-card-rules"></div>
           <div id="emptyClientCardRulesText" class="status settings-empty hidden">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
         </div>
+        <div class="panel settings-panel">
+          <div class="client-card-rules-head">
+            <div class="settings-subtitle">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080;</div>
+            <button id="addClientCardSourceBtn" class="action" type="button">+ Source</button>
+          </div>
+          <div id="clientCardSources" class="client-card-rules"></div>
+          <div id="emptyClientCardSourcesText" class="status settings-empty hidden">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
+        </div>
       </section>
 
   <div id="createClientCardFieldModal" class="modal hidden">
@@ -201,6 +209,69 @@
       <div class="modal-foot">
         <button id="deleteClientCardRuleBtn" type="button" class="action danger hidden">&#1059;&#1076;&#1072;&#1083;&#1080;&#1090;&#1100;</button>
         <button id="saveClientCardRuleBtn" type="button" class="action primary">&#1057;&#1086;&#1093;&#1088;&#1072;&#1085;&#1080;&#1090;&#1100;</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="clientCardSourceModal" class="modal hidden">
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head">
+        <div id="clientCardSourceModalTitle" style="font-weight:700;">Source</div>
+        <button id="closeClientCardSourceModalBtn" type="button" class="action">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1100;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field-section modal-field-section-profile">
+          <label>&#1053;&#1072;&#1079;&#1074;&#1072;&#1085;&#1080;&#1077;<input id="sourceName" autocomplete="off" /></label>
+          <label>&#1058;&#1077;&#1093;&#1085;&#1080;&#1095;&#1077;&#1089;&#1082;&#1080;&#1081; &#1082;&#1083;&#1102;&#1095;<input id="sourceTechnicalKey" autocomplete="off" /></label>
+          <label class="checkbox-label">&#1040;&#1082;&#1090;&#1080;&#1074;&#1077;&#1085; <input id="sourceActive" type="checkbox" checked /></label>
+          <label>&#1052;&#1077;&#1090;&#1086;&#1076;
+            <select id="sourceMethod">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+            </select>
+          </label>
+          <label>URL
+            <div class="client-card-color-picker-row">
+              <input id="sourceUrl" autocomplete="off" />
+              <select id="sourceInsertUrlField"></select>
+              <button id="sourceInsertUrlFieldBtn" class="action" type="button">&#1042;&#1089;&#1090;&#1072;&#1074;&#1080;&#1090;&#1100; &#1087;&#1086;&#1083;&#1077;</button>
+            </div>
+          </label>
+          <label>Timeout, ms<input id="sourceTimeoutMs" type="number" min="100" max="30000" value="3000" /></label>
+          <label>&#1055;&#1086;&#1074;&#1077;&#1076;&#1077;&#1085;&#1080;&#1077; &#1087;&#1088;&#1080; &#1086;&#1096;&#1080;&#1073;&#1082;&#1077;
+            <select id="sourceOnError">
+              <option value="ignore">&#1048;&#1075;&#1085;&#1086;&#1088;&#1080;&#1088;&#1086;&#1074;&#1072;&#1090;&#1100; &#1086;&#1096;&#1080;&#1073;&#1082;&#1091;</option>
+              <option value="block_save">&#1041;&#1083;&#1086;&#1082;&#1080;&#1088;&#1086;&#1074;&#1072;&#1090;&#1100; &#1089;&#1086;&#1093;&#1088;&#1072;&#1085;&#1077;&#1085;&#1080;&#1077;</option>
+            </select>
+          </label>
+          <div class="status-panel-title">Query parameters</div>
+          <div id="sourceQueryRows" class="client-card-rule-actions"></div>
+          <div id="sourceQueryComplexNotice" class="status hidden"></div>
+          <button id="addSourceQueryRowBtn" class="action" type="button">+ Query</button>
+          <div class="status-panel-title">Headers</div>
+          <div class="status">secret &#1079;&#1072;&#1076;&#1072;&#1105;&#1090;&#1089;&#1103; &#1085;&#1072; &#1089;&#1077;&#1088;&#1074;&#1077;&#1088;&#1077; &#1095;&#1077;&#1088;&#1077;&#1079; CLIENT_CARD_SOURCE_SECRET_&lt;NAME&gt;. &#1042; UI &#1091;&#1082;&#1072;&#1079;&#1099;&#1074;&#1072;&#1077;&#1090;&#1089;&#1103; &#1090;&#1086;&#1083;&#1100;&#1082;&#1086; {{secret:NAME}}.</div>
+          <div id="sourceHeaderRows" class="client-card-rule-actions"></div>
+          <div id="sourceHeaderComplexNotice" class="status hidden"></div>
+          <button id="addSourceHeaderRowBtn" class="action" type="button">+ Header</button>
+          <label>Body JSON
+            <div class="client-card-color-picker-row">
+              <select id="sourceInsertBodyField"></select>
+              <button id="sourceInsertBodyFieldBtn" class="action" type="button">&#1042;&#1089;&#1090;&#1072;&#1074;&#1080;&#1090;&#1100; &#1087;&#1086;&#1083;&#1077;</button>
+            </div>
+            <textarea id="sourceBodyJson" rows="6"></textarea>
+          </label>
+          <div class="status-panel-title">Mappings</div>
+          <div id="sourceMappingRows" class="client-card-rule-actions"></div>
+          <button id="addSourceMappingRowBtn" class="action" type="button">+ Mapping</button>
+          <div class="status-panel-title">&#1058;&#1077;&#1089;&#1090;</div>
+          <div id="sourceTestContext" class="modal-field-section modal-field-section-profile"></div>
+          <div id="sourceTestResult" class="status"></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="deleteClientCardSourceBtn" type="button" class="action danger hidden">&#1059;&#1076;&#1072;&#1083;&#1080;&#1090;&#1100;</button>
+        <button id="testClientCardSourceBtn" type="button" class="action">&#1055;&#1088;&#1086;&#1074;&#1077;&#1088;&#1080;&#1090;&#1100; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;</button>
+        <button id="saveClientCardSourceBtn" type="button" class="action primary">&#1057;&#1086;&#1093;&#1088;&#1072;&#1085;&#1080;&#1090;&#1100;</button>
       </div>
     </div>
   </div>

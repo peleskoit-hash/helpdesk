@@ -127,6 +127,12 @@
       clientModal: root.querySelector("#clientModal"),
       closeClientModalBtn: root.querySelector("#closeClientModalBtn"),
       saveClientBtn: root.querySelector("#saveClientBtn"),
+      runClientSourceBtn: root.querySelector("#runClientSourceBtn"),
+      clientSourceRunModal: root.querySelector("#clientSourceRunModal"),
+      closeClientSourceRunModalBtn: root.querySelector("#closeClientSourceRunModalBtn"),
+      clientSourceRunSelect: root.querySelector("#clientSourceRunSelect"),
+      runSelectedClientSourceBtn: root.querySelector("#runSelectedClientSourceBtn"),
+      clientSourceRunStatus: root.querySelector("#clientSourceRunStatus"),
       fContactName: root.querySelector("#fContactName"),
       fLastName: root.querySelector("#fLastName"),
       fDestination: root.querySelector("#fDestination"),
@@ -156,6 +162,11 @@
       isBlank,
       SALES_FIRST_DEPARTMENT,
       SALES_SECOND_DEPARTMENT,
+      manualSourceRunPath: () => `/api/v1/management/users/${encodeURIComponent(state.selectedClientId)}/profile/source-run`,
+      onManualSourceSuccess: (profile) => {
+        window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
+        loadUsers(root).catch((error) => setStatus(root, error.message));
+      },
     };
   }
 
@@ -209,6 +220,7 @@
     setStatus(root, "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438...");
     const profile = await api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`);
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
+    window.TicketClientCard.syncManualSourceRunControl?.(clientCardCtx(root));
     els(root).clientModal.classList.remove("hidden");
     setStatus(root, "\u0413\u043e\u0442\u043e\u0432\u043e");
   }
@@ -261,6 +273,7 @@
     });
     el.closeClientModalBtn?.addEventListener("click", () => closeClientModal(root));
     el.saveClientBtn?.addEventListener("click", () => saveClientProfile(root).catch((error) => setStatus(root, error.message)));
+    window.TicketClientCard?.bindManualSourceRun?.(clientCardCtx(root));
     el.fDestination?.addEventListener("change", () => window.TicketClientCard?.syncDynamicModalFields(clientCardCtx(root)));
     el.fLocationType?.addEventListener("change", () => window.TicketClientCard?.syncDynamicModalFields(clientCardCtx(root)));
   }
@@ -275,6 +288,7 @@
         return;
       }
       state.clientCardViewConfig = await api("/api/v1/management/users/client-card-view-config").catch(() => null);
+      window.TicketClientCard?.syncManualSourceRunControl?.(clientCardCtx(root));
       await loadUsers(root);
     } catch (error) {
       setStatus(root, error.message);

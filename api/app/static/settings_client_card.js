@@ -1,10 +1,12 @@
 (function () {
 function initSettingsClientCardPage() {
 const state = {
-  clientCard: { blocks: [] },
+  clientCard: { blocks: [], sources: [] },
   expandedBlocks: new Set(),
   editingFieldId: null,
   editingRuleId: null,
+  editingSourceId: null,
+  sourceEditorDirty: false,
   pendingBlockColors: new Map(),
 };
 
@@ -80,6 +82,8 @@ const uiText = {
   deleteFieldConfirmSuffix: "\u00bb?",
   rulesSaved: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e",
   ruleDeleted: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u043e",
+  sourceSaved: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
+  sourceDeleted: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0443\u0434\u0430\u043b\u0451\u043d",
 };
 
 const el = {
@@ -92,6 +96,37 @@ const el = {
   addClientCardRuleBtn: document.getElementById("addClientCardRuleBtn"),
   clientCardRules: document.getElementById("clientCardRules"),
   emptyClientCardRulesText: document.getElementById("emptyClientCardRulesText"),
+  addClientCardSourceBtn: document.getElementById("addClientCardSourceBtn"),
+  clientCardSources: document.getElementById("clientCardSources"),
+  emptyClientCardSourcesText: document.getElementById("emptyClientCardSourcesText"),
+  clientCardSourceModal: document.getElementById("clientCardSourceModal"),
+  clientCardSourceModalTitle: document.getElementById("clientCardSourceModalTitle"),
+  closeClientCardSourceModalBtn: document.getElementById("closeClientCardSourceModalBtn"),
+  saveClientCardSourceBtn: document.getElementById("saveClientCardSourceBtn"),
+  deleteClientCardSourceBtn: document.getElementById("deleteClientCardSourceBtn"),
+  testClientCardSourceBtn: document.getElementById("testClientCardSourceBtn"),
+  sourceName: document.getElementById("sourceName"),
+  sourceTechnicalKey: document.getElementById("sourceTechnicalKey"),
+  sourceActive: document.getElementById("sourceActive"),
+  sourceMethod: document.getElementById("sourceMethod"),
+  sourceUrl: document.getElementById("sourceUrl"),
+  sourceTimeoutMs: document.getElementById("sourceTimeoutMs"),
+  sourceOnError: document.getElementById("sourceOnError"),
+  sourceQueryRows: document.getElementById("sourceQueryRows"),
+  addSourceQueryRowBtn: document.getElementById("addSourceQueryRowBtn"),
+  sourceHeaderRows: document.getElementById("sourceHeaderRows"),
+  addSourceHeaderRowBtn: document.getElementById("addSourceHeaderRowBtn"),
+  sourceBodyJson: document.getElementById("sourceBodyJson"),
+  sourceMappingRows: document.getElementById("sourceMappingRows"),
+  addSourceMappingRowBtn: document.getElementById("addSourceMappingRowBtn"),
+  sourceTestContext: document.getElementById("sourceTestContext"),
+  sourceTestResult: document.getElementById("sourceTestResult"),
+  sourceQueryComplexNotice: document.getElementById("sourceQueryComplexNotice"),
+  sourceHeaderComplexNotice: document.getElementById("sourceHeaderComplexNotice"),
+  sourceInsertUrlField: document.getElementById("sourceInsertUrlField"),
+  sourceInsertUrlFieldBtn: document.getElementById("sourceInsertUrlFieldBtn"),
+  sourceInsertBodyField: document.getElementById("sourceInsertBodyField"),
+  sourceInsertBodyFieldBtn: document.getElementById("sourceInsertBodyFieldBtn"),
   clientCardRuleModal: document.getElementById("clientCardRuleModal"),
   clientCardRuleModalTitle: document.getElementById("clientCardRuleModalTitle"),
   closeClientCardRuleModalBtn: document.getElementById("closeClientCardRuleModalBtn"),
@@ -162,6 +197,8 @@ async function api(path, options = {}) {
     const msg = p?.detail?.error?.message || t || "Ошибка запроса";
     const err = new Error(msg);
     err.status = r.status;
+    err.code = p?.detail?.error?.code || "";
+    err.details = p?.detail?.error?.details || {};
     throw err;
   }
   return p;
@@ -237,6 +274,7 @@ function setClientCardAndRender(config) {
   if (config) state.clientCard = config;
   renderClientCardSettings();
   renderClientCardRules();
+  renderClientCardSources();
 }
 
 function fieldOptionsHtml(selectedKey = "") {
@@ -258,18 +296,381 @@ function blockOptionsHtml(selectedKey = "") {
     .join("");
 }
 
+function sourceOptionsHtml(selectedId = "") {
+  return (state.clientCard.sources || [])
+    .map((source) => `<option value="${escapeHtml(source.id)}" ${source.id === selectedId ? "selected" : ""}>${escapeHtml(source.name || source.technical_key || source.id)}</option>`)
+    .join("");
+}
+
+function findSourceById(sourceId) {
+  return (state.clientCard.sources || []).find((source) => source.id === sourceId) || null;
+}
+
+function compactUrl(value) {
+  try {
+    const url = new URL(value);
+    return `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return String(value || "");
+  }
+}
+
+function insertAtCursor(input, text) {
+  if (!input) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.value = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+  input.focus();
+  input.setSelectionRange(start + text.length, start + text.length);
+}
+
+function templateFieldOptionsHtml(selectedKey = "") {
+  return allClientCardFields()
+    .filter((field) => !field.is_system || saveContextSystemFieldKeys.has(field.key))
+    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)}</option>`)
+    .join("");
+}
+
+const complexTemplateValuePlaceholder = "\u005b\u0421\u043b\u043e\u0436\u043d\u0430\u044f\u0020\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430\u003a\u0020\u0442\u043e\u043b\u044c\u043a\u043e\u0020\u0441\u043a\u0430\u043b\u044f\u0440\u043d\u043e\u0435\u0020\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0020\u0438\u043b\u0438\u0020\u043e\u0447\u0438\u0441\u0442\u043a\u0430\u005d";
+
+function isScalarTemplateValue(value) {
+  return value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function analyzeTemplateObject(value) {
+  const rows = [];
+  const complexKeys = [];
+  for (const [key, item] of Object.entries(value || {})) {
+    if (isScalarTemplateValue(item)) {
+      rows.push({ key, value: item == null ? "" : String(item), isComplex: false });
+      continue;
+    }
+    complexKeys.push(key);
+    rows.push({ key, value: complexTemplateValuePlaceholder, isComplex: true });
+  }
+  if (!rows.length) rows.push({ key: "", value: "", isComplex: false });
+  return { rows, complexKeys };
+}
+
+function serializeTemplateRows(container, rowSelector) {
+  const result = {};
+  const unresolvedKeys = [];
+  container.querySelectorAll(rowSelector).forEach((row) => {
+    const key = row.querySelector("[data-source-row-key]").value.trim();
+    const valueInput = row.querySelector("[data-source-row-value]");
+    const value = valueInput.value;
+    const isComplex = valueInput.dataset.sourceComplexValue === "1";
+    if (!key) return;
+    if (isComplex && value === complexTemplateValuePlaceholder) {
+      unresolvedKeys.push(key);
+      return;
+    }
+    result[key] = value;
+  });
+  return { value: Object.keys(result).length ? result : null, unresolvedKeys };
+}
+
+function renderTemplateComplexNotice(noticeEl, kind, complexKeys) {
+  if (!noticeEl) return;
+  if (!complexKeys.length) {
+    noticeEl.textContent = "";
+    noticeEl.classList.add("hidden");
+    return;
+  }
+  noticeEl.textContent = `${kind}: \u043d\u0430\u0439\u0434\u0435\u043d\u044b \u0441\u043b\u043e\u0436\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f (${complexKeys.join(", ")}). \u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e, \u043f\u043e\u043a\u0430 \u0432\u044b \u043d\u0435 \u0437\u0430\u043c\u0435\u043d\u0438\u0442\u0435 \u0438\u0445 \u043d\u0430 \u0441\u043a\u0430\u043b\u044f\u0440\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0438\u043b\u0438 \u043d\u0435 \u043e\u0447\u0438\u0441\u0442\u0438\u0442\u0435 key.`;
+  noticeEl.classList.remove("hidden");
+}
+
+function keyValueRowHtml(kind, key = "", value = "", options = {}) {
+  const complexAttr = options.isComplex ? ' data-source-complex-value="1"' : "";
+  return `
+    <div class="client-card-source-row" data-source-${kind}-row>
+      <input data-source-row-key value="${escapeHtml(key)}" placeholder="key" autocomplete="off" />
+      <input data-source-row-value${complexAttr} value="${escapeHtml(value)}" placeholder="value" autocomplete="off" />
+      <select data-source-insert-field>${templateFieldOptionsHtml()}</select>
+      <button class="action" type="button" data-source-insert-field-btn>\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u043b\u0435</button>
+      <button class="action danger" type="button" data-source-remove-row>&times;</button>
+    </div>
+  `;
+}
+
+function mappingRowHtml(responsePath = "", targetKey = "") {
+  return `
+    <div class="client-card-source-row" data-source-mapping-row>
+      <input data-source-response-path value="${escapeHtml(responsePath)}" placeholder="data.user.name" autocomplete="off" />
+      <span>&rarr;</span>
+      <select data-source-target-key>${saveFieldOptionsHtml(targetKey)}</select>
+      <button class="action danger" type="button" data-source-remove-row>&times;</button>
+    </div>
+  `;
+}
+
+function renderKeyValueRows(container, kind, value, noticeEl) {
+  const analyzed = analyzeTemplateObject(value);
+  container.innerHTML = analyzed.rows.map((row) => keyValueRowHtml(kind, row.key, row.value, row)).join("");
+  renderTemplateComplexNotice(noticeEl, kind === "query" ? "Query" : "Headers", analyzed.complexKeys);
+}
+
+function renderMappingRows(mapping = []) {
+  const rows = mapping.length ? mapping : [{ response_path: "", target_key: "" }];
+  el.sourceMappingRows.innerHTML = rows.map((item) => mappingRowHtml(item.response_path || "", item.target_key || "")).join("");
+}
+
+function collectMappingRows() {
+  const mapping = [];
+  el.sourceMappingRows.querySelectorAll("[data-source-mapping-row]").forEach((row) => {
+    const responsePath = row.querySelector("[data-source-response-path]").value.trim();
+    const targetKey = row.querySelector("[data-source-target-key]").value;
+    if (responsePath && targetKey) mapping.push({ response_path: responsePath, target_key: targetKey });
+  });
+  return mapping;
+}
+
+function parseBodyJson() {
+  const raw = el.sourceBodyJson.value.trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("\u0422\u0435\u043b\u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043e\u043b\u0436\u043d\u043e \u0431\u044b\u0442\u044c \u0432\u0430\u043b\u0438\u0434\u043d\u044b\u043c JSON");
+  }
+}
+
+function sourcePayloadFromModal() {
+  const name = el.sourceName.value.trim();
+  if (!name) throw new Error("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 source \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e");
+  const queryTemplate = serializeTemplateRows(el.sourceQueryRows, "[data-source-query-row]");
+  const headerTemplate = serializeTemplateRows(el.sourceHeaderRows, "[data-source-header-row]");
+  if (queryTemplate.unresolvedKeys.length || headerTemplate.unresolvedKeys.length) {
+    throw new Error("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0438\u043b\u0438 \u0437\u0430\u043c\u0435\u043d\u0438\u0442\u0435 \u043d\u0435\u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u043c\u044b\u0435 \u0441\u043b\u043e\u0436\u043d\u044b\u0435 query/header \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f");
+  }
+  return {
+    name,
+    technical_key: el.sourceTechnicalKey.value.trim() || null,
+    kind: "http",
+    is_active: Boolean(el.sourceActive.checked),
+    method: el.sourceMethod.value,
+    url_template: el.sourceUrl.value.trim(),
+    timeout_ms: Number(el.sourceTimeoutMs.value || 3000),
+    on_error: el.sourceOnError.value,
+    query_template_json: queryTemplate.value,
+    headers_template_json: headerTemplate.value,
+    body_template_json: parseBodyJson(),
+    mapping_json: collectMappingRows(),
+  };
+}
+
+function sourceTemplateRefs(source) {
+  const refs = new Set();
+  const scan = (value) => {
+    if (typeof value === "string") {
+      const re = /\{\{([a-zA-Z0-9_]+)\}\}/g;
+      let match;
+      while ((match = re.exec(value)) !== null) refs.add(match[1]);
+      return;
+    }
+    if (Array.isArray(value)) value.forEach(scan);
+    else if (value && typeof value === "object") Object.values(value).forEach(scan);
+  };
+  scan(source.url_template || "");
+  scan(source.query_template_json || {});
+  scan(source.headers_template_json || {});
+  scan(source.body_template_json);
+  return [...refs];
+}
+
+function renderSourceTestContext(source) {
+  const refs = sourceTemplateRefs(source);
+  if (!refs.length) {
+    el.sourceTestContext.innerHTML = `<div class="status">\u0412 templates \u043d\u0435\u0442 \u043f\u043e\u043b\u0435\u0439 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438</div>`;
+    return;
+  }
+  const fields = new Map(allClientCardFields().map((field) => [field.key, field]));
+  el.sourceTestContext.innerHTML = refs.map((key) => {
+    const field = fields.get(key);
+    return `<label>${escapeHtml(field?.label || key)}<input data-source-test-field="${escapeHtml(key)}" autocomplete="off" /></label>`;
+  }).join("");
+}
+
+function collectSourceTestContext() {
+  const context = {};
+  el.sourceTestContext.querySelectorAll("[data-source-test-field]").forEach((input) => {
+    context[input.dataset.sourceTestField] = input.value;
+  });
+  return context;
+}
+
+function renderSourceTestResult(result) {
+  const mapped = Object.entries(result?.mapped_values || {})
+    .map(([key, value]) => {
+      const field = allClientCardFields().find((item) => item.key === key);
+      return `${escapeHtml(field?.label || key)} &rarr; ${escapeHtml(value == null ? "null" : String(value))}`;
+    })
+    .join("<br />");
+  const missing = (result?.missing_response_paths || []).map(escapeHtml).join(", ");
+  el.sourceTestResult.innerHTML = `
+    <div>HTTP: ${escapeHtml(result?.http_status ?? "-")}</div>
+    <div>${escapeHtml(result?.duration_ms ?? 0)} ms</div>
+    <div>${mapped || "\u041c\u0430\u043f\u043f\u0438\u043d\u0433 \u043f\u0443\u0441\u0442"}</div>
+    <div>${missing ? `Missing: ${missing}` : ""}</div>
+  `;
+}
+
+function openSourceModal(sourceId = null) {
+  const source = sourceId ? findSourceById(sourceId) : null;
+  state.editingSourceId = source?.id || null;
+  el.clientCardSourceModalTitle.textContent = source ? "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 source" : "\u041d\u043e\u0432\u044b\u0439 source";
+  el.sourceName.value = source?.name || "";
+  el.sourceTechnicalKey.value = source?.technical_key || "";
+  el.sourceActive.checked = source?.is_active !== false;
+  el.sourceMethod.value = source?.method || "GET";
+  el.sourceUrl.value = source?.url_template || "";
+  el.sourceTimeoutMs.value = source?.timeout_ms || 3000;
+  el.sourceOnError.value = source?.on_error || "ignore";
+  renderKeyValueRows(el.sourceQueryRows, "query", source?.query_template_json || {}, el.sourceQueryComplexNotice);
+  renderKeyValueRows(el.sourceHeaderRows, "header", source?.headers_template_json || {}, el.sourceHeaderComplexNotice);
+  el.sourceBodyJson.value = source?.body_template_json == null ? "" : JSON.stringify(source.body_template_json, null, 2);
+  renderMappingRows(source?.mapping_json || []);
+  renderSourceTestContext(source || sourcePayloadFromModalSafe());
+  el.sourceTestResult.innerHTML = "";
+  el.deleteClientCardSourceBtn.classList.toggle("hidden", !source);
+  state.sourceEditorDirty = false;
+  syncSourceTestAvailability();
+  el.sourceInsertUrlField.innerHTML = templateFieldOptionsHtml();
+  el.sourceInsertBodyField.innerHTML = templateFieldOptionsHtml();
+  el.clientCardSourceModal.classList.remove("hidden");
+  el.sourceName.focus();
+}
+
+function sourcePayloadFromModalSafe() {
+  try { return sourcePayloadFromModal(); } catch { return {}; }
+}
+
+function closeSourceModal() {
+  state.editingSourceId = null;
+  state.sourceEditorDirty = false;
+  el.clientCardSourceModal.classList.add("hidden");
+}
+
+function canTestSourceEditor({ editingSourceId, sourceEditorDirty }) {
+  return Boolean(editingSourceId) && sourceEditorDirty !== true;
+}
+
+function syncSourceTestAvailability() {
+  if (!el.testClientCardSourceBtn) return;
+  el.testClientCardSourceBtn.disabled = !canTestSourceEditor(state);
+}
+
+function markSourceEditorDirty() {
+  state.sourceEditorDirty = true;
+  syncSourceTestAvailability();
+}
+
+async function saveSourceFromModal() {
+  try {
+    const payload = sourcePayloadFromModal();
+    const path = state.editingSourceId ? `/api/v1/settings/client-card/sources/${state.editingSourceId}` : "/api/v1/settings/client-card/sources";
+    await api(path, {
+      method: state.editingSourceId ? "PATCH" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    state.sourceEditorDirty = false;
+    closeSourceModal();
+    await loadClientCardConfig();
+    setStatus(uiText.sourceSaved);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function testSourceFromModal() {
+  if (!canTestSourceEditor(state)) {
+    el.sourceTestResult.textContent = "\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f";
+    return;
+  }
+  try {
+    el.sourceTestResult.textContent = "\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430...";
+    const result = await api(`/api/v1/settings/client-card/sources/${state.editingSourceId}/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ context: collectSourceTestContext() }),
+    });
+    renderSourceTestResult(result);
+  } catch (e) {
+    el.sourceTestResult.textContent = e.message;
+  }
+}
+
+async function toggleSource(sourceId, isActive) {
+  try {
+    await api(`/api/v1/settings/client-card/sources/${sourceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    });
+    await loadClientCardConfig();
+    setStatus(uiText.sourceSaved);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function deleteSource(sourceId) {
+  const source = findSourceById(sourceId);
+  if (!source) return;
+  if (!window.confirm(`\u0423\u0434\u0430\u043b\u0438\u0442\u044c source \u00ab${source.name || source.technical_key || source.id}\u00bb?`)) return;
+  try {
+    const sources = await api(`/api/v1/settings/client-card/sources/${sourceId}`, { method: "DELETE" });
+    state.clientCard.sources = sources;
+    closeSourceModal();
+    renderClientCardSources();
+    renderClientCardRules();
+    setStatus(uiText.sourceDeleted);
+  } catch (e) {
+    if (e.status === 409 && Array.isArray(e.details?.rules)) {
+      showError(`${e.message}\n\n${e.details.rules.map((rule) => rule.name || rule.technical_key || rule.id).join("\n")}`);
+      return;
+    }
+    showError(e.message);
+  }
+}
+
 function syncRuleValueVisibility() {
   const needsValue = el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals";
   el.ruleConditionField.closest("label").classList.toggle("hidden", el.ruleOperator.value === "always");
   el.ruleValueWrap.classList.toggle("hidden", !needsValue);
 }
 
+function computeRuleActionUiState({ targetType = "field", scope = "editor", action = "show", valueType = "literal", previousNonSaveScope = "editor" }) {
+  let nextTargetType = targetType;
+  let nextScope = scope;
+  let nextPreviousNonSaveScope = previousNonSaveScope;
+  if (scope !== "save") nextPreviousNonSaveScope = scope;
+  if (action === "lookup_source" || action === "set_value") {
+    if (scope !== "save") nextPreviousNonSaveScope = scope;
+    nextScope = "save";
+    nextTargetType = "field";
+  } else if (scope === "save") {
+    nextScope = previousNonSaveScope || "editor";
+  }
+  return {
+    targetType: nextTargetType,
+    scope: nextScope,
+    previousNonSaveScope: nextPreviousNonSaveScope,
+    isLookupSource: action === "lookup_source",
+    showValueType: action === "set_value",
+    showSourceField: action === "set_value" && ["field", "map"].includes(valueType),
+    showLookupSource: action === "lookup_source",
+    showValue: action === "set_value" && ["literal", "template"].includes(valueType),
+    showMap: action === "set_value" && valueType === "map",
+  };
+}
+
 function ruleActionOptions(targetType, scope, selected = "show") {
-  const allowed = scope === "save"
-    ? ["set_value"]
-    : (targetType === "block" || scope !== "editor"
-      ? ["show", "hide"]
-      : ["show", "hide", "readonly", "editable", "required", "optional"]);
+  const allowed = targetType === "block"
+    ? ["show", "hide"]
+    : ["show", "hide", "readonly", "editable", "required", "optional", "set_value", "lookup_source"];
   const labels = {
     show: "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c",
     hide: "\u0421\u043a\u0440\u044b\u0442\u044c",
@@ -278,6 +679,7 @@ function ruleActionOptions(targetType, scope, selected = "show") {
     required: "\u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
     optional: "\u041d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
     set_value: "\u0417\u0430\u0434\u0430\u0442\u044c \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435",
+    lookup_source: "\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430",
   };
   const safeSelected = allowed.includes(selected) ? selected : allowed[0];
   return allowed
@@ -290,6 +692,7 @@ function ruleActionRowHtml(action = {}, index = 0) {
   const scope = action.scope || "editor";
   const targetKey = action.target_key || "";
   const valueType = action.value_type || "literal";
+  const sourceId = action.source_id || "";
   const mapText = Object.entries(action.map || {})
     .map(([key, value]) => `${key} => ${value ?? ""}`)
     .join("\n");
@@ -322,6 +725,7 @@ function ruleActionRowHtml(action = {}, index = 0) {
         </select>
       </label>
       <label data-rule-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a<select data-rule-action-prop="source_key">${fieldOptionsHtml(action.source_key || "")}</select></label>
+      <label data-rule-lookup-source-wrap>Source<select data-rule-action-prop="source_id">${sourceOptionsHtml(sourceId)}</select></label>
       <label data-rule-value-wrap>\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435<input data-rule-action-prop="value" value="${escapeHtml(action.value || "")}" autocomplete="off" /></label>
       <label data-rule-map-wrap>Map: \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430 = source =&gt; result<textarea data-rule-action-prop="map" rows="4">${escapeHtml(mapText)}</textarea></label>
       <button class="action danger ${index === 0 ? "hidden" : ""}" type="button" data-remove-rule-action>&times;</button>
@@ -331,26 +735,42 @@ function ruleActionRowHtml(action = {}, index = 0) {
 
 function syncRuleActionRow(row) {
   let targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
-  const scope = row.querySelector('[data-rule-action-prop="scope"]').value;
+  const targetTypeSelect = row.querySelector('[data-rule-action-prop="target_type"]');
+  const scopeSelect = row.querySelector('[data-rule-action-prop="scope"]');
+  const actionSelect = row.querySelector('[data-rule-action-prop="action"]');
+  const previousNonSaveScope = row.dataset.previousNonSaveScope || "editor";
+  let scope = scopeSelect.value;
   const valueType = row.querySelector('[data-rule-action-prop="value_type"]')?.value || "literal";
+  const actionValue = actionSelect.value;
   if (scope === "save" && targetType !== "field") {
-    row.querySelector('[data-rule-action-prop="target_type"]').value = "field";
+    targetTypeSelect.value = "field";
     targetType = "field";
   }
   const targetFieldSelect = row.querySelector('[data-rule-action-prop="target_field"]');
   const sourceFieldSelect = row.querySelector('[data-rule-action-prop="source_key"]');
+  const lookupSourceSelect = row.querySelector('[data-rule-action-prop="source_id"]');
   const targetValue = targetFieldSelect.value;
   const sourceValue = sourceFieldSelect.value;
+  const lookupSourceValue = lookupSourceSelect.value;
   targetFieldSelect.innerHTML = scope === "save" ? saveFieldOptionsHtml(targetValue) : fieldOptionsHtml(targetValue);
   sourceFieldSelect.innerHTML = saveFieldOptionsHtml(sourceValue);
-  row.querySelector("[data-rule-field-target-wrap]").classList.toggle("hidden", targetType === "block");
-  row.querySelector("[data-rule-block-target-wrap]").classList.toggle("hidden", targetType !== "block");
-  const actionSelect = row.querySelector('[data-rule-action-prop="action"]');
+  lookupSourceSelect.innerHTML = sourceOptionsHtml(lookupSourceValue);
   actionSelect.innerHTML = ruleActionOptions(targetType, scope, actionSelect.value);
-  row.querySelector("[data-rule-value-type-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value");
-  row.querySelector("[data-rule-source-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || !["field", "map"].includes(valueType));
-  row.querySelector("[data-rule-value-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || !["literal", "template"].includes(valueType));
-  row.querySelector("[data-rule-map-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || valueType !== "map");
+  const uiState = computeRuleActionUiState({ targetType, scope, action: actionValue, valueType, previousNonSaveScope });
+  row.dataset.previousNonSaveScope = uiState.previousNonSaveScope;
+  targetTypeSelect.value = uiState.targetType;
+  scopeSelect.value = uiState.scope;
+  scopeSelect.disabled = uiState.isLookupSource;
+  scopeSelect.closest("label").classList.toggle("hidden", uiState.isLookupSource);
+  targetFieldSelect.innerHTML = uiState.scope === "save" ? saveFieldOptionsHtml(targetValue) : fieldOptionsHtml(targetValue);
+  row.querySelector('[data-rule-action-prop="target_type"]').closest("label").classList.toggle("hidden", uiState.isLookupSource);
+  row.querySelector("[data-rule-field-target-wrap]").classList.toggle("hidden", uiState.isLookupSource || uiState.targetType === "block");
+  row.querySelector("[data-rule-block-target-wrap]").classList.toggle("hidden", uiState.isLookupSource || uiState.targetType !== "block");
+  row.querySelector("[data-rule-value-type-wrap]").classList.toggle("hidden", !uiState.showValueType);
+  row.querySelector("[data-rule-source-wrap]").classList.toggle("hidden", !uiState.showSourceField);
+  row.querySelector("[data-rule-lookup-source-wrap]").classList.toggle("hidden", !uiState.showLookupSource);
+  row.querySelector("[data-rule-value-wrap]").classList.toggle("hidden", !uiState.showValue);
+  row.querySelector("[data-rule-map-wrap]").classList.toggle("hidden", !uiState.showMap);
 }
 
 function syncRuleActionRows() {
@@ -379,6 +799,12 @@ function collectRuleActions() {
       action: actionName,
       scope: row.querySelector('[data-rule-action-prop="scope"]').value,
     };
+    if (actionName === "lookup_source") {
+      item.scope = "save";
+      item.source_id = row.querySelector('[data-rule-action-prop="source_id"]').value;
+      delete item.target_type;
+      delete item.target_key;
+    }
     if (actionName === "set_value") {
       const valueType = row.querySelector('[data-rule-action-prop="value_type"]').value;
       item.value_type = valueType;
@@ -859,12 +1285,57 @@ function renderClientCardRules() {
   });
 }
 
+function renderClientCardSources() {
+  if (!el.clientCardSources) return;
+  const sources = state.clientCard.sources || [];
+  el.clientCardSources.innerHTML = "";
+  el.emptyClientCardSourcesText.classList.toggle("hidden", sources.length > 0);
+  for (const source of sources) {
+    const row = document.createElement("div");
+    row.className = "client-card-rule-row";
+    row.innerHTML = `
+      <div class="client-card-field-main">
+        <div class="client-card-field-label">${escapeHtml(source.name || source.technical_key || source.id)}</div>
+        <div class="client-card-field-meta">
+          <span>${source.is_active ? uiText.active : uiText.inactive}</span>
+          <span class="mono">${escapeHtml(source.technical_key || "-")}</span>
+          <span>${escapeHtml(source.method || "GET")}</span>
+          <span title="${escapeHtml(source.url_template || "")}">${escapeHtml(compactUrl(source.url_template || ""))}</span>
+          <span>${source.on_error === "block_save" ? "\u0411\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c" : "\u0418\u0433\u043d\u043e\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}</span>
+        </div>
+      </div>
+      <div class="client-card-field-actions">
+        <label class="checkbox-label">${uiText.activeLabel}
+          <input type="checkbox" data-toggle-source-id="${escapeHtml(source.id)}" ${source.is_active ? "checked" : ""} />
+        </label>
+        <button class="action" type="button" data-test-source-id="${escapeHtml(source.id)}">\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c</button>
+        <button class="action" type="button" data-edit-source-id="${escapeHtml(source.id)}">${uiText.edit}</button>
+        <button class="action danger" type="button" data-delete-source-id="${escapeHtml(source.id)}">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>
+      </div>
+    `;
+    el.clientCardSources.appendChild(row);
+  }
+  el.clientCardSources.querySelectorAll("[data-edit-source-id]").forEach((btn) => {
+    btn.addEventListener("click", () => openSourceModal(btn.dataset.editSourceId));
+  });
+  el.clientCardSources.querySelectorAll("[data-test-source-id]").forEach((btn) => {
+    btn.addEventListener("click", () => openSourceModal(btn.dataset.testSourceId));
+  });
+  el.clientCardSources.querySelectorAll("[data-delete-source-id]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteSource(btn.dataset.deleteSourceId));
+  });
+  el.clientCardSources.querySelectorAll("[data-toggle-source-id]").forEach((input) => {
+    input.addEventListener("change", () => toggleSource(input.dataset.toggleSourceId, input.checked));
+  });
+}
+
 async function loadClientCardConfig() {
   el.emptyClientCardText.classList.remove("hidden");
   el.emptyClientCardText.textContent = "Загрузка настроек карточки...";
   state.clientCard = await api("/api/v1/settings/client-card");
   renderClientCardSettings();
   renderClientCardRules();
+  renderClientCardSources();
   if (!(state.clientCard.blocks || []).length) {
     el.emptyClientCardText.classList.remove("hidden");
     el.emptyClientCardText.textContent = "Блоки карточки пока не настроены";
@@ -954,6 +1425,7 @@ const handlePageKeydown = (e) => {
     closeCreateFieldModal();
     closeEditFieldModal();
     closeRuleModal();
+    closeSourceModal();
     closeError();
   }
 };
@@ -969,6 +1441,7 @@ const handlePageKeydown = (e) => {
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
   el.addClientCardFieldBtn.addEventListener("click", openCreateFieldModal);
   el.addClientCardRuleBtn.addEventListener("click", () => openRuleModal());
+  el.addClientCardSourceBtn?.addEventListener("click", () => openSourceModal());
   el.closeCreateClientCardBlockModalBtn.addEventListener("click", closeCreateModal);
   el.saveCreateClientCardBlockBtn.addEventListener("click", createBlock);
   el.closeCreateClientCardFieldModalBtn.addEventListener("click", closeCreateFieldModal);
@@ -979,6 +1452,68 @@ const handlePageKeydown = (e) => {
   el.saveEditClientCardFieldBtn.addEventListener("click", saveFieldFromModal);
   el.closeClientCardRuleModalBtn.addEventListener("click", closeRuleModal);
   el.saveClientCardRuleBtn.addEventListener("click", saveRuleFromModal);
+  el.closeClientCardSourceModalBtn?.addEventListener("click", closeSourceModal);
+  el.saveClientCardSourceBtn?.addEventListener("click", saveSourceFromModal);
+  el.testClientCardSourceBtn?.addEventListener("click", testSourceFromModal);
+  el.deleteClientCardSourceBtn?.addEventListener("click", () => {
+    if (state.editingSourceId) deleteSource(state.editingSourceId);
+  });
+  el.addSourceQueryRowBtn?.addEventListener("click", () => {
+    el.sourceQueryRows.insertAdjacentHTML("beforeend", keyValueRowHtml("query"));
+    markSourceEditorDirty();
+  });
+  el.addSourceHeaderRowBtn?.addEventListener("click", () => {
+    el.sourceHeaderRows.insertAdjacentHTML("beforeend", keyValueRowHtml("header"));
+    markSourceEditorDirty();
+  });
+  el.addSourceMappingRowBtn?.addEventListener("click", () => {
+    el.sourceMappingRows.insertAdjacentHTML("beforeend", mappingRowHtml());
+    markSourceEditorDirty();
+  });
+  el.sourceInsertUrlFieldBtn?.addEventListener("click", () => {
+    insertAtCursor(el.sourceUrl, `{{${el.sourceInsertUrlField.value}}}`);
+    markSourceEditorDirty();
+    renderSourceTestContext(sourcePayloadFromModalSafe());
+  });
+  el.sourceInsertBodyFieldBtn?.addEventListener("click", () => {
+    insertAtCursor(el.sourceBodyJson, `{{${el.sourceInsertBodyField.value}}}`);
+    markSourceEditorDirty();
+    renderSourceTestContext(sourcePayloadFromModalSafe());
+  });
+  [el.sourceQueryRows, el.sourceHeaderRows, el.sourceMappingRows].forEach((container) => {
+    container?.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest("[data-source-remove-row]");
+      if (removeBtn) {
+        removeBtn.closest(".client-card-source-row")?.remove();
+        markSourceEditorDirty();
+        return;
+      }
+      const insertBtn = event.target.closest("[data-source-insert-field-btn]");
+      if (insertBtn) {
+        const row = insertBtn.closest(".client-card-source-row");
+        insertAtCursor(row?.querySelector("[data-source-row-value]"), `{{${row?.querySelector("[data-source-insert-field]")?.value || ""}}}`);
+        row?.querySelector("[data-source-row-value]")?.removeAttribute("data-source-complex-value");
+        markSourceEditorDirty();
+        renderSourceTestContext(sourcePayloadFromModalSafe());
+      }
+    });
+  });
+  [el.sourceName, el.sourceTechnicalKey, el.sourceActive, el.sourceMethod, el.sourceUrl, el.sourceTimeoutMs, el.sourceOnError, el.sourceBodyJson, el.sourceQueryRows, el.sourceHeaderRows, el.sourceMappingRows].forEach((node) => {
+    node?.addEventListener("input", (event) => {
+      if (event?.target?.matches?.("[data-source-row-value]")) {
+        event.target.removeAttribute("data-source-complex-value");
+      }
+      markSourceEditorDirty();
+      renderSourceTestContext(sourcePayloadFromModalSafe());
+    });
+    node?.addEventListener("change", (event) => {
+      if (event?.target?.matches?.("[data-source-row-value]")) {
+        event.target.removeAttribute("data-source-complex-value");
+      }
+      markSourceEditorDirty();
+      renderSourceTestContext(sourcePayloadFromModalSafe());
+    });
+  });
   el.deleteClientCardRuleBtn.addEventListener("click", () => {
     if (state.editingRuleId) deleteRule(state.editingRuleId);
   });
@@ -1006,6 +1541,7 @@ const handlePageKeydown = (e) => {
   closeOnBackdropClick(el.createClientCardFieldModal, closeCreateFieldModal);
   closeOnBackdropClick(el.editClientCardFieldModal, closeEditFieldModal);
   closeOnBackdropClick(el.clientCardRuleModal, closeRuleModal);
+  if (el.clientCardSourceModal) closeOnBackdropClick(el.clientCardSourceModal, closeSourceModal);
   closeOnBackdropClick(el.errorModal, closeError);
 
   el.closeErrorModalBtn.addEventListener("click", closeError);

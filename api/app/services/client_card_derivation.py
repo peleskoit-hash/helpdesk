@@ -250,6 +250,12 @@ class SavePipelineResult:
     changed_keys: set[str]
 
 
+@dataclass(frozen=True)
+class ManualSourceRunResult:
+    profile: ClientProfile
+    changed_keys: set[str]
+
+
 def _profile_snapshot(profile: ClientProfile | None) -> dict[str, Any]:
     if profile is None:
         data = {field: None for field in SYSTEM_PROFILE_FIELDS}
@@ -525,6 +531,107 @@ def apply_client_card_profile_save_pipeline(
             profile.custom_fields = current
     profile.updated_at = datetime.utcnow()
     return SavePipelineResult(profile=profile, changed_keys=changed_keys)
+
+
+def apply_client_card_source_manual_run(
+    db: Session,
+    *,
+    client_id: str,
+    source_id: str,
+) -> ManualSourceRunResult:
+    source_model = db.get(ClientCardSourceConfig, source_id)
+    if source_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "source_not_found", "message": "Source not found", "details": {}}},
+        )
+    if not source_model.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": {"code": "source_inactive", "message": "Source is inactive", "details": {}}},
+        )
+    if db.get(Client, client_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "client_not_found", "message": "Client not found", "details": {}}},
+        )
+
+    source = _copy_source(source_model)
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
+    updated_at_snapshot = profile.updated_at if profile is not None else None
+    profile_id = profile.id if profile is not None else None
+    base = _profile_snapshot(profile)
+    context = {field: base.get(field) for field in SYSTEM_PROFILE_FIELDS}
+    context.update(base.get("custom_fields") or {})
+
+    if db.in_transaction():
+        if db.new or db.dirty or db.deleted:
+            raise RuntimeError("client-card source manual run requires a clean read phase")
+        db.rollback()
+
+    try:
+        from .client_card_sources import ClientCardSourceError, MISSING, execute_source, read_response_path
+
+        result = execute_source(source, context)
+    except ClientCardSourceError:
+        raise _safe_source_error(source)
+
+    field_configs = _field_configs(db)
+    custom_keys = _custom_field_keys(db)
+    source_delta: list[tuple[str, Any, bool]] = []
+    for item in source.mapping_json or []:
+        target_key = item.get("target_key")
+        value = read_response_path(result.payload, item.get("response_path"))
+        if value is MISSING or not target_key:
+            continue
+        source_delta.append(
+            _prepare_value_delta(
+                target_key,
+                value,
+                context=context,
+                field_configs=field_configs,
+                custom_keys=custom_keys,
+            )
+        )
+
+    if profile_id:
+        profile = _locked_profile(db, profile_id)
+        if profile is None or profile.updated_at != updated_at_snapshot:
+            raise _retry_conflict()
+    else:
+        if _locked_client(db, client_id) is None:
+            raise _retry_conflict()
+        existing = _locked_profile_by_client_id(db, client_id)
+        if existing is not None:
+            raise _retry_conflict()
+        now = datetime.utcnow()
+        profile = ClientProfile(
+            id=str(uuid.uuid4()),
+            client_id=client_id,
+            custom_fields={},
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(profile)
+
+    changed_keys: set[str] = set()
+    staged: dict[str, Any] = {}
+    custom_fields = dict(profile.custom_fields or {})
+    _merge_value_delta(
+        source_delta,
+        staged=staged,
+        custom_fields=custom_fields,
+        context=context,
+        custom_keys=custom_keys,
+        changed_keys=changed_keys,
+    )
+    for target_key, value in staged.items():
+        if target_key in SYSTEM_PROFILE_FIELDS:
+            setattr(profile, target_key, value)
+        elif target_key in custom_keys:
+            profile.custom_fields = dict(custom_fields)
+    profile.updated_at = datetime.utcnow()
+    return ManualSourceRunResult(profile=profile, changed_keys=changed_keys)
 
 
 def apply_client_card_save_derivations(

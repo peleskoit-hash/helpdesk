@@ -23,7 +23,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardConfigResponse, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
@@ -37,7 +37,7 @@ from ..services.ticket_attachments import (
 )
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
-from ..services.client_card_derivation import apply_client_card_profile_save_pipeline
+from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
@@ -850,7 +850,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
     )
 
 
-@router.get("/{ticket_id}/client-card-view-config", response_model=ClientCardConfigResponse)
+@router.get("/{ticket_id}/client-card-view-config", response_model=ClientCardRuntimeConfigResponse)
 def get_client_card_view_config(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _get_ticket_or_404(db, ticket_id, user)
     return _client_card_view_config(db)
@@ -927,7 +927,7 @@ def update_client_profile(
 ):
     t = _get_ticket_or_404(db, ticket_id, user)
     if not can_edit_client_profile(user):
-        _error(403, "readonly_role", "Нет прав на редактирование карточки клиента")
+        _error(403, "readonly_role", "\u041d\u0435\u0442 \u043f\u0440\u0430\u0432 \u043d\u0430 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438 \u043a\u043b\u0438\u0435\u043d\u0442\u0430")
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == t.client_id)).scalar_one_or_none()
     contact = _telegram_contact_for_client(db, t.client_id)
 
@@ -970,6 +970,28 @@ def update_client_profile(
         telegram_username,
         telegram_display_name,
     )
+
+
+@router.post("/{ticket_id}/client-profile/source-run", response_model=ClientProfileOut)
+def run_client_profile_source(
+    ticket_id: str,
+    payload: ClientCardSourceRunRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    t = _get_ticket_or_404(db, ticket_id, user)
+    if not can_edit_client_profile(user):
+        _error(403, "readonly_role", "\u041d\u0435\u0442 \u043f\u0440\u0430\u0432 \u043d\u0430 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438 \u043a\u043b\u0438\u0435\u043d\u0442\u0430")
+    contact = _telegram_contact_for_client(db, t.client_id)
+    result = apply_client_card_source_manual_run(db, client_id=t.client_id, source_id=payload.source_id)
+    profile = result.profile
+    if t.client and "contact_name" in result.changed_keys and profile.contact_name:
+        t.client.display_name = profile.contact_name
+    db.commit()
+    db.refresh(profile)
+    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (t.client.display_name if t.client else None)
+    telegram_username = contact.external_username if contact else None
+    return _profile_out(profile, telegram_username, telegram_display_name)
 
 
 def _add_message(

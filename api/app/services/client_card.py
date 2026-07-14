@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientProfile
-from ..schemas import ClientCardBlockConfigOut, ClientCardConfigResponse, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientProfileOut
+from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
+from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
 
 
 def _error(status_code: int, code: str, message: str):
@@ -46,7 +46,7 @@ def _profile_out(
     )
 
 
-def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
+def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
     blocks = db.execute(
         select(ClientCardBlockConfig)
         .where(ClientCardBlockConfig.is_active.is_(True))
@@ -76,7 +76,12 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 options=field.options_json or None,
             )
         )
-    return ClientCardConfigResponse(
+    sources = db.execute(
+        select(ClientCardSourceConfig)
+        .where(ClientCardSourceConfig.is_active.is_(True))
+        .order_by(ClientCardSourceConfig.created_at.asc())
+    ).scalars().all()
+    return ClientCardRuntimeConfigResponse(
         blocks=[
             ClientCardBlockConfigOut(
                 id=block.id,
@@ -110,6 +115,15 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 .where(ClientCardRuleConfig.is_active.is_(True))
                 .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())
             ).scalars().all()
+        ],
+        sources=[
+            ClientCardSourceRuntimeOut(
+                id=source.id,
+                technical_key=source.technical_key,
+                name=source.name,
+                is_active=bool(source.is_active),
+            )
+            for source in sources
         ],
     )
 
