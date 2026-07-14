@@ -277,6 +277,16 @@ test('ticket client card runtime applies configurable rules and filters payload'
   assert.match(payloadSource, /delete payload\[key\]/);
 });
 
+test('ticket client card no longer computes derived department metadata in frontend', () => {
+  assert.doesNotMatch(ticketClientCardSource, /buildDepartmentMetaPayload/);
+  assert.doesNotMatch(ticketPageSource, /SALES_FIRST_DEPARTMENT/);
+  assert.doesNotMatch(ticketPageSource, /SALES_SECOND_DEPARTMENT/);
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+  assert.doesNotMatch(payloadSource, /departmentMeta/);
+  assert.doesNotMatch(payloadSource, /first_department:/);
+  assert.doesNotMatch(payloadSource, /group_name:/);
+});
+
 test('ticket client card block hide then field show still excludes field from payload', () => {
   const ensureSource = sourceBetween(ticketClientCardSource, 'function ensureRuleState', 'function fieldEditorNodes');
   const blockActionSource = sourceBetween(ticketClientCardSource, 'if (action.target_type === "block")', 'if (action.target_type !== "field")');

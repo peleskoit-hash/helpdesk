@@ -18,6 +18,7 @@ from ..services.client_card import (
     _normalize_custom_field_value,
     _profile_out,
 )
+from ..services.client_card_derivation import apply_client_card_save_derivations
 
 
 router = APIRouter(prefix="/api/v1/management/users", tags=["management-users"])
@@ -283,8 +284,9 @@ def update_management_user_profile(
             setattr(profile, field, data[field])
     if "is_verified" in data:
         profile.is_verified = bool(data["is_verified"])
+    merged_custom_fields = dict(profile.custom_fields or {})
     if "custom_fields" in data and data["custom_fields"] is not None:
-        custom_fields = dict(profile.custom_fields or {})
+        custom_fields = dict(merged_custom_fields)
         field_map = _custom_field_map(db)
         for key, value in data["custom_fields"].items():
             field = field_map.get(key)
@@ -296,6 +298,8 @@ def update_management_user_profile(
             else:
                 custom_fields[key] = normalized
         profile.custom_fields = custom_fields
+        merged_custom_fields = custom_fields
+    apply_client_card_save_derivations(db, profile, data, merged_custom_fields)
     profile.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(profile)

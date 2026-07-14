@@ -37,6 +37,7 @@ from ..services.ticket_attachments import (
 )
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
+from ..services.client_card_derivation import apply_client_card_save_derivations
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
@@ -956,6 +957,7 @@ def update_client_profile(
             setattr(profile, field, data[field])
     if "is_verified" in data:
         profile.is_verified = bool(data["is_verified"])
+    merged_custom_fields = dict(profile.custom_fields or {})
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
         incoming = data["custom_fields"] or {}
@@ -964,8 +966,7 @@ def update_client_profile(
         unknown_keys = [key for key in incoming.keys() if key not in custom_fields_map]
         if unknown_keys:
             _error(400, "unknown_custom_field_keys", f"Неизвестные custom поля: {', '.join(unknown_keys)}")
-        current_custom = dict(profile.custom_fields or {})
-        normalized_custom: dict = dict(current_custom)
+        normalized_custom: dict = dict(merged_custom_fields)
         for key, value in incoming.items():
             field = custom_fields_map[key]
             if not field.is_editable:
@@ -979,6 +980,8 @@ def update_client_profile(
             else:
                 normalized_custom[key] = normalized
         profile.custom_fields = normalized_custom
+        merged_custom_fields = normalized_custom
+    apply_client_card_save_derivations(db, profile, data, merged_custom_fields)
     profile.updated_at = datetime.utcnow()
 
     if t.client and data.get("contact_name"):

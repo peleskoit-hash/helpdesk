@@ -240,6 +240,7 @@
   }
 
   function ruleMatches(ctx, rule) {
+    if (rule.condition_operator === "always") return true;
     const current = normalizeRuleValue(fieldEditorValue(ctx, rule.condition_field_key));
     const expected = normalizeRuleValue(rule.condition_value);
     if (rule.condition_operator === "equals") return current === expected;
@@ -417,6 +418,7 @@
   }
 
   function cardRuleMatches(profile, rule) {
+    if (rule.condition_operator === "always") return true;
     const value = normalizeRuleValue(getClientFieldValue(profile, rule.condition_field_key));
     const expected = normalizeRuleValue(rule.condition_value);
     if (rule.condition_operator === "equals") return value === expected;
@@ -631,48 +633,11 @@
     return (rawValue ?? "").toString().trim() || null;
   }
 
-  function buildDepartmentMetaPayload(ctx) {
-    const { el, SALES_FIRST_DEPARTMENT, SALES_SECOND_DEPARTMENT } = ctx;
-    const destination = el.fDestination.value.trim() || null;
-    const sandOwner = el.fSandOwner.value.trim() || null;
-    const salesGroup = el.fSalesGroup.value.trim() || null;
-
-    if (destination === "Песок") {
-      return {
-        department: "Стажировка",
-        first_department: null,
-        group_name: sandOwner,
-      };
-    }
-
-    if (destination === "Отдел Продаж") {
-      let firstDepartment = null;
-      if (salesGroup) {
-        if (SALES_FIRST_DEPARTMENT.has(salesGroup)) firstDepartment = "Первый департамент";
-        else if (SALES_SECOND_DEPARTMENT.has(salesGroup)) firstDepartment = "Второй отдел";
-        else if (salesGroup === "группа Москвиченко") firstDepartment = "Третий отдел";
-      }
-
-      return {
-        department: "Отдел продаж",
-        first_department: firstDepartment,
-        group_name: salesGroup,
-      };
-    }
-
-    return {
-      department: destination,
-      first_department: null,
-      group_name: null,
-    };
-  }
-
   function getModalPayload(ctx) {
     const { el } = ctx;
     validateClientCardRuleRequirements(ctx);
     const locationType = el.fLocationType.value.trim() || null;
     const anydesk = el.fAnydesk.value.trim() || null;
-    const departmentMeta = buildDepartmentMetaPayload(ctx);
 
     const custom_fields = {};
     if (el.customFieldsContainer) {
@@ -695,9 +660,6 @@
       destination: el.fDestination.value.trim() || null,
       sand_owner: el.fSandOwner.value.trim() || null,
       sales_group: el.fSalesGroup.value.trim() || null,
-      department: departmentMeta.department,
-      first_department: departmentMeta.first_department,
-      group_name: departmentMeta.group_name,
       location_type: locationType,
       anydesk,
       internal_number: el.fInternalNumber.value.trim() || null,

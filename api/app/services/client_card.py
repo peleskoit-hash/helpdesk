@@ -100,7 +100,7 @@ def _client_card_view_config(db: Session) -> ClientCardConfigResponse:
                 is_active=bool(rule.is_active),
                 is_system=bool(rule.is_system),
                 sort_order=rule.sort_order,
-                condition_field_key=rule.condition_field_key,
+                condition_field_key=rule.condition_field_key or None,
                 condition_operator=rule.condition_operator,
                 condition_value=rule.condition_value,
                 actions=rule.actions_json or [],

@@ -301,10 +301,11 @@ class ClientCardBlockConfigOut(BaseModel):
     fields: list[ClientCardFieldConfigOut] = Field(default_factory=list)
 
 
-ClientCardRuleOperator = Literal["equals", "not_equals", "is_empty", "is_not_empty"]
-ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "required", "optional"]
+ClientCardRuleOperator = Literal["always", "equals", "not_equals", "is_empty", "is_not_empty"]
+ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "required", "optional", "set_value"]
 ClientCardRuleTargetType = Literal["field", "block"]
-ClientCardRuleScope = Literal["card", "editor", "both"]
+ClientCardRuleScope = Literal["card", "editor", "both", "save"]
+ClientCardRuleValueType = Literal["literal", "field", "template", "map", "null"]
 
 
 class ClientCardRuleAction(BaseModel):
@@ -312,6 +313,10 @@ class ClientCardRuleAction(BaseModel):
     target_key: str = Field(min_length=1)
     action: ClientCardRuleActionType
     scope: ClientCardRuleScope = "editor"
+    value_type: ClientCardRuleValueType | None = None
+    value: str | None = None
+    source_key: str | None = None
+    map: dict[str, str | None] | None = None
 
 
 class ClientCardRuleConfigOut(BaseModel):
@@ -321,7 +326,7 @@ class ClientCardRuleConfigOut(BaseModel):
     is_active: bool
     is_system: bool = False
     sort_order: int
-    condition_field_key: str
+    condition_field_key: str | None = None
     condition_operator: ClientCardRuleOperator
     condition_value: str | None = None
     actions: list[ClientCardRuleAction] = Field(default_factory=list)
@@ -336,7 +341,7 @@ class ClientCardRuleCreate(BaseModel):
     name: str = Field(min_length=1)
     is_active: bool = True
     sort_order: int = 1000
-    condition_field_key: str = Field(min_length=1)
+    condition_field_key: str | None = None
     condition_operator: ClientCardRuleOperator
     condition_value: str | None = None
     actions: list[ClientCardRuleAction] = Field(min_length=1)

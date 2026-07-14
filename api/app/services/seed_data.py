@@ -107,6 +107,61 @@ def ensure_client_card_defaults() -> None:
             "condition_value": "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
             "actions_json": [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "editor"}],
         },
+        {
+            "technical_key": "derive_department_meta_fallback",
+            "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: fallback",
+            "sort_order": 100,
+            "condition_field_key": "",
+            "condition_operator": "always",
+            "condition_value": None,
+            "actions_json": [
+                {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "destination"},
+                {"target_type": "field", "target_key": "first_department", "action": "set_value", "scope": "save", "value_type": "null"},
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "null"},
+            ],
+        },
+        {
+            "technical_key": "derive_department_meta_sand",
+            "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: \u041f\u0435\u0441\u043e\u043a",
+            "sort_order": 110,
+            "condition_field_key": "destination",
+            "condition_operator": "equals",
+            "condition_value": "\u041f\u0435\u0441\u043e\u043a",
+            "actions_json": [
+                {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "\u0421\u0442\u0430\u0436\u0438\u0440\u043e\u0432\u043a\u0430"},
+                {"target_type": "field", "target_key": "first_department", "action": "set_value", "scope": "save", "value_type": "null"},
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "sand_owner"},
+            ],
+        },
+        {
+            "technical_key": "derive_department_meta_sales",
+            "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: \u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
+            "sort_order": 120,
+            "condition_field_key": "destination",
+            "condition_operator": "equals",
+            "condition_value": "\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
+            "actions_json": [
+                {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "\u041e\u0442\u0434\u0435\u043b \u043f\u0440\u043e\u0434\u0430\u0436"},
+                {
+                    "target_type": "field",
+                    "target_key": "first_department",
+                    "action": "set_value",
+                    "scope": "save",
+                    "value_type": "map",
+                    "source_key": "sales_group",
+                    "map": {
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0412\u043b\u0430\u0441\u043e\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0421\u0430\u0439\u0434\u0430\u0440\u0430\u043b\u0438\u0435\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u041c\u0430\u043a\u0430\u0440\u0435\u043d\u043a\u043e": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0445\u0430\u043b\u0438\u0435\u0432\u043e\u0439": "\u0412\u0442\u043e\u0440\u043e\u0439 \u043e\u0442\u0434\u0435\u043b",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u041a\u043e\u0447\u0443\u0440\u044b": "\u0412\u0442\u043e\u0440\u043e\u0439 \u043e\u0442\u0434\u0435\u043b",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u041c\u043e\u0441\u043a\u0432\u0438\u0447\u0435\u043d\u043a\u043e": "\u0422\u0440\u0435\u0442\u0438\u0439 \u043e\u0442\u0434\u0435\u043b",
+                    },
+                },
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "sales_group"},
+            ],
+        },
     ]
 
     with SessionLocal() as db:

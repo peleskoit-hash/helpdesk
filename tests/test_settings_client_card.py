@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
 from api.app.models import Client, ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, Company, Ticket, TicketStatus, User
-from api.app.routers import settings_client_card, tickets
+from api.app.routers import management_users, settings_client_card, tickets
 from api.app.schemas import ClientCardBlockUpdate, ClientCardFieldCreate, ClientCardFieldUpdate, ClientCardMovePayload, ClientCardRuleAction, ClientCardRuleCreate, ClientCardRuleUpdate, ClientProfileUpdate
 from api.app.services import seed_data
 
@@ -375,6 +375,426 @@ def test_create_rule_equals_show():
 
     assert result.name == "Show AnyDesk"
     assert result.actions[0].target_key == "anydesk"
+
+
+def _client_card_save_fixture(session):
+    now = datetime.utcnow()
+    company = Company(id=str(uuid.uuid4()), name="Company")
+    user = User(id="admin-1", company_id=company.id, full_name="Admin", role="admin")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        subject="Subject",
+        status=TicketStatus.NEW.value,
+        created_at=now,
+        updated_at=now,
+    )
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=client.id, custom_fields={}, created_at=now, updated_at=now)
+    block = _block("department", "Department", 10)
+    fields = [
+        _field("contact_name", "Name", block.key, 10, is_system=True),
+        _field("destination", "Destination", block.key, 20, is_system=True),
+        _field("sand_owner", "Sand", block.key, 30, is_system=True),
+        _field("sales_group", "Sales", block.key, 40, is_system=True),
+        _field("department", "Department", block.key, 50, is_system=True),
+        _field("first_department", "First", block.key, 60, is_system=True),
+        _field("group_name", "Group", block.key, 70, is_system=True),
+        _field("location_type", "Location", block.key, 80, is_system=True),
+        _field("anydesk", "AnyDesk", block.key, 90, is_system=True),
+    ]
+    custom_block = _block("custom_block_1", "Custom", 20)
+    custom_note = _field("custom_note", "Note", custom_block.key, 10, is_system=False)
+    session.add_all([company, user, client, ticket, profile, block, custom_block, custom_note, *fields])
+    session.commit()
+    return client, ticket, profile
+
+
+def _save_rule(name, order, operator, condition_key, condition_value, actions):
+    return ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name=name,
+        is_active=True,
+        is_system=False,
+        sort_order=order,
+        condition_field_key=condition_key or "",
+        condition_operator=operator,
+        condition_value=condition_value,
+        actions_json=actions,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+
+def test_create_rule_accepts_always_set_value_action_schema():
+    session = _session()
+    block = _block("department", "Department", 10)
+    destination = _field("destination", "Destination", block.key, 10, is_system=True)
+    department = _field("department", "Department", block.key, 20, is_system=True)
+    session.add_all([block, destination, department])
+    session.commit()
+
+    result = settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="Derive",
+            condition_operator="always",
+            actions=[
+                ClientCardRuleAction(
+                    target_key="department",
+                    action="set_value",
+                    scope="save",
+                    value_type="field",
+                    source_key="destination",
+                )
+            ],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.condition_field_key is None
+    assert result.actions[0].action == "set_value"
+    assert result.actions[0].scope == "save"
+    assert result.actions[0].value_type == "field"
+
+
+def test_save_rule_rejects_backend_unsupported_fields():
+    session = _session()
+    block = _block("tg", "Telegram", 10)
+    telegram = _field("telegram_username", "@username", block.key, 10, is_system=True)
+    department = _field("department", "Department", block.key, 20, is_system=True)
+    destination = _field("destination", "Destination", block.key, 30, is_system=True)
+    session.add_all([block, telegram, department, destination])
+    session.commit()
+
+    cases = [
+        (
+            ClientCardRuleCreate(
+                name="Bad target",
+                condition_operator="always",
+                actions=[ClientCardRuleAction(target_key="telegram_username", action="set_value", scope="save", value_type="literal", value="x")],
+            ),
+            "rule_save_target_unsupported",
+        ),
+        (
+            ClientCardRuleCreate(
+                name="Bad source",
+                condition_operator="always",
+                actions=[ClientCardRuleAction(target_key="department", action="set_value", scope="save", value_type="field", source_key="telegram_username")],
+            ),
+            "rule_save_source_unsupported",
+        ),
+        (
+            ClientCardRuleCreate(
+                name="Bad condition",
+                condition_field_key="telegram_username",
+                condition_operator="equals",
+                condition_value="x",
+                actions=[ClientCardRuleAction(target_key="department", action="set_value", scope="save", value_type="field", source_key="destination")],
+            ),
+            "rule_save_condition_field_unsupported",
+        ),
+        (
+            ClientCardRuleCreate(
+                name="Bad template",
+                condition_operator="always",
+                actions=[ClientCardRuleAction(target_key="department", action="set_value", scope="save", value_type="template", value="{{telegram_username}}")],
+            ),
+            "rule_save_template_ref_unsupported",
+        ),
+    ]
+    for payload, code in cases:
+        with pytest.raises(HTTPException) as exc:
+            settings_client_card.create_client_card_rule(payload, db=session, user=_admin())
+        assert exc.value.status_code == 422
+        assert exc.value.detail["error"]["code"] == code
+
+
+def test_save_rule_rejects_dependency_free_always_literal_and_null_actions():
+    session = _session()
+    block = _block("department", "Department", 10)
+    department = _field("department", "Department", block.key, 10, is_system=True)
+    first_department = _field("first_department", "First", block.key, 20, is_system=True)
+    session.add_all([block, department, first_department])
+    session.commit()
+
+    for payload in [
+        ClientCardRuleCreate(
+            name="Literal only",
+            condition_operator="always",
+            actions=[ClientCardRuleAction(target_key="department", action="set_value", scope="save", value_type="literal", value="x")],
+        ),
+        ClientCardRuleCreate(
+            name="Null only",
+            condition_operator="always",
+            actions=[ClientCardRuleAction(target_key="first_department", action="set_value", scope="save", value_type="null")],
+        ),
+    ]:
+        with pytest.raises(HTTPException) as exc:
+            settings_client_card.create_client_card_rule(payload, db=session, user=_admin())
+        assert exc.value.status_code == 422
+        assert exc.value.detail["error"]["code"] == "rule_save_trigger_required"
+
+
+def test_save_derivation_value_types_and_ordered_override():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    session.add_all(
+        [
+            _save_rule(
+                "fallback",
+                10,
+                "always",
+                None,
+                None,
+                [
+                    {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "destination"},
+                    {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "template", "value": "{{destination}} / {{location_type}}"},
+                    {"target_type": "field", "target_key": "anydesk", "action": "set_value", "scope": "save", "value_type": "null"},
+                    {"target_type": "field", "target_key": "custom_note", "action": "set_value", "scope": "save", "value_type": "literal", "value": "from-rule"},
+                ],
+            ),
+            _save_rule(
+                "override",
+                20,
+                "equals",
+                "destination",
+                "Sales",
+                [
+                    {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Sales Department"},
+                    {"target_type": "field", "target_key": "first_department", "action": "set_value", "scope": "save", "value_type": "map", "source_key": "sales_group", "map": {"A": "First", "B": None}},
+                ],
+            ),
+        ]
+    )
+    profile.anydesk = "old-anydesk"
+    session.commit()
+
+    tickets.update_client_profile(
+        ticket.id,
+        ClientProfileUpdate(destination="Sales", sales_group="A", location_type="Remote"),
+        db=session,
+        user=_admin(),
+    )
+    session.refresh(profile)
+
+    assert profile.department == "Sales Department"
+    assert profile.first_department == "First"
+    assert profile.group_name == "Sales / Remote"
+    assert profile.anydesk is None
+    assert profile.custom_fields == {"custom_note": "from-rule"}
+
+
+def test_save_derivation_normalizes_custom_select_and_system_boolean():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    custom_block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "custom_block_1")).scalar_one()
+    custom_select = _field("custom_status", "Status", custom_block.key, 20, is_system=False)
+    custom_select.field_type = "select"
+    custom_select.options_json = ["ok"]
+    session.add_all(
+        [
+            custom_select,
+            _save_rule(
+                "normalize",
+                10,
+                "is_not_empty",
+                "destination",
+                None,
+                [
+                    {"target_type": "field", "target_key": "custom_status", "action": "set_value", "scope": "save", "value_type": "literal", "value": "ok"},
+                    {"target_type": "field", "target_key": "is_verified", "action": "set_value", "scope": "save", "value_type": "literal", "value": "true"},
+                ],
+            ),
+        ]
+    )
+    session.commit()
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(destination="Support"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.custom_fields == {"custom_status": "ok"}
+    assert profile.is_verified is True
+
+
+def test_save_derivation_rejects_invalid_custom_select_value():
+    session = _session()
+    _, ticket, _ = _client_card_save_fixture(session)
+    custom_block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "custom_block_1")).scalar_one()
+    custom_select = _field("custom_status", "Status", custom_block.key, 20, is_system=False)
+    custom_select.field_type = "select"
+    custom_select.options_json = ["ok"]
+    session.add_all(
+        [
+            custom_select,
+            _save_rule(
+                "normalize",
+                10,
+                "is_not_empty",
+                "destination",
+                None,
+                [{"target_type": "field", "target_key": "custom_status", "action": "set_value", "scope": "save", "value_type": "literal", "value": "bad"}],
+            ),
+        ]
+    )
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(destination="Support"), db=session, user=_admin())
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "invalid_custom_field_value"
+
+
+def test_save_derivation_boolean_condition_map_and_template_match_js_normalize():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    session.add(
+        _save_rule(
+            "bool",
+            10,
+            "equals",
+            "is_verified",
+            "false",
+            [
+                {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "map", "source_key": "is_verified", "map": {"false": "not verified"}},
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "template", "value": "verified={{is_verified}}"},
+            ],
+        )
+    )
+    session.commit()
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(is_verified=False), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.department == "not verified"
+    assert profile.group_name == "verified=false"
+
+
+def test_save_derivation_uses_current_profile_plus_incoming_partial_payload():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    profile.destination = "\u041f\u0435\u0441\u043e\u043a"
+    profile.department = "old"
+    session.add(
+        _save_rule(
+            "sand",
+            10,
+            "equals",
+            "destination",
+            "\u041f\u0435\u0441\u043e\u043a",
+            [
+                {"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "\u0421\u0442\u0430\u0436\u0438\u0440\u043e\u0432\u043a\u0430"},
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "sand_owner"},
+            ],
+        )
+    )
+    session.commit()
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(sand_owner="Owner"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.department == "\u0421\u0442\u0430\u0436\u0438\u0440\u043e\u0432\u043a\u0430"
+    assert profile.group_name == "Owner"
+
+
+def test_contact_name_only_patch_does_not_run_unrelated_derivation():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    profile.destination = "Support"
+    profile.department = "Existing"
+    session.add(
+        _save_rule(
+            "fallback",
+            10,
+            "always",
+            None,
+            None,
+            [{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "destination"}],
+        )
+    )
+    session.commit()
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(contact_name="Anna"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.contact_name == "Anna"
+    assert profile.department == "Existing"
+
+
+def test_management_user_profile_uses_common_save_derivation():
+    session = _session()
+    client, _, profile = _client_card_save_fixture(session)
+    session.add(
+        _save_rule(
+            "fallback",
+            10,
+            "always",
+            None,
+            None,
+            [{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "destination"}],
+        )
+    )
+    session.commit()
+
+    management_users.update_management_user_profile(
+        client.id,
+        ClientProfileUpdate(destination="Support"),
+        db=session,
+        user=_admin(),
+    )
+    session.refresh(profile)
+
+    assert profile.department == "Support"
+
+
+def test_seeded_department_meta_rules_match_legacy_behavior(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        now = datetime.utcnow()
+        company = Company(id=str(uuid.uuid4()), name="Company")
+        user = User(id="admin-1", company_id=company.id, full_name="Admin", role="admin")
+        client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+        ticket = Ticket(
+            id=str(uuid.uuid4()),
+            company_id=company.id,
+            client_id=client.id,
+            subject="Subject",
+            status=TicketStatus.NEW.value,
+            created_at=now,
+            updated_at=now,
+        )
+        profile = ClientProfile(id=str(uuid.uuid4()), client_id=client.id, custom_fields={}, created_at=now, updated_at=now)
+        session.add_all([company, user, client, ticket, profile])
+        session.commit()
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(destination="\u041f\u0435\u0441\u043e\u043a", sand_owner="Owner"), db=session, user=_admin())
+        session.refresh(profile)
+        assert profile.department == "\u0421\u0442\u0430\u0436\u0438\u0440\u043e\u0432\u043a\u0430"
+        assert profile.first_department is None
+        assert profile.group_name == "Owner"
+
+        tickets.update_client_profile(
+            ticket.id,
+            ClientProfileUpdate(destination="\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436", sales_group="\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430"),
+            db=session,
+            user=_admin(),
+        )
+        session.refresh(profile)
+        assert profile.department == "\u041e\u0442\u0434\u0435\u043b \u043f\u0440\u043e\u0434\u0430\u0436"
+        assert profile.first_department == "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442"
+        assert profile.group_name == "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430"
+
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(destination="\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"), db=session, user=_admin())
+        session.refresh(profile)
+        assert profile.department == "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"
+        assert profile.first_department is None
+        assert profile.group_name is None
 
 
 def test_ticket_profile_custom_fields_patch_preserves_omitted_and_clears_explicit_null():

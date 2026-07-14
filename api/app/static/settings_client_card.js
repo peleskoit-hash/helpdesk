@@ -11,6 +11,28 @@ const state = {
 const colorSchemes = ["blue", "green", "yellow", "red", "gray", "purple"];
 const fieldTypes = ["text", "textarea", "number", "date", "checkbox", "select", "phone", "url", "password"];
 const systemBlockKeys = new Set(["tg", "profile", "department", "work", "verification"]);
+const saveContextSystemFieldKeys = new Set([
+  "contact_name",
+  "last_name",
+  "email",
+  "phone",
+  "verification_status",
+  "is_verified",
+  "destination",
+  "sand_owner",
+  "sales_group",
+  "department",
+  "first_department",
+  "group_name",
+  "employee_type",
+  "location_type",
+  "anydesk",
+  "internal_number",
+  "external_user_id",
+  "bitrix_login",
+  "bitrix_password",
+  "bitrix_id",
+]);
 const colorLabels = {
   blue: "\u0413\u043e\u043b\u0443\u0431\u043e\u0439",
   green: "\u0417\u0435\u043b\u0451\u043d\u044b\u0439",
@@ -223,6 +245,13 @@ function fieldOptionsHtml(selectedKey = "") {
     .join("");
 }
 
+function saveFieldOptionsHtml(selectedKey = "") {
+  return allClientCardFields()
+    .filter((field) => !field.is_system || saveContextSystemFieldKeys.has(field.key))
+    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)} (${escapeHtml(field.key)})</option>`)
+    .join("");
+}
+
 function blockOptionsHtml(selectedKey = "") {
   return (state.clientCard.blocks || [])
     .map((block) => `<option value="${escapeHtml(block.key)}" ${block.key === selectedKey ? "selected" : ""}>${escapeHtml(block.title || block.key)} (${escapeHtml(block.key)})</option>`)
@@ -231,13 +260,16 @@ function blockOptionsHtml(selectedKey = "") {
 
 function syncRuleValueVisibility() {
   const needsValue = el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals";
+  el.ruleConditionField.closest("label").classList.toggle("hidden", el.ruleOperator.value === "always");
   el.ruleValueWrap.classList.toggle("hidden", !needsValue);
 }
 
 function ruleActionOptions(targetType, scope, selected = "show") {
-  const allowed = targetType === "block" || scope !== "editor"
-    ? ["show", "hide"]
-    : ["show", "hide", "readonly", "editable", "required", "optional"];
+  const allowed = scope === "save"
+    ? ["set_value"]
+    : (targetType === "block" || scope !== "editor"
+      ? ["show", "hide"]
+      : ["show", "hide", "readonly", "editable", "required", "optional"]);
   const labels = {
     show: "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c",
     hide: "\u0421\u043a\u0440\u044b\u0442\u044c",
@@ -245,6 +277,7 @@ function ruleActionOptions(targetType, scope, selected = "show") {
     editable: "editable",
     required: "\u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
     optional: "\u041d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
+    set_value: "\u0417\u0430\u0434\u0430\u0442\u044c \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435",
   };
   const safeSelected = allowed.includes(selected) ? selected : allowed[0];
   return allowed
@@ -256,6 +289,10 @@ function ruleActionRowHtml(action = {}, index = 0) {
   const targetType = action.target_type || "field";
   const scope = action.scope || "editor";
   const targetKey = action.target_key || "";
+  const valueType = action.value_type || "literal";
+  const mapText = Object.entries(action.map || {})
+    .map(([key, value]) => `${key} => ${value ?? ""}`)
+    .join("\n");
   return `
     <div class="client-card-rule-action-row" data-rule-action-row>
       <label>\u0422\u0438\u043f \u0446\u0435\u043b\u0438
@@ -272,20 +309,48 @@ function ruleActionRowHtml(action = {}, index = 0) {
           <option value="editor" ${scope === "editor" ? "selected" : ""}>\u041e\u043a\u043d\u043e \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f</option>
           <option value="card" ${scope === "card" ? "selected" : ""}>\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430</option>
           <option value="both" ${scope === "both" ? "selected" : ""}>\u041e\u0431\u0430</option>
+          <option value="save" ${scope === "save" ? "selected" : ""}>\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435</option>
         </select>
       </label>
+      <label data-rule-value-type-wrap>\u0422\u0438\u043f \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f
+        <select data-rule-action-prop="value_type">
+          <option value="literal" ${valueType === "literal" ? "selected" : ""}>literal</option>
+          <option value="field" ${valueType === "field" ? "selected" : ""}>field</option>
+          <option value="template" ${valueType === "template" ? "selected" : ""}>template</option>
+          <option value="map" ${valueType === "map" ? "selected" : ""}>map</option>
+          <option value="null" ${valueType === "null" ? "selected" : ""}>null</option>
+        </select>
+      </label>
+      <label data-rule-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a<select data-rule-action-prop="source_key">${fieldOptionsHtml(action.source_key || "")}</select></label>
+      <label data-rule-value-wrap>\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435<input data-rule-action-prop="value" value="${escapeHtml(action.value || "")}" autocomplete="off" /></label>
+      <label data-rule-map-wrap>Map: \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430 = source =&gt; result<textarea data-rule-action-prop="map" rows="4">${escapeHtml(mapText)}</textarea></label>
       <button class="action danger ${index === 0 ? "hidden" : ""}" type="button" data-remove-rule-action>&times;</button>
     </div>
   `;
 }
 
 function syncRuleActionRow(row) {
-  const targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
+  let targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
   const scope = row.querySelector('[data-rule-action-prop="scope"]').value;
+  const valueType = row.querySelector('[data-rule-action-prop="value_type"]')?.value || "literal";
+  if (scope === "save" && targetType !== "field") {
+    row.querySelector('[data-rule-action-prop="target_type"]').value = "field";
+    targetType = "field";
+  }
+  const targetFieldSelect = row.querySelector('[data-rule-action-prop="target_field"]');
+  const sourceFieldSelect = row.querySelector('[data-rule-action-prop="source_key"]');
+  const targetValue = targetFieldSelect.value;
+  const sourceValue = sourceFieldSelect.value;
+  targetFieldSelect.innerHTML = scope === "save" ? saveFieldOptionsHtml(targetValue) : fieldOptionsHtml(targetValue);
+  sourceFieldSelect.innerHTML = saveFieldOptionsHtml(sourceValue);
   row.querySelector("[data-rule-field-target-wrap]").classList.toggle("hidden", targetType === "block");
   row.querySelector("[data-rule-block-target-wrap]").classList.toggle("hidden", targetType !== "block");
   const actionSelect = row.querySelector('[data-rule-action-prop="action"]');
   actionSelect.innerHTML = ruleActionOptions(targetType, scope, actionSelect.value);
+  row.querySelector("[data-rule-value-type-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value");
+  row.querySelector("[data-rule-source-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || !["field", "map"].includes(valueType));
+  row.querySelector("[data-rule-value-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || !["literal", "template"].includes(valueType));
+  row.querySelector("[data-rule-map-wrap]").classList.toggle("hidden", actionSelect.value !== "set_value" || valueType !== "map");
 }
 
 function syncRuleActionRows() {
@@ -305,14 +370,40 @@ function collectRuleActions() {
   const actions = [];
   el.ruleActions.querySelectorAll("[data-rule-action-row]").forEach((row) => {
     const targetType = row.querySelector('[data-rule-action-prop="target_type"]').value;
-    actions.push({
+    const actionName = row.querySelector('[data-rule-action-prop="action"]').value;
+    const item = {
       target_type: targetType,
       target_key: targetType === "block"
         ? row.querySelector('[data-rule-action-prop="target_block"]').value
         : row.querySelector('[data-rule-action-prop="target_field"]').value,
-      action: row.querySelector('[data-rule-action-prop="action"]').value,
+      action: actionName,
       scope: row.querySelector('[data-rule-action-prop="scope"]').value,
-    });
+    };
+    if (actionName === "set_value") {
+      const valueType = row.querySelector('[data-rule-action-prop="value_type"]').value;
+      item.value_type = valueType;
+      if (["literal", "template"].includes(valueType)) {
+        item.value = row.querySelector('[data-rule-action-prop="value"]').value;
+      }
+      if (["field", "map"].includes(valueType)) {
+        item.source_key = row.querySelector('[data-rule-action-prop="source_key"]').value;
+      }
+      if (valueType === "map") {
+        const mapping = {};
+        const lines = row.querySelector('[data-rule-action-prop="map"]').value.split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const separator = trimmed.includes("=>") ? "=>" : "=";
+          const parts = trimmed.split(separator);
+          const key = (parts.shift() || "").trim();
+          const value = parts.join(separator).trim();
+          if (key) mapping[key] = value || null;
+        }
+        item.map = mapping;
+      }
+    }
+    actions.push(item);
   });
   if (!actions.length) throw new Error("\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u043d\u043e \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435");
   return actions;
@@ -345,7 +436,7 @@ function rulePayloadFromModal() {
   return {
     name,
     is_active: Boolean(el.ruleActive.checked),
-    condition_field_key: el.ruleConditionField.value,
+    condition_field_key: el.ruleOperator.value === "always" ? null : el.ruleConditionField.value,
     condition_operator: el.ruleOperator.value,
     condition_value: (el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals") ? (el.ruleValue.value.trim() || null) : null,
     actions: collectRuleActions(),

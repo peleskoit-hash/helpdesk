@@ -23,17 +23,6 @@ function normalizeTicketsReturnUrl(rawUrl) {
   }
 }
 
-const SALES_FIRST_DEPARTMENT = new Set([
-  "группа Власова",
-  "группа Шабурова",
-  "группа Сайдаралиева",
-  "группа Макаренко",
-]);
-const SALES_SECOND_DEPARTMENT = new Set([
-  "группа Шахалиевой",
-  "группа Кочуры",
-]);
-
 const state = {
   ticketId,
   role: localStorage.getItem("hd_user_role") || "agent",
@@ -297,8 +286,6 @@ function clientCardCtx() {
     showError,
     isBlank,
     setControlValue,
-    SALES_FIRST_DEPARTMENT,
-    SALES_SECOND_DEPARTMENT,
   };
 }
 

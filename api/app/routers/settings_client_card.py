@@ -23,6 +23,7 @@ from ..schemas import (
     ClientCardRuleCreate,
     ClientCardRuleUpdate,
 )
+from ..services.client_card_derivation import SYSTEM_PROFILE_FIELDS
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -30,10 +31,12 @@ SYSTEM_BLOCK_KEYS = {"tg", "profile", "department", "work", "verification"}
 SORT_STEP = 10
 NAMED_COLOR_SCHEMES = {"blue", "green", "yellow", "red", "gray", "purple"}
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
-RULE_OPERATORS = {"equals", "not_equals", "is_empty", "is_not_empty"}
-RULE_ACTIONS = {"show", "hide", "readonly", "editable", "required", "optional"}
-RULE_SCOPES = {"card", "editor", "both"}
+RULE_OPERATORS = {"always", "equals", "not_equals", "is_empty", "is_not_empty"}
+RULE_ACTIONS = {"show", "hide", "readonly", "editable", "required", "optional", "set_value"}
+RULE_SCOPES = {"card", "editor", "both", "save"}
 RULE_TARGET_TYPES = {"field", "block"}
+RULE_VALUE_TYPES = {"literal", "field", "template", "map", "null"}
+TEMPLATE_FIELD_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
 EDITOR_RUNTIME_SYSTEM_FIELD_KEYS = {
     "contact_name",
     "last_name",
@@ -149,7 +152,7 @@ def _rule_out(rule: ClientCardRuleConfig) -> ClientCardRuleConfigOut:
         is_active=bool(rule.is_active),
         is_system=bool(rule.is_system),
         sort_order=rule.sort_order,
-        condition_field_key=rule.condition_field_key,
+        condition_field_key=rule.condition_field_key or None,
         condition_operator=rule.condition_operator,
         condition_value=rule.condition_value,
         actions=rule.actions_json or [],
@@ -198,31 +201,73 @@ def _ordered_rules(db: Session, *, active_only: bool = False) -> list[ClientCard
 def _validate_rule_payload(
     db: Session,
     *,
-    condition_field_key: str,
+    condition_field_key: str | None,
     condition_operator: str,
     condition_value: str | None,
     actions: list,
 ) -> None:
     if condition_operator not in RULE_OPERATORS:
         _error(422, "rule_operator_invalid", "Unsupported client card rule operator")
+    if condition_operator != "always" and not (condition_field_key or "").strip():
+        _error(422, "rule_condition_field_required", "Rule condition field is required for this operator")
     if condition_operator in {"equals", "not_equals"} and not (condition_value or "").strip():
         _error(422, "rule_condition_value_required", "Rule condition value is required for this operator")
-    if db.execute(select(ClientCardFieldConfig.id).where(ClientCardFieldConfig.key == condition_field_key)).first() is None:
-        _error(422, "rule_condition_field_unknown", "Condition field is not configured")
     if not actions:
         _error(422, "rule_actions_required", "Rule must contain at least one action")
     fields_by_key = {field.key: field for field in db.execute(select(ClientCardFieldConfig)).scalars().all()}
     field_keys = set(fields_by_key.keys())
+    custom_field_keys = {field.key for field in fields_by_key.values() if not field.is_system}
+    save_context_keys = set(SYSTEM_PROFILE_FIELDS) | custom_field_keys
     block_keys = set(db.execute(select(ClientCardBlockConfig.key)).scalars().all())
+    has_save_action = any(
+        (action.action if hasattr(action, "action") else action.get("action")) == "set_value"
+        and (action.scope if hasattr(action, "scope") else action.get("scope")) == "save"
+        for action in actions
+    )
+    if has_save_action and condition_operator != "always" and condition_field_key not in save_context_keys:
+        _error(422, "rule_save_condition_field_unsupported", "Condition field is not available to save-time derivation")
+    if not has_save_action and condition_operator != "always" and db.execute(select(ClientCardFieldConfig.id).where(ClientCardFieldConfig.key == condition_field_key)).first() is None:
+        _error(422, "rule_condition_field_unknown", "Condition field is not configured")
+    save_trigger_deps: set[str] = set()
+    if has_save_action and condition_operator != "always" and condition_field_key:
+        save_trigger_deps.add(condition_field_key)
     for action in actions:
         target_type = action.target_type if hasattr(action, "target_type") else action.get("target_type")
         target_key = action.target_key if hasattr(action, "target_key") else action.get("target_key")
         action_name = action.action if hasattr(action, "action") else action.get("action")
         scope = action.scope if hasattr(action, "scope") else action.get("scope")
+        value_type = action.value_type if hasattr(action, "value_type") else action.get("value_type")
+        source_key = action.source_key if hasattr(action, "source_key") else action.get("source_key")
+        value_map = action.map if hasattr(action, "map") else action.get("map")
         if target_type not in RULE_TARGET_TYPES:
             _error(422, "rule_target_type_invalid", "Unsupported client card rule target type")
         if action_name not in RULE_ACTIONS:
             _error(422, "rule_action_invalid", "Unsupported client card rule action")
+        if action_name == "set_value":
+            if target_type != "field" or scope != "save":
+                _error(422, "rule_set_value_scope_invalid", "set_value actions support only field targets with save scope")
+            if value_type not in RULE_VALUE_TYPES:
+                _error(422, "rule_value_type_invalid", "Unsupported set_value type")
+            if target_key not in save_context_keys:
+                _error(422, "rule_save_target_unsupported", "Target field is not persistable by save-time derivation")
+            if value_type in {"field", "map"}:
+                if not (source_key or "").strip():
+                    _error(422, "rule_source_field_required", "Source field is required for this value type")
+                if source_key not in save_context_keys:
+                    _error(422, "rule_save_source_unsupported", "Source field is not available to save-time derivation")
+                save_trigger_deps.add(source_key)
+            if value_type == "template":
+                for ref in TEMPLATE_FIELD_RE.findall(str(_rule_action_value(action, "value") or "")):
+                    if ref not in save_context_keys:
+                        _error(422, "rule_save_template_ref_unsupported", "Template field is not available to save-time derivation")
+                    save_trigger_deps.add(ref)
+            if value_type == "map" and not isinstance(value_map, dict):
+                _error(422, "rule_map_required", "Map value type requires a mapping")
+            if target_key not in field_keys:
+                _error(422, "rule_target_field_unknown", "Target field is not configured")
+            continue
+        if scope == "save":
+            _error(422, "rule_save_scope_action_invalid", "Save scope supports only set_value actions")
         if target_type == "block" and action_name not in {"show", "hide"}:
             _error(422, "rule_block_action_invalid", "Block rules support only show and hide actions")
         if target_type == "field" and action_name not in {"show", "hide"} and scope != "editor":
@@ -237,34 +282,50 @@ def _validate_rule_payload(
                 _error(422, "rule_target_editor_unsupported", "Target field cannot be controlled in the editor runtime")
         if target_type == "block" and target_key not in block_keys:
             _error(422, "rule_target_block_unknown", "Target block is not configured")
+    if has_save_action and not save_trigger_deps:
+        _error(422, "rule_save_trigger_required", "Save-time derivation rule requires a condition field, source field, or template reference")
 
 
 def _rule_actions_for_storage(actions: list) -> list[dict]:
     stored = []
     for action in actions:
         if hasattr(action, "target_key"):
-            stored.append(
-                {
-                    "target_type": action.target_type,
-                    "target_key": action.target_key,
-                    "action": action.action,
-                    "scope": action.scope,
-                }
-            )
+            item = {
+                "target_type": action.target_type,
+                "target_key": action.target_key,
+                "action": action.action,
+                "scope": action.scope,
+            }
+            if action.action == "set_value":
+                item["value_type"] = action.value_type
+                if action.value is not None:
+                    item["value"] = action.value
+                if action.source_key is not None:
+                    item["source_key"] = action.source_key
+                if action.map is not None:
+                    item["map"] = action.map
+            stored.append(item)
         else:
-            stored.append(
-                {
-                    "target_type": action.get("target_type", "field"),
-                    "target_key": action.get("target_key"),
-                    "action": action.get("action"),
-                    "scope": action.get("scope", "editor"),
-                }
-            )
+            item = {
+                "target_type": action.get("target_type", "field"),
+                "target_key": action.get("target_key"),
+                "action": action.get("action"),
+                "scope": action.get("scope", "editor"),
+            }
+            if item["action"] == "set_value":
+                item["value_type"] = action.get("value_type")
+                if "value" in action:
+                    item["value"] = action.get("value")
+                if "source_key" in action:
+                    item["source_key"] = action.get("source_key")
+                if "map" in action:
+                    item["map"] = action.get("map")
+            stored.append(item)
     return stored
 
 
 def _rule_condition_value_for_storage(operator: str, value: str | None) -> str | None:
-    if operator in {"is_empty", "is_not_empty"}:
+    if operator in {"always", "is_empty", "is_not_empty"}:
         return None
     return (value or "").strip() or None
 
@@ -281,6 +342,12 @@ def _rules_using_field(db: Session, field_key: str) -> list[ClientCardRuleConfig
             continue
         for action in rule.actions_json or []:
             if action.get("target_type", "field") == "field" and action.get("target_key") == field_key:
+                matches.append(rule)
+                break
+            if action.get("action") == "set_value" and action.get("source_key") == field_key:
+                matches.append(rule)
+                break
+            if action.get("action") == "set_value" and f"{{{{{field_key}}}}}" in str(action.get("value") or ""):
                 matches.append(rule)
                 break
     return matches
@@ -338,10 +405,10 @@ def create_client_card_rule(
     name = payload.name.strip()
     if not name:
         _error(422, "rule_name_required", "Rule name is required")
-    condition_field_key = payload.condition_field_key.strip()
+    condition_field_key = (payload.condition_field_key or "").strip()
     _validate_rule_payload(
         db,
-        condition_field_key=condition_field_key,
+        condition_field_key=condition_field_key if payload.condition_operator != "always" else "",
         condition_operator=payload.condition_operator,
         condition_value=payload.condition_value,
         actions=payload.actions,
@@ -353,7 +420,7 @@ def create_client_card_rule(
         is_active=payload.is_active,
         is_system=False,
         sort_order=payload.sort_order,
-        condition_field_key=condition_field_key,
+        condition_field_key=condition_field_key if payload.condition_operator != "always" else "",
         condition_operator=payload.condition_operator,
         condition_value=_rule_condition_value_for_storage(payload.condition_operator, payload.condition_value),
         actions_json=_rule_actions_for_storage(payload.actions),
@@ -401,7 +468,7 @@ def update_client_card_rule(
         rule.is_active = payload.is_active
     if payload.sort_order is not None:
         rule.sort_order = payload.sort_order
-    rule.condition_field_key = next_condition_field_key
+    rule.condition_field_key = next_condition_field_key if next_condition_operator != "always" else ""
     rule.condition_operator = next_condition_operator
     if "condition_value" in payload_data or "condition_operator" in payload_data:
         rule.condition_value = _rule_condition_value_for_storage(next_condition_operator, next_condition_value)
