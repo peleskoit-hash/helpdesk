@@ -306,6 +306,9 @@ ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "requ
 ClientCardRuleTargetType = Literal["field", "block"]
 ClientCardRuleScope = Literal["card", "editor", "both", "save"]
 ClientCardRuleValueType = Literal["literal", "field", "template", "map", "null"]
+ClientCardSourceKind = Literal["http"]
+ClientCardSourceMethod = Literal["GET", "POST"]
+ClientCardSourceOnError = Literal["ignore", "block_save"]
 
 
 class ClientCardRuleAction(BaseModel):
@@ -355,6 +358,62 @@ class ClientCardRuleUpdate(BaseModel):
     condition_operator: ClientCardRuleOperator | None = None
     condition_value: str | None = None
     actions: list[ClientCardRuleAction] | None = None
+
+
+class ClientCardSourceMapping(BaseModel):
+    response_path: str = Field(min_length=1)
+    target_key: str = Field(min_length=1)
+
+
+class ClientCardSourceConfigBase(BaseModel):
+    technical_key: str | None = None
+    name: str = Field(min_length=1)
+    kind: ClientCardSourceKind = "http"
+    is_active: bool = True
+    method: ClientCardSourceMethod = "GET"
+    url_template: str = Field(min_length=1)
+    query_template_json: dict | None = None
+    headers_template_json: dict | None = None
+    body_template_json: dict | list | str | int | float | bool | None = None
+    timeout_ms: int = Field(default=3000, ge=100, le=30000)
+    mapping_json: list[ClientCardSourceMapping] = Field(default_factory=list)
+    on_error: ClientCardSourceOnError = "ignore"
+
+
+class ClientCardSourceCreate(ClientCardSourceConfigBase):
+    pass
+
+
+class ClientCardSourceUpdate(BaseModel):
+    technical_key: str | None = None
+    name: str | None = None
+    kind: ClientCardSourceKind | None = None
+    is_active: bool | None = None
+    method: ClientCardSourceMethod | None = None
+    url_template: str | None = None
+    query_template_json: dict | None = None
+    headers_template_json: dict | None = None
+    body_template_json: dict | list | str | int | float | bool | None = None
+    timeout_ms: int | None = Field(default=None, ge=100, le=30000)
+    mapping_json: list[ClientCardSourceMapping] | None = None
+    on_error: ClientCardSourceOnError | None = None
+
+
+class ClientCardSourceConfigOut(ClientCardSourceConfigBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientCardSourceTestRequest(BaseModel):
+    context: dict = Field(default_factory=dict)
+
+
+class ClientCardSourceTestResponse(BaseModel):
+    http_status: int | None = None
+    mapped_values: dict = Field(default_factory=dict)
+    missing_response_paths: list[str] = Field(default_factory=list)
+    duration_ms: int
 
 
 class ClientCardBlockUpdate(BaseModel):

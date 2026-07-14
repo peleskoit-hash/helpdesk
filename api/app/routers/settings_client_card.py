@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig
+from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig
 from ..schemas import (
     ClientCardBlockConfigOut,
     ClientCardBlockCreate,
@@ -22,8 +22,20 @@ from ..schemas import (
     ClientCardRuleConfigOut,
     ClientCardRuleCreate,
     ClientCardRuleUpdate,
+    ClientCardSourceConfigOut,
+    ClientCardSourceCreate,
+    ClientCardSourceTestRequest,
+    ClientCardSourceTestResponse,
+    ClientCardSourceUpdate,
 )
 from ..services.client_card_derivation import SYSTEM_PROFILE_FIELDS
+from ..services.client_card_sources import (
+    ClientCardSourceConfigError,
+    ClientCardSourceError,
+    execute_source,
+    mapped_preview,
+    validate_source_payload,
+)
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -159,6 +171,36 @@ def _rule_out(rule: ClientCardRuleConfig) -> ClientCardRuleConfigOut:
     )
 
 
+def _source_mapping_for_storage(mapping: list | None) -> list[dict]:
+    stored = []
+    for item in mapping or []:
+        if hasattr(item, "response_path"):
+            stored.append({"response_path": item.response_path, "target_key": item.target_key})
+        else:
+            stored.append({"response_path": item.get("response_path"), "target_key": item.get("target_key")})
+    return stored
+
+
+def _source_out(source: ClientCardSourceConfig) -> ClientCardSourceConfigOut:
+    return ClientCardSourceConfigOut(
+        id=source.id,
+        technical_key=source.technical_key,
+        name=source.name,
+        kind=source.kind,
+        is_active=bool(source.is_active),
+        method=source.method,
+        url_template=source.url_template,
+        query_template_json=source.query_template_json,
+        headers_template_json=source.headers_template_json,
+        body_template_json=source.body_template_json,
+        timeout_ms=source.timeout_ms,
+        mapping_json=source.mapping_json or [],
+        on_error=source.on_error,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+    )
+
+
 def _is_custom_block(block: ClientCardBlockConfig) -> bool:
     return block.key not in SYSTEM_BLOCK_KEYS and block.key.startswith("custom_block_")
 
@@ -196,6 +238,28 @@ def _ordered_rules(db: Session, *, active_only: bool = False) -> list[ClientCard
     if active_only:
         stmt = stmt.where(ClientCardRuleConfig.is_active.is_(True))
     return db.execute(stmt.order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())).scalars().all()
+
+
+def _ordered_sources(db: Session) -> list[ClientCardSourceConfig]:
+    return db.execute(
+        select(ClientCardSourceConfig).order_by(ClientCardSourceConfig.created_at.asc())
+    ).scalars().all()
+
+
+def _source_technical_key(value: str | None) -> str | None:
+    cleaned = (value or "").strip()
+    return cleaned or None
+
+
+def _source_payload_data(payload) -> dict:
+    return payload.model_dump(exclude_unset=True)
+
+
+def _reject_null_source_required_fields(data: dict) -> None:
+    required = {"name", "kind", "is_active", "method", "url_template", "timeout_ms", "on_error"}
+    for key in sorted(required & data.keys()):
+        if data[key] is None:
+            _error(422, "source_required_field_null", f"Source field '{key}' cannot be null")
 
 
 def _validate_rule_payload(
@@ -367,6 +431,20 @@ def _rule_refs(rules: list[ClientCardRuleConfig]) -> list[dict]:
     return [{"id": rule.id, "name": rule.name, "technical_key": rule.technical_key} for rule in rules]
 
 
+def _source_refs(sources: list[ClientCardSourceConfig]) -> list[dict]:
+    return [{"id": source.id, "name": source.name, "technical_key": source.technical_key} for source in sources]
+
+
+def _sources_mapping_to_field(db: Session, field_key: str) -> list[ClientCardSourceConfig]:
+    matches = []
+    for source in _ordered_sources(db):
+        for mapping in source.mapping_json or []:
+            if mapping.get("target_key") == field_key:
+                matches.append(source)
+                break
+    return matches
+
+
 def _serialize_client_card_config(db: Session) -> ClientCardConfigResponse:
     blocks = db.execute(
         select(ClientCardBlockConfig).order_by(ClientCardBlockConfig.sort_order.asc(), ClientCardBlockConfig.created_at.asc())
@@ -393,6 +471,168 @@ def get_client_card_config(db: Session = Depends(get_db), user: CurrentUser = De
 def list_client_card_rules(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _require_admin(user)
     return [_rule_out(rule) for rule in _ordered_rules(db)]
+
+
+@router.get("/client-card/sources", response_model=list[ClientCardSourceConfigOut])
+def list_client_card_sources(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+    return [_source_out(source) for source in _ordered_sources(db)]
+
+
+@router.post("/client-card/sources", response_model=ClientCardSourceConfigOut)
+def create_client_card_source(
+    payload: ClientCardSourceCreate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    name = payload.name.strip()
+    if not name:
+        _error(422, "source_name_required", "Source name is required")
+    technical_key = _source_technical_key(payload.technical_key)
+    if technical_key and db.execute(select(ClientCardSourceConfig.id).where(ClientCardSourceConfig.technical_key == technical_key)).first():
+        _error(409, "source_technical_key_exists", "Source technical key already exists")
+    mapping = _source_mapping_for_storage(payload.mapping_json)
+    validate_source_payload(
+        db,
+        method=payload.method,
+        kind=payload.kind,
+        on_error=payload.on_error,
+        url_template=payload.url_template,
+        mapping=mapping,
+        query=payload.query_template_json,
+        headers=payload.headers_template_json,
+        body=payload.body_template_json,
+    )
+    now = datetime.utcnow()
+    source = ClientCardSourceConfig(
+        id=str(uuid.uuid4()),
+        technical_key=technical_key,
+        name=name,
+        kind=payload.kind,
+        is_active=payload.is_active,
+        method=payload.method,
+        url_template=payload.url_template.strip(),
+        query_template_json=payload.query_template_json,
+        headers_template_json=payload.headers_template_json,
+        body_template_json=payload.body_template_json,
+        timeout_ms=payload.timeout_ms,
+        mapping_json=mapping,
+        on_error=payload.on_error,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return _source_out(source)
+
+
+@router.patch("/client-card/sources/{source_id}", response_model=ClientCardSourceConfigOut)
+def update_client_card_source(
+    source_id: str,
+    payload: ClientCardSourceUpdate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    source = db.get(ClientCardSourceConfig, source_id)
+    if source is None:
+        _error(404, "source_not_found", "Source not found")
+    data = _source_payload_data(payload)
+    _reject_null_source_required_fields(data)
+    next_name = source.name if "name" not in data else str(data["name"]).strip()
+    if not next_name:
+        _error(422, "source_name_required", "Source name is required")
+    next_technical_key = source.technical_key
+    if "technical_key" in data:
+        next_technical_key = _source_technical_key(data["technical_key"])
+    if next_technical_key and next_technical_key != source.technical_key:
+        exists = db.execute(select(ClientCardSourceConfig.id).where(ClientCardSourceConfig.technical_key == next_technical_key)).scalar_one_or_none()
+        if exists:
+            _error(409, "source_technical_key_exists", "Source technical key already exists")
+    next_mapping = source.mapping_json or []
+    if "mapping_json" in data:
+        next_mapping = _source_mapping_for_storage(payload.mapping_json or [])
+    validate_source_payload(
+        db,
+        method=data.get("method", source.method),
+        kind=data.get("kind", source.kind),
+        on_error=data.get("on_error", source.on_error),
+        url_template=data.get("url_template", source.url_template),
+        mapping=next_mapping,
+        query=data.get("query_template_json", source.query_template_json),
+        headers=data.get("headers_template_json", source.headers_template_json),
+        body=data.get("body_template_json", source.body_template_json),
+    )
+    source.name = next_name
+    source.technical_key = next_technical_key
+    if "kind" in data:
+        source.kind = data["kind"]
+    if "is_active" in data:
+        source.is_active = data["is_active"]
+    if "method" in data:
+        source.method = data["method"]
+    if "url_template" in data:
+        source.url_template = str(data["url_template"]).strip()
+    if "query_template_json" in data:
+        source.query_template_json = data["query_template_json"]
+    if "headers_template_json" in data:
+        source.headers_template_json = data["headers_template_json"]
+    if "body_template_json" in data:
+        source.body_template_json = data["body_template_json"]
+    if "timeout_ms" in data:
+        source.timeout_ms = data["timeout_ms"]
+    if "mapping_json" in data:
+        source.mapping_json = next_mapping
+    if "on_error" in data:
+        source.on_error = data["on_error"]
+    source.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(source)
+    return _source_out(source)
+
+
+@router.delete("/client-card/sources/{source_id}", response_model=list[ClientCardSourceConfigOut])
+def delete_client_card_source(
+    source_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    source = db.get(ClientCardSourceConfig, source_id)
+    if source is None:
+        _error(404, "source_not_found", "Source not found")
+    # Future slice: reject delete when lookup_source rule actions reference this source.
+    db.delete(source)
+    db.commit()
+    return [_source_out(item) for item in _ordered_sources(db)]
+
+
+@router.post("/client-card/sources/{source_id}/test", response_model=ClientCardSourceTestResponse)
+def test_client_card_source(
+    source_id: str,
+    payload: ClientCardSourceTestRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    source = db.get(ClientCardSourceConfig, source_id)
+    if source is None:
+        _error(404, "source_not_found", "Source not found")
+    try:
+        result = execute_source(source, payload.context or {})
+        mapped, missing = mapped_preview(db, source, result.payload)
+    except ClientCardSourceConfigError as exc:
+        _error(422, "source_config_invalid", str(exc))
+    except ClientCardSourceError as exc:
+        _error(502, "source_test_failed", str(exc))
+    return ClientCardSourceTestResponse(
+        http_status=result.http_status,
+        mapped_values=mapped,
+        missing_response_paths=missing,
+        duration_ms=result.duration_ms,
+    )
 
 
 @router.post("/client-card/rules", response_model=ClientCardRuleConfigOut)
@@ -607,14 +847,23 @@ def delete_client_card_block(
     if any(field.is_system for field in fields):
         _error(403, "system_block_fields_delete_forbidden", "Block contains system fields")
     field_rules = []
+    field_sources = []
     for field in fields:
         field_rules.extend(_rules_using_field(db, field.key))
+        field_sources.extend(_sources_mapping_to_field(db, field.key))
     if field_rules:
         _error_details(
             409,
             "rule_condition_in_use",
             "Block contains fields used by client card rules",
             {"rules": _rule_refs(list({rule.id: rule for rule in field_rules}.values()))},
+        )
+    if field_sources:
+        _error_details(
+            409,
+            "source_mapping_target_in_use",
+            "Block contains fields used by client card sources",
+            {"sources": _source_refs(list({source.id: source for source in field_sources}.values()))},
         )
     for field in fields:
         db.delete(field)
@@ -720,6 +969,14 @@ def delete_client_card_field(
             code,
             "Field is used by client card rules",
             {"rules": _rule_refs(rules)},
+        )
+    sources = _sources_mapping_to_field(db, field.key)
+    if sources:
+        _error_details(
+            409,
+            "source_mapping_target_in_use",
+            "Field is used by client card sources",
+            {"sources": _source_refs(sources)},
         )
     block_key = field.block_key
     db.delete(field)

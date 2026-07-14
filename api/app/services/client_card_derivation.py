@@ -187,7 +187,7 @@ def _normalize_system_value(target_key: str, field: ClientCardFieldConfig | None
     return str(value).strip() or None
 
 
-def _normalize_derived_value(
+def normalize_client_card_derived_value(
     target_key: str,
     value: Any,
     field_configs: dict[str, ClientCardFieldConfig],
@@ -198,6 +198,15 @@ def _normalize_derived_value(
             return None
         return _normalize_custom_field_value(field_configs[target_key], value)
     return _normalize_system_value(target_key, field_configs.get(target_key), value)
+
+
+def _normalize_derived_value(
+    target_key: str,
+    value: Any,
+    field_configs: dict[str, ClientCardFieldConfig],
+    custom_keys: set[str],
+) -> Any:
+    return normalize_client_card_derived_value(target_key, value, field_configs, custom_keys)
 
 
 def apply_client_card_save_derivations(

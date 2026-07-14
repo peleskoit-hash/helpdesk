@@ -168,6 +168,72 @@ def ensure_client_card_field_config_columns() -> None:
         conn.execute(text("UPDATE client_card_rule_configs SET is_system = FALSE WHERE is_system IS NULL"))
         conn.execute(text("UPDATE client_card_rule_configs SET sort_order = 1000 WHERE sort_order IS NULL"))
 
+        source_json_type = "TEXT" if dialect == "sqlite" else "JSONB"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS client_card_source_configs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    technical_key VARCHAR(100) UNIQUE,
+                    name VARCHAR(200) NOT NULL,
+                    kind VARCHAR(40) NOT NULL,
+                    is_active BOOLEAN,
+                    method VARCHAR(10) NOT NULL,
+                    url_template VARCHAR(2000) NOT NULL,
+                    query_template_json {source_json_type},
+                    headers_template_json {source_json_type},
+                    body_template_json {source_json_type},
+                    timeout_ms INTEGER,
+                    mapping_json {source_json_type},
+                    on_error VARCHAR(40),
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        if dialect == "sqlite":
+            source_rows = conn.execute(text("PRAGMA table_info(client_card_source_configs)")).mappings().all()
+            source_existing = {row["name"] for row in source_rows}
+        else:
+            source_rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'client_card_source_configs'
+                    """
+                )
+            ).fetchall()
+            source_existing = {row[0] for row in source_rows}
+        source_required_columns = {
+            "technical_key": "VARCHAR(100)",
+            "kind": "VARCHAR(40)",
+            "is_active": "BOOLEAN",
+            "method": "VARCHAR(10)",
+            "url_template": "VARCHAR(2000)",
+            "query_template_json": source_json_type,
+            "headers_template_json": source_json_type,
+            "body_template_json": source_json_type,
+            "timeout_ms": "INTEGER",
+            "mapping_json": source_json_type,
+            "on_error": "VARCHAR(40)",
+        }
+        for column_name, column_type in source_required_columns.items():
+            if column_name not in source_existing:
+                conn.execute(text(f"ALTER TABLE client_card_source_configs ADD COLUMN {column_name} {column_type}"))
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_client_card_source_configs_technical_key "
+                "ON client_card_source_configs (technical_key)"
+            )
+        )
+        conn.execute(text("UPDATE client_card_source_configs SET kind = 'http' WHERE kind IS NULL"))
+        conn.execute(text("UPDATE client_card_source_configs SET is_active = TRUE WHERE is_active IS NULL"))
+        conn.execute(text("UPDATE client_card_source_configs SET method = 'GET' WHERE method IS NULL"))
+        conn.execute(text("UPDATE client_card_source_configs SET timeout_ms = 3000 WHERE timeout_ms IS NULL"))
+        conn.execute(text("UPDATE client_card_source_configs SET on_error = 'ignore' WHERE on_error IS NULL"))
+
 
 def ensure_telegram_contact_columns() -> None:
     required_columns = {

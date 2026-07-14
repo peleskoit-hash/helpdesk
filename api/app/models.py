@@ -292,6 +292,26 @@ class ClientCardRuleConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ClientCardSourceConfig(Base):
+    __tablename__ = "client_card_source_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    technical_key: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(40), default="http")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    method: Mapped[str] = mapped_column(String(10), default="GET")
+    url_template: Mapped[str] = mapped_column(String(2000))
+    query_template_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    headers_template_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    body_template_json: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    timeout_ms: Mapped[int] = mapped_column(default=3000)
+    mapping_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    on_error: Mapped[str] = mapped_column(String(40), default="ignore")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class BotButtonSetting(Base):
     __tablename__ = "bot_button_settings"
 

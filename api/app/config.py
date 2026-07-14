@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     initial_seed_enabled: bool | None = None
     attachment_storage_dir: str = "/app/storage/attachments"
     bitrix_webhook_base: str | None = None
+    client_card_source_allowed_hosts: str | None = None
     session_secret_key: str = DEFAULT_SESSION_SECRET
     session_cookie_name: str = "esdesk_session"
     session_cookie_secure: bool = False
