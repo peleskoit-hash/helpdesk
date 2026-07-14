@@ -37,7 +37,7 @@ from ..services.ticket_attachments import (
 )
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
-from ..services.client_card_derivation import apply_client_card_save_derivations
+from ..services.client_card_derivation import apply_client_card_profile_save_pipeline
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
@@ -928,36 +928,11 @@ def update_client_profile(
     t = _get_ticket_or_404(db, ticket_id, user)
     if not can_edit_client_profile(user):
         _error(403, "readonly_role", "Нет прав на редактирование карточки клиента")
-    profile = _get_or_create_client_profile(db, t.client_id)
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == t.client_id)).scalar_one_or_none()
     contact = _telegram_contact_for_client(db, t.client_id)
 
     data = payload.model_dump(exclude_unset=True)
-    for field in [
-        "contact_name",
-        "last_name",
-        "email",
-        "phone",
-        "verification_status",
-        "destination",
-        "sand_owner",
-        "sales_group",
-        "department",
-        "first_department",
-        "group_name",
-        "employee_type",
-        "location_type",
-        "anydesk",
-        "internal_number",
-        "external_user_id",
-        "bitrix_login",
-        "bitrix_password",
-        "bitrix_id",
-    ]:
-        if field in data:
-            setattr(profile, field, data[field])
-    if "is_verified" in data:
-        profile.is_verified = bool(data["is_verified"])
-    merged_custom_fields = dict(profile.custom_fields or {})
+    merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
         incoming = data["custom_fields"] or {}
@@ -979,13 +954,12 @@ def update_client_profile(
                 normalized_custom.pop(key, None)
             else:
                 normalized_custom[key] = normalized
-        profile.custom_fields = normalized_custom
         merged_custom_fields = normalized_custom
-    apply_client_card_save_derivations(db, profile, data, merged_custom_fields)
-    profile.updated_at = datetime.utcnow()
+    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=t.client_id)
+    profile = result.profile
 
-    if t.client and data.get("contact_name"):
-        t.client.display_name = data["contact_name"]
+    if t.client and "contact_name" in result.changed_keys and profile.contact_name:
+        t.client.display_name = profile.contact_name
 
     db.commit()
     db.refresh(profile)

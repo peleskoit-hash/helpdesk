@@ -302,7 +302,7 @@ class ClientCardBlockConfigOut(BaseModel):
 
 
 ClientCardRuleOperator = Literal["always", "equals", "not_equals", "is_empty", "is_not_empty"]
-ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "required", "optional", "set_value"]
+ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "required", "optional", "set_value", "lookup_source"]
 ClientCardRuleTargetType = Literal["field", "block"]
 ClientCardRuleScope = Literal["card", "editor", "both", "save"]
 ClientCardRuleValueType = Literal["literal", "field", "template", "map", "null"]
@@ -313,12 +313,13 @@ ClientCardSourceOnError = Literal["ignore", "block_save"]
 
 class ClientCardRuleAction(BaseModel):
     target_type: ClientCardRuleTargetType = "field"
-    target_key: str = Field(min_length=1)
+    target_key: str | None = None
     action: ClientCardRuleActionType
     scope: ClientCardRuleScope = "editor"
     value_type: ClientCardRuleValueType | None = None
     value: str | None = None
     source_key: str | None = None
+    source_id: str | None = None
     map: dict[str, str | None] | None = None
 
 

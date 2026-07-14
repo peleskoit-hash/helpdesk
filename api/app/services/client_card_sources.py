@@ -224,13 +224,36 @@ def validate_template_tree(value: Any, field_keys: set[str], *, allow_secrets_in
         return
     if isinstance(value, dict):
         for key, item in value.items():
-            if validate_keys:
-                parse_template_refs(str(key), field_keys=field_keys, allow_secrets=False)
+            if validate_keys and ("{{" in str(key) or "}}" in str(key)):
+                raise ClientCardSourceConfigError("Source template keys are not supported")
             validate_template_tree(item, field_keys, allow_secrets_in_values=allow_secrets_in_values, validate_keys=validate_keys)
+
+
+def collect_template_tree_field_refs(value: Any) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, str):
+        fields, _secrets = parse_template_refs(value, allow_secrets=True)
+        refs.update(fields)
+    elif isinstance(value, list):
+        for item in value:
+            refs.update(collect_template_tree_field_refs(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            refs.update(collect_template_tree_field_refs(item))
+    return refs
+
+
+def source_template_field_refs(source: ClientCardSourceConfig) -> set[str]:
+    refs, _secrets = parse_template_refs(source.url_template or "", allow_secrets=False)
+    refs.update(collect_template_tree_field_refs(source.query_template_json or {}))
+    refs.update(collect_template_tree_field_refs(source.headers_template_json or {}))
+    refs.update(collect_template_tree_field_refs(source.body_template_json))
+    return refs
 
 
 def validate_mapping(db: Session, mapping: list[dict[str, Any]]) -> None:
     keys = persistable_client_card_keys(db)
+    seen_targets: set[str] = set()
     for item in mapping or []:
         response_path = item.get("response_path")
         target_key = item.get("target_key")
@@ -240,6 +263,9 @@ def validate_mapping(db: Session, mapping: list[dict[str, Any]]) -> None:
             _error(422, "source_response_path_invalid", "Invalid source response path")
         if target_key not in keys:
             _error(422, "source_mapping_target_invalid", "Mapping target is not a persistable client-card field")
+        if target_key in seen_targets:
+            _error(422, "source_mapping_target_duplicate", "Source mapping target cannot be repeated")
+        seen_targets.add(target_key)
 
 
 def validate_source_payload(db: Session, *, method: str, kind: str, on_error: str, url_template: str, mapping: list[dict[str, Any]], query: Any, headers: Any, body: Any) -> None:
@@ -255,8 +281,8 @@ def validate_source_payload(db: Session, *, method: str, kind: str, on_error: st
     try:
         validate_url_template_static(url_template)
         parse_template_refs(url_template, field_keys=field_keys, allow_secrets=False)
-        validate_template_tree(query, field_keys, allow_secrets_in_values=False, validate_keys=False)
-        validate_template_tree(body, field_keys, allow_secrets_in_values=False, validate_keys=False)
+        validate_template_tree(query, field_keys, allow_secrets_in_values=False, validate_keys=True)
+        validate_template_tree(body, field_keys, allow_secrets_in_values=False, validate_keys=True)
         validate_template_tree(headers, field_keys, allow_secrets_in_values=True, validate_keys=True)
     except ClientCardSourceConfigError as exc:
         _error(422, "source_config_invalid", str(exc))
@@ -307,6 +333,8 @@ def execute_source(
     started = time.monotonic()
     response = (transport or default_transport)(request)
     duration_ms = int((time.monotonic() - started) * 1000)
+    if response.status >= 400:
+        raise ClientCardSourceHttpError(f"Source HTTP request failed with status {response.status}", status=response.status)
     content_type = next((value for key, value in response.headers.items() if key.lower() == "content-type"), "")
     if "json" not in content_type.lower():
         raise ClientCardSourceHttpError("Source returned non-JSON response", status=response.status)

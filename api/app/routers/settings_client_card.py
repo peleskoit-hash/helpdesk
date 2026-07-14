@@ -2,6 +2,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -29,11 +30,13 @@ from ..schemas import (
     ClientCardSourceUpdate,
 )
 from ..services.client_card_derivation import SYSTEM_PROFILE_FIELDS
+from ..services.client_card_derivation import _save_rule_dependencies
 from ..services.client_card_sources import (
     ClientCardSourceConfigError,
     ClientCardSourceError,
     execute_source,
     mapped_preview,
+    source_template_field_refs,
     validate_source_payload,
 )
 
@@ -44,7 +47,7 @@ SORT_STEP = 10
 NAMED_COLOR_SCHEMES = {"blue", "green", "yellow", "red", "gray", "purple"}
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 RULE_OPERATORS = {"always", "equals", "not_equals", "is_empty", "is_not_empty"}
-RULE_ACTIONS = {"show", "hide", "readonly", "editable", "required", "optional", "set_value"}
+RULE_ACTIONS = {"show", "hide", "readonly", "editable", "required", "optional", "set_value", "lookup_source"}
 RULE_SCOPES = {"card", "editor", "both", "save"}
 RULE_TARGET_TYPES = {"field", "block"}
 RULE_VALUE_TYPES = {"literal", "field", "template", "map", "null"}
@@ -284,7 +287,7 @@ def _validate_rule_payload(
     save_context_keys = set(SYSTEM_PROFILE_FIELDS) | custom_field_keys
     block_keys = set(db.execute(select(ClientCardBlockConfig.key)).scalars().all())
     has_save_action = any(
-        (action.action if hasattr(action, "action") else action.get("action")) == "set_value"
+        (action.action if hasattr(action, "action") else action.get("action")) in {"set_value", "lookup_source"}
         and (action.scope if hasattr(action, "scope") else action.get("scope")) == "save"
         for action in actions
     )
@@ -302,11 +305,29 @@ def _validate_rule_payload(
         scope = action.scope if hasattr(action, "scope") else action.get("scope")
         value_type = action.value_type if hasattr(action, "value_type") else action.get("value_type")
         source_key = action.source_key if hasattr(action, "source_key") else action.get("source_key")
+        source_id = action.source_id if hasattr(action, "source_id") else action.get("source_id")
         value_map = action.map if hasattr(action, "map") else action.get("map")
-        if target_type not in RULE_TARGET_TYPES:
+        if action_name != "lookup_source" and target_type not in RULE_TARGET_TYPES:
             _error(422, "rule_target_type_invalid", "Unsupported client card rule target type")
         if action_name not in RULE_ACTIONS:
             _error(422, "rule_action_invalid", "Unsupported client card rule action")
+        if action_name == "lookup_source":
+            if scope != "save":
+                _error(422, "rule_lookup_source_scope_invalid", "lookup_source actions support only save scope")
+            if not (source_id or "").strip():
+                _error(422, "rule_source_id_required", "lookup_source action requires source_id")
+            source = db.get(ClientCardSourceConfig, source_id)
+            if source is None:
+                _error(422, "rule_source_unknown", "lookup_source source does not exist")
+            try:
+                refs = source_template_field_refs(source)
+            except ClientCardSourceConfigError as exc:
+                _error(422, "source_config_invalid", str(exc))
+            for ref in refs:
+                if ref not in save_context_keys:
+                    _error(422, "rule_save_template_ref_unsupported", "Template field is not available to save-time derivation")
+                save_trigger_deps.add(ref)
+            continue
         if action_name == "set_value":
             if target_type != "field" or scope != "save":
                 _error(422, "rule_set_value_scope_invalid", "set_value actions support only field targets with save scope")
@@ -368,6 +389,10 @@ def _rule_actions_for_storage(actions: list) -> list[dict]:
                     item["source_key"] = action.source_key
                 if action.map is not None:
                     item["map"] = action.map
+            if action.action == "lookup_source":
+                item.pop("target_key", None)
+                item.pop("target_type", None)
+                item["source_id"] = action.source_id
             stored.append(item)
         else:
             item = {
@@ -384,6 +409,10 @@ def _rule_actions_for_storage(actions: list) -> list[dict]:
                     item["source_key"] = action.get("source_key")
                 if "map" in action:
                     item["map"] = action.get("map")
+            if item["action"] == "lookup_source":
+                item.pop("target_key", None)
+                item.pop("target_type", None)
+                item["source_id"] = action.get("source_id")
             stored.append(item)
     return stored
 
@@ -414,6 +443,11 @@ def _rules_using_field(db: Session, field_key: str) -> list[ClientCardRuleConfig
             if action.get("action") == "set_value" and f"{{{{{field_key}}}}}" in str(action.get("value") or ""):
                 matches.append(rule)
                 break
+            if action.get("action") == "lookup_source":
+                source = db.get(ClientCardSourceConfig, action.get("source_id") or "")
+                if source is not None and field_key in source_template_field_refs(source):
+                    matches.append(rule)
+                    break
     return matches
 
 
@@ -443,6 +477,55 @@ def _sources_mapping_to_field(db: Session, field_key: str) -> list[ClientCardSou
                 matches.append(source)
                 break
     return matches
+
+
+def _sources_template_using_field(db: Session, field_key: str) -> list[ClientCardSourceConfig]:
+    matches = []
+    for source in _ordered_sources(db):
+        if field_key in source_template_field_refs(source):
+            matches.append(source)
+    return matches
+
+
+def _rules_using_source(db: Session, source_id: str) -> list[ClientCardRuleConfig]:
+    matches = []
+    for rule in _ordered_rules(db):
+        for action in rule.actions_json or []:
+            if action.get("action") == "lookup_source" and action.get("source_id") == source_id:
+                matches.append(rule)
+                break
+    return matches
+
+
+def _source_clone(source: ClientCardSourceConfig, **overrides) -> SimpleNamespace:
+    data = {
+        "id": source.id,
+        "technical_key": source.technical_key,
+        "name": source.name,
+        "kind": source.kind,
+        "is_active": bool(source.is_active),
+        "method": source.method,
+        "url_template": source.url_template,
+        "query_template_json": source.query_template_json,
+        "headers_template_json": source.headers_template_json,
+        "body_template_json": source.body_template_json,
+        "timeout_ms": source.timeout_ms,
+        "mapping_json": source.mapping_json or [],
+        "on_error": source.on_error,
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def _validate_referencing_rules_keep_dependencies(db: Session, source: ClientCardSourceConfig, prospective: SimpleNamespace) -> None:
+    rules = _rules_using_source(db, source.id)
+    if not rules:
+        return
+    sources_by_id = {item.id: item for item in _ordered_sources(db)}
+    sources_by_id[source.id] = prospective
+    for rule in rules:
+        if rule.is_active and not _save_rule_dependencies(rule, sources_by_id=sources_by_id):
+            _error(422, "rule_save_trigger_required", "Source update would leave a lookup_source save rule without trigger dependencies")
 
 
 def _serialize_client_card_config(db: Session) -> ClientCardConfigResponse:
@@ -565,6 +648,20 @@ def update_client_card_source(
         headers=data.get("headers_template_json", source.headers_template_json),
         body=data.get("body_template_json", source.body_template_json),
     )
+    prospective = _source_clone(
+        source,
+        kind=data.get("kind", source.kind),
+        is_active=data.get("is_active", source.is_active),
+        method=data.get("method", source.method),
+        url_template=data.get("url_template", source.url_template),
+        query_template_json=data.get("query_template_json", source.query_template_json),
+        headers_template_json=data.get("headers_template_json", source.headers_template_json),
+        body_template_json=data.get("body_template_json", source.body_template_json),
+        timeout_ms=data.get("timeout_ms", source.timeout_ms),
+        mapping_json=next_mapping,
+        on_error=data.get("on_error", source.on_error),
+    )
+    _validate_referencing_rules_keep_dependencies(db, source, prospective)
     source.name = next_name
     source.technical_key = next_technical_key
     if "kind" in data:
@@ -603,7 +700,14 @@ def delete_client_card_source(
     source = db.get(ClientCardSourceConfig, source_id)
     if source is None:
         _error(404, "source_not_found", "Source not found")
-    # Future slice: reject delete when lookup_source rule actions reference this source.
+    rules = _rules_using_source(db, source_id)
+    if rules:
+        _error_details(
+            409,
+            "source_rule_reference_in_use",
+            "Source is used by client card rules",
+            {"rules": _rule_refs(rules)},
+        )
     db.delete(source)
     db.commit()
     return [_source_out(item) for item in _ordered_sources(db)]
@@ -851,6 +955,7 @@ def delete_client_card_block(
     for field in fields:
         field_rules.extend(_rules_using_field(db, field.key))
         field_sources.extend(_sources_mapping_to_field(db, field.key))
+        field_sources.extend(_sources_template_using_field(db, field.key))
     if field_rules:
         _error_details(
             409,
@@ -971,7 +1076,9 @@ def delete_client_card_field(
             {"rules": _rule_refs(rules)},
         )
     sources = _sources_mapping_to_field(db, field.key)
+    sources.extend(_sources_template_using_field(db, field.key))
     if sources:
+        sources = list({source.id: source for source in sources}.values())
         _error_details(
             409,
             "source_mapping_target_in_use",

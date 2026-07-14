@@ -515,6 +515,39 @@ def test_template_validation_rejects_secret_url_invalid_secret_unknown_and_malfo
         assert exc.value.detail["error"]["code"] == "source_config_invalid"
 
 
+def test_template_keys_are_rejected_and_value_refs_define_dependencies():
+    session = _session()
+    _seed_fields(session)
+
+    for field_name, value in [
+        ("query_template_json", {"{{internal_number}}": "literal"}),
+        ("headers_template_json", {"X-{{internal_number}}": "literal"}),
+        ("body_template_json", {"{{internal_number}}": "literal"}),
+    ]:
+        with pytest.raises(HTTPException) as exc:
+            settings_client_card.create_client_card_source(
+                ClientCardSourceCreate(
+                    name=f"Bad key {field_name}",
+                    url_template="https://api.example.com",
+                    mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+                    **{field_name: value},
+                ),
+                db=session,
+                user=_admin(),
+            )
+        assert exc.value.status_code == 422
+        assert exc.value.detail["error"]["code"] == "source_config_invalid"
+
+    source = _source(
+        url_template="https://api.example.com/users/{{internal_number}}",
+        query_template_json={"literal_key": "{{contact_name}}"},
+        headers_template_json={"X-Static": "{{secret:API_KEY}}"},
+        body_template_json={"nested": {"literal": "{{custom_note}}"}},
+    )
+
+    assert sources.source_template_field_refs(source) == {"internal_number", "contact_name", "custom_note"}
+
+
 def test_missing_prefixed_secret_fails_safely_without_value(monkeypatch):
     source = _source(headers_template_json={"Authorization": "Bearer {{secret:API_KEY}}"})
     monkeypatch.delenv("CLIENT_CARD_SOURCE_SECRET_API_KEY", raising=False)
@@ -636,6 +669,53 @@ def test_invalid_mapping_target_and_response_path():
     assert path_exc.value.detail["error"]["code"] == "source_response_path_invalid"
 
 
+def test_source_rejects_duplicate_mapping_targets_on_create_and_patch():
+    session = _session()
+    _seed_fields(session)
+
+    with pytest.raises(HTTPException) as create_exc:
+        settings_client_card.create_client_card_source(
+            ClientCardSourceCreate(
+                name="Duplicate",
+                url_template="https://api.example.com",
+                mapping_json=[
+                    {"response_path": "data.name", "target_key": "contact_name"},
+                    {"response_path": "data.other_name", "target_key": "contact_name"},
+                ],
+            ),
+            db=session,
+            user=_admin(),
+        )
+    assert create_exc.value.status_code == 422
+    assert create_exc.value.detail["error"]["code"] == "source_mapping_target_duplicate"
+
+    created = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            name="Valid",
+            url_template="https://api.example.com",
+            mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    with pytest.raises(HTTPException) as patch_exc:
+        settings_client_card.update_client_card_source(
+            created.id,
+            ClientCardSourceUpdate(
+                mapping_json=[
+                    {"response_path": "data.name", "target_key": "contact_name"},
+                    {"response_path": "data.other_name", "target_key": "contact_name"},
+                ],
+            ),
+            db=session,
+            user=_admin(),
+        )
+    assert patch_exc.value.status_code == 422
+    assert patch_exc.value.detail["error"]["code"] == "source_mapping_target_duplicate"
+    assert session.get(ClientCardSourceConfig, created.id).mapping_json == [{"response_path": "data.name", "target_key": "contact_name"}]
+
+
 def test_test_endpoint_returns_preview_and_does_not_mutate_profile(monkeypatch):
     session = _session()
     _seed_fields(session)
@@ -706,3 +786,46 @@ def test_delete_field_and_block_are_blocked_by_source_mapping_refs():
     assert block_exc.value.status_code == 409
     assert block_exc.value.detail["error"]["code"] == "source_mapping_target_in_use"
     assert block_exc.value.detail["error"]["details"]["sources"] == [{"id": source.id, "name": "Mapped", "technical_key": "mapped"}]
+
+
+def test_delete_field_and_block_are_blocked_by_source_template_refs():
+    session = _session()
+    block = _block("custom_block_1")
+    field = _field("custom_note", is_system=False)
+    field.block_key = block.key
+    session.add_all([block, field, _field("contact_name")])
+    session.commit()
+    source = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            technical_key="templated",
+            name="Templated",
+            url_template="https://api.example.com/users/{{custom_note}}",
+            mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    with pytest.raises(HTTPException) as field_exc:
+        settings_client_card.delete_client_card_field(field.id, db=session, user=_admin())
+    assert field_exc.value.status_code == 409
+    assert field_exc.value.detail["error"]["details"]["sources"] == [{"id": source.id, "name": "Templated", "technical_key": "templated"}]
+
+    with pytest.raises(HTTPException) as block_exc:
+        settings_client_card.delete_client_card_block(block.id, db=session, user=_admin())
+    assert block_exc.value.status_code == 409
+    assert block_exc.value.detail["error"]["details"]["sources"] == [{"id": source.id, "name": "Templated", "technical_key": "templated"}]
+
+
+def test_mocked_transport_http_400_is_source_error():
+    source = _source()
+
+    with pytest.raises(ClientCardSourceHttpError) as exc:
+        sources.execute_source(
+            source,
+            {"internal_number": "42"},
+            transport=lambda _request: SourceHttpResponse(404, {"content-type": "application/json"}, b'{"error":"missing"}'),
+            resolver=_public_resolver,
+        )
+
+    assert exc.value.status == 404

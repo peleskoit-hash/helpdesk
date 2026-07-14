@@ -18,7 +18,7 @@ from ..services.client_card import (
     _normalize_custom_field_value,
     _profile_out,
 )
-from ..services.client_card_derivation import apply_client_card_save_derivations
+from ..services.client_card_derivation import apply_client_card_profile_save_pipeline
 
 
 router = APIRouter(prefix="/api/v1/management/users", tags=["management-users"])
@@ -257,34 +257,9 @@ def update_management_user_profile(
     client = db.get(Client, client_id)
     if client is None:
         _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
-    profile = _get_or_create_client_profile(db, client_id)
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
     data = _payload_data(payload)
-    for field in [
-        "contact_name",
-        "last_name",
-        "email",
-        "phone",
-        "verification_status",
-        "destination",
-        "sand_owner",
-        "sales_group",
-        "department",
-        "first_department",
-        "group_name",
-        "employee_type",
-        "location_type",
-        "anydesk",
-        "internal_number",
-        "external_user_id",
-        "bitrix_login",
-        "bitrix_password",
-        "bitrix_id",
-    ]:
-        if field in data:
-            setattr(profile, field, data[field])
-    if "is_verified" in data:
-        profile.is_verified = bool(data["is_verified"])
-    merged_custom_fields = dict(profile.custom_fields or {})
+    merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields = dict(merged_custom_fields)
         field_map = _custom_field_map(db)
@@ -297,10 +272,9 @@ def update_management_user_profile(
                 custom_fields.pop(key, None)
             else:
                 custom_fields[key] = normalized
-        profile.custom_fields = custom_fields
         merged_custom_fields = custom_fields
-    apply_client_card_save_derivations(db, profile, data, merged_custom_fields)
-    profile.updated_at = datetime.utcnow()
+    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=client_id)
+    profile = result.profile
     db.commit()
     db.refresh(profile)
     contact = _telegram_contact_for_client(db, client_id)

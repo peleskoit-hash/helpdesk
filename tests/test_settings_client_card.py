@@ -6,13 +6,15 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, Company, Ticket, TicketStatus, User
+from api.app.models import Client, ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, Company, Ticket, TicketStatus, User
 from api.app.routers import management_users, settings_client_card, tickets
-from api.app.schemas import ClientCardBlockUpdate, ClientCardFieldCreate, ClientCardFieldUpdate, ClientCardMovePayload, ClientCardRuleAction, ClientCardRuleCreate, ClientCardRuleUpdate, ClientProfileUpdate
+from api.app.schemas import ClientCardBlockUpdate, ClientCardFieldCreate, ClientCardFieldUpdate, ClientCardMovePayload, ClientCardRuleAction, ClientCardRuleCreate, ClientCardRuleUpdate, ClientCardSourceCreate, ClientCardSourceUpdate, ClientProfileUpdate
+from api.app.services import client_card_sources
 from api.app.services import seed_data
 
 
@@ -427,6 +429,29 @@ def _save_rule(name, order, operator, condition_key, condition_value, actions):
     )
 
 
+def _source_config(**overrides):
+    now = datetime.utcnow()
+    data = {
+        "id": str(uuid.uuid4()),
+        "technical_key": "lookup",
+        "name": "Lookup",
+        "kind": "http",
+        "is_active": True,
+        "method": "GET",
+        "url_template": "https://api.example.com/users/{{internal_number}}",
+        "query_template_json": None,
+        "headers_template_json": None,
+        "body_template_json": None,
+        "timeout_ms": 1000,
+        "mapping_json": [{"response_path": "data.name", "target_key": "contact_name"}],
+        "on_error": "ignore",
+        "created_at": now,
+        "updated_at": now,
+    }
+    data.update(overrides)
+    return ClientCardSourceConfig(**data)
+
+
 def test_create_rule_accepts_always_set_value_action_schema():
     session = _session()
     block = _block("department", "Department", 10)
@@ -535,6 +560,124 @@ def test_save_rule_rejects_dependency_free_always_literal_and_null_actions():
             settings_client_card.create_client_card_rule(payload, db=session, user=_admin())
         assert exc.value.status_code == 422
         assert exc.value.detail["error"]["code"] == "rule_save_trigger_required"
+
+
+def test_lookup_source_rule_schema_storage_and_source_refs():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    session.add_all([
+        block,
+        _field("internal_number", "Number", block.key, 10, is_system=True),
+        _field("contact_name", "Name", block.key, 20, is_system=True),
+    ])
+    session.commit()
+    source = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            name="Lookup",
+            url_template="https://api.example.com/users/{{internal_number}}",
+            mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    result = settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="Lookup rule",
+            condition_operator="always",
+            actions=[ClientCardRuleAction(action="lookup_source", scope="save", source_id=source.id)],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    stored = session.get(ClientCardRuleConfig, result.id).actions_json[0]
+    assert stored == {"action": "lookup_source", "scope": "save", "source_id": source.id}
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.delete_client_card_source(source.id, db=session, user=_admin())
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["details"]["rules"][0]["id"] == result.id
+
+
+def test_lookup_source_rule_rejects_missing_or_static_dependency_free_source():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    session.add_all([block, _field("contact_name", "Name", block.key, 10, is_system=True)])
+    session.commit()
+
+    with pytest.raises(HTTPException) as missing_exc:
+        settings_client_card.create_client_card_rule(
+            ClientCardRuleCreate(
+                name="Missing source",
+                condition_operator="always",
+                actions=[ClientCardRuleAction(action="lookup_source", scope="save", source_id=str(uuid.uuid4()))],
+            ),
+            db=session,
+            user=_admin(),
+        )
+    assert missing_exc.value.detail["error"]["code"] == "rule_source_unknown"
+
+    source = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            name="Static",
+            url_template="https://api.example.com/users",
+            mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+    with pytest.raises(HTTPException) as dep_exc:
+        settings_client_card.create_client_card_rule(
+            ClientCardRuleCreate(
+                name="Static source",
+                condition_operator="always",
+                actions=[ClientCardRuleAction(action="lookup_source", scope="save", source_id=source.id)],
+            ),
+            db=session,
+            user=_admin(),
+        )
+    assert dep_exc.value.detail["error"]["code"] == "rule_save_trigger_required"
+
+
+def test_source_patch_cannot_make_lookup_source_rule_dependency_free():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    session.add_all([
+        block,
+        _field("internal_number", "Number", block.key, 10, is_system=True),
+        _field("contact_name", "Name", block.key, 20, is_system=True),
+    ])
+    session.commit()
+    source = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            name="Lookup",
+            url_template="https://api.example.com/users/{{internal_number}}",
+            mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+    settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="Lookup rule",
+            condition_operator="always",
+            actions=[ClientCardRuleAction(action="lookup_source", scope="save", source_id=source.id)],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_source(
+            source.id,
+            ClientCardSourceUpdate(url_template="https://api.example.com/users"),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "rule_save_trigger_required"
+    assert session.get(ClientCardSourceConfig, source.id).url_template.endswith("{{internal_number}}")
 
 
 def test_save_derivation_value_types_and_ordered_override():
@@ -747,6 +890,498 @@ def test_management_user_profile_uses_common_save_derivation():
     session.refresh(profile)
 
     assert profile.department == "Support"
+
+
+def test_lookup_source_per_rule_trigger_action_order_mapping_and_later_override(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config(mapping_json=[
+        {"response_path": "data.name", "target_key": "contact_name"},
+        {"response_path": "data.department", "target_key": "department"},
+    ])
+    unrelated = _source_config(
+        id=str(uuid.uuid4()),
+        technical_key="other",
+        name="Other",
+        url_template="https://api.example.com/other/{{sales_group}}",
+    )
+    session.add_all([
+        source,
+        unrelated,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [
+                {"action": "lookup_source", "scope": "save", "source_id": source.id},
+                {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "template", "value": "{{contact_name}} / {{department}}"},
+            ],
+        ),
+        _save_rule(
+            "unrelated",
+            20,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": unrelated.id}],
+        ),
+        _save_rule(
+            "later override",
+            30,
+            "equals",
+            "department",
+            "From source",
+            [{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Final"}],
+        ),
+    ])
+    session.commit()
+    calls = []
+
+    def fake_execute(src, context):
+        calls.append(src.id)
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Anna", "department": "From source"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert calls == [source.id]
+    assert profile.contact_name == "Anna"
+    assert profile.group_name == "Anna / From source"
+    assert profile.department == "Final"
+
+
+def test_lookup_source_missing_null_inactive_and_error_policies(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    missing_source = _source_config(mapping_json=[
+        {"response_path": "data.missing", "target_key": "last_name"},
+        {"response_path": "data.name", "target_key": "contact_name"},
+        {"response_path": "data.clear", "target_key": "anydesk"},
+    ])
+    inactive_source = _source_config(
+        id=str(uuid.uuid4()),
+        technical_key="inactive",
+        name="Inactive",
+        is_active=False,
+        mapping_json=[{"response_path": "data.name", "target_key": "department"}],
+    )
+    ignore_source = _source_config(
+        id=str(uuid.uuid4()),
+        technical_key="ignore",
+        name="Ignore",
+        url_template="https://api.example.com/ignore/{{internal_number}}",
+        mapping_json=[{"response_path": "data.name", "target_key": "department"}],
+        on_error="ignore",
+    )
+    session.add_all([
+        missing_source,
+        inactive_source,
+        ignore_source,
+        _save_rule(
+            "sources",
+            10,
+            "always",
+            None,
+            None,
+            [
+                {"action": "lookup_source", "scope": "save", "source_id": missing_source.id},
+                {"action": "lookup_source", "scope": "save", "source_id": inactive_source.id},
+                {"action": "lookup_source", "scope": "save", "source_id": ignore_source.id},
+            ],
+        ),
+    ])
+    profile.last_name = "Keep"
+    profile.anydesk = "old"
+    session.commit()
+
+    def fake_execute(src, context):
+        if src.id == ignore_source.id:
+            raise client_card_sources.ClientCardSourceHttpError("Source HTTP request failed", status=502)
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Anna", "clear": None}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.last_name == "Keep"
+    assert profile.contact_name == "Anna"
+    assert profile.anydesk is None
+    assert profile.department is None
+
+
+def test_lookup_source_ignore_discards_partial_mapping_delta_and_later_triggers(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    custom_block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "custom_block_1")).scalar_one()
+    custom_select = _field("custom_status", "Status", custom_block.key, 20, is_system=False)
+    custom_select.field_type = "select"
+    custom_select.options_json = ["ok"]
+    source = _source_config(
+        mapping_json=[
+            {"response_path": "data.name", "target_key": "contact_name"},
+            {"response_path": "data.status", "target_key": "custom_status"},
+        ],
+        on_error="ignore",
+    )
+    session.add_all([
+        custom_select,
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+        _save_rule(
+            "later",
+            20,
+            "equals",
+            "contact_name",
+            "Anna",
+            [{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Triggered"}],
+        ),
+    ])
+    profile.contact_name = "Before"
+    session.commit()
+
+    monkeypatch.setattr(
+        client_card_sources,
+        "execute_source",
+        lambda _source, _context: SimpleNamespace(http_status=200, payload={"data": {"name": "Anna", "status": "bad"}}, duration_ms=1),
+    )
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.contact_name == "Before"
+    assert profile.custom_fields == {}
+    assert profile.department is None
+
+
+def test_lookup_source_block_save_aborts_without_profile_mutation(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config(on_error="block_save")
+    session.add_all([
+        source,
+        _save_rule(
+            "block",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    profile.contact_name = "Before"
+    session.commit()
+
+    monkeypatch.setattr(
+        client_card_sources,
+        "execute_source",
+        lambda _source, _context: (_ for _ in ()).throw(client_card_sources.ClientCardSourceHttpError("boom", status=502)),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42", contact_name="Incoming"), db=session, user=_admin())
+
+    assert exc.value.status_code == 502
+    session.refresh(profile)
+    assert profile.contact_name == "Before"
+    assert profile.internal_number is None
+
+
+def test_lookup_source_http_runs_outside_db_transaction_and_contact_name_side_effect(monkeypatch):
+    session = _session()
+    client, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config()
+    session.add_all([
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    session.commit()
+    transaction_states = []
+
+    def fake_execute(_source, _context):
+        transaction_states.append(session.in_transaction())
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Mapped Name"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+    session.refresh(profile)
+    session.refresh(client)
+
+    assert transaction_states == [False]
+    assert profile.contact_name == "Mapped Name"
+    assert client.display_name == "Mapped Name"
+
+
+def test_lookup_source_runtime_error_is_not_swallowed_by_ignore(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config(on_error="ignore")
+    session.add_all([
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    profile.contact_name = "Before"
+    session.commit()
+
+    monkeypatch.setattr(client_card_sources, "execute_source", lambda _source, _context: (_ for _ in ()).throw(RuntimeError("programming error")))
+
+    with pytest.raises(RuntimeError):
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+
+    session.refresh(profile)
+    assert profile.contact_name == "Before"
+    assert profile.internal_number is None
+
+
+def test_lookup_source_missing_profile_block_save_leaves_no_profile_row(monkeypatch):
+    session = _session()
+    client, ticket, profile = _client_card_save_fixture(session)
+    session.delete(profile)
+    source = _source_config(on_error="block_save")
+    session.add(_save_rule("lookup", 10, "always", None, None, [{"action": "lookup_source", "scope": "save", "source_id": source.id}]))
+    session.add(source)
+    session.commit()
+
+    monkeypatch.setattr(
+        client_card_sources,
+        "execute_source",
+        lambda _source, _context: (_ for _ in ()).throw(client_card_sources.ClientCardSourceHttpError("boom", status=502)),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+
+    assert exc.value.status_code == 502
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
+
+
+def test_lookup_source_phase_b_uses_plain_snapshots_and_no_sql_between_sources(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    custom_block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "custom_block_1")).scalar_one()
+    custom_select = _field("custom_status", "Status", custom_block.key, 20, is_system=False)
+    custom_select.field_type = "select"
+    custom_select.options_json = ["ok"]
+    first_source = _source_config(
+        mapping_json=[{"response_path": "data.status", "target_key": "custom_status"}],
+    )
+    second_source = _source_config(
+        id=str(uuid.uuid4()),
+        technical_key="second",
+        name="Second",
+        url_template="https://api.example.com/second/{{custom_status}}",
+        mapping_json=[{"response_path": "data.name", "target_key": "contact_name"}],
+    )
+    session.add_all([
+        custom_select,
+        first_source,
+        second_source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [
+                {"action": "lookup_source", "scope": "save", "source_id": first_source.id},
+                {"action": "lookup_source", "scope": "save", "source_id": second_source.id},
+            ],
+        ),
+    ])
+    session.commit()
+    first_source_id = first_source.id
+    second_source_id = second_source.id
+    phase_b = {"active": False, "sql": 0}
+
+    def count_phase_b_sql(*_args):
+        if phase_b["active"]:
+            phase_b["sql"] += 1
+
+    event.listen(session.bind, "before_cursor_execute", count_phase_b_sql)
+
+    def fake_execute(source, context):
+        assert session.in_transaction() is False
+        if source.id == first_source_id:
+            phase_b["active"] = True
+            return SimpleNamespace(http_status=200, payload={"data": {"status": "ok"}}, duration_ms=1)
+        assert context["custom_status"] == "ok"
+        assert phase_b["sql"] == 0
+        phase_b["active"] = False
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Anna"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+    try:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+    finally:
+        event.remove(session.bind, "before_cursor_execute", count_phase_b_sql)
+    session.refresh(profile)
+
+    assert profile.custom_fields == {"custom_status": "ok"}
+    assert profile.contact_name == "Anna"
+
+
+def test_lookup_source_profile_changed_during_preflight_returns_409_without_overwrite(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config()
+    session.add_all([
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    profile.contact_name = "Before"
+    session.commit()
+
+    def fake_execute(_source, _context):
+        profile.contact_name = "Concurrent"
+        profile.updated_at = datetime.utcnow()
+        session.commit()
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Source wins?"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_profile_changed_retry"
+    session.refresh(profile)
+    assert profile.contact_name == "Concurrent"
+    assert profile.internal_number is None
+
+
+def test_lookup_source_profile_changed_in_other_session_returns_409_without_overwrite(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    session = Session()
+    other_session = Session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    source = _source_config()
+    session.add_all([
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    profile.contact_name = "Before"
+    session.commit()
+
+    def fake_execute(_source, _context):
+        concurrent = other_session.execute(select(ClientProfile).where(ClientProfile.id == profile.id)).scalar_one()
+        concurrent.contact_name = "Concurrent"
+        concurrent.updated_at = datetime.utcnow()
+        other_session.commit()
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Source wins?"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_profile_changed_retry"
+    session.rollback()
+    session.refresh(profile)
+    assert profile.contact_name == "Concurrent"
+    assert profile.internal_number is None
+
+
+def test_lookup_source_missing_profile_concurrent_create_returns_409_without_duplicate(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    session = Session()
+    other_session = Session()
+    client, ticket, profile = _client_card_save_fixture(session)
+    session.delete(profile)
+    source = _source_config()
+    session.add_all([
+        source,
+        _save_rule(
+            "lookup",
+            10,
+            "always",
+            None,
+            None,
+            [{"action": "lookup_source", "scope": "save", "source_id": source.id}],
+        ),
+    ])
+    session.commit()
+
+    def fake_execute(_source, _context):
+        concurrent = ClientProfile(
+            id=str(uuid.uuid4()),
+            client_id=client.id,
+            contact_name="Concurrent",
+            internal_number="concurrent-number",
+            custom_fields={},
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        other_session.add(concurrent)
+        other_session.commit()
+        return SimpleNamespace(http_status=200, payload={"data": {"name": "Source wins?"}}, duration_ms=1)
+
+    monkeypatch.setattr(client_card_sources, "execute_source", fake_execute)
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="42"), db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_profile_changed_retry"
+    session.rollback()
+    profiles = session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalars().all()
+    assert len(profiles) == 1
+    assert profiles[0].contact_name == "Concurrent"
+    assert profiles[0].internal_number == "concurrent-number"
 
 
 def test_seeded_department_meta_rules_match_legacy_behavior(monkeypatch):
