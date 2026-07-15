@@ -58,26 +58,42 @@
         <span id="statusText" class="status">Готово</span>
       </div>
 
-      <section class="content" style="grid-template-columns: 1fr;">
-        <div class="panel settings-panel">
-          <div class="client-card-settings" id="clientCardSettings"></div>
-          <div id="emptyClientCardText" class="status settings-empty hidden">Блоки карточки не найдены</div>
+      <section class="content client-card-settings-content" style="grid-template-columns: 1fr;">
+        <div class="client-card-page-tabs" role="tablist" aria-label="&#1056;&#1072;&#1079;&#1076;&#1077;&#1083;&#1099; &#1082;&#1072;&#1088;&#1090;&#1086;&#1095;&#1082;&#1080; &#1082;&#1083;&#1080;&#1077;&#1085;&#1090;&#1072;">
+          <button id="clientCardBlocksTab" class="action primary" type="button" role="tab" data-client-card-main-tab="blocks" aria-controls="clientCardBlocksPanel" aria-selected="true">&#1041;&#1083;&#1086;&#1082;&#1080;</button>
+          <button id="clientCardAutomationTab" class="action" type="button" role="tab" data-client-card-main-tab="automation" aria-controls="clientCardAutomationPanel" aria-selected="false">&#1040;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1079;&#1072;&#1094;&#1080;&#1103;</button>
         </div>
-        <div class="panel settings-panel">
-          <div class="client-card-rules-head">
-            <div class="settings-subtitle">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072;</div>
-            <button id="addClientCardRuleBtn" class="action" type="button">+ &#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1086;</button>
+
+        <div id="clientCardBlocksPanel" data-client-card-main-panel="blocks">
+          <div class="panel settings-panel">
+            <div class="client-card-settings" id="clientCardSettings"></div>
+            <div id="emptyClientCardText" class="status settings-empty hidden">&#1041;&#1083;&#1086;&#1082;&#1080; &#1082;&#1072;&#1088;&#1090;&#1086;&#1095;&#1082;&#1080; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
           </div>
-          <div id="clientCardRules" class="client-card-rules"></div>
-          <div id="emptyClientCardRulesText" class="status settings-empty hidden">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
         </div>
-        <div class="panel settings-panel">
-          <div class="client-card-rules-head">
-            <div class="settings-subtitle">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080;</div>
-            <button id="addClientCardSourceBtn" class="action" type="button">+ Source</button>
+
+        <div id="clientCardAutomationPanel" class="hidden" data-client-card-main-panel="automation">
+          <div class="client-card-page-tabs client-card-subtabs" role="tablist" aria-label="&#1056;&#1072;&#1079;&#1076;&#1077;&#1083;&#1099; &#1072;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1079;&#1072;&#1094;&#1080;&#1080;">
+            <button id="clientCardRulesTab" class="action primary" type="button" role="tab" data-client-card-automation-tab="rules" aria-controls="clientCardRulesPanel" aria-selected="true">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072;</button>
+            <button id="clientCardSourcesTab" class="action" type="button" role="tab" data-client-card-automation-tab="sources" aria-controls="clientCardSourcesPanel" aria-selected="false">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;</button>
           </div>
-          <div id="clientCardSources" class="client-card-rules"></div>
-          <div id="emptyClientCardSourcesText" class="status settings-empty hidden">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
+
+          <div id="clientCardRulesPanel" class="panel settings-panel" data-client-card-automation-panel="rules">
+            <div class="client-card-rules-head">
+              <div class="settings-subtitle">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072;</div>
+              <button id="addClientCardRuleBtn" class="action" type="button">+ &#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1086;</button>
+            </div>
+            <div id="clientCardRules" class="client-card-rules"></div>
+            <div id="emptyClientCardRulesText" class="status settings-empty hidden">&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072; &#1072;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1079;&#1072;&#1094;&#1080;&#1080; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
+          </div>
+
+          <div id="clientCardSourcesPanel" class="panel settings-panel hidden" data-client-card-automation-panel="sources">
+            <div class="client-card-rules-head">
+              <div class="settings-subtitle">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;</div>
+              <button id="addClientCardSourceBtn" class="action" type="button">+ &#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;</button>
+            </div>
+            <div id="clientCardSources" class="client-card-rules"></div>
+            <div id="emptyClientCardSourcesText" class="status settings-empty hidden">&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093; &#1087;&#1086;&#1082;&#1072; &#1085;&#1077; &#1085;&#1072;&#1089;&#1090;&#1088;&#1086;&#1077;&#1085;&#1099;</div>
+          </div>
         </div>
       </section>
 
@@ -216,7 +232,7 @@
   <div id="clientCardSourceModal" class="modal hidden">
     <div class="modal-dialog settings-user-dialog">
       <div class="modal-head">
-        <div id="clientCardSourceModalTitle" style="font-weight:700;">Source</div>
+        <div id="clientCardSourceModalTitle" style="font-weight:700;">&#1053;&#1086;&#1074;&#1099;&#1081; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;</div>
         <button id="closeClientCardSourceModalBtn" type="button" class="action">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1100;</button>
       </div>
       <div class="modal-body">
@@ -270,7 +286,7 @@
       </div>
       <div class="modal-foot">
         <button id="deleteClientCardSourceBtn" type="button" class="action danger hidden">&#1059;&#1076;&#1072;&#1083;&#1080;&#1090;&#1100;</button>
-        <button id="testClientCardSourceBtn" type="button" class="action">&#1055;&#1088;&#1086;&#1074;&#1077;&#1088;&#1080;&#1090;&#1100; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;</button>
+        <button id="testClientCardSourceBtn" type="button" class="action">&#1055;&#1088;&#1086;&#1074;&#1077;&#1088;&#1080;&#1090;&#1100; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;</button>
         <button id="saveClientCardSourceBtn" type="button" class="action primary">&#1057;&#1086;&#1093;&#1088;&#1072;&#1085;&#1080;&#1090;&#1100;</button>
       </div>
     </div>
@@ -298,6 +314,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260629d"></script>
-  <script src="/static/settings_client_card.js?v=20260710a"></script>
+  <script src="/static/settings_client_card.js?v=20260715b"></script>
 </body>
 </html>

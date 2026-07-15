@@ -3809,6 +3809,55 @@ body[data-theme="dark"] .verified-no {
   gap: 12px;
 }
 
+.main[data-shell-page="settings-client-card"] {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.main[data-shell-page="settings-client-card"] .client-card-settings-content {
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
+  gap: 12px;
+  overflow: visible;
+  min-height: max-content;
+}
+
+.main[data-shell-page="settings-client-card"] .client-card-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  align-self: start;
+}
+
+.main[data-shell-page="settings-client-card"] .client-card-subtabs {
+  margin-bottom: 12px;
+}
+
+.main[data-shell-page="settings-client-card"] [data-client-card-main-panel] {
+  width: 100%;
+  align-self: start;
+  min-height: max-content;
+}
+
+.main[data-shell-page="settings-client-card"] #clientCardAutomationPanel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.main[data-shell-page="settings-client-card"] .settings-panel {
+  align-self: start;
+  overflow: visible;
+  min-height: max-content;
+}
+
+.main[data-shell-page="settings-client-card"] #clientCardSettings,
+.main[data-shell-page="settings-client-card"] .client-card-rules {
+  min-height: 0;
+}
+
 .client-card-rules {
   display: grid;
   gap: 8px;
@@ -3828,7 +3877,40 @@ body[data-theme="dark"] .verified-no {
 }
 
 .client-card-rule-action-row {
-  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.client-card-rule-actions {
+  gap: 12px;
+}
+
+.client-card-rule-action-row > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.client-card-rule-action-row select,
+.client-card-rule-action-row input,
+.client-card-rule-action-row textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.client-card-rule-action-row textarea {
+  min-height: 96px;
+}
+
+.client-card-rule-action-row [data-remove-rule-action] {
+  justify-self: end;
+}
+
+#clientCardRuleModal .modal-dialog {
+  width: min(760px, 94vw);
 }
 
 .client-card-source-row {

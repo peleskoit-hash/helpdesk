@@ -8,6 +8,8 @@ const state = {
   editingSourceId: null,
   sourceEditorDirty: false,
   pendingBlockColors: new Map(),
+  activeClientCardTab: "blocks",
+  activeAutomationTab: "rules",
 };
 
 const colorSchemes = ["blue", "green", "yellow", "red", "gray", "purple"];
@@ -82,8 +84,8 @@ const uiText = {
   deleteFieldConfirmSuffix: "\u00bb?",
   rulesSaved: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e",
   ruleDeleted: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u043e",
-  sourceSaved: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
-  sourceDeleted: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0443\u0434\u0430\u043b\u0451\u043d",
+  sourceSaved: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
+  sourceDeleted: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u0443\u0434\u0430\u043b\u0451\u043d",
 };
 
 const el = {
@@ -91,6 +93,10 @@ const el = {
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   addClientCardBlockBtn: document.getElementById("addClientCardBlockBtn"),
   addClientCardFieldBtn: document.getElementById("addClientCardFieldBtn"),
+  clientCardMainTabs: Array.from(document.querySelectorAll("[data-client-card-main-tab]")),
+  clientCardMainPanels: Array.from(document.querySelectorAll("[data-client-card-main-panel]")),
+  clientCardAutomationTabs: Array.from(document.querySelectorAll("[data-client-card-automation-tab]")),
+  clientCardAutomationPanels: Array.from(document.querySelectorAll("[data-client-card-automation-panel]")),
   clientCardSettings: document.getElementById("clientCardSettings"),
   emptyClientCardText: document.getElementById("emptyClientCardText"),
   addClientCardRuleBtn: document.getElementById("addClientCardRuleBtn"),
@@ -181,6 +187,39 @@ const el = {
 
 function setStatus(text) { el.statusText.textContent = text; }
 function escapeHtml(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
+
+function syncClientCardTabs() {
+  const showBlocks = state.activeClientCardTab === "blocks";
+  el.clientCardMainTabs.forEach((tab) => {
+    const active = tab.dataset.clientCardMainTab === state.activeClientCardTab;
+    tab.classList.toggle("primary", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  el.clientCardMainPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.clientCardMainPanel !== state.activeClientCardTab);
+  });
+  el.addClientCardBlockBtn.classList.toggle("hidden", !showBlocks);
+  el.addClientCardFieldBtn.classList.toggle("hidden", !showBlocks);
+
+  el.clientCardAutomationTabs.forEach((tab) => {
+    const active = tab.dataset.clientCardAutomationTab === state.activeAutomationTab;
+    tab.classList.toggle("primary", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  el.clientCardAutomationPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.clientCardAutomationPanel !== state.activeAutomationTab);
+  });
+}
+
+function setClientCardTab(tab) {
+  state.activeClientCardTab = tab === "automation" ? "automation" : "blocks";
+  syncClientCardTabs();
+}
+
+function setAutomationTab(tab) {
+  state.activeAutomationTab = tab === "sources" ? "sources" : "rules";
+  syncClientCardTabs();
+}
 
 async function api(path, options = {}) {
   const r = await fetch(path, {
@@ -438,7 +477,7 @@ function parseBodyJson() {
 
 function sourcePayloadFromModal() {
   const name = el.sourceName.value.trim();
-  if (!name) throw new Error("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 source \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e");
+  if (!name) throw new Error("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e");
   const queryTemplate = serializeTemplateRows(el.sourceQueryRows, "[data-source-query-row]");
   const headerTemplate = serializeTemplateRows(el.sourceHeaderRows, "[data-source-header-row]");
   if (queryTemplate.unresolvedKeys.length || headerTemplate.unresolvedKeys.length) {
@@ -519,7 +558,7 @@ function renderSourceTestResult(result) {
 function openSourceModal(sourceId = null) {
   const source = sourceId ? findSourceById(sourceId) : null;
   state.editingSourceId = source?.id || null;
-  el.clientCardSourceModalTitle.textContent = source ? "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 source" : "\u041d\u043e\u0432\u044b\u0439 source";
+  el.clientCardSourceModalTitle.textContent = source ? "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445" : "\u041d\u043e\u0432\u044b\u0439 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445";
   el.sourceName.value = source?.name || "";
   el.sourceTechnicalKey.value = source?.technical_key || "";
   el.sourceActive.checked = source?.is_active !== false;
@@ -619,7 +658,7 @@ async function toggleSource(sourceId, isActive) {
 async function deleteSource(sourceId) {
   const source = findSourceById(sourceId);
   if (!source) return;
-  if (!window.confirm(`\u0423\u0434\u0430\u043b\u0438\u0442\u044c source \u00ab${source.name || source.technical_key || source.id}\u00bb?`)) return;
+  if (!window.confirm(`\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u00ab${source.name || source.technical_key || source.id}\u00bb?`)) return;
   try {
     const sources = await api(`/api/v1/settings/client-card/sources/${sourceId}`, { method: "DELETE" });
     state.clientCard.sources = sources;
@@ -707,7 +746,7 @@ function ruleActionRowHtml(action = {}, index = 0) {
       <label data-rule-field-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_field">${fieldOptionsHtml(targetKey)}</select></label>
       <label data-rule-block-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_block">${blockOptionsHtml(targetKey)}</select></label>
       <label>\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435<select data-rule-action-prop="action">${ruleActionOptions(targetType, scope, action.action || "show")}</select></label>
-      <label>Scope
+      <label>\u041e\u0431\u043b\u0430\u0441\u0442\u044c \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0438\u044f
         <select data-rule-action-prop="scope">
           <option value="editor" ${scope === "editor" ? "selected" : ""}>\u041e\u043a\u043d\u043e \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f</option>
           <option value="card" ${scope === "card" ? "selected" : ""}>\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430</option>
@@ -725,7 +764,7 @@ function ruleActionRowHtml(action = {}, index = 0) {
         </select>
       </label>
       <label data-rule-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a<select data-rule-action-prop="source_key">${fieldOptionsHtml(action.source_key || "")}</select></label>
-      <label data-rule-lookup-source-wrap>Source<select data-rule-action-prop="source_id">${sourceOptionsHtml(sourceId)}</select></label>
+      <label data-rule-lookup-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445<select data-rule-action-prop="source_id">${sourceOptionsHtml(sourceId)}</select></label>
       <label data-rule-value-wrap>\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435<input data-rule-action-prop="value" value="${escapeHtml(action.value || "")}" autocomplete="off" /></label>
       <label data-rule-map-wrap>Map: \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430 = source =&gt; result<textarea data-rule-action-prop="map" rows="4">${escapeHtml(mapText)}</textarea></label>
       <button class="action danger ${index === 0 ? "hidden" : ""}" type="button" data-remove-rule-action>&times;</button>
@@ -1440,6 +1479,12 @@ const handlePageKeydown = (e) => {
   });
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
   el.addClientCardFieldBtn.addEventListener("click", openCreateFieldModal);
+  el.clientCardMainTabs.forEach((tab) => {
+    tab.addEventListener("click", () => setClientCardTab(tab.dataset.clientCardMainTab));
+  });
+  el.clientCardAutomationTabs.forEach((tab) => {
+    tab.addEventListener("click", () => setAutomationTab(tab.dataset.clientCardAutomationTab));
+  });
   el.addClientCardRuleBtn.addEventListener("click", () => openRuleModal());
   el.addClientCardSourceBtn?.addEventListener("click", () => openSourceModal());
   el.closeCreateClientCardBlockModalBtn.addEventListener("click", closeCreateModal);
@@ -1557,6 +1602,7 @@ const handlePageKeydown = (e) => {
   });
 
   document.addEventListener("keydown", handlePageKeydown);
+  syncClientCardTabs();
 
   setStatus("Загружаю настройки...");
   window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })

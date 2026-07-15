@@ -47,6 +47,7 @@ function ctxFor(stateOverrides = {}) {
 const helpers = loadHelpers();
 const settingsClientCardSource = fs.readFileSync('api/app/static/settings_client_card.js', 'utf8');
 const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_client_card.html', 'utf8');
+const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
 const managementUsersSource = fs.readFileSync('api/app/static/management_users.js', 'utf8');
@@ -188,11 +189,70 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260710a/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260710a/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260715b/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260715b/);
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260710a/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260710a/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260710a/);
+});
+
+test('settings client card uses main tabs with blocks open by default', () => {
+  assert.match(settingsClientCardTemplate, /data-client-card-main-tab="blocks"[^>]*aria-selected="true"[^>]*>&#1041;&#1083;&#1086;&#1082;&#1080;<\/button>/);
+  assert.match(settingsClientCardTemplate, /data-client-card-main-tab="automation"[^>]*aria-selected="false"[^>]*>&#1040;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1079;&#1072;&#1094;&#1080;&#1103;<\/button>/);
+  assert.match(settingsClientCardSource, /activeClientCardTab: "blocks"/);
+  assert.match(settingsClientCardSource, /function setClientCardTab/);
+
+  const blocksPanel = sourceBetween(settingsClientCardTemplate, 'id="clientCardBlocksPanel"', 'id="clientCardAutomationPanel"');
+  assert.match(blocksPanel, /id="clientCardSettings"/);
+  assert.doesNotMatch(blocksPanel, /id="clientCardRules"/);
+  assert.doesNotMatch(blocksPanel, /id="clientCardSources"/);
+});
+
+test('settings client card automation has rules and sources subtabs', () => {
+  assert.match(settingsClientCardTemplate, /data-client-card-automation-tab="rules"[^>]*aria-selected="true"[^>]*>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072;<\/button>/);
+  assert.match(settingsClientCardTemplate, /data-client-card-automation-tab="sources"[^>]*aria-selected="false"[^>]*>&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;<\/button>/);
+  assert.match(settingsClientCardSource, /activeAutomationTab: "rules"/);
+  assert.match(settingsClientCardSource, /function setAutomationTab/);
+
+  const rulesPanel = sourceBetween(settingsClientCardTemplate, 'id="clientCardRulesPanel"', 'id="clientCardSourcesPanel"');
+  assert.match(rulesPanel, /id="clientCardRules"/);
+  assert.doesNotMatch(rulesPanel, /id="clientCardSources"/);
+  assert.match(settingsClientCardTemplate, /id="clientCardSourcesPanel" class="panel settings-panel hidden"/);
+});
+
+test('settings client card tab switching keeps loaded config and toolbar actions scoped', () => {
+  const tabSyncSource = sourceBetween(settingsClientCardSource, 'function syncClientCardTabs', 'async function api');
+  assert.match(tabSyncSource, /classList\.toggle\("hidden", panel\.dataset\.clientCardMainPanel !== state\.activeClientCardTab\)/);
+  assert.match(tabSyncSource, /classList\.toggle\("hidden", !showBlocks\)/);
+  assert.doesNotMatch(tabSyncSource, /api\(|loadClientCardConfig\(/);
+
+  const saveSource = sourceBetween(settingsClientCardSource, 'async function saveSourceFromModal()', 'async function testSourceFromModal()');
+  const deleteSource = sourceBetween(settingsClientCardSource, 'async function deleteSource(sourceId)', 'function syncRuleValueVisibility()');
+  const saveRule = sourceBetween(settingsClientCardSource, 'async function saveRuleFromModal()', 'async function toggleRule');
+  assert.doesNotMatch(saveSource, /activeAutomationTab\s*=/);
+  assert.doesNotMatch(deleteSource, /activeAutomationTab\s*=/);
+  assert.doesNotMatch(saveRule, /activeAutomationTab\s*=/);
+});
+
+test('settings client card layout stays top-aligned without old vertical stretch gap', () => {
+  assert.match(settingsClientCardSource, /syncClientCardTabs\(\)/);
+  assert.match(settingsClientCardTemplate, /class="content client-card-settings-content"/);
+  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \.client-card-settings-content \{[\s\S]*align-content: start;[\s\S]*grid-auto-rows: max-content;[\s\S]*overflow: visible;[\s\S]*min-height: max-content;/);
+  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] #clientCardAutomationPanel \{[\s\S]*display: grid;[\s\S]*gap: 12px;[\s\S]*align-content: start;/);
+  assert.doesNotMatch(stylesSource, /\.client-card-rule-action-row \{\s*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) auto;/);
+});
+
+test('settings client card blocks panel keeps natural height and vertical scroll access', () => {
+  const settingsPanelScope = sourceBetween(
+    stylesSource,
+    '.main[data-shell-page="settings-client-card"] .settings-panel {',
+    '.main[data-shell-page="settings-client-card"] #clientCardSettings,',
+  );
+  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \{[\s\S]*overflow-y: auto;[\s\S]*overflow-x: hidden;/);
+  assert.match(settingsPanelScope, /overflow: visible;/);
+  assert.match(settingsPanelScope, /min-height: max-content;/);
+  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \[data-client-card-main-panel\] \{[\s\S]*width: 100%;[\s\S]*align-self: start;[\s\S]*min-height: max-content;/);
+  assert.doesNotMatch(settingsPanelScope, /overflow: hidden/);
 });
 
 test('settings client card UI exposes delete actions only for custom config entries', () => {
@@ -406,6 +466,26 @@ test('client card settings renders source list and source editor controls', () =
   assert.match(settingsClientCardSource, /function collectMappingRows/);
   assert.match(settingsClientCardTemplate, /id="sourceQueryComplexNotice"/);
   assert.match(settingsClientCardTemplate, /id="sourceHeaderComplexNotice"/);
+});
+
+test('client card source headings use Russian data source wording', () => {
+  assert.match(settingsClientCardTemplate, /&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;/);
+  assert.match(settingsClientCardTemplate, />\+ &#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;<\/button>/);
+  assert.match(settingsClientCardTemplate, /&#1053;&#1086;&#1074;&#1099;&#1081; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;/);
+  assert.match(settingsClientCardSource, /\\u0420\\u0435\\u0434\\u0430\\u043a\\u0442\\u0438\\u0440\\u043e\\u0432\\u0430\\u043d\\u0438\\u0435 \\u0438\\u0441\\u0442\\u043e\\u0447\\u043d\\u0438\\u043a\\u0430 \\u0434\\u0430\\u043d\\u043d\\u044b\\u0445/);
+  assert.match(settingsClientCardSource, /\\u041d\\u043e\\u0432\\u044b\\u0439 \\u0438\\u0441\\u0442\\u043e\\u0447\\u043d\\u0438\\u043a \\u0434\\u0430\\u043d\\u043d\\u044b\\u0445/);
+  assert.match(settingsClientCardSource, /data-rule-lookup-source-wrap>\\u0418\\u0441\\u0442\\u043e\\u0447\\u043d\\u0438\\u043a \\u0434\\u0430\\u043d\\u043d\\u044b\\u0445/);
+  assert.doesNotMatch(settingsClientCardTemplate, />\+ Source<\/button>|>Source<\/div>/);
+  assert.doesNotMatch(settingsClientCardSource, /Название source|Новый source|Редактирование source|Удалить source/);
+});
+
+test('rule action editor uses full-width vertical card layout and widened modal', () => {
+  assert.match(settingsClientCardSource, /\\u041e\\u0431\\u043b\\u0430\\u0441\\u0442\\u044c \\u043f\\u0440\\u0438\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f/);
+  assert.match(stylesSource, /\.client-card-rule-action-row \{[\s\S]*grid-template-columns: minmax\(0, 1fr\);[\s\S]*border: 1px solid rgba\(148, 163, 184, 0\.35\);[\s\S]*padding: 12px;/);
+  assert.match(stylesSource, /\.client-card-rule-action-row > label \{[\s\S]*display: grid;[\s\S]*gap: 6px;/);
+  assert.match(stylesSource, /\.client-card-rule-action-row select,[\s\S]*\.client-card-rule-action-row input,[\s\S]*\.client-card-rule-action-row textarea \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
+  assert.match(stylesSource, /#clientCardRuleModal \.modal-dialog \{[\s\S]*width: min\(760px, 94vw\);/);
+  assert.match(stylesSource, /\.client-card-rule-actions \{[\s\S]*gap: 12px;/);
 });
 
 test('client card source editor supports template insertion, dependency context and preview rendering', () => {

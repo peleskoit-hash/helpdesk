@@ -11,7 +11,7 @@
   const shellRoutes = new Map([
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20260603b"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260710a"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260715b"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
