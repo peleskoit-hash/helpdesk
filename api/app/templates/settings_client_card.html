@@ -53,7 +53,6 @@
         <button id="backToSettingsBtn" class="action" type="button">Назад</button>
         <div class="settings-title">Карточка Клиент</div>
         <button id="addClientCardBlockBtn" class="action" type="button">+ Добавить блок</button>
-        <button id="addClientCardFieldBtn" class="action" type="button">+ Добавить поле</button>
         <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
         <span id="statusText" class="status">Готово</span>
       </div>
@@ -146,15 +145,11 @@
       <div class="modal-body">
         <div class="modal-field-section modal-field-section-profile">
           <label>Название блока<input id="newClientCardBlockTitle" autocomplete="off" /></label>
-          <label>Цветовая схема
-            <select id="newClientCardBlockColor">
-              <option value="blue">Голубой</option>
-              <option value="green">Зелёный</option>
-              <option value="yellow">Жёлтый</option>
-              <option value="red">Красный</option>
-              <option value="gray" selected>Серый</option>
-              <option value="purple">Фиолетовый</option>
-            </select>
+          <label>&#1062;&#1074;&#1077;&#1090; &#1073;&#1083;&#1086;&#1082;&#1072;
+            <div class="client-card-color-picker-row">
+              <input id="newClientCardBlockColor" class="client-card-color-input" type="color" value="#E5E7EB" />
+              <span id="newClientCardBlockColorHex" class="client-card-color-hex">#E5E7EB</span>
+            </div>
           </label>
         </div>
       </div>
@@ -314,6 +309,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260629d"></script>
-  <script src="/static/settings_client_card.js?v=20260715b"></script>
+  <script src="/static/settings_client_card.js?v=20260715c"></script>
 </body>
 </html>

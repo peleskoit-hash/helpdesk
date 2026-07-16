@@ -6,6 +6,7 @@ const state = {
   editingFieldId: null,
   editingRuleId: null,
   editingSourceId: null,
+  createFieldBlockKey: null,
   sourceEditorDirty: false,
   pendingBlockColors: new Map(),
   activeClientCardTab: "blocks",
@@ -82,6 +83,7 @@ const uiText = {
   deleteBlockConfirmSuffix: "\u00bb \u0438 \u0432\u0441\u0435 \u0435\u0433\u043e \u043f\u043e\u043b\u044f?",
   deleteFieldConfirmPrefix: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u043e\u043b\u0435 \u00ab",
   deleteFieldConfirmSuffix: "\u00bb?",
+  addField: "+ \u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u043b\u0435",
   rulesSaved: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e",
   ruleDeleted: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u043e",
   sourceSaved: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
@@ -92,7 +94,6 @@ const el = {
   statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   addClientCardBlockBtn: document.getElementById("addClientCardBlockBtn"),
-  addClientCardFieldBtn: document.getElementById("addClientCardFieldBtn"),
   clientCardMainTabs: Array.from(document.querySelectorAll("[data-client-card-main-tab]")),
   clientCardMainPanels: Array.from(document.querySelectorAll("[data-client-card-main-panel]")),
   clientCardAutomationTabs: Array.from(document.querySelectorAll("[data-client-card-automation-tab]")),
@@ -151,6 +152,7 @@ const el = {
   saveCreateClientCardBlockBtn: document.getElementById("saveCreateClientCardBlockBtn"),
   newClientCardBlockTitle: document.getElementById("newClientCardBlockTitle"),
   newClientCardBlockColor: document.getElementById("newClientCardBlockColor"),
+  newClientCardBlockColorHex: document.getElementById("newClientCardBlockColorHex"),
   createClientCardFieldModal: document.getElementById("createClientCardFieldModal"),
   closeCreateClientCardFieldModalBtn: document.getElementById("closeCreateClientCardFieldModalBtn"),
   saveCreateClientCardFieldBtn: document.getElementById("saveCreateClientCardFieldBtn"),
@@ -199,7 +201,6 @@ function syncClientCardTabs() {
     panel.classList.toggle("hidden", panel.dataset.clientCardMainPanel !== state.activeClientCardTab);
   });
   el.addClientCardBlockBtn.classList.toggle("hidden", !showBlocks);
-  el.addClientCardFieldBtn.classList.toggle("hidden", !showBlocks);
 
   el.clientCardAutomationTabs.forEach((tab) => {
     const active = tab.dataset.clientCardAutomationTab === state.activeAutomationTab;
@@ -276,6 +277,12 @@ function currentBlockColor(block) {
   return state.pendingBlockColors.get(block.id) || colorToHex(block.color_scheme);
 }
 
+function syncCreateBlockColorPreview() {
+  const color = colorToHex(el.newClientCardBlockColor?.value);
+  if (el.newClientCardBlockColor) el.newClientCardBlockColor.value = color;
+  if (el.newClientCardBlockColorHex) el.newClientCardBlockColorHex.textContent = color.toUpperCase();
+}
+
 function applySettingsBlockColor(card, color) {
   const safeColor = colorToHex(color);
   card.style.setProperty("--client-card-settings-block-bg", safeColor);
@@ -307,6 +314,10 @@ function findRuleById(ruleId) {
 
 function isCustomBlock(block) {
   return block && !systemBlockKeys.has(block.key) && String(block.key || "").startsWith("custom_block_");
+}
+
+function findBlockByKey(blockKey) {
+  return (state.clientCard.blocks || []).find((block) => block.key === blockKey) || null;
 }
 
 function setClientCardAndRender(config) {
@@ -1230,6 +1241,9 @@ function renderClientCardSettings() {
             </div>
           `).join("")}
         </div>
+        <div class="client-card-block-footer">
+          <button class="action" type="button" data-add-field-block-key="${escapeHtml(block.key)}">${uiText.addField}</button>
+        </div>
       </div>
     `;
 
@@ -1276,6 +1290,9 @@ function renderClientCardSettings() {
 
   el.clientCardSettings.querySelectorAll("[data-edit-field-id]").forEach((btn) => {
     btn.addEventListener("click", () => openEditFieldModal(btn.dataset.editFieldId));
+  });
+  el.clientCardSettings.querySelectorAll("[data-add-field-block-key]").forEach((btn) => {
+    btn.addEventListener("click", () => openCreateFieldModal(btn.dataset.addFieldBlockKey));
   });
 }
 
@@ -1383,7 +1400,8 @@ async function loadClientCardConfig() {
 
 function openCreateModal() {
   el.newClientCardBlockTitle.value = "";
-  el.newClientCardBlockColor.value = "gray";
+  el.newClientCardBlockColor.value = fallbackColorHex;
+  syncCreateBlockColorPreview();
   el.createClientCardBlockModal.classList.remove("hidden");
   el.newClientCardBlockTitle.focus();
 }
@@ -1392,7 +1410,9 @@ function closeCreateModal() {
   el.createClientCardBlockModal.classList.add("hidden");
 }
 
-function openCreateFieldModal() {
+function openCreateFieldModal(blockKey = null) {
+  state.createFieldBlockKey = blockKey || null;
+  const contextBlock = state.createFieldBlockKey ? findBlockByKey(state.createFieldBlockKey) : null;
   el.newClientCardFieldLabel.value = "";
   el.newClientCardFieldType.value = "text";
   el.newClientCardFieldVisible.checked = true;
@@ -1401,12 +1421,18 @@ function openCreateFieldModal() {
   el.newClientCardFieldRequired.checked = false;
   el.newClientCardFieldOptions.value = "";
   el.newClientCardFieldBlock.innerHTML = (state.clientCard.blocks || []).map((block) => `<option value="${escapeHtml(block.key)}">${escapeHtml(block.title)}</option>`).join("");
+  if (contextBlock) {
+    el.newClientCardFieldBlock.value = state.createFieldBlockKey;
+  }
+  el.newClientCardFieldBlock.disabled = Boolean(contextBlock);
   syncCreateFieldOptionsVisibility();
   el.createClientCardFieldModal.classList.remove("hidden");
   el.newClientCardFieldLabel.focus();
 }
 
 function closeCreateFieldModal() {
+  state.createFieldBlockKey = null;
+  el.newClientCardFieldBlock.disabled = false;
   el.createClientCardFieldModal.classList.add("hidden");
 }
 
@@ -1419,13 +1445,16 @@ async function createField() {
     if (fieldType === "select" && (!options || !options.length)) {
       throw new Error("Для поля select нужно указать хотя бы один вариант");
     }
+    const targetBlockKey = state.createFieldBlockKey || el.newClientCardFieldBlock.value;
+    const targetBlock = findBlockByKey(targetBlockKey);
+    if (targetBlock) state.expandedBlocks.add(targetBlock.id);
     await api("/api/v1/settings/client-card/fields", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         label,
         field_type: fieldType,
-        block_key: el.newClientCardFieldBlock.value,
+        block_key: targetBlockKey,
         is_visible: Boolean(el.newClientCardFieldVisible.checked),
         is_visible_in_editor: Boolean(el.newClientCardFieldVisibleInEditor.checked),
         is_editable: Boolean(el.newClientCardFieldEditable.checked),
@@ -1445,10 +1474,11 @@ async function createBlock() {
   try {
     const title = el.newClientCardBlockTitle.value.trim();
     if (!title) throw new Error("Название блока обязательно");
+    const color = colorToHex(el.newClientCardBlockColor.value);
     await api("/api/v1/settings/client-card/blocks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, color_scheme: el.newClientCardBlockColor.value }),
+      body: JSON.stringify({ title, color_scheme: color }),
     });
     closeCreateModal();
     await loadClientCardConfig();
@@ -1478,7 +1508,6 @@ const handlePageKeydown = (e) => {
     window.location.href = "/settings";
   });
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
-  el.addClientCardFieldBtn.addEventListener("click", openCreateFieldModal);
   el.clientCardMainTabs.forEach((tab) => {
     tab.addEventListener("click", () => setClientCardTab(tab.dataset.clientCardMainTab));
   });
@@ -1489,6 +1518,7 @@ const handlePageKeydown = (e) => {
   el.addClientCardSourceBtn?.addEventListener("click", () => openSourceModal());
   el.closeCreateClientCardBlockModalBtn.addEventListener("click", closeCreateModal);
   el.saveCreateClientCardBlockBtn.addEventListener("click", createBlock);
+  el.newClientCardBlockColor.addEventListener("input", syncCreateBlockColorPreview);
   el.closeCreateClientCardFieldModalBtn.addEventListener("click", closeCreateFieldModal);
   el.saveCreateClientCardFieldBtn.addEventListener("click", createField);
   el.newClientCardFieldType.addEventListener("change", syncCreateFieldOptionsVisibility);

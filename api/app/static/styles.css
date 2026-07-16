@@ -3863,6 +3863,12 @@ body[data-theme="dark"] .verified-no {
   gap: 8px;
 }
 
+.client-card-block-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-start;
+}
+
 .client-card-rule-row {
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 8px;

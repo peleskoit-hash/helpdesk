@@ -189,8 +189,8 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260715b/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260715b/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260715c/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260715c/);
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260710a/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260710a/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260710a/);
@@ -662,10 +662,36 @@ test('verification block title renders through common client card config mechani
   assert.doesNotMatch(renderSource, /block\.key === "verification"/);
 });
 
-test('settings client card create field modal still uses block select', () => {
+test('settings client card create block modal uses color input with hex preview', () => {
+  assert.match(settingsClientCardTemplate, /id="newClientCardBlockColor" class="client-card-color-input" type="color"/);
+  assert.match(settingsClientCardTemplate, /id="newClientCardBlockColorHex" class="client-card-color-hex">#E5E7EB<\/span>/);
+  assert.doesNotMatch(settingsClientCardTemplate, /<select id="newClientCardBlockColor">/);
+  assert.doesNotMatch(settingsClientCardTemplate, /value="gray"|>Голубой<\/option>|>Серый<\/option>/);
+  assert.match(settingsClientCardSource, /function syncCreateBlockColorPreview/);
+  assert.match(settingsClientCardSource, /el\.newClientCardBlockColor\.value = fallbackColorHex/);
+  assert.match(settingsClientCardSource, /syncCreateBlockColorPreview\(\);/);
+  assert.match(settingsClientCardSource, /const color = colorToHex\(el\.newClientCardBlockColor\.value\)/);
+  assert.match(settingsClientCardSource, /body: JSON\.stringify\(\{ title, color_scheme: color \}\)/);
+});
+
+test('settings client card create field modal still uses block select with contextual lock', () => {
   assert.match(settingsClientCardTemplate, /id="newClientCardFieldBlock"/);
   assert.match(settingsClientCardSource, /newClientCardFieldBlock\.innerHTML/);
-  assert.match(settingsClientCardSource, /block_key: el\.newClientCardFieldBlock\.value/);
+  assert.match(settingsClientCardSource, /state\.createFieldBlockKey = blockKey \|\| null/);
+  assert.match(settingsClientCardSource, /const contextBlock = state\.createFieldBlockKey \? findBlockByKey\(state\.createFieldBlockKey\) : null/);
+  assert.match(settingsClientCardSource, /el\.newClientCardFieldBlock\.disabled = Boolean\(contextBlock\)/);
+  assert.match(settingsClientCardSource, /const targetBlockKey = state\.createFieldBlockKey \|\| el\.newClientCardFieldBlock\.value/);
+  assert.match(settingsClientCardSource, /block_key: targetBlockKey/);
+});
+
+test('settings client card removes global add field button and renders local block add field action', () => {
+  assert.doesNotMatch(settingsClientCardTemplate, /id="addClientCardFieldBtn"/);
+  assert.doesNotMatch(settingsClientCardSource, /addClientCardFieldBtn/);
+  assert.match(settingsClientCardSource, /data-add-field-block-key="\$\{escapeHtml\(block\.key\)\}"/);
+  assert.match(settingsClientCardSource, /querySelectorAll\("\[data-add-field-block-key\]"\)/);
+  assert.match(settingsClientCardSource, /openCreateFieldModal\(btn\.dataset\.addFieldBlockKey\)/);
+  assert.match(settingsClientCardSource, /state\.expandedBlocks\.add\(targetBlock\.id\)/);
+  assert.match(stylesSource, /\.client-card-block-footer \{[\s\S]*margin-top: 12px;[\s\S]*display: flex;/);
 });
 
 test('hydrates unconditional and conditional files into file-centric entries', () => {
