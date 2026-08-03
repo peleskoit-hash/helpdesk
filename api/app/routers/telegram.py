@@ -96,6 +96,7 @@ from ..services.telegram_onboarding import (
     telegram_contact_by_chat_id,
 )
 from ..services.system_tickets import FirstConnectionDefaults, first_connection_values
+from ..services.ticket_call_center_snapshot import apply_call_center_employee_snapshot_on_ticket_create
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
@@ -326,6 +327,7 @@ def _try_forced_assignment(db: Session, ticket: Ticket, button: ButtonSpec | Non
 
 def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSpec | None = None) -> User | None:
     ticket.intake_state = TicketIntakeState.READY.value
+    apply_call_center_employee_snapshot_on_ticket_create(db, ticket)
 
     fixed_assignee = _apply_fixed_assignee_from_setting(db, ticket)
     if fixed_assignee is not None:
@@ -1348,6 +1350,7 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
     )
     db.add(new_ticket)
     db.flush()
+    apply_call_center_employee_snapshot_on_ticket_create(db, new_ticket)
 
     append_system_message(db, new_ticket, f"Заявка создана: {subject}")
     if assignee_id:

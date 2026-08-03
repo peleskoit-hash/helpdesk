@@ -26,6 +26,7 @@ MISSING = object()
 FIELD_TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
 SECRET_TEMPLATE_RE = re.compile(r"\{\{secret:([A-Z0-9_]+)\}\}")
 FIELD_TEMPLATE_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+DEV_LOCAL_HTTP_HOSTS = frozenset({"host.docker.internal", "localhost", "127.0.0.1", "::1"})
 
 
 class ClientCardSourceError(Exception):
@@ -71,6 +72,7 @@ class SourceExecutionResult:
 @dataclass(frozen=True)
 class ValidatedSourceUrl:
     url: str
+    scheme: str
     hostname: str
     port: int
     addresses: tuple[str, ...]
@@ -333,6 +335,8 @@ def execute_source(
     started = time.monotonic()
     response = (transport or default_transport)(request)
     duration_ms = int((time.monotonic() - started) * 1000)
+    if 300 <= response.status < 400:
+        raise ClientCardSourceHttpError("Source redirects are disabled", status=response.status)
     if response.status >= 400:
         raise ClientCardSourceHttpError(f"Source HTTP request failed with status {response.status}", status=response.status)
     content_type = next((value for key, value in response.headers.items() if key.lower() == "content-type"), "")
@@ -360,22 +364,41 @@ class ValidatedHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
 
 
+class ValidatedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, port: int, *, connect_address: str, timeout: float):
+        super().__init__(host, port=port, timeout=timeout)
+        self._connect_address = connect_address
+
+    def connect(self) -> None:
+        self.sock = _connect_validated_ip(self._connect_address, self.port, self.timeout)
+
+
 def default_transport(request: SourceHttpRequest) -> SourceHttpResponse:
     parsed = urlparse(request.url)
     path = urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
     headers = dict(request.headers)
-    headers.setdefault("Host", _host_header(request.tls_hostname, request.port))
+    headers.setdefault("Host", _host_header(request.tls_hostname, request.port, scheme=parsed.scheme.lower()))
     if not request.validated_addresses:
         raise ClientCardSourceHttpError("Source HTTP request failed")
 
     last_connect_error: Exception | None = None
     for index, connect_address in enumerate(request.validated_addresses):
-        connection = ValidatedHTTPSConnection(
-            request.tls_hostname,
-            request.port,
-            connect_address=connect_address,
-            timeout=request.timeout,
-        )
+        if parsed.scheme.lower() == "https":
+            connection = ValidatedHTTPSConnection(
+                request.tls_hostname,
+                request.port,
+                connect_address=connect_address,
+                timeout=request.timeout,
+            )
+        elif parsed.scheme.lower() == "http":
+            connection = ValidatedHTTPConnection(
+                request.tls_hostname,
+                request.port,
+                connect_address=connect_address,
+                timeout=request.timeout,
+            )
+        else:
+            raise ClientCardSourceConfigError("Unsupported source URL scheme")
         try:
             connection.connect()
         except TimeoutError as exc:
@@ -439,12 +462,14 @@ def validate_rendered_url(configured_template: str, rendered_url: str, *, resolv
 def resolve_and_validate_url(configured_template: str, rendered_url: str, *, resolver: Callable[[str], list[str]] | None = None) -> ValidatedSourceUrl:
     configured = urlparse(configured_template)
     rendered = urlparse(rendered_url)
-    if configured.scheme != "https" or rendered.scheme != "https":
-        raise ClientCardSourceConfigError("Source URL must use HTTPS")
+    _validate_url_components(configured)
+    _validate_url_components(rendered)
+    _validate_url_scheme_policy(configured)
+    _validate_url_scheme_policy(rendered)
     if not configured.hostname or not rendered.hostname:
         raise ClientCardSourceConfigError("Source URL hostname is required")
-    configured_port = configured.port or 443
-    rendered_port = rendered.port or 443
+    configured_port = configured.port or _default_port(configured.scheme)
+    rendered_port = rendered.port or _default_port(rendered.scheme)
     if (
         configured.scheme.lower(),
         configured.hostname.lower(),
@@ -455,11 +480,16 @@ def resolve_and_validate_url(configured_template: str, rendered_url: str, *, res
         rendered_port,
     ):
         raise ClientCardSourceConfigError("Source URL templates cannot change scheme, host, or port")
-    addresses = validate_hostname(rendered.hostname, resolver=resolver)
+    addresses = validate_hostname(
+        rendered.hostname,
+        scheme=rendered.scheme.lower(),
+        resolver=resolver,
+    )
     if settings.is_prod and rendered.hostname.lower() not in allowed_hosts():
         raise ClientCardSourceConfigError("Source hostname is not allowed")
     return ValidatedSourceUrl(
         url=urlunparse(rendered),
+        scheme=rendered.scheme.lower(),
         hostname=rendered.hostname,
         port=rendered_port,
         addresses=tuple(addresses),
@@ -468,8 +498,8 @@ def resolve_and_validate_url(configured_template: str, rendered_url: str, *, res
 
 def validate_url_template_static(url_template: str) -> None:
     parsed = urlparse(url_template)
-    if parsed.scheme != "https":
-        raise ClientCardSourceConfigError("Source URL must use HTTPS")
+    _validate_url_components(parsed)
+    _validate_url_scheme_policy(parsed)
     if not parsed.hostname:
         raise ClientCardSourceConfigError("Source URL hostname is required")
     netloc = parsed.netloc
@@ -477,8 +507,15 @@ def validate_url_template_static(url_template: str) -> None:
         raise ClientCardSourceConfigError("Source URL templates cannot change scheme, host, or port")
 
 
-def validate_hostname(hostname: str, *, resolver: Callable[[str], list[str]] | None = None) -> list[str]:
+def validate_hostname(
+    hostname: str,
+    *,
+    scheme: str = "https",
+    resolver: Callable[[str], list[str]] | None = None,
+) -> list[str]:
     host = hostname.strip().lower().rstrip(".")
+    if _is_dev_local_http_host(host, scheme=scheme):
+        return _validate_dev_local_http_host(host, resolver=resolver)
     if host in {"localhost", "localhost.localdomain"} or host.endswith(".localhost"):
         raise ClientCardSourceConfigError("Source hostname is not allowed")
     addresses: list[str]
@@ -502,6 +539,52 @@ def validate_hostname(hostname: str, *, resolver: Callable[[str], list[str]] | N
         ):
             raise ClientCardSourceConfigError("Source hostname resolves to a disallowed IP address")
     return addresses
+
+
+def _default_port(scheme: str) -> int:
+    return 443 if scheme.lower() == "https" else 80
+
+
+def _validate_url_components(parsed) -> None:
+    if parsed.username is not None or parsed.password is not None:
+        raise ClientCardSourceConfigError("Source URL credentials are not allowed")
+
+
+def _validate_url_scheme_policy(parsed) -> None:
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if scheme == "https":
+        return
+    if scheme == "http" and _is_dev_local_http_host(host, scheme=scheme):
+        return
+    raise ClientCardSourceConfigError("Source URL must use HTTPS")
+
+
+def _is_dev_local_http_host(host: str, *, scheme: str) -> bool:
+    return scheme.lower() == "http" and not settings.is_prod and host in DEV_LOCAL_HTTP_HOSTS
+
+
+def _validate_dev_local_http_host(host: str, *, resolver: Callable[[str], list[str]] | None = None) -> list[str]:
+    normalized = host.strip().lower().rstrip(".")
+    if normalized not in DEV_LOCAL_HTTP_HOSTS:
+        raise ClientCardSourceConfigError("Source hostname is not allowed")
+    if normalized == "localhost":
+        return ["127.0.0.1", "::1"]
+    if normalized in {"127.0.0.1", "::1"}:
+        return [normalized]
+    try:
+        addresses = (resolver or resolve_hostname)(normalized)
+    except OSError as exc:
+        raise ClientCardSourceConfigError("Source hostname could not be resolved") from exc
+    if not addresses:
+        raise ClientCardSourceConfigError("Source hostname could not be resolved")
+    validated: list[str] = []
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not (ip.is_loopback or ip.is_private):
+            raise ClientCardSourceConfigError("Source hostname resolves to a disallowed IP address")
+        validated.append(address)
+    return validated
 
 
 def resolve_hostname(hostname: str) -> list[str]:
@@ -530,14 +613,15 @@ def _connect_validated_ip(address: str, port: int, timeout: float) -> socket.soc
         raise
 
 
-def _host_header(hostname: str, port: int) -> str:
+def _host_header(hostname: str, port: int, *, scheme: str = "https") -> str:
     host = hostname
     try:
         if ipaddress.ip_address(hostname).version == 6:
             host = f"[{hostname}]"
     except ValueError:
         pass
-    if port == 443:
+    default_port = _default_port(scheme)
+    if port == default_port:
         return host
     return f"{host}:{port}"
 

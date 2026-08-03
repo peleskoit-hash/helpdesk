@@ -9,12 +9,43 @@ const state = {
   createFieldBlockKey: null,
   sourceEditorDirty: false,
   pendingBlockColors: new Map(),
+  pendingBlockSaveTimers: new Map(),
+  pendingBlockSaveMeta: new Map(),
   activeClientCardTab: "blocks",
   activeAutomationTab: "rules",
 };
 
 const colorSchemes = ["blue", "green", "yellow", "red", "gray", "purple"];
 const fieldTypes = ["text", "textarea", "number", "date", "checkbox", "select", "phone", "url", "password"];
+const fieldTypeLabels = {
+  text: "\u0422\u0435\u043a\u0441\u0442",
+  textarea: "\u041c\u043d\u043e\u0433\u043e\u0441\u0442\u0440\u043e\u0447\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442",
+  number: "\u0427\u0438\u0441\u043b\u043e",
+  date: "\u0414\u0430\u0442\u0430",
+  checkbox: "\u0414\u0430 / \u041d\u0435\u0442",
+  select: "\u0421\u043f\u0438\u0441\u043e\u043a",
+  phone: "\u0422\u0435\u043b\u0435\u0444\u043e\u043d",
+  url: "\u0421\u0441\u044b\u043b\u043a\u0430",
+  password: "\u041f\u0430\u0440\u043e\u043b\u044c",
+  readonly: "\u0422\u043e\u043b\u044c\u043a\u043e \u0447\u0442\u0435\u043d\u0438\u0435",
+};
+const ruleActionLabels = {
+  show: "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c",
+  hide: "\u0421\u043a\u0440\u044b\u0442\u044c",
+  readonly: "\u0421\u0434\u0435\u043b\u0430\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0447\u0442\u0435\u043d\u0438\u044f",
+  editable: "\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435",
+  required: "\u0421\u0434\u0435\u043b\u0430\u0442\u044c \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u043c",
+  optional: "\u0421\u0434\u0435\u043b\u0430\u0442\u044c \u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u043c",
+  set_value: "\u0417\u0430\u0434\u0430\u0442\u044c \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435",
+  lookup_source: "\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430",
+};
+const ruleValueTypeLabels = {
+  literal: "\u0422\u0435\u043a\u0441\u0442",
+  field: "\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u0434\u0440\u0443\u0433\u043e\u0433\u043e \u043f\u043e\u043b\u044f",
+  template: "\u0428\u0430\u0431\u043b\u043e\u043d",
+  map: "\u0421\u043e\u043f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435",
+  null: "\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c",
+};
 const systemBlockKeys = new Set(["tg", "profile", "department", "work", "verification"]);
 const saveContextSystemFieldKeys = new Set([
   "contact_name",
@@ -60,7 +91,6 @@ const uiText = {
   inactive: "\u041d\u0435 \u0430\u043a\u0442\u0438\u0432\u0435\u043d",
   collapse: "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c",
   expand: "\u0420\u0430\u0441\u043a\u0440\u044b\u0442\u044c",
-  saveBlock: "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0431\u043b\u043e\u043a",
   title: "\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0431\u043b\u043e\u043a\u0430",
   blockColor: "\u0426\u0432\u0435\u0442 \u0431\u043b\u043e\u043a\u0430",
   activeLabel: "\u0410\u043a\u0442\u0438\u0432\u0435\u043d",
@@ -83,9 +113,13 @@ const uiText = {
   deleteBlockConfirmSuffix: "\u00bb \u0438 \u0432\u0441\u0435 \u0435\u0433\u043e \u043f\u043e\u043b\u044f?",
   deleteFieldConfirmPrefix: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u043e\u043b\u0435 \u00ab",
   deleteFieldConfirmSuffix: "\u00bb?",
+  deleteRuleConfirmPrefix: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u0440\u0430\u0432\u0438\u043b\u043e \u201c",
+  deleteRuleConfirmSuffix: "\u201d?",
   addField: "+ \u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u043b\u0435",
   rulesSaved: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e",
   ruleDeleted: "\u041f\u0440\u0430\u0432\u0438\u043b\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u043e",
+  ruleCopied: "\u041a\u043e\u043f\u0438\u044f \u043f\u0440\u0430\u0432\u0438\u043b\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430",
+  copy: "\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c",
   sourceSaved: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d",
   sourceDeleted: "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u0443\u0434\u0430\u043b\u0451\u043d",
 };
@@ -308,8 +342,48 @@ function allClientCardFields() {
   return (state.clientCard.blocks || []).flatMap((block) => block.fields || []);
 }
 
+function fieldTypeLabel(type) {
+  const key = String(type || "text").toLowerCase();
+  return fieldTypeLabels[key] || key;
+}
+
 function findRuleById(ruleId) {
   return (state.clientCard.rules || []).find((rule) => rule.id === ruleId) || null;
+}
+
+function deepCloneRuleActions(actions) {
+  return JSON.parse(JSON.stringify(actions || []));
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nextRuleCopyName(sourceName, rules = []) {
+  const baseName = String(sourceName || "").trim();
+  const copySuffix = " \u2014 \u041a\u043e\u043f\u0438\u044f";
+  const pattern = new RegExp(`^${escapeRegExp(baseName + copySuffix)}(?: (\\d+))?$`);
+  let maxIndex = 0;
+  for (const rule of rules) {
+    const match = pattern.exec(String(rule?.name || "").trim());
+    if (!match) continue;
+    const index = match[1] ? Number(match[1]) : 1;
+    if (Number.isFinite(index) && index > maxIndex) maxIndex = index;
+  }
+  if (maxIndex <= 0) return `${baseName}${copySuffix}`;
+  return `${baseName}${copySuffix} ${maxIndex + 1}`;
+}
+
+function buildRuleDuplicatePayload(rule, rules = []) {
+  return {
+    name: nextRuleCopyName(rule?.name || "", rules),
+    is_active: false,
+    sort_order: Number(rule?.sort_order || 0) + 1,
+    condition_field_key: rule?.condition_operator === "always" ? null : (rule?.condition_field_key || null),
+    condition_operator: rule?.condition_operator || "always",
+    condition_value: rule?.condition_value ?? null,
+    actions: deepCloneRuleActions(rule?.actions || []),
+  };
 }
 
 function isCustomBlock(block) {
@@ -329,20 +403,20 @@ function setClientCardAndRender(config) {
 
 function fieldOptionsHtml(selectedKey = "") {
   return allClientCardFields()
-    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)} (${escapeHtml(field.key)})</option>`)
+    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)}</option>`)
     .join("");
 }
 
 function saveFieldOptionsHtml(selectedKey = "") {
   return allClientCardFields()
     .filter((field) => !field.is_system || saveContextSystemFieldKeys.has(field.key))
-    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)} (${escapeHtml(field.key)})</option>`)
+    .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)}</option>`)
     .join("");
 }
 
 function blockOptionsHtml(selectedKey = "") {
   return (state.clientCard.blocks || [])
-    .map((block) => `<option value="${escapeHtml(block.key)}" ${block.key === selectedKey ? "selected" : ""}>${escapeHtml(block.title || block.key)} (${escapeHtml(block.key)})</option>`)
+    .map((block) => `<option value="${escapeHtml(block.key)}" ${block.key === selectedKey ? "selected" : ""}>${escapeHtml(block.title || block.key)}</option>`)
     .join("");
 }
 
@@ -350,6 +424,25 @@ function sourceOptionsHtml(selectedId = "") {
   return (state.clientCard.sources || [])
     .map((source) => `<option value="${escapeHtml(source.id)}" ${source.id === selectedId ? "selected" : ""}>${escapeHtml(source.name || source.technical_key || source.id)}</option>`)
     .join("");
+}
+
+function isInteractiveElement(target) {
+  return Boolean(target?.closest?.("button, input, select, textarea, a, label, [data-no-card-open]"));
+}
+
+function interactiveBoundary(target) {
+  return target?.closest?.("button, input, select, textarea, a, label, [role='button'], [data-no-card-open]") || null;
+}
+
+function bindKeyboardOpen(row, handler) {
+  row.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const boundary = interactiveBoundary(event.target);
+    if (boundary && boundary !== row) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handler();
+  });
 }
 
 function findSourceById(sourceId) {
@@ -379,6 +472,82 @@ function templateFieldOptionsHtml(selectedKey = "") {
     .filter((field) => !field.is_system || saveContextSystemFieldKeys.has(field.key))
     .map((field) => `<option value="${escapeHtml(field.key)}" ${field.key === selectedKey ? "selected" : ""}>${escapeHtml(field.label || field.key)}</option>`)
     .join("");
+}
+
+function formatSourceTemplateRef(fieldKey) {
+  const key = String(fieldKey || "").trim();
+  return /^[a-zA-Z0-9_]+$/.test(key) ? `{{${key}}}` : "";
+}
+
+function ruleConditionFieldType(field) {
+  return String(field?.field_type || field?.type || "text").toLowerCase();
+}
+
+function normalizedFieldOptions(field) {
+  let rawOptions = field?.options;
+  if (typeof rawOptions === "string") {
+    try {
+      rawOptions = JSON.parse(rawOptions);
+    } catch {
+      rawOptions = [];
+    }
+  } else if (!Array.isArray(rawOptions)) {
+    rawOptions = field?.options_json;
+  }
+  if (typeof rawOptions === "string") {
+    try {
+      rawOptions = JSON.parse(rawOptions);
+    } catch {
+      rawOptions = [];
+    }
+  }
+  if (!Array.isArray(rawOptions)) rawOptions = [];
+  return rawOptions
+    .map((option) => {
+      if (option && typeof option === "object" && !Array.isArray(option)) {
+        const value = String(option.value ?? option.key ?? "").trim();
+        const label = String(option.label ?? option.title ?? option.name ?? value).trim();
+        return value ? { value, label: label || value } : null;
+      }
+      const value = String(option ?? "").trim();
+      return value ? { value, label: value } : null;
+    })
+    .filter(Boolean);
+}
+
+function ruleConditionValuePayload(control, fieldType) {
+  if (!control) return null;
+  const rawValue = String(control.value ?? "").trim();
+  if (!rawValue) return null;
+  return String(fieldType || "").toLowerCase() === "number" ? String(Number(rawValue)) : rawValue;
+}
+
+function ruleTemplateFieldRefs(template) {
+  const refs = [];
+  const seen = new Set();
+  const re = /\{\{([a-zA-Z0-9_]+)\}\}/g;
+  let match;
+  while ((match = re.exec(String(template || ""))) !== null) {
+    if (seen.has(match[1])) continue;
+    seen.add(match[1]);
+    refs.push(match[1]);
+  }
+  return refs;
+}
+
+function compactRenderedTemplate(value) {
+  return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+}
+
+function renderRuleTemplateValue(template, context = {}) {
+  const rendered = String(template || "").replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, key) => {
+    const value = context[key];
+    if (value == null) return "";
+    if (value === true) return "true";
+    if (value === false) return "false";
+    return String(value).trim();
+  });
+  return compactRenderedTemplate(rendered);
 }
 
 const complexTemplateValuePlaceholder = "\u005b\u0421\u043b\u043e\u0436\u043d\u0430\u044f\u0020\u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430\u003a\u0020\u0442\u043e\u043b\u044c\u043a\u043e\u0020\u0441\u043a\u0430\u043b\u044f\u0440\u043d\u043e\u0435\u0020\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0020\u0438\u043b\u0438\u0020\u043e\u0447\u0438\u0441\u0442\u043a\u0430\u005d";
@@ -690,6 +859,42 @@ function syncRuleValueVisibility() {
   const needsValue = el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals";
   el.ruleConditionField.closest("label").classList.toggle("hidden", el.ruleOperator.value === "always");
   el.ruleValueWrap.classList.toggle("hidden", !needsValue);
+  if (needsValue) syncRuleConditionValueControl();
+}
+
+function currentRuleValueControl() {
+  return el.ruleValueWrap.querySelector("[data-rule-condition-value]") || el.ruleValue;
+}
+
+function ruleConditionField() {
+  return allClientCardFields().find((field) => field.key === el.ruleConditionField.value) || null;
+}
+
+function syncRuleConditionValueControl(value = null) {
+  const currentValue = value ?? currentRuleValueControl()?.value ?? "";
+  const field = ruleConditionField();
+  const type = ruleConditionFieldType(field);
+  const options = normalizedFieldOptions(field);
+  let controlHtml = "";
+  if (type === "select" && options.length) {
+    const hasCurrentOption = !String(currentValue).trim() || options.some((option) => option.value === String(currentValue));
+    controlHtml = `<select id="ruleValue" data-rule-condition-value>
+      <option value="">\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e</option>
+      ${!hasCurrentOption ? `<option value="${escapeHtml(currentValue)}" selected>\u0422\u0435\u043a\u0443\u0449\u0435\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435: ${escapeHtml(currentValue)} (\u0432 \u0441\u043f\u0438\u0441\u043a\u0435 \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435\u0442)</option>` : ""}
+      ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === String(currentValue) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+    </select>`;
+  } else if (type === "checkbox") {
+    controlHtml = `<select id="ruleValue" data-rule-condition-value>
+      <option value="">\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e</option>
+      <option value="true" ${String(currentValue) === "true" ? "selected" : ""}>\u0414\u0430</option>
+      <option value="false" ${String(currentValue) === "false" ? "selected" : ""}>\u041d\u0435\u0442</option>
+    </select>`;
+  } else {
+    const inputType = type === "number" ? "number" : "text";
+    controlHtml = `<input id="ruleValue" data-rule-condition-value type="${inputType}" value="${escapeHtml(currentValue)}" autocomplete="off" />`;
+  }
+  el.ruleValueWrap.innerHTML = `\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435${controlHtml}`;
+  el.ruleValue = document.getElementById("ruleValue");
 }
 
 function computeRuleActionUiState({ targetType = "field", scope = "editor", action = "show", valueType = "literal", previousNonSaveScope = "editor" }) {
@@ -713,6 +918,7 @@ function computeRuleActionUiState({ targetType = "field", scope = "editor", acti
     showSourceField: action === "set_value" && ["field", "map"].includes(valueType),
     showLookupSource: action === "lookup_source",
     showValue: action === "set_value" && ["literal", "template"].includes(valueType),
+    showTemplateTools: action === "set_value" && valueType === "template",
     showMap: action === "set_value" && valueType === "map",
   };
 }
@@ -721,19 +927,9 @@ function ruleActionOptions(targetType, scope, selected = "show") {
   const allowed = targetType === "block"
     ? ["show", "hide"]
     : ["show", "hide", "readonly", "editable", "required", "optional", "set_value", "lookup_source"];
-  const labels = {
-    show: "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c",
-    hide: "\u0421\u043a\u0440\u044b\u0442\u044c",
-    readonly: "readonly",
-    editable: "editable",
-    required: "\u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
-    optional: "\u041d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0435",
-    set_value: "\u0417\u0430\u0434\u0430\u0442\u044c \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435",
-    lookup_source: "\u041f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430",
-  };
   const safeSelected = allowed.includes(selected) ? selected : allowed[0];
   return allowed
-    .map((value) => `<option value="${value}" ${value === safeSelected ? "selected" : ""}>${labels[value]}</option>`)
+    .map((value) => `<option value="${value}" ${value === safeSelected ? "selected" : ""}>${ruleActionLabels[value] || value}</option>`)
     .join("");
 }
 
@@ -748,16 +944,16 @@ function ruleActionRowHtml(action = {}, index = 0) {
     .join("\n");
   return `
     <div class="client-card-rule-action-row" data-rule-action-row>
-      <label>\u0422\u0438\u043f \u0446\u0435\u043b\u0438
+      <label>\u0427\u0442\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c
         <select data-rule-action-prop="target_type">
           <option value="field" ${targetType === "field" ? "selected" : ""}>\u041f\u043e\u043b\u0435</option>
           <option value="block" ${targetType === "block" ? "selected" : ""}>\u0411\u043b\u043e\u043a</option>
         </select>
       </label>
-      <label data-rule-field-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_field">${fieldOptionsHtml(targetKey)}</select></label>
-      <label data-rule-block-target-wrap>\u0426\u0435\u043b\u044c<select data-rule-action-prop="target_block">${blockOptionsHtml(targetKey)}</select></label>
-      <label>\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435<select data-rule-action-prop="action">${ruleActionOptions(targetType, scope, action.action || "show")}</select></label>
-      <label>\u041e\u0431\u043b\u0430\u0441\u0442\u044c \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0438\u044f
+      <label data-rule-field-target-wrap>\u041a\u0430\u043a\u043e\u0439 \u0431\u043b\u043e\u043a \u0438\u043b\u0438 \u043f\u043e\u043b\u0435<select data-rule-action-prop="target_field">${fieldOptionsHtml(targetKey)}</select></label>
+      <label data-rule-block-target-wrap>\u041a\u0430\u043a\u043e\u0439 \u0431\u043b\u043e\u043a \u0438\u043b\u0438 \u043f\u043e\u043b\u0435<select data-rule-action-prop="target_block">${blockOptionsHtml(targetKey)}</select></label>
+      <label>\u0427\u0442\u043e \u0441\u0434\u0435\u043b\u0430\u0442\u044c<select data-rule-action-prop="action">${ruleActionOptions(targetType, scope, action.action || "show")}</select></label>
+      <label>\u0413\u0434\u0435 \u043f\u0440\u0438\u043c\u0435\u043d\u044f\u0442\u044c
         <select data-rule-action-prop="scope">
           <option value="editor" ${scope === "editor" ? "selected" : ""}>\u041e\u043a\u043d\u043e \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f</option>
           <option value="card" ${scope === "card" ? "selected" : ""}>\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430</option>
@@ -767,20 +963,62 @@ function ruleActionRowHtml(action = {}, index = 0) {
       </label>
       <label data-rule-value-type-wrap>\u0422\u0438\u043f \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f
         <select data-rule-action-prop="value_type">
-          <option value="literal" ${valueType === "literal" ? "selected" : ""}>literal</option>
-          <option value="field" ${valueType === "field" ? "selected" : ""}>field</option>
-          <option value="template" ${valueType === "template" ? "selected" : ""}>template</option>
-          <option value="map" ${valueType === "map" ? "selected" : ""}>map</option>
-          <option value="null" ${valueType === "null" ? "selected" : ""}>null</option>
+          <option value="literal" ${valueType === "literal" ? "selected" : ""}>${ruleValueTypeLabels.literal}</option>
+          <option value="field" ${valueType === "field" ? "selected" : ""}>${ruleValueTypeLabels.field}</option>
+          <option value="template" ${valueType === "template" ? "selected" : ""}>${ruleValueTypeLabels.template}</option>
+          <option value="map" ${valueType === "map" ? "selected" : ""}>${ruleValueTypeLabels.map}</option>
+          <option value="null" ${valueType === "null" ? "selected" : ""}>${ruleValueTypeLabels.null}</option>
         </select>
       </label>
       <label data-rule-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a<select data-rule-action-prop="source_key">${fieldOptionsHtml(action.source_key || "")}</select></label>
       <label data-rule-lookup-source-wrap>\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445<select data-rule-action-prop="source_id">${sourceOptionsHtml(sourceId)}</select></label>
-      <label data-rule-value-wrap>\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435<input data-rule-action-prop="value" value="${escapeHtml(action.value || "")}" autocomplete="off" /></label>
+      <div data-rule-value-wrap class="client-card-rule-value-wrap">
+        <label><span data-rule-value-label>\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435</span><input data-rule-action-prop="value" value="${escapeHtml(action.value || "")}" placeholder="\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u043e\u043b\u044f \u043a\u043d\u043e\u043f\u043a\u043e\u0439 \u043d\u0438\u0436\u0435" autocomplete="off" /></label>
+        <div class="client-card-rule-template-tools" data-rule-template-tools>
+          <div class="client-card-template-insert-row">
+            <select data-rule-template-insert-field>${templateFieldOptionsHtml()}</select>
+            <button class="action" type="button" data-rule-template-insert-field-btn>\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u043b\u0435</button>
+          </div>
+          <div class="status">\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u043e\u043b\u0435 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430: \u043e\u043d\u043e \u0432\u0441\u0442\u0430\u0432\u0438\u0442\u0441\u044f \u0432 \u0448\u0430\u0431\u043b\u043e\u043d. \u041c\u043e\u0436\u043d\u043e \u0434\u043e\u0431\u0430\u0432\u043b\u044f\u0442\u044c \u043f\u0440\u043e\u0431\u0435\u043b\u044b \u0438 \u043e\u0431\u044b\u0447\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442. \u041f\u0440\u0438\u043c\u0435\u0440: [\u0424\u0430\u043c\u0438\u043b\u0438\u044f] [\u0418\u043c\u044f].</div>
+          <div class="client-card-rule-template-preview-context" data-rule-template-preview-context></div>
+          <div class="client-card-rule-template-preview" data-rule-template-preview>\u041f\u0440\u0435\u0434\u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440: \u043f\u0443\u0441\u0442\u043e</div>
+        </div>
+      </div>
       <label data-rule-map-wrap>Map: \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430 = source =&gt; result<textarea data-rule-action-prop="map" rows="4">${escapeHtml(mapText)}</textarea></label>
       <button class="action danger ${index === 0 ? "hidden" : ""}" type="button" data-remove-rule-action>&times;</button>
     </div>
   `;
+}
+
+function syncRuleTemplatePreview(row) {
+  const tools = row.querySelector("[data-rule-template-tools]");
+  const valueInput = row.querySelector('[data-rule-action-prop="value"]');
+  const contextWrap = row.querySelector("[data-rule-template-preview-context]");
+  const previewEl = row.querySelector("[data-rule-template-preview]");
+  if (!tools || !valueInput || !contextWrap || !previewEl) return;
+
+  const existingValues = {};
+  contextWrap.querySelectorAll("[data-rule-template-preview-field]").forEach((input) => {
+    existingValues[input.dataset.ruleTemplatePreviewField] = input.value;
+  });
+  const fieldsByKey = new Map(allClientCardFields().map((field) => [field.key, field]));
+  const refs = ruleTemplateFieldRefs(valueInput.value);
+  const refsSignature = refs.join("\u0001");
+  if (contextWrap.dataset.ruleTemplateRefs !== refsSignature) {
+    contextWrap.dataset.ruleTemplateRefs = refsSignature;
+    contextWrap.innerHTML = refs.length
+      ? refs.map((key) => {
+          const field = fieldsByKey.get(key);
+          return `<label>${escapeHtml(field?.label || key)}<input data-rule-template-preview-field="${escapeHtml(key)}" value="${escapeHtml(existingValues[key] || "")}" placeholder="\u041f\u0440\u0438\u043c\u0435\u0440 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f" autocomplete="off" /></label>`;
+        }).join("")
+      : `<div class="status">\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u043f\u043e\u043b\u0435 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430, \u0447\u0442\u043e\u0431\u044b \u0443\u0432\u0438\u0434\u0435\u0442\u044c preview \u0441 \u0434\u0430\u043d\u043d\u044b\u043c\u0438.</div>`;
+  }
+  const context = {};
+  contextWrap.querySelectorAll("[data-rule-template-preview-field]").forEach((input) => {
+    context[input.dataset.ruleTemplatePreviewField] = input.value;
+  });
+  const rendered = renderRuleTemplateValue(valueInput.value, context);
+  previewEl.textContent = `\u041f\u0440\u0435\u0434\u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440: ${rendered || "\u043f\u0443\u0441\u0442\u043e"}`;
 }
 
 function syncRuleActionRow(row) {
@@ -799,12 +1037,15 @@ function syncRuleActionRow(row) {
   const targetFieldSelect = row.querySelector('[data-rule-action-prop="target_field"]');
   const sourceFieldSelect = row.querySelector('[data-rule-action-prop="source_key"]');
   const lookupSourceSelect = row.querySelector('[data-rule-action-prop="source_id"]');
+  const templateFieldSelect = row.querySelector("[data-rule-template-insert-field]");
   const targetValue = targetFieldSelect.value;
   const sourceValue = sourceFieldSelect.value;
   const lookupSourceValue = lookupSourceSelect.value;
+  const templateFieldValue = templateFieldSelect?.value || "";
   targetFieldSelect.innerHTML = scope === "save" ? saveFieldOptionsHtml(targetValue) : fieldOptionsHtml(targetValue);
   sourceFieldSelect.innerHTML = saveFieldOptionsHtml(sourceValue);
   lookupSourceSelect.innerHTML = sourceOptionsHtml(lookupSourceValue);
+  if (templateFieldSelect) templateFieldSelect.innerHTML = templateFieldOptionsHtml(templateFieldValue);
   actionSelect.innerHTML = ruleActionOptions(targetType, scope, actionSelect.value);
   const uiState = computeRuleActionUiState({ targetType, scope, action: actionValue, valueType, previousNonSaveScope });
   row.dataset.previousNonSaveScope = uiState.previousNonSaveScope;
@@ -820,7 +1061,10 @@ function syncRuleActionRow(row) {
   row.querySelector("[data-rule-source-wrap]").classList.toggle("hidden", !uiState.showSourceField);
   row.querySelector("[data-rule-lookup-source-wrap]").classList.toggle("hidden", !uiState.showLookupSource);
   row.querySelector("[data-rule-value-wrap]").classList.toggle("hidden", !uiState.showValue);
+  row.querySelector("[data-rule-template-tools]")?.classList.toggle("hidden", !uiState.showTemplateTools);
+  row.querySelector("[data-rule-value-label]").textContent = uiState.showTemplateTools ? "\u0428\u0430\u0431\u043b\u043e\u043d" : "\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435";
   row.querySelector("[data-rule-map-wrap]").classList.toggle("hidden", !uiState.showMap);
+  syncRuleTemplatePreview(row);
 }
 
 function syncRuleActionRows() {
@@ -893,10 +1137,12 @@ function openRuleModal(ruleId = null) {
   el.ruleActive.checked = rule?.is_active !== false;
   el.ruleConditionField.innerHTML = fieldOptionsHtml(rule?.condition_field_key || "");
   el.ruleOperator.value = rule?.condition_operator || "equals";
-  el.ruleValue.value = rule?.condition_value || "";
   renderRuleActions(rule?.actions || []);
   el.deleteClientCardRuleBtn.classList.toggle("hidden", !rule || rule.is_system);
   syncRuleValueVisibility();
+  if (el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals") {
+    syncRuleConditionValueControl(rule?.condition_value || "");
+  }
   el.clientCardRuleModal.classList.remove("hidden");
   el.ruleName.focus();
 }
@@ -909,12 +1155,16 @@ function closeRuleModal() {
 function rulePayloadFromModal() {
   const name = el.ruleName.value.trim();
   if (!name) throw new Error("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0430\u0432\u0438\u043b\u0430 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e");
+  const conditionField = ruleConditionField();
+  const conditionControl = currentRuleValueControl();
   return {
     name,
     is_active: Boolean(el.ruleActive.checked),
     condition_field_key: el.ruleOperator.value === "always" ? null : el.ruleConditionField.value,
     condition_operator: el.ruleOperator.value,
-    condition_value: (el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals") ? (el.ruleValue.value.trim() || null) : null,
+    condition_value: (el.ruleOperator.value === "equals" || el.ruleOperator.value === "not_equals")
+      ? ruleConditionValuePayload(conditionControl, conditionField?.field_type)
+      : null,
     actions: collectRuleActions(),
   };
 }
@@ -967,11 +1217,40 @@ async function moveRule(ruleId, direction) {
 async function deleteRule(ruleId) {
   const rule = findRuleById(ruleId);
   if (!rule || rule.is_system) return;
+  if (!window.confirm(`${uiText.deleteRuleConfirmPrefix}${rule.name || rule.id}${uiText.deleteRuleConfirmSuffix}`)) return;
   try {
     const config = await api(`/api/v1/settings/client-card/rules/${ruleId}`, { method: "DELETE" });
     closeRuleModal();
     setClientCardAndRender(config);
     setStatus(uiText.ruleDeleted);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function duplicateRule(ruleId) {
+  const sourceRule = findRuleById(ruleId);
+  if (!sourceRule) return;
+  try {
+    const createdRule = await api("/api/v1/settings/client-card/rules", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(buildRuleDuplicatePayload(sourceRule, state.clientCard.rules || [])),
+    });
+    await loadClientCardConfig();
+    let sourceIndex = (state.clientCard.rules || []).findIndex((rule) => rule.id === ruleId);
+    let copyIndex = (state.clientCard.rules || []).findIndex((rule) => rule.id === createdRule.id);
+    while (sourceIndex !== -1 && copyIndex > sourceIndex + 1) {
+      const config = await api(`/api/v1/settings/client-card/rules/${createdRule.id}/move`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ direction: "up" }),
+      });
+      setClientCardAndRender(config);
+      sourceIndex = (state.clientCard.rules || []).findIndex((rule) => rule.id === ruleId);
+      copyIndex = (state.clientCard.rules || []).findIndex((rule) => rule.id === createdRule.id);
+    }
+    setStatus(uiText.ruleCopied);
   } catch (e) {
     showError(e.message);
   }
@@ -990,7 +1269,7 @@ function openEditFieldModal(fieldId) {
   el.editFieldRequired.checked = Boolean(field.is_required);
   el.editFieldKey.value = field.key || "";
   el.editFieldKey.disabled = true;
-  el.editFieldType.innerHTML = fieldTypes.map((type) => `<option value="${type}">${type}</option>`).join("");
+  el.editFieldType.innerHTML = fieldTypes.map((type) => `<option value="${type}">${fieldTypeLabel(type)}</option>`).join("");
   el.editFieldType.value = field.field_type || "text";
 
   const isSystem = Boolean(field.is_system);
@@ -1086,21 +1365,64 @@ function blockPayloadFromDom(blockId) {
   return { title, color_scheme: color, is_active: active, show_in_card: showInCard, show_in_editor: showInEditor, show_title: showTitle };
 }
 
+function clearPendingBlockSaveTimer(blockId) {
+  const timer = state.pendingBlockSaveTimers.get(blockId);
+  if (timer) window.clearTimeout(timer);
+  state.pendingBlockSaveTimers.delete(blockId);
+}
+
+function blockSaveMeta(blockId) {
+  if (!state.pendingBlockSaveMeta.has(blockId)) {
+    state.pendingBlockSaveMeta.set(blockId, { version: 0, pendingVersion: 0, inFlight: false, statusText: uiText.blockSaved });
+  }
+  return state.pendingBlockSaveMeta.get(blockId);
+}
+
+function scheduleBlockAutosave(blockId, { delay = 0, statusText = uiText.blockSaved } = {}) {
+  const meta = blockSaveMeta(blockId);
+  meta.version += 1;
+  meta.pendingVersion = meta.version;
+  meta.statusText = statusText;
+  clearPendingBlockSaveTimer(blockId);
+  if (delay > 0) {
+    state.pendingBlockSaveTimers.set(blockId, window.setTimeout(() => {
+      state.pendingBlockSaveTimers.delete(blockId);
+      flushBlockAutosave(blockId);
+    }, delay));
+    return;
+  }
+  flushBlockAutosave(blockId);
+}
+
 async function saveBlock(blockId, statusText = uiText.blockSaved) {
+  scheduleBlockAutosave(blockId, { statusText });
+}
+
+async function flushBlockAutosave(blockId) {
+  const meta = blockSaveMeta(blockId);
+  if (meta.inFlight) return;
+  const savingVersion = meta.pendingVersion;
+  meta.inFlight = true;
   try {
     await api(`/api/v1/settings/client-card/blocks/${blockId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(blockPayloadFromDom(blockId)),
     });
-    state.pendingBlockColors.delete(blockId);
-    await loadClientCardConfig();
-    setStatus(statusText);
+    if (meta.pendingVersion === savingVersion) {
+      state.pendingBlockColors.delete(blockId);
+      await loadClientCardConfig();
+      setStatus(meta.statusText);
+    }
   } catch (e) {
     showError(e.message);
+  } finally {
+    meta.inFlight = false;
+    if (meta.pendingVersion !== savingVersion) {
+      flushBlockAutosave(blockId);
+    }
   }
 }
-
 async function moveBlock(blockId, direction) {
   try {
     const config = await api(`/api/v1/settings/client-card/blocks/${blockId}/move`, {
@@ -1170,6 +1492,9 @@ function renderClientCardSettings() {
 
     const card = document.createElement("div");
     card.className = `client-card-settings-block compact ${blockColorClass(block.color_scheme)}`;
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `${expanded ? uiText.collapse : uiText.expand}: ${block.title || block.key}`);
     card.innerHTML = `
       <div class="client-card-accordion-head">
         <div class="client-card-accordion-main">
@@ -1178,8 +1503,6 @@ function renderClientCardSettings() {
             <div class="client-card-accordion-key">${escapeHtml(block.key)}</div>
           </div>
           <div class="client-card-content-actions">
-            <button class="action" type="button" data-toggle-block-id="${escapeHtml(block.id)}">${expanded ? uiText.collapse : uiText.expand}</button>
-            <button class="action" type="button" data-save-block-id="${escapeHtml(block.id)}">${uiText.saveBlock}</button>
             ${customBlock ? `<button class="action danger" type="button" data-delete-block-id="${escapeHtml(block.id)}">${uiText.deleteBlock}</button>` : ""}
           </div>
           <div class="client-card-accordion-meta">
@@ -1196,12 +1519,13 @@ function renderClientCardSettings() {
         <label>${uiText.title}
           <input data-block-id="${escapeHtml(block.id)}" data-prop="title" value="${escapeHtml(block.title)}" />
         </label>
-        <label>${uiText.blockColor}
+        <div class="client-card-block-color-control" data-no-card-open>
+          <label class="client-card-block-color-label" for="client-card-color-${escapeHtml(block.id)}">${uiText.blockColor}</label>
           <div class="client-card-color-picker-row">
-            <input class="client-card-color-input" type="color" data-block-id="${escapeHtml(block.id)}" data-prop="color_scheme" value="${escapeHtml(blockColor)}" />
+            <input id="client-card-color-${escapeHtml(block.id)}" class="client-card-color-input" type="color" data-block-id="${escapeHtml(block.id)}" data-prop="color_scheme" value="${escapeHtml(blockColor)}" />
             <span class="client-card-color-hex" data-block-id="${escapeHtml(block.id)}" data-color-hex>${escapeHtml(blockColor.toUpperCase())}</span>
           </div>
-        </label>
+        </div>
         <label class="checkbox-label">${uiText.activeLabel}
           <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="is_active" ${block.is_active ? "checked" : ""} />
         </label>
@@ -1219,7 +1543,7 @@ function renderClientCardSettings() {
       <div class="client-card-accordion-body ${expanded ? "" : "hidden"}">
         <div class="client-card-field-list">
           ${(block.fields || []).map((field, fieldIndex, fields) => `
-            <div class="client-card-field-row">
+            <div class="client-card-field-row" data-open-field-id="${escapeHtml(field.id)}">
               <div class="client-card-field-visible">
                 <input type="checkbox" ${field.is_visible ? "checked" : ""} disabled />
                 <input type="checkbox" ${field.is_visible_in_editor !== false ? "checked" : ""} disabled />
@@ -1228,14 +1552,13 @@ function renderClientCardSettings() {
                 <div class="client-card-field-label">${escapeHtml(field.label)}</div>
                 <div class="client-card-field-meta">
                   <span class="mono" title="${escapeHtml(field.key)}">${escapeHtml(field.key)}</span>
-                  <span>${escapeHtml(field.field_type)}</span>
+                  <span>${escapeHtml(fieldTypeLabel(field.field_type))}</span>
                   ${field.is_system ? `<span>${uiText.systemField}</span>` : ""}
                 </div>
               </div>
               <div class="client-card-field-actions">
                 <button class="action" type="button" data-move-field-id="${escapeHtml(field.id)}" data-direction="up" ${fieldIndex === 0 ? "disabled" : ""}>${uiText.moveUp}</button>
                 <button class="action" type="button" data-move-field-id="${escapeHtml(field.id)}" data-direction="down" ${fieldIndex === fields.length - 1 ? "disabled" : ""}>${uiText.moveDown}</button>
-                <button class="action" type="button" data-edit-field-id="${escapeHtml(field.id)}">${uiText.edit}</button>
                 ${field.is_system ? "" : `<button class="action danger" type="button" data-delete-field-id="${escapeHtml(field.id)}">${uiText.deleteField}</button>`}
               </div>
             </div>
@@ -1249,14 +1572,18 @@ function renderClientCardSettings() {
 
     applySettingsBlockColor(card, blockColor);
     el.clientCardSettings.appendChild(card);
+    card.addEventListener("click", (event) => {
+      const boundary = interactiveBoundary(event.target);
+      if (boundary && boundary !== card) return;
+      toggleBlock(block.id);
+    });
+    bindKeyboardOpen(card, () => toggleBlock(block.id));
   }
 
-  el.clientCardSettings.querySelectorAll("[data-toggle-block-id]").forEach((btn) => {
-    btn.addEventListener("click", () => toggleBlock(btn.dataset.toggleBlockId));
-  });
-
-  el.clientCardSettings.querySelectorAll("[data-save-block-id]").forEach((btn) => {
-    btn.addEventListener("click", () => saveBlock(btn.dataset.saveBlockId, uiText.blockSaved));
+  el.clientCardSettings.querySelectorAll("[data-prop='title']").forEach((input) => {
+    input.addEventListener("input", () => scheduleBlockAutosave(input.dataset.blockId, { delay: 500, statusText: uiText.blockSaved }));
+    input.addEventListener("change", () => scheduleBlockAutosave(input.dataset.blockId, { statusText: uiText.blockSaved }));
+    input.addEventListener("blur", () => scheduleBlockAutosave(input.dataset.blockId, { statusText: uiText.blockSaved }));
   });
 
   el.clientCardSettings.querySelectorAll("[data-prop='color_scheme']").forEach((input) => {
@@ -1273,26 +1600,63 @@ function renderClientCardSettings() {
   });
 
   el.clientCardSettings.querySelectorAll("[data-move-block-id]").forEach((btn) => {
-    btn.addEventListener("click", () => moveBlock(btn.dataset.moveBlockId, btn.dataset.direction));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      moveBlock(btn.dataset.moveBlockId, btn.dataset.direction);
+    });
+  });
+
+  el.clientCardSettings.querySelectorAll("[data-prop='is_active'], [data-prop='show_in_card'], [data-prop='show_in_editor'], [data-prop='show_title']").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      event.stopPropagation();
+      scheduleBlockAutosave(input.dataset.blockId, { statusText: uiText.blockSaved });
+    });
   });
 
   el.clientCardSettings.querySelectorAll("[data-delete-block-id]").forEach((btn) => {
-    btn.addEventListener("click", () => deleteBlock(btn.dataset.deleteBlockId));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteBlock(btn.dataset.deleteBlockId);
+    });
   });
 
   el.clientCardSettings.querySelectorAll("[data-move-field-id]").forEach((btn) => {
-    btn.addEventListener("click", () => moveField(btn.dataset.moveFieldId, btn.dataset.direction));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      moveField(btn.dataset.moveFieldId, btn.dataset.direction);
+    });
   });
 
   el.clientCardSettings.querySelectorAll("[data-delete-field-id]").forEach((btn) => {
-    btn.addEventListener("click", () => deleteField(btn.dataset.deleteFieldId));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteField(btn.dataset.deleteFieldId);
+    });
   });
 
-  el.clientCardSettings.querySelectorAll("[data-edit-field-id]").forEach((btn) => {
-    btn.addEventListener("click", () => openEditFieldModal(btn.dataset.editFieldId));
+  el.clientCardSettings.querySelectorAll("[data-open-field-id]").forEach((row) => {
+    const fieldId = row.dataset.openFieldId;
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `${uiText.edit}: ${row.querySelector(".client-card-field-label")?.textContent || fieldId}`);
+    row.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const boundary = interactiveBoundary(event.target);
+      if (boundary && boundary !== row) return;
+      openEditFieldModal(fieldId);
+    });
+    bindKeyboardOpen(row, () => openEditFieldModal(fieldId));
   });
   el.clientCardSettings.querySelectorAll("[data-add-field-block-key]").forEach((btn) => {
-    btn.addEventListener("click", () => openCreateFieldModal(btn.dataset.addFieldBlockKey));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openCreateFieldModal(btn.dataset.addFieldBlockKey);
+    });
   });
 }
 
@@ -1305,6 +1669,9 @@ function renderClientCardRules() {
     const actions = rule.actions || [];
     const row = document.createElement("div");
     row.className = "client-card-rule-row";
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `${uiText.edit}: ${rule.name || rule.id}`);
     row.innerHTML = `
       <div class="client-card-field-main">
         <div class="client-card-field-label">${escapeHtml(rule.name)}</div>
@@ -1321,23 +1688,44 @@ function renderClientCardRules() {
         </label>
         <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="up">\u2191</button>
         <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="down">\u2193</button>
-        <button class="action" type="button" data-edit-rule-id="${escapeHtml(rule.id)}">${uiText.edit}</button>
+        <button class="action" type="button" data-copy-rule-id="${escapeHtml(rule.id)}">${uiText.copy}</button>
         ${rule.is_system ? "" : `<button class="action danger" type="button" data-delete-rule-id="${escapeHtml(rule.id)}">${uiText.deleteField}</button>`}
       </div>
     `;
+    row.addEventListener("click", (event) => {
+      if (event.target !== row && isInteractiveElement(event.target)) return;
+      openRuleModal(rule.id);
+    });
+    bindKeyboardOpen(row, () => openRuleModal(rule.id));
     el.clientCardRules.appendChild(row);
   }
-  el.clientCardRules.querySelectorAll("[data-edit-rule-id]").forEach((btn) => {
-    btn.addEventListener("click", () => openRuleModal(btn.dataset.editRuleId));
-  });
   el.clientCardRules.querySelectorAll("[data-delete-rule-id]").forEach((btn) => {
-    btn.addEventListener("click", () => deleteRule(btn.dataset.deleteRuleId));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteRule(btn.dataset.deleteRuleId);
+    });
+  });
+  el.clientCardRules.querySelectorAll("[data-copy-rule-id]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      duplicateRule(btn.dataset.copyRuleId);
+    });
   });
   el.clientCardRules.querySelectorAll("[data-toggle-rule-id]").forEach((input) => {
-    input.addEventListener("change", () => toggleRule(input.dataset.toggleRuleId, input.checked));
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("change", (event) => {
+      event.stopPropagation();
+      toggleRule(input.dataset.toggleRuleId, input.checked);
+    });
   });
   el.clientCardRules.querySelectorAll("[data-move-rule-id]").forEach((btn) => {
-    btn.addEventListener("click", () => moveRule(btn.dataset.moveRuleId, btn.dataset.direction));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      moveRule(btn.dataset.moveRuleId, btn.dataset.direction);
+    });
   });
 }
 
@@ -1349,6 +1737,9 @@ function renderClientCardSources() {
   for (const source of sources) {
     const row = document.createElement("div");
     row.className = "client-card-rule-row";
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `${uiText.edit}: ${source.name || source.technical_key || source.id}`);
     row.innerHTML = `
       <div class="client-card-field-main">
         <div class="client-card-field-label">${escapeHtml(source.name || source.technical_key || source.id)}</div>
@@ -1365,23 +1756,37 @@ function renderClientCardSources() {
           <input type="checkbox" data-toggle-source-id="${escapeHtml(source.id)}" ${source.is_active ? "checked" : ""} />
         </label>
         <button class="action" type="button" data-test-source-id="${escapeHtml(source.id)}">\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c</button>
-        <button class="action" type="button" data-edit-source-id="${escapeHtml(source.id)}">${uiText.edit}</button>
         <button class="action danger" type="button" data-delete-source-id="${escapeHtml(source.id)}">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>
       </div>
     `;
+    row.addEventListener("click", (event) => {
+      const boundary = interactiveBoundary(event.target);
+      if (boundary && boundary !== row) return;
+      openSourceModal(source.id);
+    });
+    bindKeyboardOpen(row, () => openSourceModal(source.id));
     el.clientCardSources.appendChild(row);
   }
-  el.clientCardSources.querySelectorAll("[data-edit-source-id]").forEach((btn) => {
-    btn.addEventListener("click", () => openSourceModal(btn.dataset.editSourceId));
-  });
   el.clientCardSources.querySelectorAll("[data-test-source-id]").forEach((btn) => {
-    btn.addEventListener("click", () => openSourceModal(btn.dataset.testSourceId));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openSourceModal(btn.dataset.testSourceId);
+    });
   });
   el.clientCardSources.querySelectorAll("[data-delete-source-id]").forEach((btn) => {
-    btn.addEventListener("click", () => deleteSource(btn.dataset.deleteSourceId));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSource(btn.dataset.deleteSourceId);
+    });
   });
   el.clientCardSources.querySelectorAll("[data-toggle-source-id]").forEach((input) => {
-    input.addEventListener("change", () => toggleSource(input.dataset.toggleSourceId, input.checked));
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("change", (event) => {
+      event.stopPropagation();
+      toggleSource(input.dataset.toggleSourceId, input.checked);
+    });
   });
 }
 
@@ -1546,12 +1951,12 @@ const handlePageKeydown = (e) => {
     markSourceEditorDirty();
   });
   el.sourceInsertUrlFieldBtn?.addEventListener("click", () => {
-    insertAtCursor(el.sourceUrl, `{{${el.sourceInsertUrlField.value}}}`);
+    insertAtCursor(el.sourceUrl, formatSourceTemplateRef(el.sourceInsertUrlField.value));
     markSourceEditorDirty();
     renderSourceTestContext(sourcePayloadFromModalSafe());
   });
   el.sourceInsertBodyFieldBtn?.addEventListener("click", () => {
-    insertAtCursor(el.sourceBodyJson, `{{${el.sourceInsertBodyField.value}}}`);
+    insertAtCursor(el.sourceBodyJson, formatSourceTemplateRef(el.sourceInsertBodyField.value));
     markSourceEditorDirty();
     renderSourceTestContext(sourcePayloadFromModalSafe());
   });
@@ -1566,7 +1971,10 @@ const handlePageKeydown = (e) => {
       const insertBtn = event.target.closest("[data-source-insert-field-btn]");
       if (insertBtn) {
         const row = insertBtn.closest(".client-card-source-row");
-        insertAtCursor(row?.querySelector("[data-source-row-value]"), `{{${row?.querySelector("[data-source-insert-field]")?.value || ""}}}`);
+        insertAtCursor(
+          row?.querySelector("[data-source-row-value]"),
+          formatSourceTemplateRef(row?.querySelector("[data-source-insert-field]")?.value || ""),
+        );
         row?.querySelector("[data-source-row-value]")?.removeAttribute("data-source-complex-value");
         markSourceEditorDirty();
         renderSourceTestContext(sourcePayloadFromModalSafe());
@@ -1593,14 +2001,35 @@ const handlePageKeydown = (e) => {
     if (state.editingRuleId) deleteRule(state.editingRuleId);
   });
   el.ruleOperator.addEventListener("change", syncRuleValueVisibility);
+  el.ruleConditionField.addEventListener("change", () => syncRuleConditionValueControl(""));
   el.addRuleActionBtn.addEventListener("click", () => {
     el.ruleActions.insertAdjacentHTML("beforeend", ruleActionRowHtml({}, el.ruleActions.querySelectorAll("[data-rule-action-row]").length));
     syncRuleActionRows();
   });
   el.ruleActions.addEventListener("change", (event) => {
     if (event.target.matches("[data-rule-action-prop]")) syncRuleActionRows();
+    if (event.target.matches("[data-rule-template-preview-field]")) {
+      syncRuleTemplatePreview(event.target.closest("[data-rule-action-row]"));
+    }
+  });
+  el.ruleActions.addEventListener("input", (event) => {
+    const row = event.target.closest("[data-rule-action-row]");
+    if (!row) return;
+    if (event.target.matches('[data-rule-action-prop="value"], [data-rule-template-preview-field]')) {
+      syncRuleTemplatePreview(row);
+    }
   });
   el.ruleActions.addEventListener("click", (event) => {
+    const insertBtn = event.target.closest("[data-rule-template-insert-field-btn]");
+    if (insertBtn) {
+      const row = insertBtn.closest("[data-rule-action-row]");
+      const fieldKey = row?.querySelector("[data-rule-template-insert-field]")?.value || "";
+      if (fieldKey) {
+        insertAtCursor(row.querySelector('[data-rule-action-prop="value"]'), `{{${fieldKey}}}`);
+        syncRuleTemplatePreview(row);
+      }
+      return;
+    }
     const btn = event.target.closest("[data-remove-rule-action]");
     if (!btn) return;
     const rows = el.ruleActions.querySelectorAll("[data-rule-action-row]");

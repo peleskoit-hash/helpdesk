@@ -137,6 +137,36 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
     return ticket
 
 
+def _call_center_profile_overrides(ticket: Ticket) -> dict:
+    overrides = dict(ticket.call_center_profile_snapshot_json or {})
+    if ticket.call_center_employee_first_name:
+        overrides["contact_name"] = ticket.call_center_employee_first_name
+    if ticket.call_center_employee_last_name:
+        overrides["last_name"] = ticket.call_center_employee_last_name
+    if ticket.call_center_employee_id:
+        overrides["bitrix_id"] = ticket.call_center_employee_id
+    if ticket.call_center_employee_bitrix_login:
+        overrides["bitrix_login"] = ticket.call_center_employee_bitrix_login
+    return overrides
+
+
+def _drop_call_center_snapshot_payload(data: dict, ticket: Ticket) -> dict:
+    overrides = _call_center_profile_overrides(ticket)
+    if not overrides:
+        return data
+    sanitized = dict(data)
+    snapshot_custom_fields = overrides.get("custom_fields") if isinstance(overrides.get("custom_fields"), dict) else {}
+    for key in ("contact_name", "last_name", "bitrix_id", "bitrix_login"):
+        if key in overrides:
+            sanitized.pop(key, None)
+    if "custom_fields" in sanitized and isinstance(sanitized["custom_fields"], dict) and snapshot_custom_fields:
+        custom_fields = dict(sanitized["custom_fields"])
+        for key in snapshot_custom_fields:
+            custom_fields.pop(key, None)
+        sanitized["custom_fields"] = custom_fields
+    return sanitized
+
+
 def _require_admin(user: CurrentUser):
     if not is_admin(user):
         _error(403, "admin_only", "Действие доступно только администратору")
@@ -825,11 +855,18 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         auto_closed_at=t.auto_closed_at,
         closed_by_user_id=t.closed_by_user_id,
         onsite_triggered=bool(t.onsite_triggered),
+        call_center_employee_lookup_at=t.call_center_employee_lookup_at,
+        call_center_internal_number=t.call_center_internal_number,
+        call_center_employee_first_name=t.call_center_employee_first_name,
+        call_center_employee_last_name=t.call_center_employee_last_name,
+        call_center_employee_id=t.call_center_employee_id,
+        call_center_employee_bitrix_login=t.call_center_employee_bitrix_login,
         client_name=t.client.display_name if t.client else "",
         client_profile=_profile_out(
             profile,
             telegram_username,
             telegram_display_name,
+            _call_center_profile_overrides(t),
         ),
         messages=[
             {
@@ -931,7 +968,7 @@ def update_client_profile(
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == t.client_id)).scalar_one_or_none()
     contact = _telegram_contact_for_client(db, t.client_id)
 
-    data = payload.model_dump(exclude_unset=True)
+    data = _drop_call_center_snapshot_payload(payload.model_dump(exclude_unset=True), t)
     merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
@@ -969,6 +1006,7 @@ def update_client_profile(
         profile,
         telegram_username,
         telegram_display_name,
+        _call_center_profile_overrides(t),
     )
 
 
@@ -991,7 +1029,12 @@ def run_client_profile_source(
     db.refresh(profile)
     telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (t.client.display_name if t.client else None)
     telegram_username = contact.external_username if contact else None
-    return _profile_out(profile, telegram_username, telegram_display_name)
+    return _profile_out(
+        profile,
+        telegram_username,
+        telegram_display_name,
+        _call_center_profile_overrides(t),
+    )
 
 
 def _add_message(

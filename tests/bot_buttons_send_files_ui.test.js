@@ -50,6 +50,8 @@ const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_c
 const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
+const ticketsListSource = fs.readFileSync('api/app/static/list.js', 'utf8');
+const ticketsTemplate = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
 const managementUsersSource = fs.readFileSync('api/app/static/management_users.js', 'utf8');
 const ticketTemplate = fs.readFileSync('api/app/templates/ticket.html', 'utf8');
 const managementUsersTemplate = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
@@ -65,26 +67,20 @@ function sourceBetween(source, start, end) {
 
 function loadSettingsClientCardHelpers() {
   const helperSource = [
+    sourceBetween(settingsClientCardSource, 'function deepCloneRuleActions', 'function isCustomBlock'),
+    sourceBetween(settingsClientCardSource, 'function formatSourceTemplateRef', 'function ruleTemplateFieldRefs'),
+    sourceBetween(settingsClientCardSource, 'function ruleConditionFieldType', 'function ruleTemplateFieldRefs'),
+    sourceBetween(settingsClientCardSource, 'function normalizedFieldOptions', 'function ruleTemplateFieldRefs'),
+    sourceBetween(settingsClientCardSource, 'function ruleTemplateFieldRefs', 'const complexTemplateValuePlaceholder'),
     sourceBetween(settingsClientCardSource, 'const complexTemplateValuePlaceholder', 'function keyValueRowHtml'),
     sourceBetween(settingsClientCardSource, 'function canTestSourceEditor', 'function syncSourceTestAvailability'),
     sourceBetween(settingsClientCardSource, 'function computeRuleActionUiState', 'function ruleActionOptions'),
-    'window.__settingsClientCardHelpers = { analyzeTemplateObject, serializeTemplateRows, computeRuleActionUiState, canTestSourceEditor, complexTemplateValuePlaceholder };',
+    'window.__settingsClientCardHelpers = { analyzeTemplateObject, buildRuleDuplicatePayload, canTestSourceEditor, complexTemplateValuePlaceholder, computeRuleActionUiState, deepCloneRuleActions, escapeRegExp, formatSourceTemplateRef, nextRuleCopyName, normalizedFieldOptions, renderRuleTemplateValue, ruleConditionFieldType, ruleTemplateFieldRefs, serializeTemplateRows };',
   ].join('\n');
   const window = {};
   const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
   vm.runInContext(helperSource, context);
   return window.__settingsClientCardHelpers;
-}
-
-function loadTicketClientCardHelpers() {
-  const helperSource = [
-    sourceBetween(ticketClientCardSource, 'function populateManualSourceSelect', 'function openManualSourceRun'),
-    'window.__ticketClientCardHelpers = { populateManualSourceSelect };',
-  ].join('\n');
-  const window = {};
-  const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
-  vm.runInContext(helperSource, context);
-  return window.__ticketClientCardHelpers;
 }
 
 function loadManagementUsersHelpers() {
@@ -113,7 +109,6 @@ function loadManagementUsersHelpers() {
 
 const managementUsersHelpers = loadManagementUsersHelpers();
 const settingsClientCardHelpers = loadSettingsClientCardHelpers();
-const ticketClientCardHelpers = loadTicketClientCardHelpers();
 
 test('settings client card UI hides manual order controls in the main block and field editor', () => {
   assert.doesNotMatch(settingsClientCardSource, /data-prop="sort_order"/);
@@ -150,7 +145,7 @@ test('settings client card keeps draft block color through local rerenders and s
 });
 
 test('settings client card color input previews locally without direct patch', () => {
-  const inputHandlerSource = sourceBetween(settingsClientCardSource, 'input.addEventListener("input"', 'input.addEventListener("change"');
+  const inputHandlerSource = sourceBetween(settingsClientCardSource, 'input.addEventListener("input", () => {', '    input.addEventListener("change", () => saveBlock');
   assert.match(inputHandlerSource, /state\.pendingBlockColors\.set\(id, color\)/);
   assert.match(inputHandlerSource, /hex\.textContent = color\.toUpperCase\(\)/);
   assert.match(inputHandlerSource, /applySettingsBlockColor\(card, color\)/);
@@ -158,11 +153,13 @@ test('settings client card color input previews locally without direct patch', (
 });
 
 test('settings client card save block sends current color and keeps pending on errors', () => {
-  const payloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'async function saveBlock');
+  const payloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'function clearPendingBlockSaveTimer');
   assert.match(payloadSource, /state\.pendingBlockColors\.get\(blockId\) \|\| colorInput\?\.value \|\| fallbackColorHex/);
   assert.match(payloadSource, /return \{ title, color_scheme: color, is_active: active, show_in_card: showInCard, show_in_editor: showInEditor, show_title: showTitle \}/);
 
-  const saveSource = sourceBetween(settingsClientCardSource, 'async function saveBlock', 'async function moveBlock');
+  const saveSource = sourceBetween(settingsClientCardSource, 'function clearPendingBlockSaveTimer', 'async function moveBlock');
+  assert.match(saveSource, /window\.setTimeout/);
+  assert.match(saveSource, /if \(meta\.inFlight\) return/);
   assert.match(saveSource, /method: "PATCH"/);
   assert.match(saveSource, /body: JSON\.stringify\(blockPayloadFromDom\(blockId\)\)/);
   assert.match(saveSource, /state\.pendingBlockColors\.delete\(blockId\)/);
@@ -174,11 +171,19 @@ test('settings client card block header separates content and reorder actions', 
   assert.match(settingsClientCardSource, /client-card-reorder-actions/);
   const contentActions = sourceBetween(settingsClientCardSource, '<div class="client-card-content-actions">', '<div class="client-card-accordion-meta">');
   const reorderActions = sourceBetween(settingsClientCardSource, '<div class="client-card-reorder-actions">', '<div class="client-card-block-editor">');
-  assert.match(contentActions, /data-toggle-block-id/);
-  assert.match(contentActions, /data-save-block-id/);
+  assert.doesNotMatch(contentActions, /data-save-block-id/);
+  assert.doesNotMatch(contentActions, /data-toggle-block-id/);
   assert.doesNotMatch(contentActions, /data-move-block-id/);
+  assert.doesNotMatch(settingsClientCardSource, /compact-icon|data-toggle-block-id/);
   assert.match(reorderActions, /data-move-block-id/);
   assert.doesNotMatch(reorderActions, /data-save-block-id/);
+});
+
+test('settings client card block autosave removes dedicated save button and saves title on debounce', () => {
+  assert.doesNotMatch(settingsClientCardSource, /data-save-block-id/);
+  assert.match(settingsClientCardSource, /input\.addEventListener\("input", \(\) => scheduleBlockAutosave\(input\.dataset\.blockId, \{ delay: 500, statusText: uiText\.blockSaved \}\)\)/);
+  assert.match(settingsClientCardSource, /input\.addEventListener\("blur", \(\) => scheduleBlockAutosave\(input\.dataset\.blockId, \{ statusText: uiText\.blockSaved \}\)\)/);
+  assert.match(settingsClientCardSource, /data-prop='is_active'], \[data-prop='show_in_card'], \[data-prop='show_in_editor'], \[data-prop='show_title']/);
 });
 
 test('ticket client card safely applies hex block colors for ticket and management views', () => {
@@ -189,11 +194,13 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260715c/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260715c/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260710a/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260710a/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20260710a/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260803b/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20260803b/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260803a/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260803a/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20260803a/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20260803a/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20260803a/);
 });
 
 test('settings client card uses main tabs with blocks open by default', () => {
@@ -325,9 +332,285 @@ test('settings client card UI contains configurable rules section and form', () 
   assert.match(settingsClientCardSource, /function ruleActionOptions/);
   assert.match(settingsClientCardSource, /data-rule-action-row/);
   assert.match(settingsClientCardSource, /target_type: targetType/);
-  assert.match(settingsClientCardSource, /condition_value: \(el\.ruleOperator\.value === "equals" \|\| el\.ruleOperator\.value === "not_equals"\) \? \(el\.ruleValue\.value\.trim\(\) \|\| null\) : null/);
+  assert.match(settingsClientCardSource, /condition_value: \(el\.ruleOperator\.value === "equals" \|\| el\.ruleOperator\.value === "not_equals"\)/);
+  assert.match(settingsClientCardSource, /ruleConditionValuePayload\(conditionControl, conditionField\?\.field_type\)/);
   assert.match(settingsClientCardSource, /actions: collectRuleActions\(\)/);
   assert.match(settingsClientCardSource, /\/api\/v1\/settings\/client-card\/rules\/\$\{ruleId\}\/move/);
+});
+
+test('rule condition value control derives type and options from selected field config', () => {
+  const destinationField = {
+    key: 'destination',
+    label: 'Куда..?',
+    field_type: 'select',
+    block_key: 'department',
+    sort_order: 10,
+    is_system: true,
+    options: ['Песок', 'Отдел Продаж', 'Колл Центр', 'Руководство'],
+  };
+  const customShadeField = {
+    key: 'custom_shade',
+    label: 'Предпочитаемый оттенок',
+    field_type: 'select',
+    block_key: 'custom_block_1',
+    sort_order: 20,
+    is_system: false,
+    options: JSON.stringify([
+      { label: 'Красный', value: 'red' },
+      { label: 'Зелёный', value: 'green' },
+    ]),
+  };
+  const textField = {
+    key: 'contact_name',
+    label: 'Имя',
+    type: 'text',
+    block_key: 'profile',
+    sort_order: 30,
+    is_system: true,
+    options: null,
+  };
+
+  assert.equal(settingsClientCardHelpers.ruleConditionFieldType(destinationField), 'select');
+  assert.equal(settingsClientCardHelpers.ruleConditionFieldType(textField), 'text');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(settingsClientCardHelpers.normalizedFieldOptions(destinationField))),
+    [
+      { value: 'Песок', label: 'Песок' },
+      { value: 'Отдел Продаж', label: 'Отдел Продаж' },
+      { value: 'Колл Центр', label: 'Колл Центр' },
+      { value: 'Руководство', label: 'Руководство' },
+    ],
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(settingsClientCardHelpers.normalizedFieldOptions(customShadeField))),
+    [
+      { value: 'red', label: 'Красный' },
+      { value: 'green', label: 'Зелёный' },
+    ],
+  );
+  assert.match(settingsClientCardSource, /function normalizedFieldOptions/);
+  assert.match(settingsClientCardSource, /function ruleConditionFieldType/);
+  assert.match(settingsClientCardSource, /const options = normalizedFieldOptions\(field\)/);
+  assert.match(settingsClientCardSource, /const type = ruleConditionFieldType\(field\)/);
+  assert.match(settingsClientCardSource, /type === "select" && options\.length/);
+  assert.match(settingsClientCardSource, /typeof rawOptions === "string"/);
+  assert.match(settingsClientCardSource, /JSON\.parse\(rawOptions\)/);
+  assert.match(settingsClientCardSource, /option\.value === String\(currentValue\)/);
+  assert.match(settingsClientCardSource, /option\.label/);
+  assert.match(settingsClientCardSource, /type === "checkbox"/);
+  assert.match(settingsClientCardSource, /type === "number" \? "number" : "text"/);
+  assert.match(settingsClientCardSource, /el\.ruleValueWrap\.classList\.toggle\("hidden", !needsValue\)/);
+  assert.match(settingsClientCardSource, /syncRuleConditionValueControl\(rule\?\.condition_value \|\| ""\)/);
+});
+
+test('backend client card config now preserves system select options for rule editor runtime', () => {
+  const clientCardServiceSource = fs.readFileSync('api/app/services/client_card.py', 'utf8');
+  const settingsRouterSource = fs.readFileSync('api/app/routers/settings_client_card.py', 'utf8');
+  assert.match(clientCardServiceSource, /SYSTEM_SELECT_FIELD_OPTIONS = \{/);
+  assert.match(clientCardServiceSource, /"destination": \[/);
+  assert.match(clientCardServiceSource, /"Колл Центр"/);
+  assert.match(clientCardServiceSource, /def _field_options_out\(field: ClientCardFieldConfig\)/);
+  assert.match(clientCardServiceSource, /options=_field_options_out\(field\)/);
+  assert.match(settingsRouterSource, /from \.\.services\.client_card import _field_editor_visibility_default, _field_options_out/);
+  assert.match(settingsRouterSource, /options=_field_options_out\(field\)/);
+});
+
+test('rule copy helpers preserve actions, template text and isolate nested data', () => {
+  const sourceRule = {
+    id: 'rule-1',
+    name: 'ФИО',
+    is_active: true,
+    sort_order: 20,
+    condition_field_key: 'department_name',
+    condition_operator: 'equals',
+    condition_value: 'Колл Центр',
+    actions: [
+      {
+        target_type: 'field',
+        target_key: 'custom_fio',
+        action: 'set_value',
+        scope: 'save',
+        value_type: 'template',
+        value: '{{last_name}} {{contact_name}}',
+      },
+      {
+        target_type: 'field',
+        target_key: 'bitrix_login',
+        action: 'set_value',
+        scope: 'save',
+        value_type: 'field',
+        source_key: 'bitrix_login',
+      },
+    ],
+  };
+
+  const payload = settingsClientCardHelpers.buildRuleDuplicatePayload(sourceRule, [sourceRule]);
+
+  assert.equal(payload.name, 'ФИО — Копия');
+  assert.equal(payload.is_active, false);
+  assert.equal(payload.sort_order, 21);
+  assert.equal(payload.condition_field_key, 'department_name');
+  assert.equal(payload.condition_operator, 'equals');
+  assert.equal(payload.condition_value, 'Колл Центр');
+  assert.deepEqual(payload.actions, sourceRule.actions);
+  assert.equal(payload.actions[0].value, '{{last_name}} {{contact_name}}');
+  assert.notEqual(payload.actions, sourceRule.actions);
+
+  payload.actions[0].value = '{{last_name}}';
+  payload.actions[1].source_key = 'changed';
+  assert.equal(sourceRule.actions[0].value, '{{last_name}} {{contact_name}}');
+  assert.equal(sourceRule.actions[1].source_key, 'bitrix_login');
+});
+
+test('rule copy naming increments existing copy suffixes', () => {
+  const rules = [
+    { name: 'ФИО' },
+    { name: 'ФИО — Копия' },
+    { name: 'ФИО — Копия 2' },
+    { name: 'Другое правило — Копия' },
+  ];
+
+  assert.equal(settingsClientCardHelpers.nextRuleCopyName('ФИО', rules), 'ФИО — Копия 3');
+  assert.equal(settingsClientCardHelpers.nextRuleCopyName('Новое правило', rules), 'Новое правило — Копия');
+});
+
+test('rule copy button uses existing create API and isolates click from card actions', () => {
+  assert.match(settingsClientCardSource, /data-copy-rule-id="\$\{escapeHtml\(rule\.id\)\}">\$\{uiText\.copy\}<\/button>/);
+  assert.match(settingsClientCardSource, /await api\("\/api\/v1\/settings\/client-card\/rules", \{/);
+  assert.match(settingsClientCardSource, /buildRuleDuplicatePayload\(sourceRule, state\.clientCard\.rules \|\| \[\]\)/);
+  assert.match(settingsClientCardSource, /await api\(`\/api\/v1\/settings\/client-card\/rules\/\$\{createdRule\.id\}\/move`, \{/);
+  assert.match(settingsClientCardSource, /event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\);[\s\S]*duplicateRule\(btn\.dataset\.copyRuleId\);/);
+  assert.doesNotMatch(settingsClientCardSource, /data-copy-rule-id[\s\S]*openRuleModal\(btn\.dataset\.copyRuleId\)/);
+  assert.doesNotMatch(settingsClientCardSource, /data-copy-rule-id[\s\S]*toggleRule\(btn\.dataset\.copyRuleId/);
+});
+
+test('rule cards open editor from free area and keep controls isolated', () => {
+  const rulesSource = sourceBetween(settingsClientCardSource, 'function renderClientCardRules', 'function renderClientCardSources');
+  assert.match(rulesSource, /row\.tabIndex = 0/);
+  assert.match(rulesSource, /row\.setAttribute\("role", "button"\)/);
+  assert.match(rulesSource, /openRuleModal\(rule\.id\)/);
+  assert.match(rulesSource, /bindKeyboardOpen\(row, \(\) => openRuleModal\(rule\.id\)\)/);
+  assert.doesNotMatch(rulesSource, /data-edit-rule-id/);
+  assert.match(rulesSource, /event\.stopPropagation\(\);[\s\S]*deleteRule\(btn\.dataset\.deleteRuleId\)/);
+  assert.match(rulesSource, /event\.stopPropagation\(\);[\s\S]*toggleRule\(input\.dataset\.toggleRuleId, input\.checked\)/);
+  assert.match(rulesSource, /event\.stopPropagation\(\);[\s\S]*moveRule\(btn\.dataset\.moveRuleId, btn\.dataset\.direction\)/);
+});
+
+test('rule delete asks for explicit confirmation with rule name', () => {
+  const deleteSource = sourceBetween(settingsClientCardSource, 'async function deleteRule', 'async function duplicateRule');
+  assert.match(deleteSource, /window\.confirm/);
+  assert.match(deleteSource, /uiText\.deleteRuleConfirmPrefix/);
+  assert.match(deleteSource, /rule\.name \|\| rule\.id/);
+  assert.match(deleteSource, /uiText\.deleteRuleConfirmSuffix/);
+});
+
+test('rule editor uses user-facing Russian labels while preserving API values', () => {
+  assert.match(settingsClientCardTemplate, />Если поле<select id="ruleConditionField"/);
+  assert.match(settingsClientCardTemplate, />Условие сравнения/);
+  assert.match(settingsClientCardSource, /\\u0427\\u0442\\u043e \\u0438\\u0437\\u043c\\u0435\\u043d\\u0438\\u0442\\u044c/);
+  assert.match(settingsClientCardSource, /\\u041a\\u0430\\u043a\\u043e\\u0439 \\u0431\\u043b\\u043e\\u043a \\u0438\\u043b\\u0438 \\u043f\\u043e\\u043b\\u0435/);
+  assert.match(settingsClientCardSource, /\\u0427\\u0442\\u043e \\u0441\\u0434\\u0435\\u043b\\u0430\\u0442\\u044c/);
+  assert.match(settingsClientCardSource, /\\u0413\\u0434\\u0435 \\u043f\\u0440\\u0438\\u043c\\u0435\\u043d\\u044f\\u0442\\u044c/);
+  assert.match(settingsClientCardSource, /readonly: "\\u0422\\u043e\\u043b\\u044c\\u043a\\u043e \\u0447\\u0442\\u0435\\u043d\\u0438\\u0435"/);
+  assert.match(settingsClientCardSource, /"readonly"/);
+  assert.match(settingsClientCardSource, /ruleActionLabels\[value\] \|\| value/);
+  assert.doesNotMatch(settingsClientCardSource, />readonly<\/option>|>editable<\/option>|>template<\/option>|>literal<\/option>/);
+});
+
+test('rule condition value input follows selected field type', () => {
+  assert.match(settingsClientCardSource, /function syncRuleConditionValueControl/);
+  assert.match(settingsClientCardSource, /function normalizedFieldOptions/);
+  assert.match(settingsClientCardSource, /const options = normalizedFieldOptions\(field\)/);
+  assert.match(settingsClientCardSource, /type === "select" && options\.length/);
+  assert.match(settingsClientCardSource, /<select id="ruleValue" data-rule-condition-value>/);
+  assert.match(settingsClientCardSource, /option\.label/);
+  assert.match(settingsClientCardSource, /type === "checkbox"/);
+  assert.match(settingsClientCardSource, />\\u0414\\u0430<\/option>/);
+  assert.match(settingsClientCardSource, /inputType = type === "number" \? "number" : "text"/);
+  assert.match(settingsClientCardSource, /el\.ruleValueWrap\.classList\.toggle\("hidden", !needsValue\)/);
+  assert.match(settingsClientCardSource, /el\.ruleConditionField\.addEventListener\("change", \(\) => syncRuleConditionValueControl\(""\)\)/);
+});
+
+test('source cards open editor from free area and keep controls isolated', () => {
+  const sourcesSource = sourceBetween(settingsClientCardSource, 'function renderClientCardSources', 'async function loadClientCardConfig');
+  assert.match(sourcesSource, /row\.tabIndex = 0/);
+  assert.match(sourcesSource, /row\.setAttribute\("role", "button"\)/);
+  assert.match(sourcesSource, /bindKeyboardOpen\(row, \(\) => openSourceModal\(source\.id\)\)/);
+  assert.match(sourcesSource, /if \(boundary && boundary !== row\) return;/);
+  assert.doesNotMatch(sourcesSource, /data-edit-source-id/);
+  assert.match(sourcesSource, /data-test-source-id/);
+  assert.match(sourcesSource, /data-toggle-source-id/);
+  assert.match(sourcesSource, /event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\);[\s\S]*deleteSource/);
+  assert.match(sourcesSource, /event\.stopPropagation\(\);[\s\S]*toggleSource/);
+});
+
+test('settings blocks and field rows use free-area click without wide checkbox or color hit area', () => {
+  const settingsSource = sourceBetween(settingsClientCardSource, 'function renderClientCardSettings', 'function renderClientCardRules');
+  assert.match(settingsSource, /card\.tabIndex = 0/);
+  assert.match(settingsSource, /card\.setAttribute\("role", "button"\)/);
+  assert.match(settingsSource, /toggleBlock\(block\.id\)/);
+  assert.match(settingsSource, /const boundary = interactiveBoundary\(event\.target\)/);
+  assert.match(settingsSource, /if \(boundary && boundary !== card\) return/);
+  assert.doesNotMatch(settingsSource, /data-toggle-block-id|compact-icon/);
+  assert.match(settingsSource, /data-open-field-id="\$\{escapeHtml\(field\.id\)\}"/);
+  assert.doesNotMatch(settingsSource, /data-edit-field-id/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*openEditFieldModal\(fieldId\)/);
+  assert.match(settingsSource, /openEditFieldModal\(fieldId\)/);
+  assert.match(stylesSource, /\.checkbox-label \{[\s\S]*width: fit-content;[\s\S]*max-width: max-content;/);
+  assert.match(settingsSource, /client-card-block-color-label/);
+  assert.match(settingsSource, /client-card-block-color-control/);
+  assert.match(settingsSource, /for="client-card-color-\$\{escapeHtml\(block\.id\)\}"/);
+  assert.match(settingsSource, /id="client-card-color-\$\{escapeHtml\(block\.id\)\}"/);
+  assert.match(stylesSource, /\.client-card-block-color-control \{[\s\S]*width: fit-content;[\s\S]*max-width: max-content;/);
+  assert.match(stylesSource, /\.client-card-block-color-label \{[\s\S]*display: inline-flex;[\s\S]*width: fit-content;[\s\S]*max-width: max-content;[\s\S]*cursor: pointer;/);
+  assert.match(stylesSource, /\.client-card-color-picker-row \{[\s\S]*width: fit-content;[\s\S]*max-width: max-content;/);
+  assert.match(stylesSource, /\.client-card-field-row\[role="button"\]:focus-visible/);
+  assert.match(stylesSource, /\.client-card-settings-block\[role="button"\]:focus-visible/);
+});
+
+test('block free-area toggle keeps controls isolated and keyboard toggle intact', () => {
+  const settingsSource = sourceBetween(settingsClientCardSource, 'function interactiveBoundary', 'function renderClientCardRules');
+  assert.match(settingsSource, /\[role='button'\]/);
+  assert.match(settingsSource, /bindKeyboardOpen\(card, \(\) => toggleBlock\(block\.id\)\)/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*scheduleBlockAutosave\(input\.dataset\.blockId, \{ statusText: uiText\.blockSaved \}\)/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*moveBlock\(btn\.dataset\.moveBlockId, btn\.dataset\.direction\)/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*moveField\(btn\.dataset\.moveFieldId, btn\.dataset\.direction\)/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*deleteField\(btn\.dataset\.deleteFieldId\)/);
+  assert.match(settingsSource, /event\.stopPropagation\(\);[\s\S]*openCreateFieldModal\(btn\.dataset\.addFieldBlockKey\)/);
+});
+
+test('top matching rule wins for conflicting runtime actions', () => {
+  const runtimeSource = sourceBetween(ticketClientCardSource, 'function ruleConflictKey', 'function bindClientCardRuleInputs');
+  assert.match(runtimeSource, /function compareRulePriority/);
+  assert.match(runtimeSource, /field:\$\{action\.target_key\}:visibility/);
+  assert.match(runtimeSource, /field:\$\{action\.target_key\}:editability/);
+  assert.match(runtimeSource, /String\(a\?\.id \|\| ""\)\.localeCompare\(String\(b\?\.id \|\| ""\)\)/);
+  assert.match(runtimeSource, /const resolved = new Set\(\)/);
+  assert.match(runtimeSource, /if \(conflictKey && resolved\.has\(conflictKey\)\) continue/);
+  assert.match(runtimeSource, /if \(conflictKey\) resolved\.add\(conflictKey\)/);
+  assert.match(runtimeSource, /\.sort\(compareRulePriority\)/);
+  const cardSource = sourceBetween(ticketClientCardSource, 'function applyClientCardRulesToCardConfig', 'function getClientFieldValue');
+  assert.match(cardSource, /const resolved = new Set\(\)/);
+  assert.match(cardSource, /if \(conflictKey && resolved\.has\(conflictKey\)\) continue/);
+  assert.match(cardSource, /\.sort\(compareRulePriority\)/);
+});
+
+test('source modal is wide, adaptive and avoids horizontal scroll', () => {
+  const sourceUrlRowStyles = sourceBetween(stylesSource, '#clientCardSourceModal .client-card-source-url-row {', '#clientCardSourceModal .modal-foot {');
+  assert.match(stylesSource, /#clientCardSourceModal \.modal-dialog \{[\s\S]*width: min\(1120px, calc\(100vw - 32px\)\);[\s\S]*max-width: calc\(100vw - 32px\);/);
+  assert.match(stylesSource, /#clientCardSourceModal \.modal-body \{[\s\S]*overflow-y: auto;[\s\S]*overflow-x: hidden;/);
+  assert.match(stylesSource, /@media \(max-width: 980px\) \{[\s\S]*#clientCardSourceModal \.client-card-source-row/);
+  assert.match(settingsClientCardTemplate, /class="client-card-source-url-row"/);
+  assert.match(settingsClientCardTemplate, /class="client-card-source-url-tools"/);
+  assert.match(sourceUrlRowStyles, /display: grid;/);
+  assert.match(sourceUrlRowStyles, /grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(sourceUrlRowStyles, /gap: 10px;/);
+  assert.match(sourceUrlRowStyles, /#clientCardSourceModal \.client-card-source-url-row > input \{[\s\S]*min-width: 0;[\s\S]*width: 100%;[\s\S]*max-width: none;/);
+  assert.match(sourceUrlRowStyles, /#clientCardSourceModal \.client-card-source-url-tools \{[\s\S]*display: grid;[\s\S]*grid-template-columns: clamp\(180px, 20vw, 220px\) max-content;[\s\S]*justify-content: start;/);
+  assert.match(sourceUrlRowStyles, /#clientCardSourceModal \.client-card-source-url-tools > select \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
+  assert.doesNotMatch(sourceUrlRowStyles, /justify-content: space-between;/);
+  assert.match(stylesSource, /@media \(max-width: 760px\) \{[\s\S]*#clientCardSourceModal \.client-card-source-url-tools \{[\s\S]*grid-template-columns: 1fr;[\s\S]*\}[\s\S]*#clientCardSourceModal \.client-card-source-url-row \{[\s\S]*grid-template-columns: 1fr;/);
+  assert.match(stylesSource, /#clientCardSourceModal \.modal-foot \{[\s\S]*flex-wrap: wrap;/);
 });
 
 test('ticket client card runtime applies configurable rules and filters payload', () => {
@@ -337,7 +620,8 @@ test('ticket client card runtime applies configurable rules and filters payload'
   assert.match(ticketClientCardSource, /function activeEditorRuleBlockTargets/);
   assert.match(ticketClientCardSource, /function fieldShownInEditorOrRuleTarget/);
   assert.match(ticketClientCardSource, /function blockShownInEditorOrRuleTarget/);
-  assert.match(ticketClientCardSource, /!\(?field\?\.is_system/);
+  assert.match(ticketClientCardSource, /return fieldShownInEditor\(field\) \|\| ruleTargets\.has\(field\?\.key\)/);
+  assert.doesNotMatch(ticketClientCardSource, /!\(?field\?\.is_system/);
   assert.match(ticketClientCardSource, /function ruleMatches/);
   assert.match(ticketClientCardSource, /function bindClientCardRuleInputs/);
   assert.match(ticketClientCardSource, /addEventListener\("change", \(\) => applyClientCardRules\(ctx\)\)/);
@@ -425,12 +709,25 @@ test('AnyDesk visibility is represented by default rule config without renderer 
   const defaultConfigSource = sourceBetween(ticketClientCardSource, 'function defaultClientCardViewConfig()', 'function clientCardColorClass');
   const syncSource = sourceBetween(ticketClientCardSource, 'function syncDynamicModalFields', 'function fillModal');
   const seedSource = fs.readFileSync('api/app/services/seed_data.py', 'utf8');
+  assert.match(defaultConfigSource, /key: "anydesk", label: "Anydesk"[\s\S]*is_visible: false[\s\S]*is_visible_in_editor: false/);
   assert.match(defaultConfigSource, /condition_field_key: "location_type"/);
   assert.match(defaultConfigSource, /condition_value: "\\u0423\\u0434\\u0430\\u043b\\u0451\\u043d\\u043d\\u044b\\u0439"/);
-  assert.match(defaultConfigSource, /target_key: "anydesk"/);
+  assert.match(defaultConfigSource, /target_key: "anydesk", action: "show", scope: "both"/);
+  assert.match(seedSource, /\("anydesk", "Anydesk", "text", "department", 80, False, True, True\)/);
   assert.match(seedSource, /"condition_field_key": "location_type"/);
-  assert.match(seedSource, /"target_key": "anydesk"/);
+  assert.match(seedSource, /"target_key": "anydesk", "action": "show", "scope": "both"/);
   assert.doesNotMatch(syncSource, /Удал|\\u0423\\u0434\\u0430\\u043b|anydesk|fAnydesk/);
+});
+
+test('ticket client card keeps derived department metadata hidden by default in card config', () => {
+  const defaultConfigSource = sourceBetween(ticketClientCardSource, 'function defaultClientCardViewConfig()', 'function clientCardColorClass');
+  const seedSource = fs.readFileSync('api/app/services/seed_data.py', 'utf8');
+  assert.match(defaultConfigSource, /key: "department", label: "Отдел"[\s\S]*is_visible: false/);
+  assert.match(defaultConfigSource, /key: "first_department", label: "Департамент"[\s\S]*is_visible: false/);
+  assert.match(defaultConfigSource, /key: "group_name", label: "Группа"[\s\S]*is_visible: false/);
+  assert.match(seedSource, /\("department", "Отдел", "readonly", "department", 40, False, False, True\)/);
+  assert.match(seedSource, /\("first_department", "Департамент", "readonly", "department", 50, False, False, True\)/);
+  assert.match(seedSource, /\("group_name", "Группа", "readonly", "department", 60, False, False, True\)/);
 });
 
 test('ticket client card custom fields editor is exported and used by shared modal flow', () => {
@@ -441,11 +738,173 @@ test('ticket client card custom fields editor is exported and used by shared mod
   assert.match(fillModalSource, /renderCustomFieldsEditor\(ctx, profile\)/);
 });
 
+test('ticket client card modal editor follows configured mixed system/custom field order', () => {
+  assert.match(ticketClientCardSource, /const profileSystemFieldKeys = new Set/);
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+  assert.match(editorSource, /\.sort\(\(a, b\) => \(a\.sort_order \|\| 0\) - \(b\.sort_order \|\| 0\)\)/);
+  assert.match(editorSource, /if \(field\.is_system\) \{/);
+  assert.match(editorSource, /renderConfiguredSystemEditorField\(ctx, field, currentValue\)/);
+  assert.match(editorSource, /document\.createElement\("section"\)/);
+  assert.match(editorSource, /blockWrap\.className = "modal-field-section custom-field-editor-block"/);
+  assert.match(editorSource, /if \(block\.id\) blockWrap\.dataset\.blockId = block\.id/);
+  assert.match(editorSource, /blockWrap\.dataset\.blockKey = block\.key/);
+  assert.match(editorSource, /blockWrap\.dataset\.clientCardBlockKey = block\.key/);
+  assert.match(editorSource, /blockWrap\.dataset\.clientCardGeneratedSection = "1"/);
+  assert.match(editorSource, /blockWrap\.dataset\.blockColorScheme = String\(block\.color_scheme \|\| ""\)/);
+  assert.match(editorSource, /applyClientCardEditorSectionColor\(blockWrap, block\.color_scheme\)/);
+  assert.match(editorSource, /sectionParent\.insertBefore\(blockWrap, el\.customFieldsSection\)/);
+  assert.doesNotMatch(editorSource, /customFieldsContainer\.appendChild\(blockWrap\)/);
+  assert.doesNotMatch(editorSource, /filter\(\(field\) => !profileSystemFieldKeys\.has\(field\?\.key\)\)/);
+});
+
+test('ticket client card modal editor keeps system blocks when their fields are editor-visible or rule targets', () => {
+  const defaultConfigSource = sourceBetween(ticketClientCardSource, 'function defaultClientCardViewConfig()', 'function clientCardColorClass');
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+  const seedSource = fs.readFileSync('api/app/services/seed_data.py', 'utf8');
+  const clientCardServiceSource = fs.readFileSync('api/app/services/client_card.py', 'utf8');
+  const settingsRouterSource = fs.readFileSync('api/app/routers/settings_client_card.py', 'utf8');
+
+  assert.match(defaultConfigSource, /key: "tg"[\s\S]*show_in_editor: true[\s\S]*key: "telegram_username"[\s\S]*is_visible_in_editor: true[\s\S]*is_editable: false/);
+  assert.match(defaultConfigSource, /key: "department"[\s\S]*key: "destination"[\s\S]*is_visible_in_editor: true[\s\S]*key: "location_type"[\s\S]*is_visible_in_editor: true/);
+  assert.match(defaultConfigSource, /key: "sand_owner"[\s\S]*is_visible_in_editor: false/);
+  assert.match(defaultConfigSource, /key: "sales_group"[\s\S]*is_visible_in_editor: false/);
+  assert.match(defaultConfigSource, /key: "work"[\s\S]*key: "internal_number"[\s\S]*is_visible_in_editor: true[\s\S]*key: "bitrix_id"[\s\S]*is_visible_in_editor: true/);
+  assert.match(defaultConfigSource, /key: "verification"[\s\S]*key: "is_verified"[\s\S]*is_visible_in_editor: true/);
+  assert.match(editorSource, /fieldShownInEditorOrRuleTarget\(field, ruleTargets\)/);
+  assert.match(ticketClientCardSource, /return fieldShownInEditor\(field\) \|\| ruleTargets\.has\(field\?\.key\)/);
+  assert.match(editorSource, /renderConfiguredSystemEditorField\(ctx, field, currentValue\)/);
+  assert.match(editorSource, /if \(baseHidden\) fieldEl\.classList\.add\("hidden"\)/);
+  assert.match(seedSource, /system_field_editor_visibility_defaults = \{/);
+  for (const key of ['telegram_username', 'telegram_display_name', 'last_name', 'contact_name', 'destination', 'location_type', 'internal_number', 'bitrix_login', 'bitrix_password', 'bitrix_id', 'is_verified']) {
+    assert.match(seedSource, new RegExp(`"${key}": True`));
+  }
+  for (const key of ['sand_owner', 'sales_group', 'department', 'first_department', 'group_name', 'anydesk']) {
+    assert.match(seedSource, new RegExp(`"${key}": False`));
+  }
+  assert.match(clientCardServiceSource, /SYSTEM_FIELD_EDITOR_VISIBILITY_DEFAULTS = \{/);
+  assert.match(clientCardServiceSource, /_field_editor_visibility_default\(field\)/);
+  assert.match(settingsRouterSource, /from \.\.services\.client_card import _field_editor_visibility_default/);
+});
+
+test('ticket client card modal editor derives section color from block config instead of block key', () => {
+  const colorSource = sourceBetween(ticketClientCardSource, 'function clientCardColorHex', 'function blockShownInCard');
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+  const modalSectionTitleStyle = sourceBetween(stylesSource, '.modal-field-section > .client-card-block-title {', '.modal-body label {');
+  const darkModalSectionTitleStyle = sourceBetween(stylesSource, 'body[data-theme="dark"] .modal-field-section > .client-card-block-title {', 'body[data-theme="dark"] .modal-field-section label,');
+  assert.match(colorSource, /function clientCardColorHex/);
+  assert.match(colorSource, /blue: "#dbeafe"/);
+  assert.match(colorSource, /purple: "#ede9fe"/);
+  assert.match(colorSource, /if \(isHexColor\(value\)\) return value\.toLowerCase\(\)/);
+  assert.match(colorSource, /function blendHexColors/);
+  assert.match(colorSource, /function contrastRatio/);
+  assert.match(colorSource, /function contrastTextColor/);
+  assert.match(colorSource, /function applyClientCardEditorSectionColor/);
+  assert.match(colorSource, /const lightBackground = blendHexColors\(hex, "#ffffff", 0\.86\)/);
+  assert.match(colorSource, /const darkBackground = blendHexColors\(hex, "#0f172a", 0\.58\)/);
+  assert.match(colorSource, /const lightText = contrastTextColor\(lightBackground\)/);
+  assert.match(colorSource, /const darkText = contrastTextColor\(darkBackground\)/);
+  assert.match(colorSource, /sectionEl\.style\.setProperty\("--client-card-editor-bg", lightBackground\)/);
+  assert.match(colorSource, /sectionEl\.style\.setProperty\("--client-card-editor-title-text", lightText\)/);
+  assert.match(colorSource, /sectionEl\.style\.setProperty\("--client-card-editor-label-text", lightText\)/);
+  assert.match(colorSource, /sectionEl\.style\.setProperty\("--client-card-editor-title-text-dark", darkText\)/);
+  assert.match(colorSource, /sectionEl\.style\.setProperty\("--client-card-editor-label-text-dark", darkText\)/);
+  assert.match(editorSource, /applyClientCardEditorSectionColor\(blockWrap, block\.color_scheme\)/);
+  assert.doesNotMatch(colorSource, /block\.key === "tg"|block\.key === "profile"|block\.key === "department"|block\.key === "work"|block\.key === "verification"/);
+  assert.doesNotMatch(editorSource, /editorBlockSectionClass\(block\.key\)/);
+  assert.match(stylesSource, /\.modal-field-section \{[\s\S]*background: var\(--client-card-editor-bg, #e5e7eb\);/);
+  assert.match(modalSectionTitleStyle, /display: block;/);
+  assert.match(modalSectionTitleStyle, /color: var\(--client-card-editor-title-text, #0f172a\);/);
+  assert.doesNotMatch(modalSectionTitleStyle, /border-radius: 999px/);
+  assert.doesNotMatch(modalSectionTitleStyle, /background: var\(--client-card-editor-title-bg/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.modal-field-section \{[\s\S]*background: var\(--client-card-editor-bg-dark, rgba\(14, 28, 48, 0\.56\)\);/);
+  assert.match(darkModalSectionTitleStyle, /color: var\(--client-card-editor-title-text-dark, #f8fafc\);/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.client-card-field-readonly-rule input,[\s\S]*color: #e2e8f0;/);
+  assert.doesNotMatch(stylesSource, /\.modal-field-section-profile|\.modal-field-section-department|\.modal-field-section-work|\.modal-field-section-verification/);
+});
+
+test('ticket client card modal editor chooses text color by contrast ratio on blended background', () => {
+  const helpersSource = sourceBetween(ticketClientCardSource, 'function hexLuminance', 'function applyClientCardBlockColor');
+  const editorColorSource = sourceBetween(ticketClientCardSource, 'function applyClientCardEditorSectionColor', 'function blockShownInCard');
+  assert.match(helpersSource, /function contrastRatio/);
+  assert.match(helpersSource, /return \(lighter \+ 0\.05\) \/ \(darker \+ 0\.05\)/);
+  assert.match(helpersSource, /const dark = "#000000"/);
+  assert.match(helpersSource, /const light = "#ffffff"/);
+  assert.match(helpersSource, /return contrastRatio\(backgroundHex, dark\) >= contrastRatio\(backgroundHex, light\) \? dark : light/);
+  assert.match(editorColorSource, /const lightBackground = blendHexColors\(hex, "#ffffff", 0\.86\)/);
+  assert.match(editorColorSource, /const darkBackground = blendHexColors\(hex, "#0f172a", 0\.58\)/);
+  assert.match(editorColorSource, /const lightText = contrastTextColor\(lightBackground\)/);
+  assert.match(editorColorSource, /const darkText = contrastTextColor\(darkBackground\)/);
+  assert.doesNotMatch(editorColorSource, /contrastTextColor\(hex\)/);
+
+  const blendHexColors = (foreground, background, alpha) => {
+    const parse = (hex) => [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
+    const [fr, fg, fb] = parse(foreground);
+    const [br, bg, bb] = parse(background);
+    const mix = (front, back) => Math.round((front * alpha) + (back * (1 - alpha)));
+    return `#${[mix(fr, br), mix(fg, bg), mix(fb, bb)].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+  };
+  const luminance = (hex) => {
+    const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+    const normalized = channels.map((channel) => (
+      channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+    ));
+    return (0.2126 * normalized[0]) + (0.7152 * normalized[1]) + (0.0722 * normalized[2]);
+  };
+  const contrastRatio = (backgroundHex, textHex) => {
+    const background = luminance(backgroundHex);
+    const text = luminance(textHex);
+    const lighter = Math.max(background, text);
+    const darker = Math.min(background, text);
+    return (lighter + 0.05) / (darker + 0.05);
+  };
+  const contrastTextColor = (backgroundHex) => (
+    contrastRatio(backgroundHex, '#000000') >= contrastRatio(backgroundHex, '#ffffff') ? '#000000' : '#ffffff'
+  );
+
+  const lightPinkBackground = blendHexColors('#f4a7c5', '#ffffff', 0.86);
+  const lightGreenBackground = blendHexColors('#8fd19e', '#ffffff', 0.86);
+  const darkBackground = blendHexColors('#4b1d6b', '#0f172a', 0.58);
+
+  assert.equal(contrastTextColor(lightPinkBackground), '#000000');
+  assert.equal(contrastTextColor(lightGreenBackground), '#000000');
+  assert.equal(contrastTextColor(darkBackground), '#ffffff');
+});
+
+test('ticket client card editor builds sibling modal sections instead of one custom wrapper', () => {
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+  const fieldNodesSource = sourceBetween(ticketClientCardSource, 'function fieldEditorNodes', 'function selectorKey');
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+
+  assert.match(editorSource, /const sectionParent = el\.customFieldsSection\.parentElement/);
+  assert.match(editorSource, /Array\.from\(sectionParent\.children\)\.forEach/);
+  assert.match(editorSource, /node\.dataset\?\.clientCardGeneratedSection === "1"/);
+  assert.match(editorSource, /el\.customFieldsSection\.classList\.add\("hidden"\)/);
+  assert.match(editorSource, /sectionParent\.insertBefore\(blockWrap, el\.customFieldsSection\)/);
+  assert.match(editorSource, /\.filter\(\(block\) => blockShownInEditorOrRuleTarget\(block, blockRuleTargets\)\)/);
+  assert.match(editorSource, /\.filter\(\(field\) => fieldShownInEditorOrRuleTarget\(field, ruleTargets\)\)/);
+  assert.match(fieldNodesSource, /ctx\.el\.clientModal\?\.querySelector/);
+  assert.match(fieldNodesSource, /data-client-card-field-key/);
+  assert.match(payloadSource, /\(el\.clientModal \|\| el\.customFieldsContainer\)\.querySelectorAll\("\[data-custom-field-key\]"\)/);
+});
+
 test('ticket and management users pages use the shared TicketClientCard modal renderer', () => {
   assert.match(ticketPageSource, /return TicketClientCard\.fillModal\(clientCardCtx\(\), profile\)/);
   assert.match(ticketPageSource, /return TicketClientCard\.renderCustomFieldsEditor\(clientCardCtx\(\), profile\)/);
   assert.match(managementUsersSource, /window\.TicketClientCard\.fillModal\(clientCardCtx\(root\), profile \|\| \{\}\)/);
   assert.doesNotMatch(managementUsersSource, /function renderCustomFieldsEditor/);
+  assert.match(ticketClientCardSource, /applyClientCardEditorSectionColor\(blockWrap, block\.color_scheme\)/);
+});
+
+test('ordinary card and editor use the same runtime color field and do not cross-apply key-based modal colors', () => {
+  const cardSource = sourceBetween(ticketClientCardSource, 'function renderClientDynamicCard', 'function fillClientPanel');
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+  assert.match(cardSource, /clientCardColorClass\(block\.color_scheme\)/);
+  assert.match(cardSource, /applyClientCardBlockColor\(blockEl, block\.color_scheme\)/);
+  assert.match(editorSource, /blockWrap\.dataset\.blockColorScheme = String\(block\.color_scheme \|\| ""\)/);
+  assert.match(editorSource, /applyClientCardEditorSectionColor\(blockWrap, block\.color_scheme\)/);
+  assert.match(editorSource, /blockWrap\.className = "modal-field-section custom-field-editor-block"/);
+  assert.doesNotMatch(editorSource, /blockWrap\.className = .*modal-field-section-profile|blockWrap\.className = .*modal-field-section-department|blockWrap\.className = .*modal-field-section-work|blockWrap\.className = .*modal-field-section-verification/);
+  assert.doesNotMatch(editorSource, /blocks\[\s*index|blocks\[index\]|blockIndex.*color|color.*blockIndex/);
 });
 
 test('client card settings renders source list and source editor controls', () => {
@@ -480,7 +939,7 @@ test('client card source headings use Russian data source wording', () => {
 });
 
 test('rule action editor uses full-width vertical card layout and widened modal', () => {
-  assert.match(settingsClientCardSource, /\\u041e\\u0431\\u043b\\u0430\\u0441\\u0442\\u044c \\u043f\\u0440\\u0438\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f/);
+  assert.match(settingsClientCardSource, /\\u0413\\u0434\\u0435 \\u043f\\u0440\\u0438\\u043c\\u0435\\u043d\\u044f\\u0442\\u044c/);
   assert.match(stylesSource, /\.client-card-rule-action-row \{[\s\S]*grid-template-columns: minmax\(0, 1fr\);[\s\S]*border: 1px solid rgba\(148, 163, 184, 0\.35\);[\s\S]*padding: 12px;/);
   assert.match(stylesSource, /\.client-card-rule-action-row > label \{[\s\S]*display: grid;[\s\S]*gap: 6px;/);
   assert.match(stylesSource, /\.client-card-rule-action-row select,[\s\S]*\.client-card-rule-action-row input,[\s\S]*\.client-card-rule-action-row textarea \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
@@ -491,7 +950,7 @@ test('rule action editor uses full-width vertical card layout and widened modal'
 test('client card source editor supports template insertion, dependency context and preview rendering', () => {
   assert.match(settingsClientCardSource, /sourceInsertUrlFieldBtn/);
   assert.match(settingsClientCardSource, /sourceInsertBodyFieldBtn/);
-  assert.match(settingsClientCardSource, /insertAtCursor\(el\.sourceUrl, `\{\{\$\{el\.sourceInsertUrlField\.value\}\}\}`\)/);
+  assert.match(settingsClientCardSource, /insertAtCursor\(el\.sourceUrl, formatSourceTemplateRef\(el\.sourceInsertUrlField\.value\)\)/);
   assert.match(settingsClientCardSource, /function sourceTemplateRefs/);
   assert.match(settingsClientCardSource, /function renderSourceTestContext/);
   assert.match(settingsClientCardSource, /data-source-test-field/);
@@ -540,6 +999,12 @@ test('source editor serialization keeps flat values and blocks unresolved comple
   const serialized = settingsClientCardHelpers.serializeTemplateRows(container, '[data-source-query-row]');
   assert.deepEqual(JSON.parse(JSON.stringify(serialized.value)), { flat: 'value', token: '{{contact_name}}' });
   assert.deepEqual(Array.from(serialized.unresolvedKeys), ['nested']);
+});
+
+test('source editor uses backend-compatible template token syntax for query values', () => {
+  assert.equal(settingsClientCardHelpers.formatSourceTemplateRef('internal_number'), '{{internal_number}}');
+  assert.equal(settingsClientCardHelpers.formatSourceTemplateRef(' bad key '), '');
+  assert.match(settingsClientCardSource, /formatSourceTemplateRef\(row\?\.querySelector\("\[data-source-insert-field\]"\)\?\.value \|\| ""\)/);
 });
 
 test('source editor test availability blocks unsaved and new sources', () => {
@@ -592,43 +1057,37 @@ test('lookup_source rule action uses source_id and hides set_value controls', ()
   assert.match(settingsClientCardSource, /data-rule-lookup-source-wrap/);
 });
 
-test('manual source selector creates safe option text for stored HTML payload', () => {
-  const selectEl = {
-    innerHTML: 'stale',
-    options: [],
-    appendChild(node) {
-      this.options.push(node);
-    },
-  };
-  const doc = {
-    createElement(tag) {
-      assert.equal(tag, 'option');
-      return { value: '', textContent: '', innerHTML: '' };
-    },
-  };
-
-  ticketClientCardHelpers.populateManualSourceSelect(selectEl, [
-    { id: '1', name: '<img src=x onerror=alert(1)>', technical_key: 'x' },
-  ], doc);
-
-  assert.equal(selectEl.innerHTML, '');
-  assert.equal(selectEl.options.length, 1);
-  assert.equal(selectEl.options[0].value, '1');
-  assert.equal(selectEl.options[0].textContent, '<img src=x onerror=alert(1)>');
-  assert.equal(selectEl.options[0].innerHTML, '');
+test('set_value template action editor exposes field picker, hint and preview', () => {
+  assert.match(settingsClientCardSource, /data-rule-template-insert-field/);
+  assert.match(settingsClientCardSource, /data-rule-template-insert-field-btn/);
+  assert.match(settingsClientCardSource, /data-rule-template-preview/);
+  assert.match(settingsClientCardSource, /data-rule-template-preview-context/);
+  assert.match(settingsClientCardSource, /templateFieldOptionsHtml\(\)/);
+  assert.match(settingsClientCardSource, /insertAtCursor\(row\.querySelector\('\[data-rule-action-prop="value"\]'\), `\{\{\$\{fieldKey\}\}\}`\)/);
+  assert.match(settingsClientCardSource, /\\u041f\\u0440\\u0438\\u043c\\u0435\\u0440: \[\\u0424\\u0430\\u043c\\u0438\\u043b\\u0438\\u044f\] \[\\u0418\\u043c\\u044f\]/);
 });
 
-test('manual source run UI is shared by ticket and management users', () => {
-  assert.match(ticketTemplate, /id="runClientSourceBtn"/);
-  assert.match(ticketTemplate, /id="clientSourceRunModal"/);
-  assert.match(managementUsersTemplate, /id="runClientSourceBtn"/);
-  assert.match(managementUsersTemplate, /id="clientSourceRunModal"/);
-  assert.match(ticketClientCardSource, /function bindManualSourceRun/);
-  assert.match(ticketClientCardSource, /function runManualSource/);
-  assert.match(ticketClientCardSource, /source_id: sourceId/);
-  assert.match(ticketPageSource, /manualSourceRunPath: \(\) => `\/api\/v1\/tickets\/\$\{state\.ticketId\}\/client-profile\/source-run`/);
-  assert.match(managementUsersSource, /manualSourceRunPath: \(\) => `\/api\/v1\/management\/users\/\$\{encodeURIComponent\(state\.selectedClientId\)\}\/profile\/source-run`/);
-  assert.match(managementUsersSource, /loadUsers\(root\)\.catch/);
+test('set_value template preview trims empty parts without hardcoded full-name logic', () => {
+  const template = '{{last_name}} {{contact_name}}';
+
+  assert.deepEqual(Array.from(settingsClientCardHelpers.ruleTemplateFieldRefs(template)), ['last_name', 'contact_name']);
+  assert.equal(settingsClientCardHelpers.renderRuleTemplateValue(template, { last_name: 'Иванова', contact_name: 'Мария' }), 'Иванова Мария');
+  assert.equal(settingsClientCardHelpers.renderRuleTemplateValue(template, { last_name: 'Иванова', contact_name: '' }), 'Иванова');
+  assert.equal(settingsClientCardHelpers.renderRuleTemplateValue(template, { last_name: '', contact_name: 'Мария' }), 'Мария');
+  assert.equal(settingsClientCardHelpers.renderRuleTemplateValue(template, { last_name: '', contact_name: '' }), '');
+  assert.equal(settingsClientCardHelpers.renderRuleTemplateValue('ID {{bitrix_id}} login {{bitrix_login}}', { bitrix_id: 42, bitrix_login: 'm.ivanova' }), 'ID 42 login m.ivanova');
+});
+
+test('manual source run UI is removed while backend source-run routes stay outside this frontend contract', () => {
+  assert.doesNotMatch(ticketTemplate, /id="runClientSourceBtn"/);
+  assert.doesNotMatch(ticketTemplate, /id="clientSourceRunModal"/);
+  assert.doesNotMatch(managementUsersTemplate, /id="runClientSourceBtn"/);
+  assert.doesNotMatch(managementUsersTemplate, /id="clientSourceRunModal"/);
+  assert.doesNotMatch(ticketClientCardSource, /function bindManualSourceRun/);
+  assert.doesNotMatch(ticketClientCardSource, /function runManualSource/);
+  assert.doesNotMatch(ticketPageSource, /manualSourceRunPath:/);
+  assert.doesNotMatch(managementUsersSource, /manualSourceRunPath:/);
+  assert.match(ticketTemplate, /id="editClientBtn"/);
 });
 
 test('tickets source-run readonly error line stays in unicode escapes and blocks mojibake regression', () => {
@@ -817,6 +1276,16 @@ test('management users template contains pagination controls', () => {
   assert.match(template, /id="managementUsersNextBtn"/);
   assert.match(template, /&#1053;&#1072;&#1079;&#1072;&#1076;/);
   assert.match(template, /&#1044;&#1072;&#1083;&#1077;&#1077;/);
+});
+
+test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
+  assert.match(ticketsTemplate, /data-sort-key="requester_display_name"/);
+  assert.match(ticketsTemplate, /list\.js\?v=20260731a/);
+  assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
+  assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name"\]\)/);
+  assert.match(ticketsListSource, /linkedCell\("ticket-client-col", t\.requester_display_name \|\| t\.client_name \|\| ""\)/);
+  assert.match(ticketsListSource, /state\.tableSortDir = \["subject", "requester_display_name", "assignee_name"\]\.includes\(key\) \? "asc" : "desc";/);
+  assert.doesNotMatch(ticketsListSource, /profile\.last_name|profile\.contact_name|telegram_display_name/);
 });
 
 test('settings users label is renamed for admins and agents', () => {

@@ -14,6 +14,7 @@ class TicketListItem(BaseModel):
     is_frozen: bool
     seen_by_agent: bool
     client_name: str
+    requester_display_name: str = ""
     assignee_id: str | None = None
     assignee_name: str | None = None
     is_special: bool = False
@@ -145,6 +146,12 @@ class TicketCard(BaseModel):
     auto_closed_at: datetime | None = None
     closed_by_user_id: str | None = None
     onsite_triggered: bool = False
+    call_center_employee_lookup_at: datetime | None = None
+    call_center_internal_number: str | None = None
+    call_center_employee_first_name: str | None = None
+    call_center_employee_last_name: str | None = None
+    call_center_employee_id: str | None = None
+    call_center_employee_bitrix_login: str | None = None
     client_name: str
     client_profile: ClientProfileOut
     messages: list[TicketMessageOut]

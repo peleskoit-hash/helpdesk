@@ -14,6 +14,8 @@ from api.app.db import Base
 from api.app.models import Client, ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, Company, Ticket, TicketStatus, User
 from api.app.routers import management_users, settings_client_card, tickets
 from api.app.schemas import ClientCardBlockUpdate, ClientCardFieldCreate, ClientCardFieldUpdate, ClientCardMovePayload, ClientCardRuleAction, ClientCardRuleCreate, ClientCardRuleUpdate, ClientCardSourceCreate, ClientCardSourceUpdate, ClientProfileUpdate
+from api.app.services import client_card
+from api.app.services import client_card_derivation
 from api.app.services import client_card_sources
 from api.app.services import seed_data
 
@@ -718,7 +720,7 @@ def test_source_patch_cannot_make_lookup_source_rule_dependency_free():
     assert session.get(ClientCardSourceConfig, source.id).url_template.endswith("{{internal_number}}")
 
 
-def test_save_derivation_value_types_and_ordered_override():
+def test_save_derivation_value_types_and_top_rule_priority():
     session = _session()
     _, ticket, profile = _client_card_save_fixture(session)
     session.add_all(
@@ -760,11 +762,54 @@ def test_save_derivation_value_types_and_ordered_override():
     )
     session.refresh(profile)
 
-    assert profile.department == "Sales Department"
+    assert profile.department == "Sales"
     assert profile.first_department == "First"
     assert profile.group_name == "Sales / Remote"
     assert profile.anydesk is None
     assert profile.custom_fields == {"custom_note": "from-rule"}
+
+
+def test_save_derivation_template_trims_empty_name_parts_without_full_name_hardcode():
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "department")).scalar_one()
+    session.add(_field("last_name", "Last name", block.key, 15, is_system=True))
+    session.add(
+        _save_rule(
+            "full name template",
+            10,
+            "always",
+            None,
+            None,
+            [
+                {
+                    "target_type": "field",
+                    "target_key": "group_name",
+                    "action": "set_value",
+                    "scope": "save",
+                    "value_type": "template",
+                    "value": "{{last_name}} {{contact_name}}",
+                },
+            ],
+        )
+    )
+    session.commit()
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(last_name="Иванова", contact_name="Мария"), db=session, user=_admin())
+    session.refresh(profile)
+    assert profile.group_name == "Иванова Мария"
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(last_name="Иванова", contact_name=""), db=session, user=_admin())
+    session.refresh(profile)
+    assert profile.group_name == "Иванова"
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(last_name="", contact_name="Мария"), db=session, user=_admin())
+    session.refresh(profile)
+    assert profile.group_name == "Мария"
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(last_name="", contact_name=""), db=session, user=_admin())
+    session.refresh(profile)
+    assert profile.group_name is None
 
 
 def test_save_derivation_normalizes_custom_select_and_system_boolean():
@@ -930,7 +975,7 @@ def test_management_user_profile_uses_common_save_derivation():
     assert profile.department == "Support"
 
 
-def test_lookup_source_per_rule_trigger_action_order_mapping_and_later_override(monkeypatch):
+def test_lookup_source_per_rule_trigger_action_order_mapping_and_top_priority(monkeypatch):
     session = _session()
     _, ticket, profile = _client_card_save_fixture(session)
     source = _source_config(mapping_json=[
@@ -989,7 +1034,7 @@ def test_lookup_source_per_rule_trigger_action_order_mapping_and_later_override(
     assert calls == [source.id]
     assert profile.contact_name == "Anna"
     assert profile.group_name == "Anna / From source"
-    assert profile.department == "Final"
+    assert profile.department == "From source"
 
 
 def test_lookup_source_missing_null_inactive_and_error_policies(monkeypatch):
@@ -1527,6 +1572,29 @@ def test_ticket_profile_custom_fields_patch_preserves_omitted_and_clears_explici
     assert profile.custom_fields == {"custom_b": "old-b", "custom_hidden": "keep"}
 
 
+def test_ticket_profile_save_strips_legacy_system_keys_from_custom_fields():
+    session = _session()
+    _client, ticket, profile = _client_card_save_fixture(session)
+    profile.custom_fields = {
+        "contact_name": "Bad Name",
+        "last_name": "Bad Last",
+        "bitrix_id": "Bad ID",
+        "custom_note": "keep",
+    }
+    session.commit()
+
+    result = tickets.update_client_profile(
+        ticket.id,
+        ClientProfileUpdate(destination="Sales"),
+        db=session,
+        user=_admin(),
+    )
+    session.refresh(profile)
+
+    assert profile.custom_fields == {"custom_note": "keep"}
+    assert result.custom_fields == {"custom_note": "keep"}
+
+
 def test_ticket_profile_patch_preserves_omitted_system_fields_and_clears_explicit_null():
     session = _session()
     now = datetime.utcnow()
@@ -1913,6 +1981,90 @@ def test_move_rule_recalculates_sort_order_with_step_ten():
     assert [rule.sort_order for rule in payload.rules] == [10, 20, 30]
 
 
+def test_create_rule_copy_payload_preserves_logic_but_creates_inactive_independent_rule():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    session.add_all([
+        block,
+        _field("last_name", "Фамилия", block.key, 10, is_system=True),
+        _field("contact_name", "Имя", block.key, 20, is_system=True),
+        _field("custom_fio", "ФИО", block.key, 30, is_system=False),
+    ])
+    session.commit()
+
+    original = settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="ФИО",
+            is_active=True,
+            sort_order=20,
+            condition_field_key="last_name",
+            condition_operator="is_not_empty",
+            actions=[
+                ClientCardRuleAction(
+                    target_key="custom_fio",
+                    action="set_value",
+                    scope="save",
+                    value_type="template",
+                    value="{{last_name}} {{contact_name}}",
+                )
+            ],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    original_model = session.get(ClientCardRuleConfig, original.id)
+    first_copy_actions = list(original_model.actions_json or [])
+    first_copy = settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="ФИО — Копия",
+            is_active=False,
+            sort_order=21,
+            condition_field_key=original.condition_field_key,
+            condition_operator=original.condition_operator,
+            condition_value=original.condition_value,
+            actions=[ClientCardRuleAction.model_validate(action) for action in first_copy_actions],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    second_copy = settings_client_card.create_client_card_rule(
+        ClientCardRuleCreate(
+            name="ФИО — Копия 2",
+            is_active=False,
+            sort_order=22,
+            condition_field_key=original.condition_field_key,
+            condition_operator=original.condition_operator,
+            condition_value=original.condition_value,
+            actions=[ClientCardRuleAction.model_validate(action) for action in first_copy_actions],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    first_copy_model = session.get(ClientCardRuleConfig, first_copy.id)
+    second_copy_model = session.get(ClientCardRuleConfig, second_copy.id)
+
+    assert original.id != first_copy.id != second_copy.id
+    assert original.is_active is True
+    assert first_copy.is_active is False
+    assert second_copy.is_active is False
+    assert original.name == "ФИО"
+    assert first_copy.name == "ФИО — Копия"
+    assert second_copy.name == "ФИО — Копия 2"
+    assert first_copy.condition_field_key == original.condition_field_key
+    assert first_copy.condition_operator == original.condition_operator
+    assert first_copy.condition_value == original.condition_value
+    assert first_copy.actions[0].value == "{{last_name}} {{contact_name}}"
+    assert first_copy_model.actions_json == original_model.actions_json
+    assert first_copy_model.actions_json is not original_model.actions_json
+
+    first_copy_model.actions_json[0]["value"] = "{{last_name}}"
+    assert original_model.actions_json[0]["value"] == "{{last_name}} {{contact_name}}"
+    assert second_copy_model.actions_json[0]["value"] == "{{last_name}} {{contact_name}}"
+
+
 def test_delete_field_or_block_used_by_rule_is_blocked():
     session = _session()
     block = _block("custom_block_1", "Custom", 10)
@@ -1989,6 +2141,288 @@ def test_seed_creates_default_anydesk_rule_without_duplicates(monkeypatch):
     assert rules[0].technical_key == "show_anydesk_for_remote"
     assert rules[0].condition_value == "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439"
     assert rules[0].actions_json[0]["target_key"] == "anydesk"
+    assert rules[0].actions_json[0]["scope"] == "both"
+
+
+def test_seed_hides_derived_department_meta_fields_by_default(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        fields = session.execute(
+            select(ClientCardFieldConfig)
+            .where(ClientCardFieldConfig.key.in_(["department", "first_department", "group_name"]))
+            .order_by(ClientCardFieldConfig.sort_order.asc())
+        ).scalars().all()
+
+    assert [field.key for field in fields] == ["department", "first_department", "group_name"]
+    assert [field.is_visible for field in fields] == [False, False, False]
+
+
+def test_seed_sets_system_editor_visibility_for_config_driven_modal(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        blocks = session.execute(
+            select(ClientCardBlockConfig).order_by(ClientCardBlockConfig.sort_order.asc())
+        ).scalars().all()
+        fields = session.execute(select(ClientCardFieldConfig)).scalars().all()
+
+    block_by_key = {block.key: block for block in blocks}
+    assert [block.key for block in blocks] == ["tg", "profile", "department", "work", "verification"]
+    for key in ["tg", "profile", "department", "work", "verification"]:
+        assert block_by_key[key].is_active is True
+        assert block_by_key[key].show_in_editor is True
+        assert block_by_key[key].show_title is True
+
+    by_key = {field.key: field for field in fields}
+    expected_visible = {
+        "telegram_username",
+        "telegram_display_name",
+        "last_name",
+        "contact_name",
+        "destination",
+        "location_type",
+        "internal_number",
+        "bitrix_login",
+        "bitrix_password",
+        "bitrix_id",
+        "is_verified",
+    }
+    expected_base_hidden = {
+        "sand_owner",
+        "sales_group",
+        "department",
+        "first_department",
+        "group_name",
+        "anydesk",
+    }
+    for key in expected_visible:
+        assert by_key[key].is_visible_in_editor is True
+    for key in expected_base_hidden:
+        assert by_key[key].is_visible_in_editor is False
+    assert by_key["telegram_username"].is_editable is False
+    assert by_key["telegram_display_name"].is_editable is False
+
+
+def test_seed_soft_upgrade_updates_legacy_system_visibility_without_touching_custom_entries(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    now = datetime.utcnow()
+    with Session() as session:
+        session.add(
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="anydesk",
+                label="AnyDesk",
+                field_type="text",
+                block_key="department",
+                sort_order=80,
+                is_visible=True,
+                is_visible_in_editor=True,
+                is_editable=True,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            ClientCardRuleConfig(
+                id=str(uuid.uuid4()),
+                technical_key="show_anydesk_for_remote",
+                name="Legacy AnyDesk",
+                is_active=True,
+                is_system=True,
+                sort_order=30,
+                condition_field_key="location_type",
+                condition_operator="equals",
+                condition_value="\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
+                actions_json=[{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "editor"}],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add_all([
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="telegram_username",
+                label="@username",
+                field_type="readonly",
+                block_key="tg",
+                sort_order=10,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=False,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="destination",
+                label="Destination",
+                field_type="select",
+                block_key="department",
+                sort_order=10,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=True,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="internal_number",
+                label="Internal number",
+                field_type="text",
+                block_key="work",
+                sort_order=10,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=True,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="is_verified",
+                label="Verified",
+                field_type="checkbox",
+                block_key="verification",
+                sort_order=10,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=False,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="department",
+                label="Department",
+                field_type="readonly",
+                block_key="department",
+                sort_order=40,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=False,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="first_department",
+                label="First department",
+                field_type="readonly",
+                block_key="department",
+                sort_order=50,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=False,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="custom_note",
+                label="Custom note",
+                field_type="text",
+                block_key="custom_block",
+                sort_order=10,
+                is_visible=True,
+                is_visible_in_editor=True,
+                is_editable=True,
+                is_required=False,
+                is_system=False,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardFieldConfig(
+                id=str(uuid.uuid4()),
+                key="group_name",
+                label="Group",
+                field_type="readonly",
+                block_key="department",
+                sort_order=60,
+                is_visible=True,
+                is_visible_in_editor=False,
+                is_editable=False,
+                is_required=False,
+                is_system=True,
+                created_at=now,
+                updated_at=now,
+            ),
+            ClientCardRuleConfig(
+                id=str(uuid.uuid4()),
+                technical_key=None,
+                name="Custom rule",
+                is_active=True,
+                is_system=False,
+                sort_order=200,
+                condition_field_key="custom_note",
+                condition_operator="is_not_empty",
+                condition_value=None,
+                actions_json=[{"target_type": "field", "target_key": "custom_note", "action": "required", "scope": "editor"}],
+                created_at=now,
+                updated_at=now,
+            ),
+        ])
+        session.commit()
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "show_anydesk_for_remote")
+        ).scalar_one()
+        fields = session.execute(
+            select(ClientCardFieldConfig)
+            .where(ClientCardFieldConfig.key.in_(["telegram_username", "destination", "internal_number", "is_verified", "anydesk", "department", "first_department", "group_name", "custom_note"]))
+            .order_by(ClientCardFieldConfig.sort_order.asc())
+        ).scalars().all()
+        custom_rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.name == "Custom rule")
+        ).scalar_one()
+
+    assert rule.actions_json == [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "both"}]
+    by_key = {field.key: field for field in fields}
+    assert by_key["telegram_username"].is_visible_in_editor is True
+    assert by_key["destination"].is_visible_in_editor is True
+    assert by_key["internal_number"].is_visible_in_editor is True
+    assert by_key["is_verified"].is_visible_in_editor is True
+    assert by_key["anydesk"].is_visible is False
+    assert by_key["anydesk"].is_visible_in_editor is False
+    assert by_key["department"].is_visible is False
+    assert by_key["first_department"].is_visible is False
+    assert by_key["group_name"].is_visible is False
+    assert by_key["custom_note"].is_visible is True
+    assert by_key["custom_note"].is_visible_in_editor is True
+    assert custom_rule.actions_json == [{"target_type": "field", "target_key": "custom_note", "action": "required", "scope": "editor"}]
+    assert custom_rule.technical_key is None
 
 
 def test_seed_system_rule_technical_key_prevents_duplicate_after_rename(monkeypatch):
@@ -2013,6 +2447,183 @@ def test_seed_system_rule_technical_key_prevents_duplicate_after_rename(monkeypa
         ).scalars().all()
     assert len(rules) == 1
     assert rules[0].name == "User renamed AnyDesk rule"
+
+
+def test_seed_repeated_startup_keeps_user_rule_order_and_active_flag(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        system_rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "derive_department_meta_fallback")
+        ).scalar_one()
+        custom_rule = ClientCardRuleConfig(
+            id=str(uuid.uuid4()),
+            technical_key=None,
+            name="Custom priority rule",
+            is_active=True,
+            is_system=False,
+            sort_order=10,
+            condition_field_key="destination",
+            condition_operator="equals",
+            condition_value="Support",
+            actions_json=[{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Custom Support"}],
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        system_rule.sort_order = 20
+        system_rule.is_active = False
+        session.add(custom_rule)
+        session.commit()
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        ordered = session.execute(
+            select(ClientCardRuleConfig).order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())
+        ).scalars().all()
+        fallback_rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "derive_department_meta_fallback")
+        ).scalar_one()
+
+    ordered_names = [rule.technical_key or rule.name for rule in ordered]
+    assert ordered_names.index("Custom priority rule") < ordered_names.index("derive_department_meta_fallback")
+    assert fallback_rule.sort_order == 20
+    assert fallback_rule.is_active is False
+
+
+def test_seed_adds_missing_system_rule_at_end_without_reordering_existing_rules(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        deleted_rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "derive_department_meta_sales")
+        ).scalar_one()
+        existing_before = session.execute(
+            select(ClientCardRuleConfig)
+            .where(ClientCardRuleConfig.technical_key.in_(["show_sand_owner_for_sand", "show_sales_group_for_sales"]))
+            .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())
+        ).scalars().all()
+        existing_before[0].sort_order = 40
+        existing_before[1].sort_order = 10
+        session.delete(deleted_rule)
+        session.commit()
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        rules = session.execute(
+            select(ClientCardRuleConfig).order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())
+        ).scalars().all()
+        restored = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "derive_department_meta_sales")
+        ).scalar_one()
+
+    by_key = {rule.technical_key: rule for rule in rules if rule.technical_key}
+    assert by_key["show_sales_group_for_sales"].sort_order == 10
+    assert by_key["show_sand_owner_for_sand"].sort_order == 40
+    assert restored.sort_order > max(
+        rule.sort_order
+        for rule in rules
+        if rule.id != restored.id
+    )
+
+
+def test_ui_runtime_and_save_pipeline_share_same_rule_order_after_seed_replay(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        first = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "show_anydesk_for_remote")
+        ).scalar_one()
+        second = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "show_sales_group_for_sales")
+        ).scalar_one()
+        first.sort_order = 20
+        second.sort_order = 20
+        session.commit()
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        ui_rules = settings_client_card.get_client_card_config(db=session, user=_admin()).rules
+        runtime_rules = client_card._client_card_view_config(session).rules
+        save_rules = client_card_derivation._active_save_rules(session)
+
+    ui_active = [rule.technical_key or rule.name for rule in ui_rules if rule.is_active]
+    runtime_active = [rule.technical_key or rule.name for rule in runtime_rules]
+    save_active = [rule.technical_key or rule.name for rule in save_rules]
+    assert ui_active == runtime_active == save_active
+
+
+def test_seed_replay_preserves_top_matching_save_rule_priority(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(seed_data, "SessionLocal", Session)
+
+    seed_data.ensure_client_card_defaults()
+
+    now = datetime.utcnow()
+    with Session() as session:
+        company = Company(id=str(uuid.uuid4()), name="Test", created_at=now)
+        client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+        profile = ClientProfile(
+            id=str(uuid.uuid4()),
+            client_id=client.id,
+            destination="Support",
+            custom_fields={},
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([company, client, profile])
+        session.add(
+            ClientCardRuleConfig(
+                id=str(uuid.uuid4()),
+                technical_key=None,
+                name="Custom support priority",
+                is_active=True,
+                is_system=False,
+                sort_order=10,
+                condition_field_key="destination",
+                condition_operator="equals",
+                condition_value="Support",
+                actions_json=[{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "Custom Support"}],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        fallback_rule = session.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "derive_department_meta_fallback")
+        ).scalar_one()
+        fallback_rule.sort_order = 20
+        session.commit()
+
+        first = client_card_derivation.apply_client_card_profile_save_pipeline(session, profile, {"destination": "Support"}, {})
+        assert first.profile.department == "Custom Support"
+
+    seed_data.ensure_client_card_defaults()
+
+    with Session() as session:
+        profile = session.execute(select(ClientProfile)).scalar_one()
+        profile.department = None
+        session.commit()
+        second = client_card_derivation.apply_client_card_profile_save_pipeline(session, profile, {"destination": "Support"}, {})
+        assert second.profile.department == "Custom Support"
 
 
 def test_move_block_recalculates_sort_order_with_step_ten():

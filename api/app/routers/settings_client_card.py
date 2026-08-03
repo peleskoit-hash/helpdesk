@@ -31,6 +31,7 @@ from ..schemas import (
 )
 from ..services.client_card_derivation import SYSTEM_PROFILE_FIELDS
 from ..services.client_card_derivation import _save_rule_dependencies
+from ..services.client_card import _field_editor_visibility_default, _field_options_out
 from ..services.client_card_sources import (
     ClientCardSourceConfigError,
     ClientCardSourceError,
@@ -138,7 +139,7 @@ def _block_out(block: ClientCardBlockConfig, fields: list[ClientCardFieldConfigO
 def _field_visible_in_editor(field: ClientCardFieldConfig) -> bool:
     value = getattr(field, "is_visible_in_editor", None)
     if value is None:
-        return (not bool(field.is_system)) and bool(field.is_editable)
+        return _field_editor_visibility_default(field)
     return bool(value)
 
 
@@ -155,7 +156,7 @@ def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
         is_editable=bool(field.is_editable),
         is_required=bool(field.is_required),
         is_system=bool(field.is_system),
-        options=field.options_json or None,
+        options=_field_options_out(field),
     )
 
 
@@ -240,7 +241,7 @@ def _ordered_rules(db: Session, *, active_only: bool = False) -> list[ClientCard
     stmt = select(ClientCardRuleConfig)
     if active_only:
         stmt = stmt.where(ClientCardRuleConfig.is_active.is_(True))
-    return db.execute(stmt.order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())).scalars().all()
+    return db.execute(stmt.order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())).scalars().all()
 
 
 def _ordered_sources(db: Session) -> list[ClientCardSourceConfig]:

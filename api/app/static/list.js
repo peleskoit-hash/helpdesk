@@ -420,8 +420,8 @@ function sortValue(ticket, key) {
   switch (key) {
     case "subject":
       return String(ticket.subject || "").toLocaleLowerCase("ru");
-    case "client_name":
-      return String(ticket.client_name || "").toLocaleLowerCase("ru");
+    case "requester_display_name":
+      return String(ticket.requester_display_name || "").toLocaleLowerCase("ru");
     case "assignee_name":
       return String(ticket.assignee_name || "").toLocaleLowerCase("ru");
     case "last_reply_at":
@@ -440,7 +440,7 @@ function sortTickets(items) {
   // Backend list endpoints remain the source for global ordering/pagination.
   const key = state.tableSortKey;
   const dir = state.tableSortDir === "asc" ? 1 : -1;
-  const textKeys = new Set(["subject", "client_name", "assignee_name"]);
+  const textKeys = new Set(["subject", "requester_display_name", "assignee_name"]);
   const sorted = [...items];
   sorted.sort((a, b) => {
     const av = sortValue(a, key);
@@ -639,12 +639,12 @@ function renderTable() {
     const assigneeCell = state.role === "admin"
       ? `<td class="ticket-assignee-col"><select class="row-assignee-select" data-ticket-id="${escapeHtml(t.id)}" data-selected-id="${escapeHtml(t.assignee_id || "")}">${assigneeOptionsHtml(t.assignee_id, t.special_assignee_name || t.assignee_name || "")}</select></td>`
       : (state.role === "chiki_piki"
-        ? linkedCell("ticket-assignee-col", t.special_assignee_name || t.assignee_name || "РќРµСЂР°СЃРїСЂРµРґРµР»С‘РЅ")
+        ? linkedCell("ticket-assignee-col", t.special_assignee_name || t.assignee_name || "Нераспределён")
         : "");
     tr.innerHTML = `
       ${selectCell}
       ${linkedCell("ticket-subject-col", (t.subject || "") + intakeBadge(t))}
-      ${linkedCell("ticket-client-col", t.client_name || "")}
+      ${linkedCell("ticket-client-col", t.requester_display_name || t.client_name || "")}
       ${assigneeCell}
       ${linkedCell("ticket-age-col", ageText(t.created_at))}
       ${linkedCell("ticket-created-col", fmtDate(t.created_at))}
@@ -1043,7 +1043,7 @@ function init() {
         state.tableSortDir = state.tableSortDir === "asc" ? "desc" : "asc";
       } else {
         state.tableSortKey = key;
-        state.tableSortDir = ["subject", "client_name", "assignee_name"].includes(key) ? "asc" : "desc";
+        state.tableSortDir = ["subject", "requester_display_name", "assignee_name"].includes(key) ? "asc" : "desc";
       }
       localStorage.setItem("hd_table_sort_key", state.tableSortKey);
       localStorage.setItem("hd_table_sort_dir", state.tableSortDir);

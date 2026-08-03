@@ -11,7 +11,7 @@
   const shellRoutes = new Map([
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20260603b"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260715c"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260803b"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
@@ -38,8 +38,8 @@
     ["/management/users", {
       page: "management-users",
       scripts: [
-        "/static/ticket_client_card.js?v=20260710a",
-        "/static/management_users.js?v=20260709a",
+        "/static/ticket_client_card.js?v=20260803a",
+        "/static/management_users.js?v=20260803a",
       ],
     }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
@@ -51,11 +51,11 @@
       scripts: [
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20260604a",
-        "/static/ticket_client_card.js?v=20260710a",
+        "/static/ticket_client_card.js?v=20260803a",
         "/static/ticket_composer.js?v=20260522a",
         "/static/ticket_controls.js?v=20260604a",
         "/static/ticket_message_view.js?v=20260604a",
-        "/static/ticket.js?v=20260604a",
+        "/static/ticket.js?v=20260803a",
       ],
     },
   ];

@@ -107,15 +107,15 @@
           <label>Название поля<input id="newClientCardFieldLabel" autocomplete="off" /></label>
           <label>Тип поля
             <select id="newClientCardFieldType">
-              <option value="text">text</option>
-              <option value="textarea">textarea</option>
-              <option value="number">number</option>
-              <option value="date">date</option>
-              <option value="checkbox">checkbox</option>
-              <option value="select">select</option>
-              <option value="phone">phone</option>
-              <option value="url">url</option>
-              <option value="password">password</option>
+              <option value="text">Текст</option>
+              <option value="textarea">Многострочный текст</option>
+              <option value="number">Число</option>
+              <option value="date">Дата</option>
+              <option value="checkbox">Да / Нет</option>
+              <option value="select">Список</option>
+              <option value="phone">Телефон</option>
+              <option value="url">Ссылка</option>
+              <option value="password">Пароль</option>
             </select>
           </label>
           <label>Блок
@@ -177,7 +177,7 @@
             <select id="editFieldBlockKey"></select>
           </label>
           <label>Key <input id="editFieldKey" readonly /></label>
-          <label>Type
+          <label>Тип поля
             <select id="editFieldType"></select>
           </label>
           <label id="editFieldOptionsWrap" class="hidden">Варианты select (по одному в строке)
@@ -202,8 +202,8 @@
         <div class="modal-field-section modal-field-section-profile">
           <label>&#1053;&#1072;&#1079;&#1074;&#1072;&#1085;&#1080;&#1077;<input id="ruleName" autocomplete="off" /></label>
           <label class="checkbox-label">&#1040;&#1082;&#1090;&#1080;&#1074;&#1085;&#1086; <input id="ruleActive" type="checkbox" checked /></label>
-          <label>&#1055;&#1086;&#1083;&#1077; &#1091;&#1089;&#1083;&#1086;&#1074;&#1080;&#1103;<select id="ruleConditionField"></select></label>
-          <label>&#1054;&#1087;&#1077;&#1088;&#1072;&#1090;&#1086;&#1088;
+          <label>Если поле<select id="ruleConditionField"></select></label>
+          <label>Условие сравнения
             <select id="ruleOperator">
               <option value="always">&#1042;&#1089;&#1077;&#1075;&#1076;&#1072;</option>
               <option value="equals">&#1056;&#1072;&#1074;&#1085;&#1086;</option>
@@ -242,10 +242,12 @@
             </select>
           </label>
           <label>URL
-            <div class="client-card-color-picker-row">
+            <div class="client-card-source-url-row">
               <input id="sourceUrl" autocomplete="off" />
-              <select id="sourceInsertUrlField"></select>
-              <button id="sourceInsertUrlFieldBtn" class="action" type="button">&#1042;&#1089;&#1090;&#1072;&#1074;&#1080;&#1090;&#1100; &#1087;&#1086;&#1083;&#1077;</button>
+              <div class="client-card-source-url-tools">
+                <select id="sourceInsertUrlField"></select>
+                <button id="sourceInsertUrlFieldBtn" class="action" type="button">&#1042;&#1089;&#1090;&#1072;&#1074;&#1080;&#1090;&#1100; &#1087;&#1086;&#1083;&#1077;</button>
+              </div>
             </div>
           </label>
           <label>Timeout, ms<input id="sourceTimeoutMs" type="number" min="100" max="30000" value="3000" /></label>
@@ -309,6 +311,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260629d"></script>
-  <script src="/static/settings_client_card.js?v=20260715c"></script>
+  <script src="/static/settings_client_card.js?v=20260803b"></script>
 </body>
 </html>

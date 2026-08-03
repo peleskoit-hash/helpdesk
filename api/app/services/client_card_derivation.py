@@ -44,7 +44,7 @@ def _active_save_rules(db: Session) -> list[ClientCardRuleConfig]:
     return db.execute(
         select(ClientCardRuleConfig)
         .where(ClientCardRuleConfig.is_active.is_(True))
-        .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())
+        .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())
     ).scalars().all()
 
 
@@ -54,6 +54,14 @@ def _custom_field_keys(db: Session) -> set[str]:
             select(ClientCardFieldConfig.key).where(ClientCardFieldConfig.is_system.is_(False))
         ).scalars().all()
     )
+
+
+def strip_system_profile_keys_from_custom_fields(custom_fields: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in dict(custom_fields or {}).items()
+        if key not in SYSTEM_PROFILE_FIELDS
+    }
 
 
 def _field_configs(db: Session) -> dict[str, Any]:
@@ -78,7 +86,7 @@ def _active_sources(db: Session) -> dict[str, ClientCardSourceConfig]:
 def _profile_context(profile: ClientProfile, incoming: dict[str, Any], merged_custom_fields: dict[str, Any]) -> dict[str, Any]:
     context = {field: getattr(profile, field, None) for field in SYSTEM_PROFILE_FIELDS}
     context.update({key: value for key, value in incoming.items() if key in SYSTEM_PROFILE_FIELDS})
-    context.update(merged_custom_fields or {})
+    context.update(strip_system_profile_keys_from_custom_fields(merged_custom_fields))
     return context
 
 
@@ -185,7 +193,8 @@ def _rule_matches(context: dict[str, Any], rule: ClientCardRuleConfig) -> bool:
 def _render_template(template: str | None, context: dict[str, Any]) -> str | None:
     if template is None:
         return None
-    return _TEMPLATE_FIELD_RE.sub(lambda match: _normalize(context.get(match.group(1))), str(template))
+    rendered = _TEMPLATE_FIELD_RE.sub(lambda match: _normalize(context.get(match.group(1))), str(template))
+    return re.sub(r"\s+", " ", rendered).strip()
 
 
 def _action_value(action: dict[str, Any], context: dict[str, Any]) -> Any:
@@ -228,6 +237,8 @@ def normalize_client_card_derived_value(
     field_configs: dict[str, ClientCardFieldConfig],
     custom_keys: set[str],
 ) -> Any:
+    if target_key in SYSTEM_PROFILE_FIELDS:
+        return _normalize_system_value(target_key, field_configs.get(target_key), value)
     if target_key in custom_keys:
         if value is None:
             return None
@@ -262,7 +273,7 @@ def _profile_snapshot(profile: ClientProfile | None) -> dict[str, Any]:
         data["custom_fields"] = {}
         return data
     data = {field: getattr(profile, field, None) for field in SYSTEM_PROFILE_FIELDS}
-    data["custom_fields"] = dict(profile.custom_fields or {})
+    data["custom_fields"] = strip_system_profile_keys_from_custom_fields(profile.custom_fields)
     return data
 
 
@@ -341,6 +352,20 @@ def _safe_source_error(source: Any) -> HTTPException:
     )
 
 
+def _missing_source_template_value(field_key: str, field_configs: dict[str, Any]) -> HTTPException:
+    label = getattr(field_configs.get(field_key), "label", None) or field_key
+    return HTTPException(
+        status_code=422,
+        detail={
+            "error": {
+                "code": "source_template_value_required",
+                "message": f"\u041d\u0435 \u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u043f\u043e\u043b\u0435 \u201c{label}\u201d",
+                "details": {"field_key": field_key, "field_label": label},
+            }
+        },
+    )
+
+
 def _apply_value_to_maps(
     target_key: str,
     value: Any,
@@ -354,7 +379,7 @@ def _apply_value_to_maps(
 ) -> None:
     normalized = _normalize_derived_value(target_key, value, field_configs, custom_keys)
     old_value = context.get(target_key)
-    if target_key in custom_keys:
+    if target_key not in SYSTEM_PROFILE_FIELDS and target_key in custom_keys:
         if normalized is None:
             custom_fields.pop(target_key, None)
         else:
@@ -387,7 +412,7 @@ def _merge_value_delta(
     changed_keys: set[str],
 ) -> None:
     for target_key, normalized, changed in delta:
-        if target_key in custom_keys:
+        if target_key not in SYSTEM_PROFILE_FIELDS and target_key in custom_keys:
             if normalized is None:
                 custom_fields.pop(target_key, None)
             else:
@@ -403,7 +428,7 @@ def _apply_profile_patch(profile: ClientProfile, data: dict[str, Any], custom_fi
         if field in data:
             setattr(profile, field, bool(data[field]) if field == "is_verified" else data[field])
     if "custom_fields" in data:
-        profile.custom_fields = dict(custom_fields)
+        profile.custom_fields = strip_system_profile_keys_from_custom_fields(custom_fields)
 
 
 def apply_client_card_profile_save_pipeline(
@@ -427,9 +452,10 @@ def apply_client_card_profile_save_pipeline(
     base = _profile_snapshot(profile)
     context = {field: base.get(field) for field in SYSTEM_PROFILE_FIELDS}
     context.update({key: value for key, value in incoming.items() if key in SYSTEM_PROFILE_FIELDS})
-    context.update(merged_custom_fields or {})
-    custom_fields = dict(merged_custom_fields or {})
+    context.update(strip_system_profile_keys_from_custom_fields(merged_custom_fields))
+    custom_fields = strip_system_profile_keys_from_custom_fields(merged_custom_fields)
     staged: dict[str, Any] = {}
+    resolved_targets: set[str] = set()
 
     if db.in_transaction():
         if db.new or db.dirty or db.deleted:
@@ -448,7 +474,7 @@ def apply_client_card_profile_save_pipeline(
         for action in actions:
             if action.get("action") == "set_value":
                 target_key = action.get("target_key")
-                if not target_key:
+                if not target_key or target_key in resolved_targets:
                     continue
                 raw_value = _action_value(action, context)
                 _apply_value_to_maps(
@@ -461,6 +487,7 @@ def apply_client_card_profile_save_pipeline(
                     custom_keys=custom_keys,
                     changed_keys=changed_keys,
                 )
+                resolved_targets.add(target_key)
                 continue
             if action.get("action") != "lookup_source":
                 continue
@@ -475,6 +502,8 @@ def apply_client_card_profile_save_pipeline(
                 source_delta: list[tuple[str, Any, bool]] = []
                 for item in source.mapping_json or []:
                     target_key = item.get("target_key")
+                    if target_key in resolved_targets:
+                        continue
                     value = read_response_path(result.payload, item.get("response_path"))
                     if value is MISSING or not target_key:
                         continue
@@ -493,6 +522,7 @@ def apply_client_card_profile_save_pipeline(
                     custom_keys=custom_keys,
                     changed_keys=changed_keys,
                 )
+                resolved_targets.update(target_key for target_key, _, _ in source_delta)
             except (ClientCardSourceError, HTTPException):
                 if source.on_error == "block_save":
                     raise _safe_source_error(source)
@@ -529,6 +559,75 @@ def apply_client_card_profile_save_pipeline(
             else:
                 current[target_key] = value
             profile.custom_fields = current
+    profile.custom_fields = strip_system_profile_keys_from_custom_fields(profile.custom_fields)
+    profile.updated_at = datetime.utcnow()
+    return SavePipelineResult(profile=profile, changed_keys=changed_keys)
+
+
+def apply_client_card_profile_local_save_rules(
+    db: Session,
+    profile: ClientProfile,
+    incoming: dict[str, Any],
+    merged_custom_fields: dict[str, Any],
+) -> SavePipelineResult:
+    rules = [_copy_rule(rule) for rule in _active_save_rules(db)]
+    custom_keys = _custom_field_keys(db)
+    field_configs = _field_configs(db)
+    changed_keys = _incoming_changed_keys(incoming)
+    base = _profile_snapshot(profile)
+    context = {field: base.get(field) for field in SYSTEM_PROFILE_FIELDS}
+    context.update({key: value for key, value in incoming.items() if key in SYSTEM_PROFILE_FIELDS})
+    context.update(strip_system_profile_keys_from_custom_fields(merged_custom_fields))
+    custom_fields = strip_system_profile_keys_from_custom_fields(merged_custom_fields)
+    staged: dict[str, Any] = {}
+    resolved_targets: set[str] = set()
+
+    for rule in rules:
+        actions = [
+            action
+            for action in _rule_save_actions(rule)
+            if action.get("action") == "set_value"
+        ]
+        if not actions:
+            continue
+        deps: set[str] = set()
+        if rule.condition_operator != "always" and rule.condition_field_key:
+            deps.add(rule.condition_field_key)
+        for action in actions:
+            deps.update(_save_action_dependencies(action))
+        if not deps or not (changed_keys & deps):
+            continue
+        if not _rule_matches(context, rule):
+            continue
+        for action in actions:
+            target_key = action.get("target_key")
+            if not target_key or target_key in resolved_targets:
+                continue
+            raw_value = _action_value(action, context)
+            _apply_value_to_maps(
+                target_key,
+                raw_value,
+                staged=staged,
+                custom_fields=custom_fields,
+                context=context,
+                field_configs=field_configs,
+                custom_keys=custom_keys,
+                changed_keys=changed_keys,
+            )
+            resolved_targets.add(target_key)
+
+    _apply_profile_patch(profile, incoming, custom_fields)
+    for target_key, value in staged.items():
+        if target_key in SYSTEM_PROFILE_FIELDS:
+            setattr(profile, target_key, value)
+        elif target_key in custom_keys:
+            current = dict(profile.custom_fields or {})
+            if value is None:
+                current.pop(target_key, None)
+            else:
+                current[target_key] = value
+            profile.custom_fields = current
+    profile.custom_fields = strip_system_profile_keys_from_custom_fields(profile.custom_fields)
     profile.updated_at = datetime.utcnow()
     return SavePipelineResult(profile=profile, changed_keys=changed_keys)
 
@@ -563,6 +662,13 @@ def apply_client_card_source_manual_run(
     base = _profile_snapshot(profile)
     context = {field: base.get(field) for field in SYSTEM_PROFILE_FIELDS}
     context.update(base.get("custom_fields") or {})
+    field_configs = _field_configs(db)
+
+    from .client_card_sources import source_template_field_refs
+
+    for field_key in sorted(source_template_field_refs(source)):
+        if _normalize(context.get(field_key)) == "":
+            raise _missing_source_template_value(field_key, field_configs)
 
     if db.in_transaction():
         if db.new or db.dirty or db.deleted:
@@ -576,7 +682,6 @@ def apply_client_card_source_manual_run(
     except ClientCardSourceError:
         raise _safe_source_error(source)
 
-    field_configs = _field_configs(db)
     custom_keys = _custom_field_keys(db)
     source_delta: list[tuple[str, Any, bool]] = []
     for item in source.mapping_json or []:
@@ -616,7 +721,7 @@ def apply_client_card_source_manual_run(
 
     changed_keys: set[str] = set()
     staged: dict[str, Any] = {}
-    custom_fields = dict(profile.custom_fields or {})
+    custom_fields = strip_system_profile_keys_from_custom_fields(profile.custom_fields)
     _merge_value_delta(
         source_delta,
         staged=staged,
@@ -630,6 +735,10 @@ def apply_client_card_source_manual_run(
             setattr(profile, target_key, value)
         elif target_key in custom_keys:
             profile.custom_fields = dict(custom_fields)
+    profile.custom_fields = strip_system_profile_keys_from_custom_fields(custom_fields)
+    if staged:
+        result = apply_client_card_profile_local_save_rules(db, profile, staged, dict(profile.custom_fields or {}))
+        changed_keys.update(result.changed_keys)
     profile.updated_at = datetime.utcnow()
     return ManualSourceRunResult(profile=profile, changed_keys=changed_keys)
 

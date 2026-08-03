@@ -12,8 +12,8 @@
           show_in_editor: true,
           show_title: true,
           fields: [
-            { key: "telegram_username", label: "@username", field_type: "readonly", sort_order: 10, is_visible: true, is_editable: false, is_system: true },
-            { key: "telegram_display_name", label: "Имя в TG", field_type: "readonly", sort_order: 20, is_visible: true, is_editable: false, is_system: true },
+            { key: "telegram_username", label: "@username", field_type: "readonly", sort_order: 10, is_visible: true, is_visible_in_editor: true, is_editable: false, is_system: true },
+            { key: "telegram_display_name", label: "Имя в TG", field_type: "readonly", sort_order: 20, is_visible: true, is_visible_in_editor: true, is_editable: false, is_system: true },
           ],
         },
         {
@@ -26,8 +26,8 @@
           show_in_editor: true,
           show_title: true,
           fields: [
-            { key: "last_name", label: "Фамилия", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-            { key: "contact_name", label: "Имя", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
+            { key: "last_name", label: "Фамилия", field_type: "text", sort_order: 10, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "contact_name", label: "Имя", field_type: "text", sort_order: 20, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
           ],
         },
         {
@@ -40,14 +40,14 @@
           show_in_editor: true,
           show_title: true,
           fields: [
-            { key: "destination", label: "Куда..?", field_type: "select", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-            { key: "sand_owner", label: "Чей песок", field_type: "select", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
-            { key: "sales_group", label: "Группа отдела продаж", field_type: "select", sort_order: 30, is_visible: true, is_editable: true, is_system: true },
-            { key: "department", label: "Отдел", field_type: "text", sort_order: 40, is_visible: true, is_editable: true, is_system: true },
-            { key: "first_department", label: "Департамент", field_type: "text", sort_order: 50, is_visible: true, is_editable: true, is_system: true },
-            { key: "group_name", label: "Группа", field_type: "text", sort_order: 60, is_visible: true, is_editable: true, is_system: true },
-            { key: "location_type", label: "Расположение", field_type: "select", sort_order: 70, is_visible: true, is_editable: true, is_system: true },
-            { key: "anydesk", label: "Anydesk", field_type: "text", sort_order: 80, is_visible: true, is_editable: true, is_system: true },
+            { key: "destination", label: "Куда..?", field_type: "select", sort_order: 10, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "sand_owner", label: "Чей песок", field_type: "select", sort_order: 20, is_visible: true, is_visible_in_editor: false, is_editable: true, is_system: true },
+            { key: "sales_group", label: "Группа отдела продаж", field_type: "select", sort_order: 30, is_visible: true, is_visible_in_editor: false, is_editable: true, is_system: true },
+            { key: "department", label: "Отдел", field_type: "text", sort_order: 40, is_visible: false, is_visible_in_editor: false, is_editable: false, is_system: true },
+            { key: "first_department", label: "Департамент", field_type: "text", sort_order: 50, is_visible: false, is_visible_in_editor: false, is_editable: false, is_system: true },
+            { key: "group_name", label: "Группа", field_type: "text", sort_order: 60, is_visible: false, is_visible_in_editor: false, is_editable: false, is_system: true },
+            { key: "location_type", label: "Расположение", field_type: "select", sort_order: 70, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "anydesk", label: "Anydesk", field_type: "text", sort_order: 80, is_visible: false, is_visible_in_editor: false, is_editable: true, is_system: true },
           ],
         },
         {
@@ -60,10 +60,10 @@
           show_in_editor: true,
           show_title: true,
           fields: [
-            { key: "internal_number", label: "Внутренний номер", field_type: "text", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
-            { key: "bitrix_login", label: "Логин Bitrix", field_type: "text", sort_order: 20, is_visible: true, is_editable: true, is_system: true },
-            { key: "bitrix_password", label: "Пароль Bitrix", field_type: "password", sort_order: 30, is_visible: true, is_editable: true, is_system: true },
-            { key: "bitrix_id", label: "ID в Bitrix", field_type: "text", sort_order: 40, is_visible: true, is_editable: true, is_system: true },
+            { key: "internal_number", label: "Внутренний номер", field_type: "text", sort_order: 10, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "bitrix_login", label: "Логин Bitrix", field_type: "text", sort_order: 20, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "bitrix_password", label: "Пароль Bitrix", field_type: "password", sort_order: 30, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
+            { key: "bitrix_id", label: "ID в Bitrix", field_type: "text", sort_order: 40, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
           ],
         },
         {
@@ -76,7 +76,7 @@
           show_in_editor: true,
           show_title: true,
           fields: [
-            { key: "is_verified", label: "Верификация", field_type: "checkbox", sort_order: 10, is_visible: true, is_editable: true, is_system: true },
+            { key: "is_verified", label: "Верификация", field_type: "checkbox", sort_order: 10, is_visible: true, is_visible_in_editor: true, is_editable: true, is_system: true },
           ],
         },
       ],
@@ -109,7 +109,7 @@
           condition_field_key: "location_type",
           condition_operator: "equals",
           condition_value: "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
-          actions: [{ target_type: "field", target_key: "anydesk", action: "show", scope: "editor" }],
+          actions: [{ target_type: "field", target_key: "anydesk", action: "show", scope: "both" }],
         },
       ],
     };
@@ -125,11 +125,88 @@
     return /^#[0-9a-fA-F]{6}$/.test(String(value || "").trim());
   }
 
+  function clientCardColorHex(colorScheme) {
+    const value = String(colorScheme || "").trim();
+    const named = value.toLowerCase();
+    const namedHex = {
+      blue: "#dbeafe",
+      green: "#dcfce7",
+      yellow: "#fef3c7",
+      red: "#ffe4e6",
+      gray: "#e5e7eb",
+      purple: "#ede9fe",
+    };
+    if (namedHex[named]) return namedHex[named];
+    if (isHexColor(value)) return value.toLowerCase();
+    return namedHex.gray;
+  }
+
+  function hexToRgbChannels(hex) {
+    const value = clientCardColorHex(hex).slice(1);
+    const r = Number.parseInt(value.slice(0, 2), 16);
+    const g = Number.parseInt(value.slice(2, 4), 16);
+    const b = Number.parseInt(value.slice(4, 6), 16);
+    return `${r}, ${g}, ${b}`;
+  }
+
+  function hexLuminance(hex) {
+    const value = clientCardColorHex(hex).slice(1);
+    const channels = [0, 2, 4].map((index) => Number.parseInt(value.slice(index, index + 2), 16) / 255);
+    const normalized = channels.map((channel) => (
+      channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+    ));
+    return (0.2126 * normalized[0]) + (0.7152 * normalized[1]) + (0.0722 * normalized[2]);
+  }
+
+  function blendHexColors(foreground, background, alpha) {
+    const front = clientCardColorHex(foreground).slice(1);
+    const back = clientCardColorHex(background).slice(1);
+    const mixed = [0, 2, 4].map((index) => {
+      const frontChannel = Number.parseInt(front.slice(index, index + 2), 16);
+      const backChannel = Number.parseInt(back.slice(index, index + 2), 16);
+      const channel = Math.round((frontChannel * alpha) + (backChannel * (1 - alpha)));
+      return channel.toString(16).padStart(2, "0");
+    }).join("");
+    return `#${mixed}`;
+  }
+
+  function contrastRatio(backgroundHex, textHex) {
+    const background = hexLuminance(backgroundHex);
+    const text = hexLuminance(textHex);
+    const lighter = Math.max(background, text);
+    const darker = Math.min(background, text);
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  function contrastTextColor(backgroundHex) {
+    const dark = "#000000";
+    const light = "#ffffff";
+    return contrastRatio(backgroundHex, dark) >= contrastRatio(backgroundHex, light) ? dark : light;
+  }
+
   function applyClientCardBlockColor(blockEl, colorScheme) {
     const color = String(colorScheme || "").trim();
     if (!isHexColor(color)) return;
     blockEl.classList.add("client-card-block-custom-color");
     blockEl.style.setProperty("--client-card-block-bg", color.toLowerCase());
+  }
+
+  function applyClientCardEditorSectionColor(sectionEl, colorScheme) {
+    const hex = clientCardColorHex(colorScheme);
+    const lightBackground = blendHexColors(hex, "#ffffff", 0.86);
+    const darkBackground = blendHexColors(hex, "#0f172a", 0.58);
+    const lightText = contrastTextColor(lightBackground);
+    const darkText = contrastTextColor(darkBackground);
+    sectionEl.style.setProperty("--client-card-editor-bg", lightBackground);
+    sectionEl.style.setProperty("--client-card-editor-border", blendHexColors(hex, "#0f172a", 0.72));
+    sectionEl.style.setProperty("--client-card-editor-title-text", lightText);
+    sectionEl.style.setProperty("--client-card-editor-label-text", lightText);
+    sectionEl.style.setProperty("--client-card-editor-readonly-text", lightText);
+    sectionEl.style.setProperty("--client-card-editor-bg-dark", darkBackground);
+    sectionEl.style.setProperty("--client-card-editor-border-dark", blendHexColors(hex, "#f8fafc", 0.46));
+    sectionEl.style.setProperty("--client-card-editor-title-text-dark", darkText);
+    sectionEl.style.setProperty("--client-card-editor-label-text-dark", darkText);
+    sectionEl.style.setProperty("--client-card-editor-readonly-text-dark", darkText);
   }
 
   function blockShownInCard(block) {
@@ -181,7 +258,7 @@
   }
 
   function fieldShownInEditorOrRuleTarget(field, ruleTargets) {
-    return fieldShownInEditor(field) || (!field?.is_system && ruleTargets.has(field?.key));
+    return fieldShownInEditor(field) || ruleTargets.has(field?.key);
   }
 
   function blockShownInEditorOrRuleTarget(block, ruleTargets) {
@@ -203,6 +280,29 @@
     is_verified: { control: "fIsVerified" },
   };
 
+  const profileSystemFieldKeys = new Set([
+    "contact_name",
+    "last_name",
+    "email",
+    "phone",
+    "verification_status",
+    "is_verified",
+    "destination",
+    "sand_owner",
+    "sales_group",
+    "department",
+    "first_department",
+    "group_name",
+    "employee_type",
+    "location_type",
+    "anydesk",
+    "internal_number",
+    "external_user_id",
+    "bitrix_login",
+    "bitrix_password",
+    "bitrix_id",
+  ]);
+
   function ensureRuleState(ctx) {
     if (!ctx.state.clientCardRuleState) {
       ctx.state.clientCardRuleState = { hidden: new Set(), hiddenBlocks: new Set(), readonly: new Set(), required: new Set() };
@@ -214,10 +314,12 @@
   function fieldEditorNodes(ctx, key) {
     const spec = systemFieldControls[key] || {};
     const control = spec.control ? ctx.el[spec.control] : null;
-    const wrap = spec.wrap ? ctx.el[spec.wrap] : (control ? control.closest("label") : null);
+    const dynamicWrap = control?.closest("[data-client-card-field-key]") || null;
+    const wrap = dynamicWrap || (spec.wrap ? ctx.el[spec.wrap] : (control ? control.closest("label") : null));
     if (control || wrap) return { control, wrap };
     const escapedKey = selectorKey(key);
-    const dynamic = ctx.el.customFieldsContainer?.querySelector(`[data-client-card-field-key="${escapedKey}"]`);
+    const dynamic = ctx.el.clientModal?.querySelector(`[data-client-card-field-key="${escapedKey}"]`)
+      || ctx.el.customFieldsContainer?.querySelector(`[data-client-card-field-key="${escapedKey}"]`);
     const dynamicControl = dynamic?.querySelector("[data-custom-field-key]");
     return { control: dynamicControl || null, wrap: dynamic || null };
   }
@@ -270,15 +372,24 @@
         }
         const baseHidden = wrap.dataset.clientCardBaseHidden === "1";
         wrap.classList.toggle("hidden", baseHidden);
+        wrap.classList.remove("client-card-field-readonly-rule");
         if (baseHidden) state.hidden.add(key);
       }
       if (control) {
-        control.readOnly = false;
-        control.disabled = false;
+        const baseReadonly = control.dataset.clientCardBaseReadonly === "1";
+        if (control.type === "checkbox" || control.tagName === "SELECT") {
+          control.disabled = baseReadonly;
+          control.readOnly = false;
+        } else {
+          control.disabled = false;
+          control.readOnly = baseReadonly;
+        }
         control.required = false;
       }
     }
-    const blockEls = ctx.el.customFieldsContainer?.querySelectorAll("[data-client-card-block-key]") || [];
+    const blockEls = ctx.el.clientModal?.querySelectorAll("[data-client-card-generated-section][data-client-card-block-key]")
+      || ctx.el.customFieldsContainer?.querySelectorAll("[data-client-card-block-key]")
+      || [];
     blockEls.forEach((blockEl) => {
       if (blockEl.dataset.clientCardBaseHidden === undefined) {
         blockEl.dataset.clientCardBaseHidden = blockEl.classList.contains("hidden") ? "1" : "0";
@@ -305,7 +416,8 @@
 
   function syncBlockEditorVisibility(ctx, blockKey) {
     const state = ensureRuleState(ctx);
-    const block = ctx.el.customFieldsContainer?.querySelector(`[data-client-card-block-key="${selectorKey(blockKey)}"]`);
+    const block = ctx.el.clientModal?.querySelector(`[data-client-card-generated-section][data-client-card-block-key="${selectorKey(blockKey)}"]`)
+      || ctx.el.customFieldsContainer?.querySelector(`[data-client-card-block-key="${selectorKey(blockKey)}"]`);
     if (block) block.classList.toggle("hidden", state.hiddenBlocks.has(blockKey));
     const configBlock = findClientCardBlock(ctx.state.clientCardViewConfig, blockKey);
     for (const field of configBlock?.fields || []) {
@@ -337,12 +449,14 @@
       syncFieldEditorVisibility(ctx, key);
     } else if (action.action === "readonly") {
       state.readonly.add(key);
+      if (wrap) wrap.classList.add("client-card-field-readonly-rule");
       if (control) {
         if (control.type === "checkbox" || control.tagName === "SELECT") control.disabled = true;
         else control.readOnly = true;
       }
     } else if (action.action === "editable") {
       state.readonly.delete(key);
+      if (wrap) wrap.classList.remove("client-card-field-readonly-rule");
       if (control) {
         control.disabled = false;
         control.readOnly = false;
@@ -356,15 +470,39 @@
     }
   }
 
+  function ruleConflictKey(action) {
+    if (!action || !action.target_key) return "";
+    const targetType = action.target_type || "field";
+    const scope = action.scope || "editor";
+    if (targetType === "block" && (action.action === "show" || action.action === "hide")) {
+      return `${scope}:block:${action.target_key}:visibility`;
+    }
+    if (targetType !== "field") return "";
+    if (action.action === "show" || action.action === "hide") return `${scope}:field:${action.target_key}:visibility`;
+    if (action.action === "readonly" || action.action === "editable") return `${scope}:field:${action.target_key}:editability`;
+    if (action.action === "required" || action.action === "optional") return `${scope}:field:${action.target_key}:requirement`;
+    return "";
+  }
+
+  function compareRulePriority(a, b) {
+    const sortDiff = (Number(a?.sort_order) || 0) - (Number(b?.sort_order) || 0);
+    if (sortDiff) return sortDiff;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  }
+
   function applyClientCardRules(ctx) {
     resetClientCardRuleOverlay(ctx);
     const rules = (ctx.state.clientCardViewConfig?.rules || [])
       .filter((rule) => rule && rule.is_active !== false)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      .sort(compareRulePriority);
+    const resolved = new Set();
     for (const rule of rules) {
       if (!ruleMatches(ctx, rule)) continue;
       for (const action of rule.actions || []) {
+        const conflictKey = ruleConflictKey(action);
+        if (conflictKey && resolved.has(conflictKey)) continue;
         applyClientCardRuleAction(ctx, action);
+        if (conflictKey) resolved.add(conflictKey);
       }
     }
   }
@@ -445,12 +583,15 @@
     }
     const rules = (effectiveConfig.rules || [])
       .filter((rule) => rule && rule.is_active !== false)
-      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      .sort(compareRulePriority);
+    const resolved = new Set();
     for (const rule of rules) {
       if (!cardRuleMatches(profile, rule)) continue;
       for (const action of rule.actions || []) {
         const scope = action.scope || "editor";
         if (scope !== "card" && scope !== "both") continue;
+        const conflictKey = ruleConflictKey({ ...action, scope });
+        if (conflictKey && resolved.has(conflictKey)) continue;
         const shouldShow = action.action === "show";
         const shouldHide = action.action === "hide";
         if (!shouldShow && !shouldHide) continue;
@@ -461,6 +602,7 @@
           const field = fieldsByKey.get(action.target_key);
           if (field) field.is_visible = shouldShow;
         }
+        if (conflictKey) resolved.add(conflictKey);
       }
     }
     return effectiveConfig;
@@ -596,74 +738,6 @@
   function fillClientPanel(ctx, profile) {
     const effectiveConfig = ctx.state.clientCardViewConfig || defaultClientCardViewConfig();
     renderClientDynamicCard(ctx, profile, effectiveConfig);
-    syncManualSourceRunControl(ctx);
-  }
-
-  function activeManualSources(ctx) {
-    return (ctx.state.clientCardViewConfig?.sources || []).filter((source) => source && source.is_active !== false);
-  }
-
-  function syncManualSourceRunControl(ctx) {
-    const button = ctx.el.runClientSourceBtn;
-    if (!button) return;
-    button.classList.toggle("hidden", activeManualSources(ctx).length === 0);
-  }
-
-  function closeManualSourceRun(ctx) {
-    ctx.el.clientSourceRunModal?.classList.add("hidden");
-  }
-
-  function populateManualSourceSelect(selectEl, sources, doc = document) {
-    if (!selectEl) return;
-    selectEl.innerHTML = "";
-    for (const source of sources || []) {
-      const option = doc.createElement("option");
-      option.value = source.id || "";
-      option.textContent = source.name || source.technical_key || source.id || "";
-      selectEl.appendChild(option);
-    }
-  }
-
-  function openManualSourceRun(ctx) {
-    const sources = activeManualSources(ctx);
-    if (!sources.length || !ctx.el.clientSourceRunSelect) return;
-    populateManualSourceSelect(ctx.el.clientSourceRunSelect, sources);
-    if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "";
-    ctx.el.clientSourceRunModal?.classList.remove("hidden");
-  }
-
-  async function runManualSource(ctx) {
-    const sourceId = ctx.el.clientSourceRunSelect?.value || "";
-    if (!sourceId || !ctx.manualSourceRunPath) return;
-    const button = ctx.el.runSelectedClientSourceBtn;
-    try {
-      if (button) button.disabled = true;
-      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u044e...";
-      const profile = await ctx.api(ctx.manualSourceRunPath(), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ source_id: sourceId }),
-      });
-      ctx.onManualSourceSuccess?.(profile);
-      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = "\u0413\u043e\u0442\u043e\u0432\u043e";
-      ctx.setStatus?.("\u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0430 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0430 \u0438\u0437 source");
-    } catch (error) {
-      if (ctx.el.clientSourceRunStatus) ctx.el.clientSourceRunStatus.textContent = error.message || "\u041e\u0448\u0438\u0431\u043a\u0430 source";
-    } finally {
-      if (button) button.disabled = false;
-    }
-  }
-
-  function bindManualSourceRun(ctx) {
-    const button = ctx.el.runClientSourceBtn;
-    if (!button || button.dataset.clientSourceRunBound === "1") return;
-    button.dataset.clientSourceRunBound = "1";
-    button.addEventListener("click", () => openManualSourceRun(ctx));
-    ctx.el.closeClientSourceRunModalBtn?.addEventListener("click", () => closeManualSourceRun(ctx));
-    ctx.el.runSelectedClientSourceBtn?.addEventListener("click", () => runManualSource(ctx));
-    if (ctx.closeOnBackdropClick && ctx.el.clientSourceRunModal) {
-      ctx.closeOnBackdropClick(ctx.el.clientSourceRunModal, () => closeManualSourceRun(ctx));
-    }
   }
 
   function syncDynamicModalFields(ctx) {
@@ -708,8 +782,8 @@
     const anydesk = el.fAnydesk.value.trim() || null;
 
     const custom_fields = {};
-    if (el.customFieldsContainer) {
-      const customInputs = el.customFieldsContainer.querySelectorAll("[data-custom-field-key]");
+    if (el.clientModal || el.customFieldsContainer) {
+      const customInputs = (el.clientModal || el.customFieldsContainer).querySelectorAll("[data-custom-field-key]");
       customInputs.forEach((input) => {
         const key = input.dataset.customFieldKey;
         if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) return;
@@ -860,14 +934,43 @@
     }
     inputEl.dataset.customFieldKey = field.key;
     inputEl.dataset.customFieldType = fieldType;
+    inputEl.dataset.clientCardBaseReadonly = field.is_editable === false ? "1" : "0";
     wrap.appendChild(inputEl);
+    return wrap;
+  }
+
+  function renderConfiguredSystemEditorField(ctx, field, currentValue) {
+    const { control } = fieldEditorNodes(ctx, field.key);
+    if (!control) return renderReadonlyEditorField(field, currentValue);
+    const wrap = document.createElement("label");
+    wrap.className = "custom-field-editor";
+    wrap.dataset.clientCardFieldKey = field.key;
+    const title = document.createElement("span");
+    title.textContent = field.label || field.key;
+    wrap.appendChild(title);
+    wrap.appendChild(control);
+    control.dataset.clientCardBaseReadonly = field.is_editable === false ? "1" : "0";
+    if (field.is_editable === false) {
+      if (control.type === "checkbox" || control.tagName === "SELECT") control.disabled = true;
+      else control.readOnly = true;
+      wrap.classList.add("client-card-field-readonly-rule");
+    }
     return wrap;
   }
 
   function renderCustomFieldsEditor(ctx, profile) {
     const { el, state } = ctx;
-    if (!el.customFieldsContainer || !el.customFieldsSection) return;
-    el.customFieldsContainer.innerHTML = "";
+    if (!el.customFieldsSection) return;
+    const sectionParent = el.customFieldsSection.parentElement;
+    if (!sectionParent) return;
+    if (el.customFieldsContainer) el.customFieldsContainer.innerHTML = "";
+    Array.from(sectionParent.children).forEach((node) => {
+      if (node.dataset?.clientCardGeneratedSection === "1") node.remove();
+    });
+    el.clientModal?.querySelectorAll(".modal-field-section-profile, .modal-field-section-department, .modal-field-section-work, .modal-field-section-verification")
+      .forEach((section) => section.classList.add("hidden"));
+    el.customFieldsSection.classList.add("hidden");
+    el.customFieldsSection.querySelector(".status-panel-title")?.classList.add("hidden");
     const blockRuleTargets = activeEditorRuleBlockTargets(state.clientCardViewConfig);
     const blocks = (state.clientCardViewConfig?.blocks || [])
       .filter((block) => blockShownInEditorOrRuleTarget(block, blockRuleTargets))
@@ -879,9 +982,14 @@
         .filter((field) => fieldShownInEditorOrRuleTarget(field, ruleTargets))
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
       if (!fields.length) continue;
-      const blockWrap = document.createElement("div");
-      blockWrap.className = "custom-field-editor-block";
+      const blockWrap = document.createElement("section");
+      blockWrap.className = "modal-field-section custom-field-editor-block";
+      if (block.id) blockWrap.dataset.blockId = block.id;
+      blockWrap.dataset.blockKey = block.key;
       blockWrap.dataset.clientCardBlockKey = block.key;
+      blockWrap.dataset.clientCardGeneratedSection = "1";
+      blockWrap.dataset.blockColorScheme = String(block.color_scheme || "");
+      applyClientCardEditorSectionColor(blockWrap, block.color_scheme);
       if (!blockShownInEditor(block)) blockWrap.classList.add("hidden");
       if (blockShowsTitle(block)) {
         const title = document.createElement("div");
@@ -893,7 +1001,9 @@
         const currentValue = fieldValueForEditor(profile, field);
         const baseHidden = !fieldShownInEditor(field);
         let fieldEl;
-        if (!field.is_system && field.is_editable !== false) {
+        if (field.is_system) {
+          fieldEl = renderConfiguredSystemEditorField(ctx, field, currentValue);
+        } else if (field.is_editable !== false) {
           fieldEl = renderEditableCustomField(field, currentValue);
         } else {
           fieldEl = renderReadonlyEditorField(field, currentValue);
@@ -902,9 +1012,8 @@
         blockWrap.appendChild(fieldEl);
         renderedFields += 1;
       }
-      el.customFieldsContainer.appendChild(blockWrap);
+      sectionParent.insertBefore(blockWrap, el.customFieldsSection);
     }
-    el.customFieldsSection.classList.toggle("hidden", renderedFields === 0);
   }
 
   global.TicketClientCard = {
@@ -918,10 +1027,5 @@
     openClientModal,
     closeClientModal,
     saveClientProfile,
-    syncManualSourceRunControl,
-    openManualSourceRun,
-    closeManualSourceRun,
-    bindManualSourceRun,
-    populateManualSourceSelect,
   };
 })(window);

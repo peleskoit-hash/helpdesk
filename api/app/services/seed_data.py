@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from ..db import SessionLocal
 from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, Company, Ticket, TicketStatus, User
 
+SORT_STEP = 10
+
 
 def ensure_test_agents() -> None:
     agent_specs = [
@@ -52,6 +54,33 @@ def ensure_test_agents() -> None:
 
 
 def ensure_client_card_defaults() -> None:
+    system_field_editor_visibility_defaults = {
+        "telegram_username": True,
+        "telegram_display_name": True,
+        "last_name": True,
+        "contact_name": True,
+        "destination": True,
+        "sand_owner": False,
+        "sales_group": False,
+        "department": False,
+        "first_department": False,
+        "group_name": False,
+        "location_type": True,
+        "anydesk": False,
+        "internal_number": True,
+        "bitrix_login": True,
+        "bitrix_password": True,
+        "bitrix_id": True,
+        "is_verified": True,
+    }
+    system_field_visibility_upgrades = {
+        "anydesk": {"is_visible": False, "is_visible_in_editor": False},
+        "department": {"is_visible": False},
+        "first_department": {"is_visible": False},
+        "group_name": {"is_visible": False},
+    }
+    legacy_anydesk_rule_actions = [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "editor"}]
+    effective_anydesk_rule_actions = [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "both"}]
     default_blocks = [
         {"key": "tg", "title": "Telegram", "color_scheme": "blue", "sort_order": 10, "is_active": True},
         {"key": "profile", "title": "Профиль", "color_scheme": "green", "sort_order": 20, "is_active": True},
@@ -67,11 +96,11 @@ def ensure_client_card_defaults() -> None:
         ("destination", "Куда..?", "select", "department", 10, True, True, True),
         ("sand_owner", "Чей песок", "select", "department", 20, True, True, True),
         ("sales_group", "Группа отдела продаж", "select", "department", 30, True, True, True),
-        ("department", "Отдел", "readonly", "department", 40, True, False, True),
-        ("first_department", "Департамент", "readonly", "department", 50, True, False, True),
-        ("group_name", "Группа", "readonly", "department", 60, True, False, True),
+        ("department", "Отдел", "readonly", "department", 40, False, False, True),
+        ("first_department", "Департамент", "readonly", "department", 50, False, False, True),
+        ("group_name", "Группа", "readonly", "department", 60, False, False, True),
         ("location_type", "Расположение", "select", "department", 70, True, True, True),
-        ("anydesk", "Anydesk", "text", "department", 80, True, True, True),
+        ("anydesk", "Anydesk", "text", "department", 80, False, True, True),
         ("internal_number", "Внутренний номер", "text", "work", 10, True, True, True),
         ("bitrix_login", "Логин Bitrix", "text", "work", 20, True, True, True),
         ("bitrix_password", "Пароль Bitrix", "password", "work", 30, True, True, True),
@@ -105,12 +134,12 @@ def ensure_client_card_defaults() -> None:
             "condition_field_key": "location_type",
             "condition_operator": "equals",
             "condition_value": "\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439",
-            "actions_json": [{"target_type": "field", "target_key": "anydesk", "action": "show", "scope": "editor"}],
+            "actions_json": effective_anydesk_rule_actions,
         },
         {
             "technical_key": "derive_department_meta_fallback",
             "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: fallback",
-            "sort_order": 100,
+            "sort_order": 130,
             "condition_field_key": "",
             "condition_operator": "always",
             "condition_value": None,
@@ -123,7 +152,7 @@ def ensure_client_card_defaults() -> None:
         {
             "technical_key": "derive_department_meta_sand",
             "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: \u041f\u0435\u0441\u043e\u043a",
-            "sort_order": 110,
+            "sort_order": 100,
             "condition_field_key": "destination",
             "condition_operator": "equals",
             "condition_value": "\u041f\u0435\u0441\u043e\u043a",
@@ -136,7 +165,7 @@ def ensure_client_card_defaults() -> None:
         {
             "technical_key": "derive_department_meta_sales",
             "name": "\u0420\u0430\u0441\u0447\u0451\u0442 department/first_department/group_name: \u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
-            "sort_order": 120,
+            "sort_order": 110,
             "condition_field_key": "destination",
             "condition_operator": "equals",
             "condition_value": "\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436",
@@ -197,7 +226,7 @@ def ensure_client_card_defaults() -> None:
                         block_key=block_key,
                         sort_order=sort_order,
                         is_visible=is_visible,
-                        is_visible_in_editor=not is_system,
+                        is_visible_in_editor=system_field_editor_visibility_defaults.get(key, not is_system),
                         is_editable=is_editable,
                         is_system=is_system,
                         created_at=now,
@@ -206,6 +235,11 @@ def ensure_client_card_defaults() -> None:
                 )
         if not has_blocks or not has_fields:
             db.commit()
+        has_rules = db.execute(select(ClientCardRuleConfig.id).limit(1)).first() is not None
+        next_system_rule_sort_order = (
+            db.execute(select(ClientCardRuleConfig.sort_order).order_by(ClientCardRuleConfig.sort_order.desc()).limit(1)).scalar_one_or_none()
+            or 0
+        )
         for rule in default_rules:
             existing = db.execute(
                 select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == rule["technical_key"])
@@ -231,8 +265,18 @@ def ensure_client_card_defaults() -> None:
             )
             if matched is not None:
                 matched.technical_key = rule["technical_key"]
+                if (
+                    matched.technical_key == "show_anydesk_for_remote"
+                    and matched.actions_json == legacy_anydesk_rule_actions
+                ):
+                    matched.actions_json = effective_anydesk_rule_actions
                 matched.updated_at = now
                 continue
+            if has_rules:
+                next_system_rule_sort_order += SORT_STEP
+                sort_order = next_system_rule_sort_order
+            else:
+                sort_order = rule["sort_order"]
             db.add(
                 ClientCardRuleConfig(
                     id=str(uuid.uuid4()),
@@ -240,7 +284,7 @@ def ensure_client_card_defaults() -> None:
                     name=rule["name"],
                     is_active=True,
                     is_system=True,
-                    sort_order=rule["sort_order"],
+                    sort_order=sort_order,
                     condition_field_key=rule["condition_field_key"],
                     condition_operator=rule["condition_operator"],
                     condition_value=rule["condition_value"],
@@ -249,6 +293,29 @@ def ensure_client_card_defaults() -> None:
                     updated_at=now,
                 )
             )
+        for field in db.execute(
+            select(ClientCardFieldConfig).where(
+                ClientCardFieldConfig.is_system.is_(True),
+                ClientCardFieldConfig.key.in_(tuple(system_field_editor_visibility_defaults)),
+            )
+        ).scalars():
+            target = dict(system_field_visibility_upgrades.get(field.key, {}))
+            target.setdefault("is_visible_in_editor", system_field_editor_visibility_defaults[field.key])
+            changed = False
+            if "is_visible" in target and field.is_visible != target["is_visible"]:
+                field.is_visible = target["is_visible"]
+                changed = True
+            if "is_visible_in_editor" in target and field.is_visible_in_editor != target["is_visible_in_editor"]:
+                field.is_visible_in_editor = target["is_visible_in_editor"]
+                changed = True
+            if changed:
+                field.updated_at = now
+        for rule in db.execute(
+            select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "show_anydesk_for_remote")
+        ).scalars():
+            if rule.is_system and rule.actions_json == legacy_anydesk_rule_actions:
+                rule.actions_json = effective_anydesk_rule_actions
+                rule.updated_at = now
         db.commit()
 
 

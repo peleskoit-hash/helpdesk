@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -8,6 +10,104 @@ from sqlalchemy.orm import Session
 
 from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
 from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
+
+SYSTEM_PROFILE_FIELD_KEYS = {
+    "contact_name",
+    "last_name",
+    "email",
+    "phone",
+    "verification_status",
+    "is_verified",
+    "destination",
+    "sand_owner",
+    "sales_group",
+    "department",
+    "first_department",
+    "group_name",
+    "employee_type",
+    "location_type",
+    "anydesk",
+    "internal_number",
+    "external_user_id",
+    "bitrix_login",
+    "bitrix_password",
+    "bitrix_id",
+}
+
+SYSTEM_FIELD_EDITOR_VISIBILITY_DEFAULTS = {
+    "telegram_username": True,
+    "telegram_display_name": True,
+    "last_name": True,
+    "contact_name": True,
+    "destination": True,
+    "sand_owner": False,
+    "sales_group": False,
+    "department": False,
+    "first_department": False,
+    "group_name": False,
+    "location_type": True,
+    "anydesk": False,
+    "internal_number": True,
+    "bitrix_login": True,
+    "bitrix_password": True,
+    "bitrix_id": True,
+    "is_verified": True,
+}
+
+SYSTEM_SELECT_FIELD_OPTIONS = {
+    "destination": [
+        "Песок",
+        "Отдел Продаж",
+        "Колл Центр",
+        "HR",
+        "Руководство",
+        "Отдел Коучей",
+        "Контроль Качества",
+    ],
+    "sand_owner": [
+        "песок Власова",
+        "песок Шабурова",
+        "песок Сайдаралиева",
+        "песок Макаренко",
+        "песок Шахалиевой",
+        "песок Кочуры",
+        "песок Москвиченко",
+    ],
+    "sales_group": [
+        "группа Власова",
+        "группа Шабурова",
+        "группа Сайдаралиева",
+        "группа Макаренко",
+        "группа Шахалиевой",
+        "группа Кочуры",
+        "группа Москвиченко",
+    ],
+    "location_type": [
+        "Офисный",
+        "Удалённый",
+    ],
+}
+
+
+def _field_editor_visibility_default(field: ClientCardFieldConfig) -> bool:
+    if not bool(field.is_system):
+        return bool(field.is_editable)
+    return SYSTEM_FIELD_EDITOR_VISIBILITY_DEFAULTS.get(field.key, bool(field.is_editable))
+
+
+def _field_options_out(field: ClientCardFieldConfig) -> list[str] | None:
+    raw_options = field.options_json
+    if isinstance(raw_options, str):
+        try:
+            parsed = json.loads(raw_options)
+        except Exception:
+            parsed = None
+        raw_options = parsed
+    if isinstance(raw_options, list) and raw_options:
+        return raw_options
+    if bool(field.is_system):
+        return list(SYSTEM_SELECT_FIELD_OPTIONS.get(field.key, [])) or None
+    return None
 
 
 def _error(status_code: int, code: str, message: str):
@@ -18,12 +118,28 @@ def _profile_out(
     profile: ClientProfile,
     telegram_username: str | None,
     telegram_display_name: str | None,
+    field_overrides: dict[str, Any] | None = None,
 ) -> ClientProfileOut:
+    overrides = field_overrides or {}
+    value = lambda key: overrides.get(key, getattr(profile, key))
+    custom_fields = {
+        key: item
+        for key, item in dict(profile.custom_fields or {}).items()
+        if key not in SYSTEM_PROFILE_FIELD_KEYS
+    }
+    if isinstance(overrides.get("custom_fields"), dict):
+        custom_fields.update(
+            {
+                key: item
+                for key, item in overrides["custom_fields"].items()
+                if key not in SYSTEM_PROFILE_FIELD_KEYS
+            }
+        )
     return ClientProfileOut(
         telegram_username=telegram_username,
         telegram_display_name=telegram_display_name,
-        contact_name=profile.contact_name,
-        last_name=profile.last_name,
+        contact_name=value("contact_name"),
+        last_name=value("last_name"),
         email=profile.email,
         phone=profile.phone,
         verification_status=profile.verification_status,
@@ -39,10 +155,10 @@ def _profile_out(
         anydesk=profile.anydesk,
         internal_number=profile.internal_number,
         external_user_id=profile.external_user_id,
-        bitrix_login=profile.bitrix_login,
+        bitrix_login=value("bitrix_login"),
         bitrix_password=profile.bitrix_password,
-        bitrix_id=profile.bitrix_id,
-        custom_fields=profile.custom_fields or {},
+        bitrix_id=value("bitrix_id"),
+        custom_fields=custom_fields,
     )
 
 
@@ -59,7 +175,7 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
     for field in fields:
         field_visible_in_editor = getattr(field, "is_visible_in_editor", None)
         if field_visible_in_editor is None:
-            field_visible_in_editor = (not bool(field.is_system)) and bool(field.is_editable)
+            field_visible_in_editor = _field_editor_visibility_default(field)
         fields_by_block.setdefault(field.block_key, []).append(
             ClientCardFieldConfigOut(
                 id=field.id,
@@ -73,7 +189,7 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
                 is_editable=bool(field.is_editable),
                 is_required=bool(field.is_required),
                 is_system=bool(field.is_system),
-                options=field.options_json or None,
+                options=_field_options_out(field),
             )
         )
     sources = db.execute(
@@ -113,7 +229,7 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
             for rule in db.execute(
                 select(ClientCardRuleConfig)
                 .where(ClientCardRuleConfig.is_active.is_(True))
-                .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.created_at.asc())
+                .order_by(ClientCardRuleConfig.sort_order.asc(), ClientCardRuleConfig.id.asc())
             ).scalars().all()
         ],
         sources=[

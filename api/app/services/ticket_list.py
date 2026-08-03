@@ -3,7 +3,7 @@ from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import BotButtonSetting, Client, MessageType, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, Client, ClientProfile, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
@@ -152,6 +152,43 @@ def last_reply_meta(db: Session, ticket_id: str):
     return by, row.created_at
 
 
+def _normalized_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _snapshot_custom_fio(ticket: Ticket) -> str:
+    snapshot = ticket.call_center_profile_snapshot_json or {}
+    custom_fields = snapshot.get("custom_fields") if isinstance(snapshot, dict) else None
+    if not isinstance(custom_fields, dict):
+        return ""
+    return _normalized_text(custom_fields.get("custom_fio"))
+
+
+def _profile_custom_fio(db: Session, ticket: Ticket) -> str:
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
+    if profile is None or not isinstance(profile.custom_fields, dict):
+        return ""
+    return _normalized_text(profile.custom_fields.get("custom_fio"))
+
+
+def _telegram_contact(db: Session, ticket: Ticket) -> TelegramContact | None:
+    return db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
+
+
+def requester_display_name(db: Session, ticket: Ticket) -> str:
+    telegram_contact = _telegram_contact(db, ticket)
+    for value in (
+        _snapshot_custom_fio(ticket),
+        _profile_custom_fio(db, ticket),
+        _normalized_text(telegram_contact.external_display_name if telegram_contact else ""),
+        _normalized_text(ticket.client.display_name if ticket.client else ""),
+        _normalized_text(telegram_contact.external_username if telegram_contact else ""),
+    ):
+        if value:
+            return value
+    return "Клиент"
+
+
 def seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
     if not is_support_user(user):
         return False
@@ -235,6 +272,7 @@ def list_tickets_paginated(
                 is_frozen=t.is_frozen,
                 seen_by_agent=seen,
                 client_name=t.client.display_name if t.client else "",
+                requester_display_name=requester_display_name(db, t),
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=bool(t.is_special),
@@ -299,6 +337,7 @@ def list_special_tickets(
                 is_frozen=t.is_frozen,
                 seen_by_agent=False,
                 client_name=t.client.display_name if t.client else "",
+                requester_display_name=requester_display_name(db, t),
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=True,

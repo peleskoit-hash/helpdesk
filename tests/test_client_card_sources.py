@@ -139,6 +139,43 @@ def test_source_crud():
     assert session.get(ClientCardSourceConfig, created.id) is None
 
 
+def test_source_query_value_internal_number_template_saves_and_test_endpoint_passes_context(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+
+    created = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            technical_key="employee_lookup_by_query",
+            name="Employee lookup by query",
+            url_template="https://api.example.com/users",
+            query_template_json={"internal_number": "{{internal_number}}"},
+            mapping_json=[{"response_path": "data.user.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+    assert created.query_template_json == {"internal_number": "{{internal_number}}"}
+
+    seen_contexts = []
+
+    def fake_execute(source, context):
+        seen_contexts.append((source.query_template_json, dict(context)))
+        return SimpleNamespace(http_status=200, payload={"data": {"user": {"name": "Maria"}}}, duration_ms=7)
+
+    monkeypatch.setattr(settings_client_card, "execute_source", fake_execute)
+
+    preview = settings_client_card.test_client_card_source(
+        created.id,
+        ClientCardSourceTestRequest(context={"internal_number": "344"}),
+        db=session,
+        user=_admin(),
+    )
+
+    assert preview.http_status == 200
+    assert preview.mapped_values == {"contact_name": "Maria"}
+    assert seen_contexts == [({"internal_number": "{{internal_number}}"}, {"internal_number": "344"})]
+
+
 def test_source_patch_rejects_required_nulls_and_clears_nullable_fields():
     session = _session()
     _seed_fields(session)
@@ -228,8 +265,33 @@ def test_get_executor_with_mocked_transport_and_recursive_field_templates(monkey
     assert result.payload["data"]["user"]["name"] == "Anna"
 
 
+def test_execute_source_renders_query_value_from_internal_number_and_keeps_literals():
+    source = _source(
+        url_template="https://api.example.com/users",
+        query_template_json={"internal_number": "{{internal_number}}", "mode": "fixed"},
+    )
+    captured = {}
+
+    def transport(request):
+        captured["request"] = request
+        return SourceHttpResponse(200, {"content-type": "application/json"}, b'{"data":{"user":{"name":"Maria"}}}')
+
+    result = sources.execute_source(
+        source,
+        {"internal_number": "344"},
+        transport=transport,
+        resolver=_public_resolver,
+    )
+
+    assert result.http_status == 200
+    assert parse_qs(urlparse(captured["request"].url).query) == {
+        "internal_number": ["344"],
+        "mode": ["fixed"],
+    }
+
+
 def test_executor_uses_validated_ip_without_second_hostname_resolve(monkeypatch):
-    source = _source(url_template="https://api.example.com/users")
+    source = _source(url_template="https://api.example.com/users", query_template_json=None)
     captured = {}
 
     def transport(request):
@@ -632,6 +694,100 @@ def test_redirects_disabled_handler_contract():
     assert sources.NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://example.com/next") is None
 
 
+def test_dev_local_http_allowlist_is_enforced_for_create_and_execute(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    monkeypatch.setattr(sources.settings, "app_env", "dev")
+
+    created = settings_client_card.create_client_card_source(
+        ClientCardSourceCreate(
+            technical_key="local_http_host_docker_internal",
+            name="Local HTTP host.docker.internal",
+            url_template="http://host.docker.internal:18765/employee.json",
+            mapping_json=[{"response_path": "data.user.name", "target_key": "contact_name"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+    assert created.url_template == "http://host.docker.internal:18765/employee.json"
+    assert sources.validate_rendered_url(
+        "http://host.docker.internal:18765/employee.json",
+        "http://host.docker.internal:18765/employee.json",
+        resolver=lambda _host: ["192.168.65.2"],
+    ) == "http://host.docker.internal:18765/employee.json"
+    assert sources.validate_rendered_url(
+        "http://127.0.0.1:18765/employee.json",
+        "http://127.0.0.1:18765/employee.json",
+        resolver=_public_resolver,
+    ) == "http://127.0.0.1:18765/employee.json"
+
+    result = sources.execute_source(
+        _source(url_template="http://127.0.0.1:18765/employee.json"),
+        {},
+        transport=lambda request: SourceHttpResponse(200, {"content-type": "application/json"}, b'{"ok": true}'),
+        resolver=_public_resolver,
+    )
+    assert result.http_status == 200
+
+
+def test_http_local_sources_are_rejected_in_production(monkeypatch):
+    monkeypatch.setattr(sources.settings, "app_env", "prod")
+    monkeypatch.setattr(sources.settings, "client_card_source_allowed_hosts", "host.docker.internal,127.0.0.1")
+
+    for url in [
+        "http://host.docker.internal:18765/employee.json",
+        "http://127.0.0.1:18765/employee.json",
+    ]:
+        with pytest.raises(ClientCardSourceConfigError, match="HTTPS"):
+            sources.validate_url_template_static(url)
+        with pytest.raises(ClientCardSourceConfigError, match="HTTPS"):
+            sources.validate_rendered_url(url, url, resolver=lambda _host: ["127.0.0.1"])
+
+
+def test_arbitrary_http_and_url_credentials_are_rejected_in_any_environment(monkeypatch):
+    monkeypatch.setattr(sources.settings, "app_env", "dev")
+
+    with pytest.raises(ClientCardSourceConfigError, match="HTTPS"):
+        sources.validate_url_template_static("http://example.com/data")
+    with pytest.raises(ClientCardSourceConfigError, match="credentials"):
+        sources.validate_url_template_static("http://localhost:18765@evil.example.com/data")
+    with pytest.raises(ClientCardSourceConfigError, match="credentials"):
+        sources.validate_rendered_url(
+            "http://127.0.0.1:18765/data",
+            "http://user:pass@127.0.0.1:18765/data",
+            resolver=_public_resolver,
+        )
+
+
+def test_https_remains_allowed(monkeypatch):
+    monkeypatch.setattr(sources.settings, "app_env", "dev")
+
+    assert sources.validate_rendered_url(
+        "https://api.example.com/users",
+        "https://api.example.com/users",
+        resolver=_public_resolver,
+    ) == "https://api.example.com/users"
+
+
+def test_redirect_does_not_bypass_local_http_restrictions(monkeypatch):
+    monkeypatch.setattr(sources.settings, "app_env", "dev")
+
+    with pytest.raises(ClientCardSourceHttpError, match="redirects are disabled"):
+        sources.execute_source(
+            _source(url_template="http://localhost:18765/employee.json"),
+            {},
+            transport=lambda request: SourceHttpResponse(
+                302,
+                {
+                    "content-type": "application/json",
+                    "location": "http://example.com/employee.json",
+                },
+                b"{}",
+            ),
+            resolver=_public_resolver,
+        )
+
+
 def test_safe_json_paths_array_index_and_missing_vs_null():
     payload = {"data": {"user": {"name": None}}, "items": [{"name": "First"}]}
     assert sources.read_response_path(payload, "data.user.name") is None
@@ -894,6 +1050,121 @@ def test_manual_source_run_success_missing_null_and_no_save_rules(monkeypatch):
     assert profile.custom_fields == {"custom_note": "new"}
 
 
+def test_manual_source_run_applies_local_template_derivation_and_strips_system_custom_keys(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    session.add_all(
+        [
+            _field("bitrix_id"),
+            _field("bitrix_login"),
+            _field("custom_fio", is_system=False),
+            _field("favorite_color", is_system=False),
+        ]
+    )
+    session.add(
+        ClientCardRuleConfig(
+            id=str(uuid.uuid4()),
+            name="Full name",
+            is_active=True,
+            is_system=False,
+            sort_order=1,
+            condition_field_key="last_name",
+            condition_operator="is_not_empty",
+            condition_value=None,
+            actions_json=[
+                {
+                    "target_type": "field",
+                    "target_key": "custom_fio",
+                    "action": "set_value",
+                    "scope": "save",
+                    "value_type": "template",
+                    "value": "{{last_name}} {{contact_name}}",
+                }
+            ],
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    client, profile = _client_with_profile(
+        session,
+        contact_name="Old",
+        last_name="Name",
+        internal_number="344",
+        custom_fields={
+            "contact_name": "Bad Maria",
+            "last_name": "Bad Ivanova",
+            "bitrix_id": "bad-id",
+            "bitrix_login": "bad-login",
+            "custom_fio": "Old FIO",
+            "favorite_color": "Blue",
+        },
+    )
+    source = _source(
+        url_template="https://api.example.com/users",
+        query_template_json={"internal_number": "{{internal_number}}"},
+        mapping_json=[
+            {"response_path": "data.first_name", "target_key": "contact_name"},
+            {"response_path": "data.last_name", "target_key": "last_name"},
+            {"response_path": "data.id", "target_key": "bitrix_id"},
+            {"response_path": "data.login", "target_key": "bitrix_login"},
+        ],
+    )
+    session.add(source)
+    session.commit()
+    calls = []
+
+    def fake_execute(_source, context):
+        calls.append(dict(context))
+        return SimpleNamespace(
+            http_status=200,
+            payload={"data": {"first_name": "Maria", "last_name": "Ivanova", "id": 101, "login": "m.ivanova"}},
+            duration_ms=7,
+        )
+
+    monkeypatch.setattr(sources, "execute_source", fake_execute)
+
+    result = apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+    session.commit()
+    session.refresh(profile)
+
+    assert len(calls) == 1
+    assert calls[0]["internal_number"] == "344"
+    assert calls[0]["contact_name"] == "Old"
+    assert profile.contact_name == "Maria"
+    assert profile.last_name == "Ivanova"
+    assert profile.bitrix_id == "101"
+    assert profile.bitrix_login == "m.ivanova"
+    assert profile.custom_fields == {"custom_fio": "Ivanova Maria", "favorite_color": "Blue"}
+    assert {"contact_name", "last_name", "bitrix_id", "bitrix_login", "custom_fio"} <= result.changed_keys
+
+
+def test_manual_source_run_requires_non_empty_template_values_before_http(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    internal_number_field = session.execute(select(ClientCardFieldConfig).where(ClientCardFieldConfig.key == "internal_number")).scalar_one()
+    internal_number_field.label = "\u0412\u043d\u0443\u0442\u0440\u0435\u043d\u043d\u0438\u0439 \u043d\u043e\u043c\u0435\u0440"
+    client, profile = _client_with_profile(session, internal_number="")
+    source = _source(
+        url_template="https://api.example.com/users",
+        query_template_json={"internal_number": "{{internal_number}}"},
+    )
+    session.add(source)
+    session.commit()
+    calls = []
+    monkeypatch.setattr(sources, "execute_source", lambda _source, _context: calls.append(_context))
+
+    with pytest.raises(HTTPException) as exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "source_template_value_required"
+    assert "\u0412\u043d\u0443\u0442\u0440\u0435\u043d\u043d\u0438\u0439 \u043d\u043e\u043c\u0435\u0440" in exc.value.detail["error"]["message"]
+    assert calls == []
+    session.rollback()
+    session.refresh(profile)
+    assert profile.contact_name == "Before"
+
+
 def test_manual_source_run_rejects_inactive_and_missing_source():
     session = _session()
     _seed_fields(session)
@@ -1046,7 +1317,7 @@ def test_manual_source_run_creates_missing_profile(monkeypatch):
     session = _session()
     _seed_fields(session)
     client = Client(id=str(uuid.uuid4()), company_id="company-1", display_name="Before")
-    source = _source()
+    source = _source(url_template="https://api.example.com/users", query_template_json=None)
     session.add_all([client, source])
     session.commit()
 

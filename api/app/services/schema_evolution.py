@@ -347,6 +347,13 @@ def ensure_ticket_columns() -> None:
         "closed_by_user_id": "VARCHAR(36)",
         "completed_by_user_id": "VARCHAR(36)",
         "completed_counted_at": "TIMESTAMP",
+        "call_center_employee_lookup_at": "TIMESTAMP",
+        "call_center_internal_number": "VARCHAR(100)",
+        "call_center_employee_first_name": "VARCHAR(200)",
+        "call_center_employee_last_name": "VARCHAR(200)",
+        "call_center_employee_id": "VARCHAR(100)",
+        "call_center_employee_bitrix_login": "VARCHAR(255)",
+        "call_center_profile_snapshot_json": "JSON",
     }
 
     with engine.begin() as conn:
