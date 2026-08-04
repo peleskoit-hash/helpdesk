@@ -319,6 +319,18 @@ class ClientCardSourceConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class CallCenterEmployeeResolverState(Base):
+    __tablename__ = "call_center_employee_resolver_state"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class BotButtonSetting(Base):
     __tablename__ = "bot_button_settings"
 

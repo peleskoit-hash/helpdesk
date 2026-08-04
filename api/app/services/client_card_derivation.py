@@ -423,6 +423,36 @@ def _merge_value_delta(
             changed_keys.add(target_key)
 
 
+def _call_center_system_source_extra_delta(
+    source: Any,
+    payload: Any,
+    *,
+    resolved_targets: set[str],
+    context: dict[str, Any],
+    field_configs: dict[str, Any],
+    custom_keys: set[str],
+) -> list[tuple[str, Any, bool]]:
+    if getattr(source, "technical_key", None) != "call_center_employee_by_internal_number":
+        return []
+    if "custom_fio" in resolved_targets or "custom_fio" not in custom_keys:
+        return []
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return []
+    resolution_status = str(data.get("resolution_status") or "").strip()
+    if resolution_status not in {"not_found_in_successful_response", "ambiguous_internal_number"}:
+        return []
+    return [
+        _prepare_value_delta(
+            "custom_fio",
+            None,
+            context=context,
+            field_configs=field_configs,
+            custom_keys=custom_keys,
+        )
+    ]
+
+
 def _apply_profile_patch(profile: ClientProfile, data: dict[str, Any], custom_fields: dict[str, Any]) -> None:
     for field in SYSTEM_PROFILE_FIELDS:
         if field in data:
@@ -514,6 +544,16 @@ def apply_client_card_profile_save_pipeline(
                         field_configs=field_configs,
                         custom_keys=custom_keys,
                     ))
+                source_delta.extend(
+                    _call_center_system_source_extra_delta(
+                        source,
+                        result.payload,
+                        resolved_targets=resolved_targets | {target_key for target_key, _, _ in source_delta},
+                        context=context,
+                        field_configs=field_configs,
+                        custom_keys=custom_keys,
+                    )
+                )
                 _merge_value_delta(
                     source_delta,
                     staged=staged,
@@ -698,6 +738,16 @@ def apply_client_card_source_manual_run(
                 custom_keys=custom_keys,
             )
         )
+    source_delta.extend(
+        _call_center_system_source_extra_delta(
+            source,
+            result.payload,
+            resolved_targets={target_key for target_key, _, _ in source_delta},
+            context=context,
+            field_configs=field_configs,
+            custom_keys=custom_keys,
+        )
+    )
 
     if profile_id:
         profile = _locked_profile(db, profile_id)

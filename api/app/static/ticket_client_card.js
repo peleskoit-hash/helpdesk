@@ -818,10 +818,18 @@
     return payload;
   }
 
-  function openClientModal(ctx) {
+  async function openClientModal(ctx) {
     if (!ctx.state.card) return;
-    fillModal(ctx, ctx.state.card.client_profile || {});
-    ctx.el.clientModal.classList.remove("hidden");
+    try {
+      ctx.setStatus("Загружаю текущий профиль клиента...");
+      const profile = await ctx.api(`/api/v1/tickets/${ctx.state.ticketId}/client-profile`);
+      ctx.state.currentClientProfile = profile || {};
+      fillModal(ctx, ctx.state.currentClientProfile);
+      ctx.el.clientModal.classList.remove("hidden");
+      ctx.setStatus("Текущий профиль клиента загружен");
+    } catch (e) {
+      ctx.showError(e.message);
+    }
   }
 
   function closeClientModal(ctx) {
@@ -837,8 +845,8 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      ctx.state.card.client_profile = profile;
-      fillClientPanel(ctx, profile);
+      ctx.state.currentClientProfile = profile || {};
+      await ctx.loadCard({ silent: true });
       closeClientModal(ctx);
       ctx.setStatus("Профиль клиента сохранён");
     } catch (e) {

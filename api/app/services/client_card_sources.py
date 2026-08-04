@@ -27,6 +27,13 @@ FIELD_TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
 SECRET_TEMPLATE_RE = re.compile(r"\{\{secret:([A-Z0-9_]+)\}\}")
 FIELD_TEMPLATE_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 DEV_LOCAL_HTTP_HOSTS = frozenset({"host.docker.internal", "localhost", "127.0.0.1", "::1"})
+SYSTEM_SOURCE_REQUIRED_MAPPINGS = (
+    {"response_path": "data.first_name", "target_key": "contact_name"},
+    {"response_path": "data.last_name", "target_key": "last_name"},
+    {"response_path": "data.id", "target_key": "bitrix_id"},
+    {"response_path": "data.id", "target_key": "external_user_id"},
+    {"response_path": "data.login", "target_key": "bitrix_login"},
+)
 
 
 class ClientCardSourceError(Exception):
@@ -246,11 +253,28 @@ def collect_template_tree_field_refs(value: Any) -> set[str]:
 
 
 def source_template_field_refs(source: ClientCardSourceConfig) -> set[str]:
+    if source.kind == "system" or source.technical_key == "call_center_employee_by_internal_number":
+        return {"internal_number"}
     refs, _secrets = parse_template_refs(source.url_template or "", allow_secrets=False)
     refs.update(collect_template_tree_field_refs(source.query_template_json or {}))
     refs.update(collect_template_tree_field_refs(source.headers_template_json or {}))
     refs.update(collect_template_tree_field_refs(source.body_template_json))
     return refs
+
+
+def ensure_system_source_mapping_json(mapping_json: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    merged = [dict(item) for item in (mapping_json or []) if isinstance(item, dict)]
+    seen_targets = {
+        str(item.get("target_key") or "").strip()
+        for item in merged
+        if str(item.get("target_key") or "").strip()
+    }
+    for item in SYSTEM_SOURCE_REQUIRED_MAPPINGS:
+        if item["target_key"] in seen_targets:
+            continue
+        merged.append(dict(item))
+        seen_targets.add(item["target_key"])
+    return merged
 
 
 def validate_mapping(db: Session, mapping: list[dict[str, Any]]) -> None:
@@ -298,6 +322,8 @@ def execute_source(
     transport: Callable[[SourceHttpRequest], SourceHttpResponse] | None = None,
     resolver: Callable[[str], list[str]] | None = None,
 ) -> SourceExecutionResult:
+    if source.kind == "system" or source.technical_key == "call_center_employee_by_internal_number":
+        return _execute_system_source(source, context)
     if source.kind != "http":
         raise ClientCardSourceConfigError("Unsupported source kind")
     method = (source.method or "GET").upper()
@@ -347,6 +373,60 @@ def execute_source(
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ClientCardSourceHttpError("Source returned invalid JSON response", status=response.status) from exc
     return SourceExecutionResult(http_status=response.status, payload=payload, duration_ms=duration_ms)
+
+
+def _execute_system_source(source: ClientCardSourceConfig, context: dict[str, Any]) -> SourceExecutionResult:
+    if source.technical_key != "call_center_employee_by_internal_number":
+        raise ClientCardSourceConfigError("Unsupported source kind")
+    from . import call_center_employee_resolver
+
+    started = time.monotonic()
+    try:
+        result = call_center_employee_resolver.resolve(None, context.get("internal_number"))
+    except Exception as exc:
+        raise ClientCardSourceError(f"System source failed: {type(exc).__name__}") from exc
+    if result.status in {
+        call_center_employee_resolver.STATUS_TECHNICAL_ERROR,
+        call_center_employee_resolver.STATUS_REFRESH_TIMEOUT,
+        call_center_employee_resolver.STATUS_NOT_CONFIGURED,
+    }:
+        raise ClientCardSourceError(f"System source failed: {result.status}")
+    data = result.employee_payload()
+    resolution_status = data.get("resolution_status") or result.status
+    if result.status in {
+        call_center_employee_resolver.STATUS_NOT_FOUND,
+        call_center_employee_resolver.STATUS_AMBIGUOUS,
+    }:
+        payload_data = {
+            "first_name": "",
+            "last_name": "",
+            "id": "",
+            "bitrix_id": "",
+            "login": "",
+            "full_name": "",
+            "department_ids": [],
+            "resolution_status": resolution_status,
+            "used_stale_fallback": False,
+        }
+    else:
+        payload_data = {
+            "first_name": data.get("first_name") or "",
+            "last_name": data.get("last_name") or "",
+            "id": data.get("bitrix_id") or "",
+            "bitrix_id": data.get("bitrix_id") or "",
+            "full_name": data.get("full_name") or "",
+            "department_ids": data.get("department_ids") or [],
+            "resolution_status": resolution_status,
+            "used_stale_fallback": bool(data.get("used_stale_fallback")),
+        }
+        if data.get("bitrix_login"):
+            payload_data["login"] = data.get("bitrix_login")
+    payload = {"data": payload_data}
+    return SourceExecutionResult(
+        http_status=200,
+        payload=payload,
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
 
 
 class ValidatedHTTPSConnection(http.client.HTTPSConnection):

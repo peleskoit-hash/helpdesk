@@ -235,6 +235,27 @@ def ensure_client_card_field_config_columns() -> None:
         conn.execute(text("UPDATE client_card_source_configs SET on_error = 'ignore' WHERE on_error IS NULL"))
 
 
+def ensure_call_center_employee_resolver_state_table() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        json_type = "TEXT" if dialect == "sqlite" else "JSONB"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS call_center_employee_resolver_state (
+                    key VARCHAR(100) PRIMARY KEY,
+                    snapshot_json {json_type},
+                    metadata_json {json_type},
+                    fetched_at TIMESTAMP,
+                    last_attempt_at TIMESTAMP,
+                    last_success_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+
+
 def ensure_telegram_contact_columns() -> None:
     required_columns = {
         "external_username": "VARCHAR(100)",

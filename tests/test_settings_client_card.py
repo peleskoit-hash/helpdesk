@@ -17,6 +17,7 @@ from api.app.schemas import ClientCardBlockUpdate, ClientCardFieldCreate, Client
 from api.app.services import client_card
 from api.app.services import client_card_derivation
 from api.app.services import client_card_sources
+from api.app.services import call_center_employee_resolver
 from api.app.services import seed_data
 
 
@@ -452,6 +453,43 @@ def _source_config(**overrides):
     }
     data.update(overrides)
     return ClientCardSourceConfig(**data)
+
+
+def _install_call_center_system_source(session):
+    block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "department")).scalar_one()
+    custom_block = session.execute(select(ClientCardBlockConfig).where(ClientCardBlockConfig.key == "custom_block_1")).scalar_one()
+    session.add_all(
+        [
+            _field("internal_number", "Internal", block.key, 100, is_system=True),
+            _field("last_name", "Last", block.key, 110, is_system=True),
+            _field("bitrix_id", "Bitrix ID", block.key, 120, is_system=True),
+            _field("external_user_id", "External user ID", block.key, 130, is_system=True),
+            _field("bitrix_login", "Bitrix login", block.key, 140, is_system=True),
+            _field("bitrix_password", "Bitrix password", block.key, 150, is_system=True),
+            _field("phone", "Phone", block.key, 160, is_system=True),
+            _field("custom_fio", "ФИО", custom_block.key, 30, is_system=False),
+        ]
+    )
+    source = _source_config(
+        technical_key=call_center_employee_resolver.SYSTEM_SOURCE_KEY,
+        name="System",
+        kind="system",
+        url_template="system://call-center-employee-resolver",
+        mapping_json=[
+            {"response_path": "data.first_name", "target_key": "contact_name"},
+            {"response_path": "data.last_name", "target_key": "last_name"},
+            {"response_path": "data.id", "target_key": "bitrix_id"},
+            {"response_path": "data.id", "target_key": "external_user_id"},
+            {"response_path": "data.login", "target_key": "bitrix_login"},
+        ],
+    )
+    session.add_all(
+        [
+            source,
+            _save_rule("system lookup", 10, "always", None, None, [{"action": "lookup_source", "scope": "save", "source_id": source.id}]),
+        ]
+    )
+    return source
 
 
 def test_runtime_client_card_view_config_exposes_only_safe_source_summary():
@@ -1035,6 +1073,169 @@ def test_lookup_source_per_rule_trigger_action_order_mapping_and_top_priority(mo
     assert profile.contact_name == "Anna"
     assert profile.group_name == "Anna / From source"
     assert profile.department == "From source"
+
+
+def test_system_lookup_source_rule_runs_on_internal_number_change_and_preserves_login(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    _install_call_center_system_source(session)
+    profile.bitrix_login = "keep.login"
+    session.commit()
+    calls = []
+
+    def fake_resolve(db, internal_number, final_wait_seconds=None):
+        calls.append(internal_number)
+        return call_center_employee_resolver.ResolveResult(
+            status=call_center_employee_resolver.STATUS_FOUND,
+            internal_number=internal_number,
+            employee=call_center_employee_resolver.CallCenterEmployee(
+                internal_number=internal_number,
+                bitrix_id="101",
+                first_name="Anna",
+                last_name="Ivanova",
+                full_name="Ivanova Anna",
+                department_ids=[60],
+                bitrix_login=None,
+            ),
+        )
+
+    monkeypatch.setattr(call_center_employee_resolver, "resolve", fake_resolve)
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="344"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert calls == ["344"]
+    assert profile.contact_name == "Anna"
+    assert profile.last_name == "Ivanova"
+    assert profile.bitrix_id == "101"
+    assert profile.external_user_id == "101"
+    assert profile.bitrix_login == "keep.login"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        call_center_employee_resolver.STATUS_TECHNICAL_ERROR,
+        call_center_employee_resolver.STATUS_REFRESH_TIMEOUT,
+        call_center_employee_resolver.STATUS_NOT_CONFIGURED,
+    ],
+)
+def test_system_lookup_source_technical_status_keeps_last_working_profile_on_save(monkeypatch, status):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    _install_call_center_system_source(session)
+    profile.contact_name = "Tatiana"
+    profile.last_name = "Levshina"
+    profile.bitrix_id = "71701"
+    profile.external_user_id = "71701"
+    profile.bitrix_login = "t.levshina"
+    profile.bitrix_password = "keep-secret"
+    profile.phone = "123"
+    profile.custom_fields = {"custom_fio": "Levshina Tatiana", "favorite_color": "Blue"}
+    session.commit()
+
+    monkeypatch.setattr(
+        call_center_employee_resolver,
+        "resolve",
+        lambda db, internal_number, final_wait_seconds=None: call_center_employee_resolver.ResolveResult(
+            status=status,
+            internal_number=internal_number,
+            error_code="should-not-leak",
+        ),
+    )
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="726"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.internal_number == "726"
+    assert profile.contact_name == "Tatiana"
+    assert profile.last_name == "Levshina"
+    assert profile.bitrix_id == "71701"
+    assert profile.external_user_id == "71701"
+    assert profile.bitrix_login == "t.levshina"
+    assert profile.bitrix_password == "keep-secret"
+    assert profile.phone == "123"
+    assert profile.custom_fields == {"custom_fio": "Levshina Tatiana", "favorite_color": "Blue"}
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        call_center_employee_resolver.STATUS_NOT_FOUND,
+        call_center_employee_resolver.STATUS_AMBIGUOUS,
+    ],
+)
+def test_system_lookup_source_successfully_clears_only_resolver_owned_fields(monkeypatch, status):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    _install_call_center_system_source(session)
+    profile.contact_name = "Tatiana"
+    profile.last_name = "Levshina"
+    profile.bitrix_id = "71701"
+    profile.external_user_id = "71701"
+    profile.bitrix_login = "t.levshina"
+    profile.bitrix_password = "keep-secret"
+    profile.phone = "123"
+    profile.custom_fields = {"custom_fio": "Levshina Tatiana", "favorite_color": "Blue"}
+    session.commit()
+
+    monkeypatch.setattr(
+        call_center_employee_resolver,
+        "resolve",
+        lambda db, internal_number, final_wait_seconds=None: call_center_employee_resolver.ResolveResult(
+            status=status,
+            internal_number=internal_number,
+        ),
+    )
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="000"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.internal_number == "000"
+    assert profile.contact_name is None
+    assert profile.last_name is None
+    assert profile.bitrix_id is None
+    assert profile.external_user_id is None
+    assert profile.bitrix_login is None
+    assert profile.bitrix_password == "keep-secret"
+    assert profile.phone == "123"
+    assert profile.custom_fields == {"favorite_color": "Blue"}
+
+
+def test_system_lookup_source_found_with_login_updates_resolver_owned_fields(monkeypatch):
+    session = _session()
+    _, ticket, profile = _client_card_save_fixture(session)
+    _install_call_center_system_source(session)
+    profile.bitrix_login = "old.login"
+    session.commit()
+
+    monkeypatch.setattr(
+        call_center_employee_resolver,
+        "resolve",
+        lambda db, internal_number, final_wait_seconds=None: call_center_employee_resolver.ResolveResult(
+            status=call_center_employee_resolver.STATUS_FOUND,
+            internal_number=internal_number,
+            employee=call_center_employee_resolver.CallCenterEmployee(
+                internal_number=internal_number,
+                bitrix_id="202",
+                first_name="Sabrina",
+                last_name="Minigareeva",
+                full_name="Minigareeva Sabrina",
+                department_ids=[60],
+                bitrix_login="s.minigareeva",
+            ),
+        ),
+    )
+
+    tickets.update_client_profile(ticket.id, ClientProfileUpdate(internal_number="726"), db=session, user=_admin())
+    session.refresh(profile)
+
+    assert profile.internal_number == "726"
+    assert profile.contact_name == "Sabrina"
+    assert profile.last_name == "Minigareeva"
+    assert profile.bitrix_id == "202"
+    assert profile.external_user_id == "202"
+    assert profile.bitrix_login == "s.minigareeva"
 
 
 def test_lookup_source_missing_null_inactive_and_error_policies(monkeypatch):

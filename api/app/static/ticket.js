@@ -282,6 +282,7 @@ function clientCardCtx() {
     state,
     el,
     api,
+    loadCard,
     setStatus,
     showError,
     closeOnBackdropClick,

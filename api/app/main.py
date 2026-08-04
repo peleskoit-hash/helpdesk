@@ -33,12 +33,14 @@ from .routers.telegram import router as telegram_router
 from .routers.tickets import router as tickets_router
 from .routers.users import router as users_router
 from .services.button_config import clear_button_config_cache, load_button_config
+from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (
     ensure_bot_menu_level_layouts_table,
     ensure_bot_menu_profiles_tables,
     ensure_bot_button_settings_table,
     ensure_automatic_message_templates_table,
     ensure_client_card_field_config_columns,
+    ensure_call_center_employee_resolver_state_table,
     ensure_client_profile_columns,
     ensure_telegram_contact_columns,
     ensure_ticket_attachment_table,
@@ -75,11 +77,12 @@ app.include_router(mass_notifications_router)
 app.include_router(management_users_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 telegram_polling_task: asyncio.Task | None = None
+call_center_employee_refresh_thread = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global telegram_polling_task
+    global telegram_polling_task, call_center_employee_refresh_thread
 
     settings.validate_runtime_guards()
 
@@ -98,6 +101,7 @@ async def on_startup():
             ensure_bot_menu_level_layouts_table()
             ensure_bot_menu_profiles_tables()
             ensure_client_card_field_config_columns()
+            ensure_call_center_employee_resolver_state_table()
             ensure_client_card_defaults()
             last_error = None
             break
@@ -120,10 +124,13 @@ async def on_startup():
     if settings.telegram_polling_enabled and settings.telegram_bot_token and telegram_polling_task is None:
         telegram_polling_task = asyncio.create_task(telegram_polling_loop())
 
+    if call_center_employee_refresh_thread is None:
+        call_center_employee_refresh_thread = start_periodic_refresh_loop()
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global telegram_polling_task
+    global telegram_polling_task, call_center_employee_refresh_thread
 
     if telegram_polling_task is not None:
         telegram_polling_task.cancel()
@@ -132,6 +139,8 @@ async def on_shutdown():
         except asyncio.CancelledError:
             pass
         telegram_polling_task = None
+    stop_periodic_refresh_loop()
+    call_center_employee_refresh_thread = None
 
 
 @app.get("/health")

@@ -158,6 +158,11 @@ def _normalized_text(value) -> str:
 
 def _snapshot_custom_fio(ticket: Ticket) -> str:
     snapshot = ticket.call_center_profile_snapshot_json or {}
+    profile_delta = snapshot.get("profile_delta") if isinstance(snapshot, dict) else None
+    if isinstance(profile_delta, dict):
+        custom_fields = profile_delta.get("custom_fields")
+        if isinstance(custom_fields, dict):
+            return _normalized_text(custom_fields.get("custom_fio"))
     custom_fields = snapshot.get("custom_fields") if isinstance(snapshot, dict) else None
     if not isinstance(custom_fields, dict):
         return ""
@@ -175,15 +180,42 @@ def _telegram_contact(db: Session, ticket: Ticket) -> TelegramContact | None:
     return db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
 
 
+def _call_center_lookup_performed(ticket: Ticket) -> bool:
+    return ticket.call_center_employee_lookup_at is not None or isinstance(ticket.call_center_profile_snapshot_json, dict)
+
+
+def _snapshot_name_parts(ticket: Ticket) -> tuple[str, str]:
+    snapshot = ticket.call_center_profile_snapshot_json or {}
+    if not isinstance(snapshot, dict):
+        return "", ""
+    profile_delta = snapshot.get("profile_delta")
+    if isinstance(profile_delta, dict):
+        return (
+            _normalized_text(profile_delta.get("last_name")),
+            _normalized_text(profile_delta.get("contact_name")),
+        )
+    return (
+        _normalized_text(ticket.call_center_employee_last_name or snapshot.get("last_name")),
+        _normalized_text(ticket.call_center_employee_first_name or snapshot.get("first_name")),
+    )
+
+
 def requester_display_name(db: Session, ticket: Ticket) -> str:
     telegram_contact = _telegram_contact(db, ticket)
-    for value in (
-        _snapshot_custom_fio(ticket),
-        _profile_custom_fio(db, ticket),
-        _normalized_text(telegram_contact.external_display_name if telegram_contact else ""),
-        _normalized_text(ticket.client.display_name if ticket.client else ""),
-        _normalized_text(telegram_contact.external_username if telegram_contact else ""),
-    ):
+    values = [_snapshot_custom_fio(ticket)]
+    if _call_center_lookup_performed(ticket):
+        last_name, first_name = _snapshot_name_parts(ticket)
+        values.append(_normalized_text(" ".join(part for part in (last_name, first_name) if part)))
+    else:
+        values.append(_profile_custom_fio(db, ticket))
+    values.extend(
+        [
+            _normalized_text(telegram_contact.external_display_name if telegram_contact else ""),
+            _normalized_text(ticket.client.display_name if ticket.client else ""),
+            _normalized_text(telegram_contact.external_username if telegram_contact else ""),
+        ]
+    )
+    for value in values:
         if value:
             return value
     return "Клиент"

@@ -138,15 +138,41 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
 
 
 def _call_center_profile_overrides(ticket: Ticket) -> dict:
-    overrides = dict(ticket.call_center_profile_snapshot_json or {})
-    if ticket.call_center_employee_first_name:
+    snapshot = ticket.call_center_profile_snapshot_json or {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    profile_delta = snapshot.get("profile_delta")
+    if isinstance(profile_delta, dict):
+        overrides = dict(profile_delta)
+        custom_fields = profile_delta.get("custom_fields")
+        if isinstance(custom_fields, dict):
+            overrides["custom_fields"] = dict(custom_fields)
+        return overrides
+
+    overrides = {}
+    custom_fields = snapshot.get("custom_fields")
+    if isinstance(custom_fields, dict):
+        overrides["custom_fields"] = dict(custom_fields)
+    if "internal_number" in snapshot:
+        overrides["internal_number"] = snapshot.get("internal_number")
+    if ticket.call_center_employee_first_name is not None:
         overrides["contact_name"] = ticket.call_center_employee_first_name
-    if ticket.call_center_employee_last_name:
+    elif "first_name" in snapshot:
+        overrides["contact_name"] = snapshot.get("first_name") or ""
+    if ticket.call_center_employee_last_name is not None:
         overrides["last_name"] = ticket.call_center_employee_last_name
-    if ticket.call_center_employee_id:
+    elif "last_name" in snapshot:
+        overrides["last_name"] = snapshot.get("last_name") or ""
+    if ticket.call_center_employee_id is not None:
         overrides["bitrix_id"] = ticket.call_center_employee_id
-    if ticket.call_center_employee_bitrix_login:
+        overrides["external_user_id"] = ticket.call_center_employee_id
+    elif "bitrix_id" in snapshot:
+        overrides["bitrix_id"] = snapshot.get("bitrix_id") or ""
+        overrides["external_user_id"] = snapshot.get("bitrix_id") or ""
+    if ticket.call_center_employee_bitrix_login is not None:
         overrides["bitrix_login"] = ticket.call_center_employee_bitrix_login
+    elif "bitrix_login" in snapshot:
+        overrides["bitrix_login"] = snapshot.get("bitrix_login") or ""
     return overrides
 
 
@@ -156,15 +182,25 @@ def _drop_call_center_snapshot_payload(data: dict, ticket: Ticket) -> dict:
         return data
     sanitized = dict(data)
     snapshot_custom_fields = overrides.get("custom_fields") if isinstance(overrides.get("custom_fields"), dict) else {}
-    for key in ("contact_name", "last_name", "bitrix_id", "bitrix_login"):
+    for key in ("contact_name", "last_name", "bitrix_id", "external_user_id", "bitrix_login", "internal_number"):
         if key in overrides:
             sanitized.pop(key, None)
-    if "custom_fields" in sanitized and isinstance(sanitized["custom_fields"], dict) and snapshot_custom_fields:
+    if "custom_fields" in sanitized and isinstance(sanitized["custom_fields"], dict):
         custom_fields = dict(sanitized["custom_fields"])
         for key in snapshot_custom_fields:
             custom_fields.pop(key, None)
         sanitized["custom_fields"] = custom_fields
     return sanitized
+
+
+def _current_client_profile_out(profile: ClientProfile, ticket: Ticket, contact) -> ClientProfileOut:
+    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (ticket.client.display_name if ticket.client else None)
+    telegram_username = contact.external_username if contact else None
+    return _profile_out(
+        profile,
+        telegram_username,
+        telegram_display_name,
+    )
 
 
 def _require_admin(user: CurrentUser):
@@ -893,6 +929,14 @@ def get_client_card_view_config(ticket_id: str, db: Session = Depends(get_db), u
     return _client_card_view_config(db)
 
 
+@router.get("/{ticket_id}/client-profile", response_model=ClientProfileOut)
+def get_current_client_profile(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    t = _get_ticket_or_404(db, ticket_id, user)
+    profile = _get_or_create_client_profile(db, t.client_id)
+    contact = _telegram_contact_for_client(db, t.client_id)
+    return _current_client_profile_out(profile, t, contact)
+
+
 @router.get("/{ticket_id}/attachments/{attachment_id}/download")
 def download_attachment(
     ticket_id: str,
@@ -968,7 +1012,7 @@ def update_client_profile(
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == t.client_id)).scalar_one_or_none()
     contact = _telegram_contact_for_client(db, t.client_id)
 
-    data = _drop_call_center_snapshot_payload(payload.model_dump(exclude_unset=True), t)
+    data = payload.model_dump(exclude_unset=True)
     merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
@@ -1000,14 +1044,7 @@ def update_client_profile(
 
     db.commit()
     db.refresh(profile)
-    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (t.client.display_name if t.client else None)
-    telegram_username = contact.external_username if contact else None
-    return _profile_out(
-        profile,
-        telegram_username,
-        telegram_display_name,
-        _call_center_profile_overrides(t),
-    )
+    return _current_client_profile_out(profile, t, contact)
 
 
 @router.post("/{ticket_id}/client-profile/source-run", response_model=ClientProfileOut)
@@ -1027,14 +1064,7 @@ def run_client_profile_source(
         t.client.display_name = profile.contact_name
     db.commit()
     db.refresh(profile)
-    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (t.client.display_name if t.client else None)
-    telegram_username = contact.external_username if contact else None
-    return _profile_out(
-        profile,
-        telegram_username,
-        telegram_display_name,
-        _call_center_profile_overrides(t),
-    )
+    return _current_client_profile_out(profile, t, contact)
 
 
 def _add_message(

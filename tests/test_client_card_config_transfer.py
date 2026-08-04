@@ -23,6 +23,7 @@ from api.app.models import (
     User,
 )
 from api.app.services import seed_data
+from api.app.services.call_center_employee_resolver import SYSTEM_SOURCE_KEY
 from api.app.services.client_card_config_transfer import (
     ClientCardTransferError,
     export_client_card_config,
@@ -285,6 +286,111 @@ def test_repeated_import_is_idempotent():
     assert _counts(prod)["fields"] == 3
     assert _counts(prod)["sources"] == 1
     assert _counts(prod)["rules"] == 1
+
+
+def test_system_lookup_action_round_trips_without_exporting_runtime_source():
+    dev = _session()
+    block = _block()
+    fields = [_field("contact_name"), _field("internal_number")]
+    system_source = _source(
+        technical_key=SYSTEM_SOURCE_KEY,
+        name="System",
+        kind="system",
+        method="POST",
+        url_template="system://call-center-employee-resolver",
+        query_template_json=None,
+        headers_template_json=None,
+        mapping_json=[{"response_path": "data.first_name", "target_key": "contact_name"}],
+    )
+    rule = _rule(
+        technical_key="mixed_system_rule",
+        actions_json=[
+            {"action": "lookup_source", "scope": "save", "source_id": system_source.id},
+            {"action": "show", "scope": "editor", "target_type": "field", "target_key": "contact_name"},
+        ],
+    )
+    dev.add_all([block, *fields, system_source, rule])
+    dev.commit()
+
+    exported = export_client_card_config(dev)
+    assert exported["sources"] == []
+    assert exported["rules"][0]["actions"] == [
+        {"action": "lookup_source", "scope": "save", "source_key": SYSTEM_SOURCE_KEY},
+        {"action": "show", "scope": "editor", "target_type": "field", "target_key": "contact_name"},
+    ]
+    assert SYSTEM_SOURCE_KEY not in json_dumps(exported["sources"])
+
+    prod = _session()
+    first = import_client_card_config(prod, exported, apply=True)
+    second = import_client_card_config(prod, exported, apply=True)
+    imported_source = prod.execute(select(ClientCardSourceConfig).where(ClientCardSourceConfig.technical_key == SYSTEM_SOURCE_KEY)).scalar_one()
+    imported_rule = prod.execute(select(ClientCardRuleConfig).where(ClientCardRuleConfig.technical_key == "mixed_system_rule")).scalar_one()
+
+    assert first["conflicts"] == []
+    assert second["conflicts"] == []
+    assert imported_rule.actions_json == [
+        {"action": "lookup_source", "scope": "save", "source_id": imported_source.id},
+        {"action": "show", "scope": "editor", "target_type": "field", "target_key": "contact_name"},
+    ]
+    assert len(prod.execute(select(ClientCardSourceConfig).where(ClientCardSourceConfig.technical_key == SYSTEM_SOURCE_KEY)).scalars().all()) == 1
+
+
+def test_system_source_import_upgrade_keeps_existing_id_and_user_mappings():
+    prod = _session()
+    existing = _source(
+        technical_key=SYSTEM_SOURCE_KEY,
+        name="System",
+        kind="system",
+        method="POST",
+        url_template="system://call-center-employee-resolver",
+        query_template_json=None,
+        headers_template_json=None,
+        body_template_json=None,
+        mapping_json=[
+            {"response_path": "data.bitrix_id", "target_key": "bitrix_id"},
+            {"response_path": "data.full_name", "target_key": "custom_note"},
+        ],
+    )
+    prod.add_all([_block(), _field("contact_name"), _field("internal_number"), _field("custom_note", is_system=False), existing])
+    prod.commit()
+    existing_id = existing.id
+
+    payload = {
+        "format_version": 1,
+        "scope": "client_card_config",
+        "blocks": [],
+        "fields": [],
+        "sources": [],
+        "rules": [
+            {
+                "rule_key": "uses_system_source",
+                "technical_key": "uses_system_source",
+                "name": "Uses system source",
+                "is_active": True,
+                "sort_order": 10,
+                "condition_field_key": "internal_number",
+                "condition_operator": "is_not_empty",
+                "condition_value": None,
+                "actions": [{"action": "lookup_source", "scope": "save", "source_key": SYSTEM_SOURCE_KEY}],
+            }
+        ],
+    }
+
+    first = import_client_card_config(prod, payload, apply=True)
+    second = import_client_card_config(prod, payload, apply=True)
+    source = prod.execute(select(ClientCardSourceConfig).where(ClientCardSourceConfig.technical_key == SYSTEM_SOURCE_KEY)).scalar_one()
+
+    assert first["conflicts"] == []
+    assert second["conflicts"] == []
+    assert source.id == existing_id
+    mapping_by_target = {item["target_key"]: item["response_path"] for item in source.mapping_json}
+    assert mapping_by_target["bitrix_id"] == "data.bitrix_id"
+    assert mapping_by_target["contact_name"] == "data.first_name"
+    assert mapping_by_target["last_name"] == "data.last_name"
+    assert mapping_by_target["external_user_id"] == "data.id"
+    assert mapping_by_target["bitrix_login"] == "data.login"
+    assert mapping_by_target["custom_note"] == "data.full_name"
+    assert len(mapping_by_target) == len(source.mapping_json)
 
 
 def test_export_order_is_deterministic_for_same_config():

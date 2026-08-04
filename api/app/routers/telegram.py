@@ -96,7 +96,10 @@ from ..services.telegram_onboarding import (
     telegram_contact_by_chat_id,
 )
 from ..services.system_tickets import FirstConnectionDefaults, first_connection_values
-from ..services.ticket_call_center_snapshot import apply_call_center_employee_snapshot_on_ticket_create
+from ..services.ticket_call_center_snapshot import (
+    apply_call_center_employee_snapshot_on_ticket_create,
+    start_call_center_employee_refresh_if_needed,
+)
 
 
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
@@ -2036,6 +2039,8 @@ def _prepare_collecting_ticket_for_button(db: Session, ticket: Ticket, button: B
         ticket.load_counted = True
     append_system_message(db, ticket, f"\u041a\u043b\u0438\u0435\u043d\u0442 \u0432\u044b\u0431\u0440\u0430\u043b \u043a\u043d\u043e\u043f\u043a\u0443: {button.label}")
     _store_button_system_text(db, ticket, button)
+    if (menu_name or "").strip().casefold() == "колл центр":
+        start_call_center_employee_refresh_if_needed(db, ticket.client_id)
 
 
 def _create_group_children_from_collecting(

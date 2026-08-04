@@ -121,17 +121,23 @@ def _profile_out(
     field_overrides: dict[str, Any] | None = None,
 ) -> ClientProfileOut:
     overrides = field_overrides or {}
-    value = lambda key: overrides.get(key, getattr(profile, key))
+    custom_field_overrides = overrides.get("custom_fields") if isinstance(overrides.get("custom_fields"), dict) else {}
+
+    def value(key: str):
+        if key in overrides:
+            return overrides[key]
+        return getattr(profile, key)
+
     custom_fields = {
         key: item
         for key, item in dict(profile.custom_fields or {}).items()
         if key not in SYSTEM_PROFILE_FIELD_KEYS
     }
-    if isinstance(overrides.get("custom_fields"), dict):
+    if custom_field_overrides:
         custom_fields.update(
             {
                 key: item
-                for key, item in overrides["custom_fields"].items()
+                for key, item in custom_field_overrides.items()
                 if key not in SYSTEM_PROFILE_FIELD_KEYS
             }
         )
@@ -153,8 +159,8 @@ def _profile_out(
         employee_type=profile.employee_type,
         location_type=profile.location_type,
         anydesk=profile.anydesk,
-        internal_number=profile.internal_number,
-        external_user_id=profile.external_user_id,
+        internal_number=value("internal_number"),
+        external_user_id=value("external_user_id"),
         bitrix_login=value("bitrix_login"),
         bitrix_password=profile.bitrix_password,
         bitrix_id=value("bitrix_id"),

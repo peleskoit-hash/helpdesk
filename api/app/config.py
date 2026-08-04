@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     initial_seed_enabled: bool | None = None
     attachment_storage_dir: str = "/app/storage/attachments"
     bitrix_webhook_base: str | None = None
+    bitrix_kc_webhook_base: str | None = None
+    bitrix_kc_department_ids: str = "60"
+    bitrix_kc_refresh_interval_seconds: int = 3600
+    bitrix_kc_max_stale_seconds: int = 28800
+    bitrix_kc_final_wait_seconds: int = 5
+    bitrix_kc_request_timeout_seconds: int = 10
+    bitrix_kc_retry_count: int = 1
     client_card_source_allowed_hosts: str | None = None
     session_secret_key: str = DEFAULT_SESSION_SECRET
     session_cookie_name: str = "esdesk_session"

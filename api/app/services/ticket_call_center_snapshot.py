@@ -7,24 +7,24 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import ClientCardSourceConfig, ClientProfile, Ticket
-from . import client_card_sources
-from .client_card_sources import ClientCardSourceError, MISSING
+from ..models import ClientProfile, Ticket
+from . import call_center_employee_resolver
 from .client_card_derivation import SYSTEM_PROFILE_FIELDS, apply_client_card_profile_local_save_rules
 
 
 CALL_CENTER_EMPLOYEE_SOURCE_KEY = "call_center_employee_by_internal_number"
 CALL_CENTER_DESTINATION_VALUE = "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"
+RESOLVER_OWNED_PROFILE_FIELDS = (
+    "contact_name",
+    "last_name",
+    "bitrix_id",
+    "external_user_id",
+    "bitrix_login",
+    "internal_number",
+)
+RESOLVER_OWNED_CUSTOM_FIELD_KEYS = ("custom_fio",)
 
 _LOGGER = logging.getLogger(__name__)
-
-_MAPPING_TARGETS = {
-    "contact_name": ("call_center_employee_first_name", "contact_name"),
-    "last_name": ("call_center_employee_last_name", "last_name"),
-    "bitrix_id": ("call_center_employee_id", "bitrix_id"),
-    "external_user_id": ("call_center_employee_id", "bitrix_id"),
-    "bitrix_login": ("call_center_employee_bitrix_login", "bitrix_login"),
-}
 
 
 def _normalized_text(value: Any) -> str:
@@ -97,6 +97,69 @@ def _profile_snapshot_payload(profile: ClientProfile, changed_keys: set[str]) ->
     return snapshot
 
 
+def _empty_resolver_profile_delta(internal_number: str) -> dict[str, Any]:
+    return {
+        "contact_name": "",
+        "last_name": "",
+        "bitrix_id": "",
+        "external_user_id": "",
+        "bitrix_login": "",
+        "internal_number": internal_number,
+        "custom_fields": {"custom_fio": ""},
+    }
+
+
+def _clear_profile_resolver_owned_fields(profile: ClientProfile) -> None:
+    profile.contact_name = None
+    profile.last_name = None
+    profile.bitrix_id = None
+    profile.external_user_id = None
+    profile.bitrix_login = None
+    current = dict(profile.custom_fields or {})
+    for key in RESOLVER_OWNED_CUSTOM_FIELD_KEYS:
+        current.pop(key, None)
+    profile.custom_fields = current
+
+
+def _build_ticket_profile_delta(
+    *,
+    internal_number: str,
+    first_name: str | None,
+    last_name: str | None,
+    bitrix_id: str | None,
+    bitrix_login: str | None,
+    custom_fio: str | None = None,
+) -> dict[str, Any]:
+    delta = {
+        "contact_name": first_name or "",
+        "last_name": last_name or "",
+        "bitrix_id": bitrix_id or "",
+        "external_user_id": bitrix_id or "",
+        "bitrix_login": bitrix_login or "",
+        "internal_number": internal_number,
+        "custom_fields": {"custom_fio": custom_fio or ""},
+    }
+    return delta
+
+
+def start_call_center_employee_refresh_if_needed(db: Session, client_id: str) -> bool:
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
+    if not _is_call_center_profile(profile):
+        return False
+    internal_number = _normalized_text(profile.internal_number)
+    if not internal_number:
+        return False
+    try:
+        return call_center_employee_resolver.start_refresh_if_needed(internal_number)
+    except Exception as exc:
+        _LOGGER.warning(
+            "Call-center employee early refresh failed safely for client %s: %s",
+            client_id,
+            type(exc).__name__,
+        )
+        return False
+
+
 def apply_call_center_employee_snapshot_on_ticket_create(db: Session, ticket: Ticket) -> bool:
     if _ticket_has_snapshot(ticket):
         return False
@@ -112,69 +175,104 @@ def apply_call_center_employee_snapshot_on_ticket_create(db: Session, ticket: Ti
     ticket.call_center_employee_lookup_at = datetime.utcnow()
     ticket.call_center_internal_number = internal_number
 
-    source = db.execute(
-        select(ClientCardSourceConfig).where(
-            ClientCardSourceConfig.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY,
-            ClientCardSourceConfig.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-    if source is None:
-        _LOGGER.info("Call-center employee lookup source is not configured for ticket %s", ticket.id)
-        return False
-
-    context = _snapshot_context(profile)
-
     try:
-        result = client_card_sources.execute_source(source, context)
-    except ClientCardSourceError as exc:
+        result = call_center_employee_resolver.resolve(db, internal_number)
+    except Exception as exc:
         _LOGGER.warning(
-            "Call-center employee lookup failed for ticket %s via source %s: %s",
+            "Call-center employee resolver failed safely for ticket %s: %s",
             ticket.id,
-            source.technical_key or source.id,
             type(exc).__name__,
         )
+        ticket.call_center_profile_snapshot_json = {
+            "internal_number": internal_number,
+            "bitrix_id": "",
+            "first_name": "",
+            "last_name": "",
+            "full_name": "",
+            "department_ids": [],
+            "resolution_status": call_center_employee_resolver.STATUS_TECHNICAL_ERROR,
+            "used_stale_fallback": False,
+            "bitrix_login": None,
+            "error_code": type(exc).__name__,
+            "profile_delta": _empty_resolver_profile_delta(internal_number),
+        }
         return False
-
-    try:
-        applied = False
-        profile_delta: dict[str, str] = {}
-        for item in source.mapping_json or []:
-            target_key = item.get("target_key")
-            target_fields = _MAPPING_TARGETS.get(target_key)
-            if not target_fields:
-                continue
-            value = client_card_sources.read_response_path(result.payload, item.get("response_path"))
-            if value is MISSING:
-                continue
-            text = _mapped_scalar(value)
-            if text is None:
-                continue
-            ticket_field, profile_field = target_fields
-            setattr(ticket, ticket_field, text)
-            setattr(profile, profile_field, text)
-            profile_delta[profile_field] = text
-            applied = True
-        if applied:
-            result = apply_client_card_profile_local_save_rules(
-                db,
-                profile,
-                profile_delta,
-                dict(profile.custom_fields or {}),
-            )
-            ticket.call_center_profile_snapshot_json = _profile_snapshot_payload(profile, result.changed_keys)
-    except ClientCardSourceError as exc:
-        _LOGGER.warning(
-            "Call-center employee lookup mapping failed for ticket %s via source %s: %s",
-            ticket.id,
-            source.technical_key or source.id,
-            type(exc).__name__,
-        )
-        return False
-
-    if not applied:
+    payload = result.employee_payload()
+    ticket.call_center_profile_snapshot_json = {
+        **payload,
+        "profile_delta": _empty_resolver_profile_delta(internal_number),
+    }
+    if not result.found:
+        if result.status in {
+            call_center_employee_resolver.STATUS_NOT_FOUND,
+            call_center_employee_resolver.STATUS_AMBIGUOUS,
+        }:
+            _clear_profile_resolver_owned_fields(profile)
         _LOGGER.info(
-            "Call-center employee lookup returned no persistable employee fields for ticket %s via source %s",
+            "Call-center employee resolver returned status %s for ticket %s",
+            result.status,
             ticket.id,
-            source.technical_key or source.id,
         )
-    return applied
+        return False
+
+    profile_delta: dict[str, str] = {}
+    first_name = _mapped_scalar(payload.get("first_name"))
+    last_name = _mapped_scalar(payload.get("last_name"))
+    bitrix_id = _mapped_scalar(payload.get("bitrix_id"))
+    bitrix_login = _mapped_scalar(payload.get("bitrix_login"))
+    if first_name:
+        ticket.call_center_employee_first_name = first_name
+        profile.contact_name = first_name
+        profile_delta["contact_name"] = first_name
+    if last_name:
+        ticket.call_center_employee_last_name = last_name
+        profile.last_name = last_name
+        profile_delta["last_name"] = last_name
+    if bitrix_id:
+        ticket.call_center_employee_id = bitrix_id
+        profile.bitrix_id = bitrix_id
+        profile.external_user_id = bitrix_id
+        profile_delta["bitrix_id"] = bitrix_id
+        profile_delta["external_user_id"] = bitrix_id
+    if bitrix_login:
+        ticket.call_center_employee_bitrix_login = bitrix_login
+        profile.bitrix_login = bitrix_login
+        profile_delta["bitrix_login"] = bitrix_login
+
+    custom_fio = ""
+    if profile_delta:
+        derivation_result = apply_client_card_profile_local_save_rules(
+            db,
+            profile,
+            profile_delta,
+            dict(profile.custom_fields or {}),
+        )
+        derived_payload = _profile_snapshot_payload(profile, derivation_result.changed_keys)
+        custom_fio = str((derived_payload.get("custom_fields") or {}).get("custom_fio") or "").strip()
+        ticket.call_center_profile_snapshot_json = {
+            **payload,
+            **derived_payload,
+            "profile_delta": _build_ticket_profile_delta(
+                internal_number=internal_number,
+                first_name=first_name,
+                last_name=last_name,
+                bitrix_id=bitrix_id,
+                bitrix_login=bitrix_login,
+                custom_fio=custom_fio,
+            ),
+        }
+        return True
+
+    ticket.call_center_profile_snapshot_json = {
+        **payload,
+        "profile_delta": _build_ticket_profile_delta(
+            internal_number=internal_number,
+            first_name=first_name,
+            last_name=last_name,
+            bitrix_id=bitrix_id,
+            bitrix_login=bitrix_login,
+            custom_fio=custom_fio,
+        ),
+    }
+    _LOGGER.info("Call-center employee resolver found no persistable employee fields for ticket %s", ticket.id)
+    return False

@@ -40,6 +40,7 @@ from ..services.client_card_sources import (
     source_template_field_refs,
     validate_source_payload,
 )
+from ..services.call_center_employee_resolver import SYSTEM_SOURCE_KEY as CALL_CENTER_EMPLOYEE_SOURCE_KEY
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -575,6 +576,8 @@ def create_client_card_source(
     if not name:
         _error(422, "source_name_required", "Source name is required")
     technical_key = _source_technical_key(payload.technical_key)
+    if technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+        _error(403, "system_source_create_forbidden", "System source is owned by application code")
     if technical_key and db.execute(select(ClientCardSourceConfig.id).where(ClientCardSourceConfig.technical_key == technical_key)).first():
         _error(409, "source_technical_key_exists", "Source technical key already exists")
     mapping = _source_mapping_for_storage(payload.mapping_json)
@@ -624,6 +627,8 @@ def update_client_card_source(
     source = db.get(ClientCardSourceConfig, source_id)
     if source is None:
         _error(404, "source_not_found", "Source not found")
+    if source.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+        _error(403, "system_source_update_forbidden", "System source runtime is owned by application code")
     data = _source_payload_data(payload)
     _reject_null_source_required_fields(data)
     next_name = source.name if "name" not in data else str(data["name"]).strip()
@@ -702,6 +707,8 @@ def delete_client_card_source(
     source = db.get(ClientCardSourceConfig, source_id)
     if source is None:
         _error(404, "source_not_found", "Source not found")
+    if source.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+        _error(403, "system_source_delete_forbidden", "System source cannot be deleted")
     rules = _rules_using_source(db, source_id)
     if rules:
         _error_details(

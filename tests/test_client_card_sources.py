@@ -17,6 +17,7 @@ from api.app.routers import settings_client_card, tickets
 from api.app.schemas import ClientCardSourceCreate, ClientCardSourceRunRequest, ClientCardSourceTestRequest, ClientCardSourceUpdate
 from api.app.services import schema_evolution
 from api.app.services import client_card_sources as sources
+from api.app.services import call_center_employee_resolver
 from api.app.services.client_card_derivation import apply_client_card_source_manual_run
 from api.app.services.client_card_sources import (
     ClientCardSourceConfigError,
@@ -96,6 +97,21 @@ def _source(**overrides) -> ClientCardSourceConfig:
     }
     data.update(overrides)
     return ClientCardSourceConfig(**data)
+
+
+def _system_source(**overrides) -> ClientCardSourceConfig:
+    return _source(
+        technical_key=call_center_employee_resolver.SYSTEM_SOURCE_KEY,
+        name="System lookup",
+        kind="system",
+        method="POST",
+        url_template="system://call-center-employee-resolver",
+        query_template_json=None,
+        headers_template_json=None,
+        body_template_json=None,
+        mapping_json=sources.ensure_system_source_mapping_json(None),
+        **overrides,
+    )
 
 
 def _public_resolver(_host: str) -> list[str]:
@@ -1271,6 +1287,48 @@ def test_manual_source_run_source_error_does_not_mutate_profile(monkeypatch):
     session.rollback()
     session.refresh(profile)
     assert profile.contact_name == "Before"
+
+
+def test_manual_system_source_technical_error_returns_safe_api_error_without_profile_mutation(monkeypatch):
+    session = _session()
+    _seed_fields(session)
+    client, profile = _client_with_profile(
+        session,
+        contact_name="Tatiana",
+        last_name="Levshina",
+        internal_number="717",
+    )
+    profile.bitrix_id = "71701"
+    profile.external_user_id = "71701"
+    profile.bitrix_login = "t.levshina"
+    source = _system_source()
+    session.add(source)
+    session.commit()
+
+    monkeypatch.setattr(
+        call_center_employee_resolver,
+        "resolve",
+        lambda db, internal_number, final_wait_seconds=None: call_center_employee_resolver.ResolveResult(
+            status=call_center_employee_resolver.STATUS_TECHNICAL_ERROR,
+            internal_number=internal_number,
+            error_code="backend-secret",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        apply_client_card_source_manual_run(session, client_id=client.id, source_id=source.id)
+
+    assert exc.value.status_code == 502
+    assert exc.value.detail["error"]["code"] == "client_card_source_failed"
+    assert "backend-secret" not in str(exc.value.detail)
+    session.rollback()
+    session.refresh(profile)
+    assert profile.contact_name == "Tatiana"
+    assert profile.last_name == "Levshina"
+    assert profile.internal_number == "717"
+    assert profile.bitrix_id == "71701"
+    assert profile.external_user_id == "71701"
+    assert profile.bitrix_login == "t.levshina"
 
 
 def test_manual_source_run_executes_http_outside_db_transaction(monkeypatch):

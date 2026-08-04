@@ -25,6 +25,7 @@ from ..models import (
 )
 from .client_card_sources import (
     DEV_LOCAL_HTTP_HOSTS,
+    ensure_system_source_mapping_json,
     parse_template_refs,
     source_context_field_keys,
     validate_mapping,
@@ -32,6 +33,7 @@ from .client_card_sources import (
     validate_template_tree,
     validate_url_template_static,
 )
+from .call_center_employee_resolver import SYSTEM_SOURCE_KEY as CALL_CENTER_EMPLOYEE_SOURCE_KEY
 
 
 FORMAT_VERSION = 1
@@ -41,8 +43,6 @@ SECRET_KEY_RE = re.compile(r"(authorization|auth|token|secret|password|passwd|ap
 SECRET_TEMPLATE_RE = re.compile(r"\{\{secret:[A-Z0-9_]+\}\}")
 MOCK_HOST_RE = re.compile(r"(^|\.)mock(s)?(\.|$)|(^|\.)example\.(com|org|net)$", re.IGNORECASE)
 SYSTEM_BLOCK_KEYS = {"tg", "profile", "department", "work", "verification"}
-
-
 class ClientCardTransferError(RuntimeError):
     pass
 
@@ -219,7 +219,13 @@ def _source_payload(source: ClientCardSourceConfig, *, warnings: list[str] | Non
     }
 
 
-def _actions_to_export(actions: list[dict[str, Any]], *, sources_by_id: dict[str, str]) -> list[dict[str, Any]]:
+def _actions_to_export(
+    actions: list[dict[str, Any]],
+    *,
+    sources_by_id: dict[str, str],
+    warnings: list[str] | None = None,
+    rule_name: str = "",
+) -> list[dict[str, Any]]:
     exported: list[dict[str, Any]] = []
     for raw in actions or []:
         action = copy.deepcopy(raw)
@@ -265,12 +271,19 @@ def export_client_card_config(db: Session) -> dict[str, Any]:
         payload["source_key"] = _source_stable_key(source, payload)
         payload["order"] = index
         sources_by_id[source.id] = payload["source_key"]
+        if source.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+            continue
         source_payloads.append(payload)
 
     rules = db.execute(select(ClientCardRuleConfig)).scalars().all()
     rule_payloads = []
     for rule in rules:
-        actions = _actions_to_export(rule.actions_json or [], sources_by_id=sources_by_id)
+        actions = _actions_to_export(
+            rule.actions_json or [],
+            sources_by_id=sources_by_id,
+            warnings=warnings,
+            rule_name=rule.technical_key or rule.name or rule.id,
+        )
         rule_key = rule.technical_key or _hash_key(
             "custom_rule",
             {
@@ -372,6 +385,13 @@ def _assert_export_is_safe(data: dict[str, Any]) -> None:
             raise ClientCardTransferError(f"Forbidden table/data key in export: {key}")
 
 
+def _rule_uses_unexported_system_source(rule: ClientCardRuleConfig, *, sources_by_id: dict[str, str]) -> bool:
+    for action in rule.actions_json or []:
+        if action.get("action") == "lookup_source" and sources_by_id.get(action.get("source_id") or "") == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+            return True
+    return False
+
+
 def _validate_payload(data: dict[str, Any]) -> None:
     if data.get("format_version") != FORMAT_VERSION:
         raise ClientCardTransferError("Unsupported client-card export format_version")
@@ -380,6 +400,17 @@ def _validate_payload(data: dict[str, Any]) -> None:
     for section in ("blocks", "fields", "rules", "sources"):
         if not isinstance(data.get(section), list):
             raise ClientCardTransferError(f"Export section must be a list: {section}")
+
+
+def _payload_references_system_source(data: dict[str, Any]) -> bool:
+    for item in data.get("sources") or []:
+        if (item.get("source_key") or item.get("technical_key")) == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+            return True
+    for rule in data.get("rules") or []:
+        for action in rule.get("actions") or []:
+            if action.get("action") == "lookup_source" and action.get("source_key") == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+                return True
+    return False
 
 
 def _mark(stats: TransferStats, action: str, table: str) -> None:
@@ -414,7 +445,14 @@ def import_client_card_config(db: Session, data: dict[str, Any], *, apply: bool 
         db.flush()
         _import_fields(db, data["fields"], stats=stats, now=now, base_created_at=base_created_at)
         db.flush()
-        sources_by_key = _import_sources(db, data["sources"], stats=stats, now=now, base_created_at=base_created_at)
+        sources_by_key = _import_sources(
+            db,
+            data["sources"],
+            stats=stats,
+            now=now,
+            base_created_at=base_created_at,
+            include_system_source=_payload_references_system_source(data),
+        )
         db.flush()
         _import_rules(db, data["rules"], sources_by_key=sources_by_key, stats=stats, now=now, base_created_at=base_created_at)
         if stats.conflicts or not apply:
@@ -523,6 +561,7 @@ def _import_sources(
     stats: TransferStats,
     now: datetime,
     base_created_at: datetime,
+    include_system_source: bool = False,
 ) -> dict[str, ClientCardSourceConfig]:
     seen_keys: set[str] = set()
     existing_by_technical = {
@@ -532,10 +571,15 @@ def _import_sources(
     existing_sources = list(db.execute(select(ClientCardSourceConfig)).scalars().all())
     existing_by_generated = {_source_stable_key(item): item for item in existing_sources if not item.technical_key}
     result: dict[str, ClientCardSourceConfig] = {}
+    if include_system_source:
+        result[CALL_CENTER_EMPLOYEE_SOURCE_KEY] = _ensure_system_source(db, now=now)
     for item in sources:
         source_key = (item.get("source_key") or item.get("technical_key") or "").strip()
         if not source_key:
             stats.conflicts.append({"table": "client_card_source_configs", "key": "", "reason": "missing source_key"})
+            continue
+        if source_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY or item.get("technical_key") == CALL_CENTER_EMPLOYEE_SOURCE_KEY:
+            _mark(stats, "skipped", "client_card_source_configs")
             continue
         if source_key in seen_keys:
             stats.conflicts.append({"table": "client_card_source_configs", "key": source_key, "reason": "duplicate source_key in import"})
@@ -573,6 +617,43 @@ def _import_sources(
                 _mark(stats, "skipped", "client_card_source_configs")
         result[source_key] = source
     return result
+
+
+def _ensure_system_source(db: Session, *, now: datetime) -> ClientCardSourceConfig:
+    source = db.execute(
+        select(ClientCardSourceConfig).where(ClientCardSourceConfig.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY)
+    ).scalar_one_or_none()
+    values = {
+        "technical_key": CALL_CENTER_EMPLOYEE_SOURCE_KEY,
+        "name": "Сотрудник КЦ по внутреннему номеру",
+        "kind": "system",
+        "is_active": True,
+        "method": "POST",
+        "url_template": "system://call-center-employee-resolver",
+        "query_template_json": None,
+        "headers_template_json": None,
+        "body_template_json": None,
+        "timeout_ms": 5000,
+        "on_error": "ignore",
+    }
+    if source is None:
+        source = ClientCardSourceConfig(
+            id=str(uuid.uuid4()),
+            mapping_json=ensure_system_source_mapping_json(None),
+            created_at=now,
+            updated_at=now,
+            **values,
+        )
+        db.add(source)
+        return source
+    changed = _apply_scalar_changes(source, values, list(values))
+    merged_mapping = ensure_system_source_mapping_json(source.mapping_json)
+    if merged_mapping != (source.mapping_json or []):
+        source.mapping_json = merged_mapping
+        changed = True
+    if changed:
+        source.updated_at = now
+    return source
 
 
 def _validate_import_source(db: Session, item: dict[str, Any], *, dev_only: bool) -> None:

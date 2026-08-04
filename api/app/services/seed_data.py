@@ -7,10 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ..db import SessionLocal
-from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, Company, Ticket, TicketStatus, User
+from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, Company, Ticket, TicketStatus, User
+from .call_center_employee_resolver import SYSTEM_SOURCE_KEY as CALL_CENTER_EMPLOYEE_SOURCE_KEY
+from .client_card_sources import ensure_system_source_mapping_json
 
 SORT_STEP = 10
-
 
 def ensure_test_agents() -> None:
     agent_specs = [
@@ -316,6 +317,41 @@ def ensure_client_card_defaults() -> None:
             if rule.is_system and rule.actions_json == legacy_anydesk_rule_actions:
                 rule.actions_json = effective_anydesk_rule_actions
                 rule.updated_at = now
+        source = db.execute(
+            select(ClientCardSourceConfig).where(ClientCardSourceConfig.technical_key == CALL_CENTER_EMPLOYEE_SOURCE_KEY)
+        ).scalar_one_or_none()
+        if source is None:
+            source = ClientCardSourceConfig(
+                id=str(uuid.uuid4()),
+                technical_key=CALL_CENTER_EMPLOYEE_SOURCE_KEY,
+                name="Сотрудник КЦ по внутреннему номеру",
+                kind="system",
+                is_active=True,
+                method="POST",
+                url_template="system://call-center-employee-resolver",
+                query_template_json=None,
+                headers_template_json=None,
+                body_template_json=None,
+                timeout_ms=5000,
+                mapping_json=ensure_system_source_mapping_json(None),
+                on_error="ignore",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(source)
+        if source is not None:
+            source.name = source.name or "Сотрудник КЦ по внутреннему номеру"
+            source.kind = "system"
+            source.is_active = True
+            source.method = "POST"
+            source.url_template = "system://call-center-employee-resolver"
+            source.query_template_json = None
+            source.headers_template_json = None
+            source.body_template_json = None
+            source.timeout_ms = 5000
+            source.mapping_json = ensure_system_source_mapping_json(source.mapping_json)
+            source.on_error = source.on_error or "ignore"
+            source.updated_at = now
         db.commit()
 
 

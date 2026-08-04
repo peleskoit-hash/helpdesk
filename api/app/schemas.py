@@ -313,7 +313,7 @@ ClientCardRuleActionType = Literal["show", "hide", "readonly", "editable", "requ
 ClientCardRuleTargetType = Literal["field", "block"]
 ClientCardRuleScope = Literal["card", "editor", "both", "save"]
 ClientCardRuleValueType = Literal["literal", "field", "template", "map", "null"]
-ClientCardSourceKind = Literal["http"]
+ClientCardSourceKind = Literal["http", "system"]
 ClientCardSourceMethod = Literal["GET", "POST"]
 ClientCardSourceOnError = Literal["ignore", "block_save"]
 
