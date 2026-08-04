@@ -54,23 +54,13 @@
   state.countsLoaded = false;
 
   const listeners = new Set();
-  let statsAnchor = null;
   let initialized = false;
   let initPromise = null;
+  let userMenuCleanup = null;
 
   function setSidebarReady(value) {
     if (!rootBody) return;
     rootBody.dataset.sidebarReady = value ? "1" : "0";
-  }
-
-  function ensureStatsAnchor() {
-    const stats = qs("#sidebarUserStats");
-    if (!stats || statsAnchor) return;
-    statsAnchor = document.createComment("sidebar-user-stats-anchor");
-    const parent = stats.parentNode;
-    if (parent) {
-      parent.insertBefore(statsAnchor, stats);
-    }
   }
 
   function notify() {
@@ -185,43 +175,35 @@
     );
   }
 
-  function renderUserDisplay() {
+  function currentDisplayName() {
     const nameNode = qs("#sidebarUserDisplayName");
-    if (nameNode && state.fullName) {
-      nameNode.textContent = state.fullName;
+    const legacyText = (nameNode?.textContent || "").trim();
+    const legacyName = legacyText && legacyText !== "—" ? legacyText : "";
+    return (state.fullName || legacyName || "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c").trim();
+  }
+  function renderUserDisplay() {
+    const displayName = currentDisplayName();
+    const nameNode = qs("#sidebarUserDisplayName");
+    if (nameNode) {
+      nameNode.textContent = displayName;
+    }
+    const visibleNameNode = qs("[data-sidebar-user-full-name]");
+    if (visibleNameNode) {
+      visibleNameNode.textContent = displayName;
     }
   }
 
   function positionUserStatsByRole() {
     const stats = qs("#sidebarUserStats");
     if (!stats) return;
-    ensureStatsAnchor();
-    const sidebarBottom = qs(".sidebar-bottom");
-    const userActions = qs(".sidebar-user-actions");
-    const role = state.role;
-    const placeBottom = role === "admin" || role === "chiki_piki";
-
-    if (placeBottom && sidebarBottom) {
-      if (userActions && userActions.parentNode === sidebarBottom) {
-        sidebarBottom.insertBefore(stats, userActions);
-      } else if (stats.parentNode !== sidebarBottom) {
-        sidebarBottom.appendChild(stats);
-      }
-      stats.classList.add("sidebar-user-stats-bottom");
-      return;
-    }
-
-    if (statsAnchor && statsAnchor.parentNode) {
-      statsAnchor.parentNode.insertBefore(stats, statsAnchor.nextSibling);
-    }
     stats.classList.remove("sidebar-user-stats-bottom");
   }
 
   function renderAvatar() {
-    const avatar = qs(".agent-avatar");
+    const avatar = qs(".sidebar-user-avatar-button") || qs(".agent-avatar");
     if (!avatar) return;
-    let sourceName = state.fullName || "Пользователь";
-    if (!sourceName || sourceName === "Пользователь") {
+    let sourceName = currentDisplayName();
+    if (!sourceName || sourceName === "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c") {
       const me = state.agents.find((a) => a.id === state.userId);
       sourceName = me?.full_name || sourceName;
     }
@@ -233,7 +215,180 @@
       .join("")
       .toUpperCase();
     avatar.textContent = initials || "A";
-    avatar.title = sourceName || "Пользователь";
+    avatar.title = sourceName || "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c";
+  }
+
+  function ensureUserMenuStructure() {
+    const sidebarBottom = qs(".sidebar-bottom");
+    if (!sidebarBottom) return null;
+    let panel = qs("[data-sidebar-user-panel]") || qs(".sidebar-user-actions");
+    if (!panel) {
+      panel = document.createElement("div");
+      sidebarBottom.appendChild(panel);
+    }
+    panel.classList.add("sidebar-user-panel");
+    panel.dataset.sidebarUserPanel = "1";
+
+    let toggle = panel.querySelector("[data-sidebar-user-menu-toggle]");
+    if (!toggle) {
+      const existingAvatar = panel.querySelector(".agent-avatar") || qs(".agent-avatar");
+      if (existingAvatar && existingAvatar.tagName === "BUTTON") {
+        toggle = existingAvatar;
+      } else {
+        toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "sidebar-user-avatar-button agent-avatar";
+        toggle.textContent = existingAvatar?.textContent || "A";
+        toggle.title = existingAvatar?.getAttribute("title") || "";
+        if (existingAvatar?.parentNode) {
+          existingAvatar.replaceWith(toggle);
+        } else {
+          panel.insertBefore(toggle, panel.firstChild);
+        }
+      }
+    }
+    toggle.classList.add("sidebar-user-avatar-button");
+    toggle.setAttribute("aria-label", "\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u043e\u0435 \u043c\u0435\u043d\u044e");
+    toggle.setAttribute("aria-haspopup", "menu");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.dataset.sidebarUserMenuToggle = "1";
+
+    let visibleNameNode = panel.querySelector("[data-sidebar-user-full-name]");
+    if (!visibleNameNode) {
+      visibleNameNode = document.createElement("div");
+      visibleNameNode.className = "sidebar-user-name";
+      visibleNameNode.dataset.sidebarUserFullName = "1";
+      visibleNameNode.textContent = "\u2014";
+      panel.insertBefore(visibleNameNode, toggle.nextSibling);
+    }
+
+    let legacyNameNode = qs("#sidebarUserDisplayName");
+    if (!legacyNameNode) {
+      legacyNameNode = document.createElement("div");
+      legacyNameNode.id = "sidebarUserDisplayName";
+      panel.appendChild(legacyNameNode);
+    }
+    legacyNameNode.className = "sidebar-user-legacy-name";
+    legacyNameNode.hidden = true;
+    legacyNameNode.setAttribute("aria-hidden", "true");
+
+    const stats = qs("#sidebarUserStats");
+    if (stats) {
+      const hasCompletionControls = Boolean(stats.querySelector("#completionToggleBtn") || stats.querySelector("#completionDetails"));
+      if (!hasCompletionControls) {
+        stats.hidden = true;
+      }
+    }
+    const logoutForm = qs("[data-sidebar-logout-form]") || qs("form[action='/logout']");
+    if (!logoutForm) return null;
+    if (logoutForm.parentNode !== panel) {
+      panel.appendChild(logoutForm);
+    }
+    logoutForm.hidden = true;
+    logoutForm.dataset.sidebarLogoutForm = "1";
+    let menu = panel.querySelector("[data-sidebar-user-menu]");
+    if (!menu) {
+      menu = document.createElement("div");
+      menu.className = "sidebar-user-menu";
+      menu.hidden = true;
+      menu.dataset.sidebarUserMenu = "1";
+      [
+        ["profile", "\u041b\u0438\u0447\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435"],
+        ["bot-notifications", "\u0423\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u044f \u0432 \u0431\u043e\u0442\u0435"],
+        ["feedback", "\u041e\u0442\u0437\u044b\u0432\u044b"],
+        ["logout", "\u0412\u044b\u0445\u043e\u0434"],
+      ].forEach(([key, label]) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "sidebar-user-menu-item";
+        if (key === "logout") {
+          item.classList.add("sidebar-user-menu-item-danger");
+        }
+        item.dataset.sidebarUserMenuItem = key;
+        item.textContent = label;
+        menu.appendChild(item);
+      });
+      panel.appendChild(menu);
+    }
+    return { panel, toggle, menu, logoutForm };
+  }
+  function bindUserMenu() {
+    const structure = ensureUserMenuStructure();
+    if (!structure) return;
+    const { panel, toggle, menu, logoutForm } = structure;
+    if (toggle.dataset.sidebarUserMenuBound === "1") return;
+    if (typeof userMenuCleanup === "function") {
+      userMenuCleanup();
+      userMenuCleanup = null;
+    }
+    let isOpen = false;
+    const menuItems = [...menu.querySelectorAll("[data-sidebar-user-menu-item]")];
+    const setOpen = (nextOpen) => {
+      isOpen = Boolean(nextOpen);
+      panel.classList.toggle("menu-open", isOpen);
+      toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      menu.hidden = !isOpen;
+    };
+    const closeMenu = () => setOpen(false);
+    const toggleMenu = () => setOpen(!isOpen);
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      toggleMenu();
+    });
+    toggle.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleMenu();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenu();
+      }
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeMenu();
+      toggle.focus();
+    });
+    menuItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        const action = item.dataset.sidebarUserMenuItem;
+        closeMenu();
+        if (action === "logout") {
+          if (typeof logoutForm.requestSubmit === "function") {
+            logoutForm.requestSubmit();
+          } else if (typeof logoutForm.submit === "function") {
+            logoutForm.submit();
+          } else {
+            console.error("[sidebar-user-menu] Logout form cannot be submitted");
+          }
+          return;
+        }
+        console.info(`[sidebar-user-menu] Placeholder action: ${action || "unknown"}`);
+      });
+    });
+    const handlePointerDown = (event) => {
+      if (!isOpen) return;
+      if (panel.contains(event.target)) return;
+      closeMenu();
+    };
+    const handleDocumentKeydown = (event) => {
+      if (!isOpen || event.key !== "Escape") return;
+      event.preventDefault();
+      closeMenu();
+      toggle.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleDocumentKeydown);
+    setOpen(false);
+    toggle.dataset.sidebarUserMenuBound = "1";
+    userMenuCleanup = () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleDocumentKeydown);
+      setOpen(false);
+    };
   }
 
   function renderAvailabilityStatus(status) {
@@ -412,6 +567,7 @@
     renderCounts();
     renderUserDisplay();
     renderAvatar();
+    bindUserMenu();
     renderAgentFilter();
     bindToggleAll();
     bindSettingsStatusButtons();
@@ -452,4 +608,15 @@
     getState: () => ({ ...state, counts: { ...state.counts }, agents: [...state.agents], adminAssigneeIds: [...state.adminAssigneeIds] }),
     refreshCounts: () => loadCounts().then(() => { renderFromCurrentState(); notify(); }),
   };
+  function bootstrapUserPanel() {
+    ensureUserMenuStructure();
+    renderUserDisplay();
+    renderAvatar();
+    bindUserMenu();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootstrapUserPanel, { once: true });
+  } else {
+    bootstrapUserPanel();
+  }
 })();
