@@ -219,6 +219,7 @@ class TelegramContact(Base):
     external_chat_id: Mapped[str] = mapped_column(String(100), unique=True)
     external_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     external_display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     active_menu_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     menu_message_ids_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

@@ -95,6 +95,7 @@ from ..services.telegram_onboarding import (
     process_first_connection_start,
     telegram_contact_by_chat_id,
 )
+from ..services.telegram_client_access import evaluate_incoming_telegram_access
 from ..services.system_tickets import FirstConnectionDefaults, first_connection_values
 from ..services.ticket_call_center_snapshot import (
     apply_call_center_employee_snapshot_on_ticket_create,
@@ -2510,6 +2511,34 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     callback = payload.get("callback_query")
     if callback is not None:
+        message = callback.get("message") or {}
+        chat = message.get("chat") or {}
+        from_user = callback.get("from") or {}
+        external_chat_id = str(chat.get("id", ""))
+        external_user_id = str(from_user.get("id", ""))
+        callback_update = TelegramUpdate(
+            id=str(uuid.uuid4()),
+            update_id=update_id_str,
+            external_chat_id=external_chat_id or None,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+        if external_chat_id:
+            company = _first_company(db)
+            if company is None:
+                db.add(callback_update)
+                db.commit()
+                return {"ok": True, "ignored": "no_company"}
+            access = evaluate_incoming_telegram_access(
+                db,
+                company_id=company.id,
+                external_chat_id=external_chat_id,
+                external_user_id=external_user_id,
+            )
+            if access.blocked:
+                db.add(callback_update)
+                db.commit()
+                return {"ok": True, "blocked": True, "ignored": "blocked_contact"}
         data = callback.get("data") or ""
         if data == "client_close":
             return process_client_close_callback(
@@ -2533,10 +2562,6 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         if confirm is not None:
             button_ref, decision = confirm
             callback_id = str(callback.get("id", ""))
-            message = callback.get("message") or {}
-            chat = message.get("chat") or {}
-            from_user = callback.get("from") or {}
-            external_chat_id = str(chat.get("id", ""))
             message_id = message.get("message_id")
 
             db.add(
@@ -2748,6 +2773,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     if company is None:
         db.commit()
         return {"ok": True, "ignored": "no_company"}
+
+    external_user_id = str(from_user.get("id", ""))
+    access = evaluate_incoming_telegram_access(
+        db,
+        company_id=company.id,
+        external_chat_id=external_chat_id,
+        external_user_id=external_user_id,
+    )
+    if access.blocked:
+        db.commit()
+        return {"ok": True, "blocked": True, "ignored": "blocked_contact"}
 
     existing_contact = telegram_contact_by_chat_id(db, external_chat_id)
     contact = get_or_create_contact_from_user(db, company.id, external_chat_id, from_user)

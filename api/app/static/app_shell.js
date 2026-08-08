@@ -39,7 +39,7 @@
       page: "management-users",
       scripts: [
         "/static/ticket_client_card.js?v=20260803a",
-        "/static/management_users.js?v=20260803a",
+        "/static/management_users.js?v=20260808c",
       ],
     }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],

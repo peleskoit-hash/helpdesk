@@ -89,6 +89,14 @@ function loadManagementUsersHelpers() {
     HelpdeskAppShell: { registerPage() {} },
     clearTimeout() {},
     setTimeout() { return 1; },
+    location: {
+      href: 'https://example.test/management/users',
+      origin: 'https://example.test',
+    },
+    history: {
+      pushState() {},
+      replaceState() {},
+    },
   };
   const context = vm.createContext({
     window,
@@ -101,6 +109,7 @@ function loadManagementUsersHelpers() {
     Object,
     Number,
     Date,
+    URL,
     URLSearchParams,
   });
   vm.runInContext(source, context);
@@ -200,7 +209,7 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260803a/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260803a/);
   assert.match(ticketTemplate, /ticket\.js\?v=20260803a/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20260803a/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
 test('settings client card uses main tabs with blocks open by default', () => {
@@ -1182,6 +1191,25 @@ test('management users helper builds searchable all and blocked list urls', () =
   );
 });
 
+test('management users helper keeps blocked view in page url state', () => {
+  assert.equal(
+    managementUsersHelpers.filterFromPageUrl('https://example.test/management/users?view=blocked'),
+    'blocked',
+  );
+  assert.equal(
+    managementUsersHelpers.filterFromPageUrl('https://example.test/management/users'),
+    'all',
+  );
+  assert.equal(
+    managementUsersHelpers.buildPageUrlForFilter('blocked', 'https://example.test/management/users'),
+    '/management/users?view=blocked',
+  );
+  assert.equal(
+    managementUsersHelpers.buildPageUrlForFilter('all', 'https://example.test/management/users?view=blocked&q=keep'),
+    '/management/users?q=keep',
+  );
+});
+
 test('management users helper renders pagination summary', () => {
   assert.equal(managementUsersHelpers.paginationSummary(0, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 1\u201350 \u0438\u0437 120');
   assert.equal(managementUsersHelpers.paginationSummary(50, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 51\u2013100 \u0438\u0437 120');
@@ -1260,6 +1288,55 @@ test('management users table shows dash for empty internal number', () => {
     last_activity_at: null,
   });
   assert.match(html, /\u2014/);
+});
+
+test('management users UI exposes block and unblock controls', () => {
+  const html = managementUsersHelpers.tableRowHtml({
+    client_id: 'client-1',
+    telegram_display_name: 'Ivan TG',
+    telegram_username: 'belfiss',
+    telegram_user_id: '453920478',
+    display_name: 'Ivan',
+    internal_number: '4455',
+    is_blocked: true,
+    last_activity_at: null,
+  });
+  assert.match(html, /data-is-blocked="1"/);
+  assert.match(html, /management-user-row-blocked/);
+  assert.doesNotMatch(html, /\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d/);
+  assert.match(managementUsersTemplate, /id="clientBlockedState"/);
+  assert.match(managementUsersTemplate, /id="toggleClientBlockBtn"/);
+  assert.match(managementUsersTemplate, /id="resetClientDataBtn"/);
+  assert.match(managementUsersSource, /async function toggleClientBlock/);
+  assert.match(managementUsersSource, /async function resetClientData/);
+  assert.match(managementUsersSource, /\/\$\{action\}/);
+  assert.match(managementUsersSource, /\/reset-data/);
+  assert.match(managementUsersSource, /window\.confirm/);
+  assert.match(managementUsersSource, /state\.selectedClientBlocked/);
+});
+
+test('management users reset uses visible error modal on api refusal', () => {
+  assert.match(managementUsersTemplate, /id="errorModal"/);
+  assert.match(managementUsersTemplate, /id="errorText"/);
+  assert.match(managementUsersTemplate, /id="okErrorBtn"/);
+  assert.match(managementUsersSource, /function showError\(root, message\)/);
+  assert.match(managementUsersSource, /showError\(root, error\.message\)/);
+  assert.match(managementUsersSource, /closeErrorModalBtn/);
+});
+
+test('management users view mode is restored from url and synced via history api', () => {
+  assert.match(managementUsersSource, /function filterFromPageUrl/);
+  assert.match(managementUsersSource, /function buildPageUrlForFilter/);
+  assert.match(managementUsersSource, /window\.history\.pushState/);
+  assert.match(managementUsersSource, /onUrlChange\(nextUrl\)/);
+  assert.match(managementUsersSource, /filterFromPageUrl\(url \|\| window\.location\.href\)/);
+});
+
+test('management users blocked view uses dedicated row styling while normal mode has no blocked badge text', () => {
+  const styles = fs.readFileSync('api/app/static/styles.css', 'utf8');
+  assert.match(styles, /\.management-user-row-blocked td/);
+  assert.match(styles, /#fff1f2/);
+  assert.doesNotMatch(managementUsersSource, /management-user-blocked-badge/);
 });
 
 test('management users template labels internal number and verification columns', () => {

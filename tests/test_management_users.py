@@ -12,8 +12,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, TelegramContact, Ticket
-from api.app.routers import management_users
+from api.app.models import Client, ClientProfile, Company, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
+from api.app.routers import management_users, telegram
 from api.app.schemas import ClientProfileUpdate
 from api.app.services import telegram_onboarding
 from scripts import merge_telegram_contact_duplicate
@@ -51,6 +51,7 @@ def _seed_user(
     external_user_id="100500",
     external_chat_id="9001",
     verified=True,
+    is_blocked=False,
     updated_delta=5,
 ):
     company = company or _company(session)
@@ -73,6 +74,7 @@ def _seed_user(
         external_chat_id=external_chat_id,
         external_username=username,
         external_display_name="Ivan TG",
+        is_blocked=is_blocked,
     )
     ticket = Ticket(
         id=str(uuid.uuid4()),
@@ -98,22 +100,34 @@ def test_management_users_list_searches_telegram_and_profile_fields():
     assert payload["items"][0]["display_name"] == "Petrov Ivan"
     assert payload["items"][0]["internal_number"] == "100"
     assert "phone" not in payload["items"][0]
+    assert payload["items"][0]["is_blocked"] is False
+    assert payload["blocked_supported"] is True
     assert payload["items"][0]["last_activity_at"] is not None
 
 
-def test_management_users_blocked_filter_is_empty_until_blocking_exists():
+def test_management_users_blocked_filter_returns_only_blocked_contacts():
     session = _session()
-    _seed_user(session)
+    company = _company(session)
+    open_client, _, _ = _seed_user(session, company=company, username="open", external_user_id="open", external_chat_id="open")
+    blocked_client, _, _ = _seed_user(
+        session,
+        company=company,
+        username="blocked",
+        external_user_id="blocked",
+        external_chat_id="blocked",
+        is_blocked=True,
+    )
 
+    all_payload = management_users.list_management_users(db=session, user=_admin())
     payload = management_users.list_management_users(blocked=True, db=session, user=_admin())
 
-    assert payload == {
-        "items": [],
-        "total": 0,
-        "limit": 50,
-        "offset": 0,
-        "blocked_supported": False,
-    }
+    assert all_payload["total"] == 1
+    assert all_payload["items"][0]["client_id"] == open_client.id
+    assert all_payload["items"][0]["is_blocked"] is False
+    assert payload["blocked_supported"] is True
+    assert payload["total"] == 1
+    assert payload["items"][0]["client_id"] == blocked_client.id
+    assert payload["items"][0]["is_blocked"] is True
 
 
 def test_management_users_requires_admin():
@@ -325,6 +339,445 @@ def test_management_users_search_after_dedupe_by_username_user_id_and_profile():
 
     phone_payload = management_users.list_management_users(q="+79998887766", db=session, user=_admin())
     assert phone_payload["total"] == 0
+
+
+def test_management_users_block_and_unblock_are_idempotent_and_sync_duplicates():
+    session = _session()
+    company = _company(session)
+    canonical_client, _, canonical_contact = _seed_user(
+        session,
+        company=company,
+        username="dupe",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        verified=True,
+    )
+    _, _, duplicate_contact = _seed_user(
+        session,
+        company=company,
+        username="dupe",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        verified=False,
+    )
+
+    first = management_users.block_management_user(canonical_client.id, db=session, user=_admin())
+    second = management_users.block_management_user(canonical_client.id, db=session, user=_admin())
+
+    session.refresh(canonical_contact)
+    session.refresh(duplicate_contact)
+    assert first["is_blocked"] is True
+    assert second["is_blocked"] is True
+    assert first["updated_contacts"] == 2
+    assert canonical_contact.is_blocked is True
+    assert duplicate_contact.is_blocked is True
+
+    blocked_payload = management_users.list_management_users(blocked=True, db=session, user=_admin())
+    assert blocked_payload["total"] == 1
+    assert blocked_payload["items"][0]["client_id"] == canonical_client.id
+    assert blocked_payload["items"][0]["is_blocked"] is True
+
+    third = management_users.unblock_management_user(canonical_client.id, db=session, user=_admin())
+    fourth = management_users.unblock_management_user(canonical_client.id, db=session, user=_admin())
+
+    session.refresh(canonical_contact)
+    session.refresh(duplicate_contact)
+    assert third["is_blocked"] is False
+    assert fourth["is_blocked"] is False
+    assert canonical_contact.is_blocked is False
+    assert duplicate_contact.is_blocked is False
+
+
+def test_management_users_block_requires_admin():
+    session = _session()
+    client, _, _ = _seed_user(session)
+
+    with pytest.raises(HTTPException) as exc:
+        management_users.block_management_user(client.id, db=session, user=_agent())
+
+    assert exc.value.status_code == 403
+
+
+def test_management_users_reset_data_requires_admin():
+    session = _session()
+    client, _, _ = _seed_user(session)
+
+    with pytest.raises(HTTPException) as exc:
+        management_users.reset_management_user_profile_data(client.id, db=session, user=_agent())
+
+    assert exc.value.status_code == 403
+
+
+def test_management_users_dedupe_reports_blocked_when_duplicate_is_blocked():
+    session = _session()
+    company = _company(session)
+    canonical_client, _, _ = _seed_user(
+        session,
+        company=company,
+        username="dupe",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        verified=True,
+        is_blocked=False,
+    )
+    _seed_user(
+        session,
+        company=company,
+        username="dupe",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        verified=False,
+        is_blocked=True,
+    )
+
+    all_payload = management_users.list_management_users(db=session, user=_admin())
+    blocked_payload = management_users.list_management_users(blocked=True, db=session, user=_admin())
+
+    rows = [item for item in all_payload["items"] if item["telegram_user_id"] == "453920478"]
+    assert len(rows) == 0
+    assert blocked_payload["total"] == 1
+    assert blocked_payload["items"][0]["client_id"] == canonical_client.id
+    assert blocked_payload["items"][0]["is_blocked"] is True
+
+
+def test_management_users_search_preserves_blocked_state_across_hidden_duplicate():
+    session = _session()
+    company = _company(session)
+    canonical_client, canonical_profile, canonical_contact = _seed_user(
+        session,
+        company=company,
+        username="visible-user",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        verified=True,
+        is_blocked=False,
+    )
+    canonical_profile.internal_number = "ROOM-42"
+    canonical_contact.external_username = "visible-user"
+    blocked_client, blocked_profile, blocked_contact = _seed_user(
+        session,
+        company=company,
+        username="hidden-user",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        verified=False,
+        is_blocked=True,
+    )
+    blocked_profile.internal_number = "OTHER-99"
+    blocked_contact.external_username = "hidden-user"
+    session.commit()
+
+    payload = management_users.list_management_users(q="ROOM-42", db=session, user=_admin())
+    blocked_payload = management_users.list_management_users(q="ROOM-42", blocked=True, db=session, user=_admin())
+
+    assert payload["total"] == 0
+    assert blocked_payload["total"] == 1
+    assert blocked_payload["items"][0]["client_id"] == canonical_client.id
+    assert blocked_payload["items"][0]["is_blocked"] is True
+
+
+def test_management_users_blocked_state_stays_company_scoped_for_same_external_user_id():
+    session = _session()
+    company_a = _company(session)
+    company_b = _company(session)
+    client_a, profile_a, contact_a = _seed_user(
+        session,
+        company=company_a,
+        username="company-a",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        verified=True,
+        is_blocked=False,
+    )
+    profile_a.internal_number = "ROOM-A"
+    duplicate_a = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company_a.id,
+        client_id=client_a.id,
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        external_username="company-a-hidden",
+        external_display_name="Ivan TG Hidden",
+        is_blocked=True,
+    )
+    client_b, profile_b, contact_b = _seed_user(
+        session,
+        company=company_b,
+        username="company-b",
+        external_user_id="453920478",
+        external_chat_id="999001",
+        verified=True,
+        is_blocked=False,
+    )
+    profile_b.internal_number = "ROOM-B"
+    session.add(duplicate_a)
+    session.commit()
+
+    payload_a = management_users.list_management_users(q="ROOM-A", db=session, user=_admin())
+    blocked_payload_a = management_users.list_management_users(q="ROOM-A", blocked=True, db=session, user=_admin())
+    payload_b = management_users.list_management_users(q="ROOM-B", db=session, user=_admin())
+
+    assert payload_a["total"] == 0
+    assert blocked_payload_a["total"] == 1
+    assert blocked_payload_a["items"][0]["client_id"] == client_a.id
+    assert blocked_payload_a["items"][0]["is_blocked"] is True
+
+    assert payload_b["total"] == 1
+    assert payload_b["items"][0]["client_id"] == client_b.id
+    assert payload_b["items"][0]["is_blocked"] is False
+
+
+def test_management_users_reset_data_clears_profiles_for_identity_and_preserves_tickets():
+    session = _session()
+    company = _company(session)
+    client, profile, contact = _seed_user(
+        session,
+        company=company,
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        is_blocked=True,
+    )
+    profile.email = "ivan@example.test"
+    profile.verification_status = "manual"
+    profile.external_user_id = "inner-1"
+    profile.custom_fields = {"custom_note": "keep-me-not", "custom_fio": "Иван Петров"}
+    client.display_name = "Mapped Name"
+    duplicate_client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Duplicate Name")
+    duplicate_profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=duplicate_client.id,
+        contact_name="Dupe",
+        last_name="User",
+        destination="Support",
+        is_verified=True,
+        custom_fields={"custom_note": "duplicate"},
+    )
+    duplicate_contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=duplicate_client.id,
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        external_username="dupe-user",
+        external_display_name="Dupe TG",
+        is_blocked=True,
+    )
+    duplicate_ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=duplicate_client.id,
+        subject="Duplicate Ticket",
+        status=TicketStatus.CLOSED.value,
+        call_center_profile_snapshot_json={"profile_delta": {"contact_name": "Historical", "custom_fields": {"custom_fio": "Historic Name"}}},
+    )
+    session.add_all([duplicate_client, duplicate_profile, duplicate_contact, duplicate_ticket])
+    original_ticket = session.execute(select(Ticket).where(Ticket.client_id == client.id)).scalar_one()
+    original_ticket.status = TicketStatus.CLOSED.value
+    original_ticket.closed_at = datetime.utcnow()
+    session.commit()
+
+    original_snapshot = duplicate_ticket.call_center_profile_snapshot_json
+    result = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    session.refresh(contact)
+    session.refresh(duplicate_contact)
+    session.refresh(client)
+    session.refresh(duplicate_client)
+    assert result["ok"] is True
+    assert result["client_id"] == client.id
+    assert result["is_blocked"] is True
+    assert result["profile"]["telegram_username"] == contact.external_username
+    assert result["profile"]["telegram_display_name"] == contact.external_display_name
+    assert result["profile"]["is_verified"] is False
+    assert result["profile"]["destination"] is None
+    assert result["profile"]["custom_fields"] == {}
+    assert session.execute(
+        select(ClientProfile).where(ClientProfile.client_id.in_([client.id, duplicate_client.id]))
+    ).scalars().all() == []
+    assert contact.company_id == company.id
+    assert contact.external_user_id == "453920478"
+    assert contact.external_chat_id == "453920478"
+    assert contact.is_blocked is True
+    assert duplicate_contact.is_blocked is True
+    assert client.display_name == "Ivan TG"
+    assert duplicate_client.display_name == "Dupe TG"
+    session.refresh(duplicate_ticket)
+    assert session.get(Ticket, duplicate_ticket.id) is not None
+    assert duplicate_ticket.call_center_profile_snapshot_json == original_snapshot
+
+
+def test_management_users_reset_data_rejects_client_with_active_ordinary_ticket():
+    session = _session()
+    company = _company(session)
+    client, profile, contact = _seed_user(
+        session,
+        company=company,
+        external_user_id="453920478",
+        external_chat_id="453920478",
+        verified=True,
+        is_blocked=True,
+    )
+    profile.email = "ivan@example.test"
+    profile.verification_status = "manual"
+    profile.custom_fields = {"custom_note": "keep"}
+    ticket = session.execute(select(Ticket).where(Ticket.client_id == client.id)).scalar_one()
+    original_ticket_status = ticket.status
+    original_ticket_closed_at = ticket.closed_at
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_has_active_ticket"
+    assert "активная заявка" in exc.value.detail["error"]["message"]
+    session.refresh(profile)
+    session.refresh(ticket)
+    session.refresh(contact)
+    assert session.get(ClientProfile, profile.id) is not None
+    assert profile.is_verified is True
+    assert profile.email == "ivan@example.test"
+    assert profile.verification_status == "manual"
+    assert profile.custom_fields == {"custom_note": "keep"}
+    assert ticket.status == original_ticket_status
+    assert ticket.closed_at == original_ticket_closed_at
+    assert contact.is_blocked is True
+
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.closed_at = datetime.utcnow()
+    session.commit()
+
+    result = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert result["ok"] is True
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
+
+
+def test_management_users_reset_data_rejects_client_with_active_task():
+    session = _session()
+    company = _company(session)
+    client, profile, _ = _seed_user(
+        session,
+        company=company,
+        external_user_id="9001",
+        external_chat_id="9001",
+        verified=True,
+        is_blocked=False,
+    )
+    ordinary_ticket = session.execute(select(Ticket).where(Ticket.client_id == client.id)).scalar_one()
+    ordinary_ticket.status = TicketStatus.CLOSED.value
+    ordinary_ticket.closed_at = datetime.utcnow()
+    task_ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        subject="Task",
+        workflow_type=TicketWorkflowType.TASK.value,
+        status=TicketStatus.NEW.value,
+    )
+    session.add(task_ticket)
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_has_active_ticket"
+    assert session.get(ClientProfile, profile.id) is not None
+
+    task_ticket.status = TicketStatus.CLOSED.value
+    task_ticket.closed_at = datetime.utcnow()
+    session.commit()
+
+    result = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert result["ok"] is True
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
+
+
+def test_management_users_reset_data_rejects_client_with_active_auto_task():
+    session = _session()
+    company = _company(session)
+    client, profile, _ = _seed_user(
+        session,
+        company=company,
+        external_user_id="9002",
+        external_chat_id="9002",
+        verified=True,
+        is_blocked=False,
+    )
+    ordinary_ticket = session.execute(select(Ticket).where(Ticket.client_id == client.id)).scalar_one()
+    ordinary_ticket.status = TicketStatus.CLOSED.value
+    ordinary_ticket.closed_at = datetime.utcnow()
+    auto_ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        subject="Auto",
+        workflow_type=TicketWorkflowType.AUTO.value,
+        status=TicketStatus.NEW.value,
+    )
+    session.add(auto_ticket)
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "client_has_active_ticket"
+    assert session.get(ClientProfile, profile.id) is not None
+
+    auto_ticket.status = TicketStatus.CLOSED.value
+    auto_ticket.closed_at = datetime.utcnow()
+    session.commit()
+
+    result = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert result["ok"] is True
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
+
+
+def test_management_users_reset_data_is_idempotent_and_restores_first_connection_flow():
+    session = _session()
+    company = _company(session)
+    client, _, contact = _seed_user(
+        session,
+        company=company,
+        external_user_id="7001",
+        external_chat_id="7001",
+        verified=True,
+        is_blocked=False,
+    )
+    ticket = session.execute(select(Ticket).where(Ticket.client_id == client.id)).scalar_one()
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.closed_at = datetime.utcnow()
+    session.commit()
+
+    first = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+    second = management_users.reset_management_user_profile_data(client.id, db=session, user=_admin())
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["is_blocked"] is False
+    assert second["is_blocked"] is False
+    assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
+
+    result = telegram.process_telegram_update(
+        session,
+        {
+            "update_id": 5001,
+            "message": {
+                "message_id": 5001,
+                "chat": {"id": 7001},
+                "from": {"id": 7001, "first_name": "Ivan", "last_name": "Petrov"},
+                "text": "/start",
+            },
+        },
+        notify_client=False,
+    )
+
+    assert result["ok"] is True
+    assert result["first_connection"] is True
 
 
 def test_telegram_upsert_reuses_existing_external_user_id_and_preserves_private_chat():

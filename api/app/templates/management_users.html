@@ -114,6 +114,7 @@
           </div>
           <div class="modal-body">
             <div class="client-modal-scroll">
+              <div id="clientBlockedState" class="management-user-block-state hidden"></div>
               <div class="modal-field-section modal-field-section-profile">
                 <label>&#1048;&#1084;&#1103;<input id="fContactName" autocomplete="off" /></label>
                 <label>&#1060;&#1072;&#1084;&#1080;&#1083;&#1080;&#1103;<input id="fLastName" autocomplete="off" /></label>
@@ -173,7 +174,25 @@
             </div>
           </div>
           <div class="modal-foot">
+            <button id="resetClientDataBtn" type="button" class="action danger">&#1057;&#1090;&#1077;&#1088;&#1077;&#1090;&#1100; &#1074;&#1089;&#1077; &#1076;&#1072;&#1085;&#1085;&#1099;&#1077;</button>
+            <button id="toggleClientBlockBtn" type="button" class="action danger">&#1047;&#1072;&#1073;&#1083;&#1086;&#1082;&#1080;&#1088;&#1086;&#1074;&#1072;&#1090;&#1100;</button>
             <button id="saveClientBtn" type="button" class="action primary">&#1057;&#1086;&#1093;&#1088;&#1072;&#1085;&#1080;&#1090;&#1100;</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="errorModal" class="modal hidden">
+        <div class="modal-dialog" style="max-width:560px;">
+          <div class="modal-head">
+            <div style="font-weight:700;">Ошибка</div>
+            <button id="closeErrorModalBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body">
+            <textarea id="errorText" class="field" rows="8" readonly></textarea>
+          </div>
+          <div class="modal-foot">
+            <button id="copyErrorBtn" type="button" class="action">Копировать</button>
+            <button id="okErrorBtn" type="button" class="action primary">Понятно</button>
           </div>
         </div>
       </div>
@@ -184,6 +203,6 @@
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260709a"></script>
   <script src="/static/ticket_client_card.js?v=20260803a"></script>
-  <script src="/static/management_users.js?v=20260803a"></script>
+  <script src="/static/management_users.js?v=20260808c"></script>
 </body>
 </html>

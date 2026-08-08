@@ -5,7 +5,7 @@ from typing import Annotated
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
@@ -19,6 +19,10 @@ from ..services.client_card import (
     _profile_out,
 )
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
+from ..services.management_user_reset import (
+    ResetManagementUserDataActiveTicketError,
+    reset_management_user_data,
+)
 
 
 router = APIRouter(prefix="/api/v1/management/users", tags=["management-users"])
@@ -62,8 +66,16 @@ def _display_name(client: Client | None, profile: ClientProfile | None, contact:
     return profile_name or (client.display_name if client else None) or contact.external_display_name or ""
 
 
-def _row_out(contact: TelegramContact, client: Client | None, profile: ClientProfile | None, last_activity_at: datetime | None):
+def _row_out(
+    contact: TelegramContact,
+    client: Client | None,
+    profile: ClientProfile | None,
+    last_activity_at: datetime | None,
+    *,
+    is_blocked: bool | None = None,
+):
     activity = last_activity_at or contact.updated_at or contact.created_at
+    blocked = bool(contact.is_blocked) if is_blocked is None else bool(is_blocked)
     return {
         "telegram_contact_id": contact.id,
         "client_id": contact.client_id,
@@ -79,8 +91,9 @@ def _row_out(contact: TelegramContact, client: Client | None, profile: ClientPro
         "group_name": profile.group_name if profile else None,
         "sales_group": profile.sales_group if profile else None,
         "is_verified": bool(profile.is_verified) if profile else False,
-        "blocked": False,
-        "blocked_supported": False,
+        "is_blocked": blocked,
+        "blocked": blocked,
+        "blocked_supported": True,
         "first_connected_at": contact.created_at,
         "last_activity_at": activity,
     }
@@ -151,6 +164,67 @@ def _dedupe_rows(rows) -> list:
     )
 
 
+def _blocked_state_by_dedupe_key(db: Session, rows) -> dict[str, bool]:
+    state: dict[str, bool] = {}
+    identities: dict[tuple[str, str], str] = {}
+    for row in rows:
+        contact = row[0]
+        key = _dedupe_key(contact)
+        user_id = (contact.external_user_id or "").strip()
+        if user_id:
+            identities[(contact.company_id, user_id)] = key
+            state.setdefault(key, False)
+        else:
+            state[key] = bool(contact.is_blocked)
+
+    if identities:
+        blocked_rows = db.execute(
+            select(
+                TelegramContact.company_id,
+                TelegramContact.external_user_id,
+                TelegramContact.is_blocked,
+            ).where(
+                tuple_(TelegramContact.company_id, TelegramContact.external_user_id).in_(list(identities.keys()))
+            )
+        ).all()
+        for company_id, external_user_id, is_blocked in blocked_rows:
+            key = identities.get((company_id, external_user_id))
+            if key is not None:
+                state[key] = state.get(key, False) or bool(is_blocked)
+    return state
+
+
+def _contacts_for_dedupe_identity(db: Session, contact: TelegramContact) -> list[TelegramContact]:
+    user_id = (contact.external_user_id or "").strip()
+    if user_id:
+        return db.execute(
+            select(TelegramContact).where(
+                TelegramContact.company_id == contact.company_id,
+                TelegramContact.external_user_id == user_id,
+            )
+        ).scalars().all()
+    return [contact]
+
+
+def _set_contact_blocked_state(db: Session, client_id: str, blocked: bool) -> dict:
+    contact = _telegram_contact_for_client(db, client_id)
+    if contact is None:
+        _error(404, "telegram_contact_not_found", "\u041a\u043e\u043d\u0442\u0430\u043a\u0442 Telegram \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
+    now = datetime.utcnow()
+    contacts = _contacts_for_dedupe_identity(db, contact)
+    for item in contacts:
+        item.is_blocked = blocked
+        item.updated_at = now
+    db.commit()
+    return {
+        "ok": True,
+        "client_id": client_id,
+        "telegram_contact_id": contact.id,
+        "is_blocked": blocked,
+        "updated_contacts": len(contacts),
+    }
+
+
 def _payload_data(payload: ClientProfileUpdate) -> dict:
     if hasattr(payload, "model_dump"):
         return payload.model_dump(exclude_unset=True)
@@ -167,15 +241,6 @@ def list_management_users(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
-    if blocked:
-        return {
-            "items": [],
-            "total": 0,
-            "limit": limit,
-            "offset": offset,
-            "blocked_supported": False,
-        }
-
     last_ticket = (
         select(Ticket.client_id.label("client_id"), func.max(Ticket.updated_at).label("last_activity_at"))
         .group_by(Ticket.client_id)
@@ -208,13 +273,27 @@ def list_management_users(
         base.order_by(func.coalesce(last_ticket.c.last_activity_at, TelegramContact.updated_at, TelegramContact.created_at).desc())
     ).all()
     deduped_rows = _dedupe_rows(rows)
+    blocked_state = _blocked_state_by_dedupe_key(db, deduped_rows)
+    if blocked:
+        deduped_rows = [row for row in deduped_rows if blocked_state.get(_dedupe_key(row[0]), False)]
+    else:
+        deduped_rows = [row for row in deduped_rows if not blocked_state.get(_dedupe_key(row[0]), False)]
     page_rows = deduped_rows[offset:offset + limit]
     return {
-        "items": [_row_out(contact, client, profile, last_activity_at) for contact, client, profile, last_activity_at in page_rows],
+        "items": [
+            _row_out(
+                contact,
+                client,
+                profile,
+                last_activity_at,
+                is_blocked=blocked_state.get(_dedupe_key(contact), False),
+            )
+            for contact, client, profile, last_activity_at in page_rows
+        ],
         "total": len(deduped_rows),
         "limit": limit,
         "offset": offset,
-        "blocked_supported": False,
+        "blocked_supported": True,
     }
 
 
@@ -244,6 +323,57 @@ def get_management_user_profile(
         contact.external_username if contact else None,
         contact.external_display_name if contact else None,
     )
+
+
+@router.post("/{client_id}/block")
+def block_management_user(
+    client_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    return _set_contact_blocked_state(db, client_id, True)
+
+
+@router.post("/{client_id}/unblock")
+def unblock_management_user(
+    client_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    return _set_contact_blocked_state(db, client_id, False)
+
+
+@router.post("/{client_id}/reset-data")
+def reset_management_user_profile_data(
+    client_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    client = db.get(Client, client_id)
+    if client is None:
+        _error(404, "client_not_found", "Клиент не найден")
+    try:
+        result = reset_management_user_data(db, client_id)
+    except ResetManagementUserDataActiveTicketError:
+        _error(
+            409,
+            "client_has_active_ticket",
+            "\u041d\u0435\u043b\u044c\u0437\u044f \u0441\u0442\u0435\u0440\u0435\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f, \u043f\u043e\u043a\u0430 \u0443 \u043d\u0435\u0433\u043e \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u0438\u043b\u0438 \u0437\u0430\u0434\u0430\u0447\u0430. \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u0435 \u0435\u0451."
+        )
+    except LookupError:
+        _error(404, "telegram_contact_not_found", "Контакт Telegram не найден")
+    profile = result.profile
+    profile_payload = profile.model_dump() if hasattr(profile, "model_dump") else profile.dict()
+    return {
+        "ok": True,
+        "client_id": result.client_id,
+        "telegram_contact_id": result.telegram_contact_id,
+        "is_blocked": result.is_blocked,
+        "profile": profile_payload,
+    }
 
 
 @router.patch("/{client_id}/profile", response_model=ClientProfileOut)

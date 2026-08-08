@@ -260,6 +260,7 @@ def ensure_telegram_contact_columns() -> None:
     required_columns = {
         "external_username": "VARCHAR(100)",
         "external_display_name": "VARCHAR(200)",
+        "is_blocked": "BOOLEAN",
         "active_menu_message_id": "VARCHAR(100)",
         "menu_message_ids_json": "JSONB",
     }
@@ -288,10 +289,13 @@ def ensure_telegram_contact_columns() -> None:
             if column_name in existing:
                 continue
             conn.execute(text(f"ALTER TABLE telegram_contacts ADD COLUMN {column_name} {column_type}"))
+        conn.execute(text("UPDATE telegram_contacts SET is_blocked = FALSE WHERE is_blocked IS NULL"))
         if dialect == "sqlite":
             conn.execute(text("UPDATE telegram_contacts SET menu_message_ids_json = '[]' WHERE menu_message_ids_json IS NULL"))
         else:
             conn.execute(text("UPDATE telegram_contacts SET menu_message_ids_json = '[]'::jsonb WHERE menu_message_ids_json IS NULL"))
+            conn.execute(text("ALTER TABLE telegram_contacts ALTER COLUMN is_blocked SET DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE telegram_contacts ALTER COLUMN is_blocked SET NOT NULL"))
 
 
 def ensure_user_columns() -> None:

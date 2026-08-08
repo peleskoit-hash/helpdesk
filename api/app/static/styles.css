@@ -278,8 +278,29 @@ body[data-sidebar-ready="0"] .admin-select-col {
   background: rgba(231, 241, 255, 0.58);
 }
 
+.management-user-row-blocked td {
+  background: #fff1f2;
+}
+
+.management-user-row-blocked:hover td {
+  background: #ffe4e6;
+}
+
 .management-user-primary {
   font-weight: 800;
+}
+
+.management-user-blocked-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  border: 1px solid rgba(190, 18, 60, 0.22);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(254, 226, 226, 0.9);
+  color: #9f1239;
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: middle;
 }
 
 .management-user-muted {
@@ -291,6 +312,22 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .management-users-empty {
   padding: 12px;
+}
+
+.management-user-block-state {
+  border: 1px solid rgba(15, 108, 191, 0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(231, 241, 255, 0.72);
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.management-user-block-state.is-blocked {
+  border-color: rgba(190, 18, 60, 0.28);
+  background: #fff1f2;
+  color: #9f1239;
 }
 
 .management-home-panel {

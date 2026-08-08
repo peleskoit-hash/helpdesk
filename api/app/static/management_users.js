@@ -3,6 +3,8 @@
   const EMPTY = "\u2014";
   const SALES_FIRST_DEPARTMENT = "\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436";
   const SALES_SECOND_DEPARTMENT = "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440";
+  const BLOCKED_VIEW = "blocked";
+  const URL_VIEW_PARAM = "view";
 
   const state = {
     query: "",
@@ -11,6 +13,7 @@
     offset: 0,
     total: 0,
     selectedClientId: "",
+    selectedClientBlocked: false,
     clientCardViewConfig: null,
   };
 
@@ -45,6 +48,18 @@
     return `/api/v1/management/users?${params.toString()}`;
   }
 
+  function filterFromPageUrl(urlLike) {
+    const url = urlLike instanceof URL ? urlLike : new URL(String(urlLike || window.location.href), window.location.origin);
+    return url.searchParams.get(URL_VIEW_PARAM) === BLOCKED_VIEW ? BLOCKED_VIEW : "all";
+  }
+
+  function buildPageUrlForFilter(filter, urlLike) {
+    const url = urlLike instanceof URL ? new URL(urlLike.toString()) : new URL(String(urlLike || window.location.href), window.location.origin);
+    if (filter === BLOCKED_VIEW) url.searchParams.set(URL_VIEW_PARAM, BLOCKED_VIEW);
+    else url.searchParams.delete(URL_VIEW_PARAM);
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
+
   function paginationSummary(offset, limit, total, itemCount) {
     const safeTotal = Math.max(0, Number(total || 0));
     if (safeTotal === 0 || itemCount === 0) {
@@ -60,7 +75,7 @@
     const telegramBits = [username, item.telegram_user_id ? `TG ID: ${item.telegram_user_id}` : ""].filter(Boolean);
     const department = item.destination || item.group_name || item.sales_group || "";
     return `
-      <tr class="management-user-row" data-client-id="${escapeHtml(item.client_id)}">
+      <tr class="management-user-row ${item.is_blocked ? "management-user-row-blocked" : ""}" data-client-id="${escapeHtml(item.client_id)}" data-is-blocked="${item.is_blocked ? "1" : "0"}">
         <td>
           <div class="management-user-primary">${escapeHtml(formatCell(item.telegram_display_name || username || item.telegram_user_id))}</div>
           <div class="management-user-muted">${escapeHtml(telegramBits.join(" \u00b7 ") || EMPTY)}</div>
@@ -95,7 +110,9 @@
     }
     if (!response.ok) {
       const message = payload?.detail?.error?.message || raw || "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u043f\u0440\u043e\u0441\u0430";
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
     }
     return payload;
   }
@@ -103,6 +120,29 @@
   function setStatus(root, message) {
     const node = root.querySelector("#managementUsersStatus");
     if (node) node.textContent = message;
+  }
+
+  function showError(root, message) {
+    const el = els(root);
+    if (!el.errorModal || !el.errorText) return;
+    el.errorText.value = message || "\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430";
+    el.errorModal.classList.remove("hidden");
+  }
+
+  function closeError(root) {
+    const el = els(root);
+    if (el.errorModal) el.errorModal.classList.add("hidden");
+  }
+
+  function closeOnBackdropClick(modal, closeHandler) {
+    let down = false;
+    modal.addEventListener("pointerdown", (event) => {
+      down = event.target === modal;
+    });
+    modal.addEventListener("click", (event) => {
+      if (down && event.target === modal) closeHandler();
+      down = false;
+    });
   }
 
   function setControlValue(control, value) {
@@ -126,7 +166,13 @@
       nextBtn: root.querySelector("#managementUsersNextBtn"),
       clientModal: root.querySelector("#clientModal"),
       closeClientModalBtn: root.querySelector("#closeClientModalBtn"),
+      resetClientDataBtn: root.querySelector("#resetClientDataBtn"),
       saveClientBtn: root.querySelector("#saveClientBtn"),
+      errorModal: root.querySelector("#errorModal"),
+      errorText: root.querySelector("#errorText"),
+      closeErrorModalBtn: root.querySelector("#closeErrorModalBtn"),
+      copyErrorBtn: root.querySelector("#copyErrorBtn"),
+      okErrorBtn: root.querySelector("#okErrorBtn"),
       fContactName: root.querySelector("#fContactName"),
       fLastName: root.querySelector("#fLastName"),
       fDestination: root.querySelector("#fDestination"),
@@ -142,6 +188,8 @@
       fBitrixPassword: root.querySelector("#fBitrixPassword"),
       fBitrixId: root.querySelector("#fBitrixId"),
       fIsVerified: root.querySelector("#fIsVerified"),
+      clientBlockedState: root.querySelector("#clientBlockedState"),
+      toggleClientBlockBtn: root.querySelector("#toggleClientBlockBtn"),
       customFieldsSection: root.querySelector("#customFieldsSection"),
       customFieldsContainer: root.querySelector("#customFieldsContainer"),
     };
@@ -167,11 +215,7 @@
     state.offset = Number(payload?.offset || state.offset || 0);
     el.tableBody.innerHTML = items.map(tableRowHtml).join("");
     el.empty.classList.toggle("hidden", items.length > 0);
-    if (state.filter === "blocked" && payload?.blocked_supported === false) {
-      el.empty.textContent = "\u0411\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0430 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0430";
-    } else {
-      el.empty.textContent = "\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0443\u0441\u0442";
-    }
+    el.empty.textContent = "\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0443\u0441\u0442";
     if (el.pageSummary) {
       el.pageSummary.textContent = paginationSummary(state.offset, state.limit, state.total, items.length);
     }
@@ -180,6 +224,28 @@
     }
     if (el.nextBtn) {
       el.nextBtn.disabled = state.offset + state.limit >= state.total;
+    }
+  }
+
+  function syncFilterButtons(root) {
+    const el = els(root);
+    el.filters.forEach((item) => {
+      item.classList.toggle("active", (item.dataset.managementUserFilter || "all") === state.filter);
+    });
+  }
+
+  function applyFilterState(root, filter, { resetOffset = true } = {}) {
+    state.filter = filter === BLOCKED_VIEW ? BLOCKED_VIEW : "all";
+    if (resetOffset) state.offset = 0;
+    syncFilterButtons(root);
+  }
+
+  function updatePageUrlForFilter(filter, { replace = false } = {}) {
+    const nextUrl = buildPageUrlForFilter(filter);
+    if (replace) {
+      window.history.replaceState({ shell: true, url: nextUrl }, "", nextUrl);
+    } else {
+      window.history.pushState({ shell: true, url: nextUrl }, "", nextUrl);
     }
   }
 
@@ -201,11 +267,28 @@
     const modal = els(root).clientModal;
     if (modal) modal.classList.add("hidden");
     state.selectedClientId = "";
+    state.selectedClientBlocked = false;
   }
 
-  async function openClientProfileModal(root, clientId) {
+  function syncClientBlockControls(root) {
+    const el = els(root);
+    if (!el.clientBlockedState || !el.toggleClientBlockBtn) return;
+    el.clientBlockedState.classList.toggle("hidden", !state.selectedClientId);
+    el.clientBlockedState.classList.toggle("is-blocked", state.selectedClientBlocked);
+    el.clientBlockedState.textContent = state.selectedClientBlocked
+      ? "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d"
+      : "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043d\u0435 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d";
+    el.toggleClientBlockBtn.textContent = state.selectedClientBlocked
+      ? "\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c"
+      : "\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c";
+    el.toggleClientBlockBtn.classList.toggle("danger", !state.selectedClientBlocked);
+  }
+
+  async function openClientProfileModal(root, clientId, item = null) {
     if (!clientId || !window.TicketClientCard) return;
     state.selectedClientId = clientId;
+    state.selectedClientBlocked = Boolean(item?.is_blocked || item?.blocked);
+    syncClientBlockControls(root);
     setStatus(root, "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438...");
     const profile = await api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`);
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
@@ -226,6 +309,44 @@
     setStatus(root, "\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e");
   }
 
+  async function toggleClientBlock(root) {
+    if (!state.selectedClientId) return;
+    const nextBlocked = !state.selectedClientBlocked;
+    if (nextBlocked) {
+      const ok = window.confirm("\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f? \u041e\u043d \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u0441\u043c\u043e\u0436\u0435\u0442 \u0432\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u0442\u044c \u0441 Telegram-\u0431\u043e\u0442\u043e\u043c \u0434\u043e \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0438.");
+      if (!ok) return;
+    }
+    const action = nextBlocked ? "block" : "unblock";
+    setStatus(root, nextBlocked ? "\u0411\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0430..." : "\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0430...");
+    const payload = await api(`/api/v1/management/users/${encodeURIComponent(state.selectedClientId)}/${action}`, {
+      method: "POST",
+    });
+    state.selectedClientBlocked = Boolean(payload?.is_blocked);
+    syncClientBlockControls(root);
+    await loadUsers(root);
+    setStatus(root, state.selectedClientBlocked ? "\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e" : "\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e");
+  }
+
+  async function resetClientData(root) {
+    if (!state.selectedClientId || !window.TicketClientCard) return;
+    const ok = window.confirm(
+      "\u0421\u0442\u0435\u0440\u0435\u0442\u044c \u0432\u0441\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f?\n\n" +
+      "\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f \u0438 \u0432\u0435\u0440\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u0431\u0443\u0434\u0443\u0442 \u0443\u0434\u0430\u043b\u0435\u043d\u044b. \u041f\u0440\u0438 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0438 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043f\u0440\u043e\u0439\u0434\u0451\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439 \u043f\u0435\u0440\u0432\u043e\u0433\u043e \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u0437\u0430\u043d\u043e\u0432\u043e.\n\n" +
+      "\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0437\u0430\u044f\u0432\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f.\n" +
+      "\u0421\u0442\u0430\u0442\u0443\u0441 \u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0438 \u043d\u0435 \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u0441\u044f."
+    );
+    if (!ok) return;
+    setStatus(root, "\u041e\u0447\u0438\u0441\u0442\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445...");
+    const payload = await api(`/api/v1/management/users/${encodeURIComponent(state.selectedClientId)}/reset-data`, {
+      method: "POST",
+    });
+    state.selectedClientBlocked = Boolean(payload?.is_blocked);
+    syncClientBlockControls(root);
+    window.TicketClientCard.fillModal(clientCardCtx(root), payload?.profile || {});
+    await loadUsers(root);
+    setStatus(root, "\u0414\u0430\u043d\u043d\u044b\u0435 \u043a\u043b\u0438\u0435\u043d\u0442\u0430 \u043e\u0447\u0438\u0449\u0435\u043d\u044b");
+  }
+
   function bind(root) {
     const el = els(root);
     el.searchBtn?.addEventListener("click", () => {
@@ -238,9 +359,9 @@
     });
     el.filters.forEach((button) => {
       button.addEventListener("click", () => {
-        state.filter = button.dataset.managementUserFilter || "all";
-        state.offset = 0;
-        el.filters.forEach((item) => item.classList.toggle("active", item === button));
+        const nextFilter = button.dataset.managementUserFilter || "all";
+        applyFilterState(root, nextFilter, { resetOffset: true });
+        updatePageUrlForFilter(state.filter);
         loadUsers(root).catch((error) => setStatus(root, error.message));
       });
     });
@@ -257,16 +378,43 @@
     el.tableBody?.addEventListener("click", (event) => {
       const row = event.target.closest("[data-client-id]");
       if (!row) return;
-      openClientProfileModal(root, row.dataset.clientId).catch((error) => setStatus(root, error.message));
+      const item = { is_blocked: row.dataset.isBlocked === "1" };
+      openClientProfileModal(root, row.dataset.clientId, item).catch((error) => setStatus(root, error.message));
     });
     el.closeClientModalBtn?.addEventListener("click", () => closeClientModal(root));
+    el.closeErrorModalBtn?.addEventListener("click", () => closeError(root));
+    el.okErrorBtn?.addEventListener("click", () => closeError(root));
+    el.copyErrorBtn?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(el.errorText?.value || "");
+        setStatus(root, "\u0422\u0435\u043a\u0441\u0442 \u043e\u0448\u0438\u0431\u043a\u0438 \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d");
+      } catch {
+        setStatus(root, "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0442\u0435\u043a\u0441\u0442 \u043e\u0448\u0438\u0431\u043a\u0438");
+      }
+    });
+    if (el.errorModal) closeOnBackdropClick(el.errorModal, () => closeError(root));
+    el.resetClientDataBtn?.addEventListener("click", () => resetClientData(root).catch((error) => {
+      setStatus(root, `\u041e\u0448\u0438\u0431\u043a\u0430: ${error.message}`);
+      showError(root, error.message);
+    }));
     el.saveClientBtn?.addEventListener("click", () => saveClientProfile(root).catch((error) => setStatus(root, error.message)));
+    el.toggleClientBlockBtn?.addEventListener("click", () => toggleClientBlock(root).catch((error) => setStatus(root, error.message)));
     el.fDestination?.addEventListener("change", () => window.TicketClientCard?.syncDynamicModalFields(clientCardCtx(root)));
     el.fLocationType?.addEventListener("change", () => window.TicketClientCard?.syncDynamicModalFields(clientCardCtx(root)));
   }
 
-  async function initManagementUsersPage({ root } = {}) {
+  async function handleManagementUsersUrlChange(root, urlLike) {
+    const nextFilter = filterFromPageUrl(urlLike);
+    const changed = nextFilter !== state.filter;
+    applyFilterState(root, nextFilter, { resetOffset: changed });
+    if (changed) {
+      await loadUsers(root);
+    }
+  }
+
+  async function initManagementUsersPage({ root, url } = {}) {
     if (!root) return;
+    applyFilterState(root, filterFromPageUrl(url || window.location.href), { resetOffset: false });
     bind(root);
     try {
       const sidebar = await window.HelpdeskSidebar?.init?.();
@@ -279,10 +427,17 @@
     } catch (error) {
       setStatus(root, error.message);
     }
+    return {
+      onUrlChange(nextUrl) {
+        return handleManagementUsersUrlChange(root, nextUrl);
+      },
+    };
   }
 
   window.ManagementUsersPage = {
     buildUsersUrl,
+    buildPageUrlForFilter,
+    filterFromPageUrl,
     formatCell,
     formatDate,
     paginationSummary,
