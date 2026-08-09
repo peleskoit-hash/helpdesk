@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 import uuid
 
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType
+from .automatic_messages import render_automatic_message_for_telegram
 from .telegram_bot import send_message
 
 AUTO_CLOSE_MINUTES = 20
@@ -14,6 +16,7 @@ AUTO_CLOSE_CLIENT_TEXT = (
     "Ваша заявка закрыта в связи с отсутствием активности в ней, "
     "если Ваша проблема не была решена, пожалуйста, создайте новую нажав /start"
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -144,6 +147,7 @@ def cleanup_auto_close_tickets(db: Session) -> int:
         try:
             _send_auto_close_to_client(db, ticket)
         except Exception:
+            _LOGGER.exception("Failed to send auto-close notification for ticket %s", ticket.id)
             _add_system_message(db, ticket, "Не удалось отправить клиенту сообщение об автозакрытии", now)
         closed += 1
     if closed:
