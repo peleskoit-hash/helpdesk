@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ TEXT_EXTENSIONS = {
 }
 IGNORE_DIR_NAMES = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".pytest_cache"}
 MARKER_CHARS = set("РСÐÑÃ")
+QUESTION_RUN_RE = re.compile(r"\?{5,}")
 
 
 def iter_files(paths: list[str]) -> list[Path]:
@@ -56,6 +58,19 @@ def line_looks_mojibake(line: str) -> bool:
     return cyrillic_score(fixed) > cyrillic_score(line)
 
 
+def line_has_lost_cyrillic(line: str) -> bool:
+    runs = QUESTION_RUN_RE.findall(line)
+    if not runs:
+        return False
+    total_questions = sum(len(run) for run in runs)
+    longest_run = max(len(run) for run in runs)
+    if total_questions < 8:
+        return False
+    if len(runs) >= 2:
+        return True
+    return longest_run >= 8 and any(marker in line for marker in {'"', "'", "`"})
+
+
 def find_issues(path: Path) -> list[tuple[int, str]]:
     issues: list[tuple[int, str]] = []
     try:
@@ -64,7 +79,7 @@ def find_issues(path: Path) -> list[tuple[int, str]]:
         issues.append((0, "Файл не читается как UTF-8"))
         return issues
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if line_looks_mojibake(line):
+        if line_looks_mojibake(line) or line_has_lost_cyrillic(line):
             issues.append((lineno, line.strip()))
     return issues
 

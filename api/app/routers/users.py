@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,7 +27,7 @@ def _current_user_model(db: Session, current_user: CurrentUser) -> User:
             select(User).where(User.role == "admin", User.is_active.is_(True)).order_by(User.created_at.asc()).limit(1)
         ).scalar_one_or_none()
     if user is None:
-        _error(404, "user_not_found", "???????????? ?? ??????")
+        _error(404, "user_not_found", "Пользователь не найден")
     return user
 
 
@@ -211,7 +211,7 @@ def update_my_status(
 ):
     user = _current_user_model(db, current_user)
     if is_readonly_chiki_piki(current_user):
-        _error(403, "readonly_role", "???? ????-???? ?? ????? ?????? ??????")
+        _error(403, "readonly_role", "Роль Чики-пики не может менять статус")
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
     if user.role == "agent" and payload.availability_status == "online":
@@ -233,11 +233,11 @@ def update_user_status(
         _error(403, "forbidden", "Только администратор может менять статусы сотрудников")
     user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if user is None:
-        _error(404, "user_not_found", "???????????? ?? ??????")
+        _error(404, "user_not_found", "Пользователь не найден")
     if not user.is_active:
-        _error(400, "user_inactive", "?????? ???????? ?????? ??????????? ????????????")
+        _error(400, "user_inactive", "Нельзя изменить статус неактивного пользователя")
     if user.role not in {"agent", "trainee"}:
-        _error(400, "invalid_role", "?????? ????? ?????? ?????? ??????????? ?????????")
+        _error(400, "invalid_role", "Статус можно менять только сотрудникам поддержки")
     user.availability_status = payload.availability_status
     user.updated_at = datetime.utcnow()
     if user.role == "agent" and payload.availability_status == "online":

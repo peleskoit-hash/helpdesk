@@ -12,7 +12,7 @@ Rules:
 - do not read `CODEX_CONTEXT.md` unless the bug clearly depends on project-wide rules;
 - do not read all docs;
 - work only with the files named in the task or found by direct search in that area;
-- keep the final report to 4 blocks: `????????`, `????????`, `??? ????????? ???????`, `Blockers`.
+- keep the final report to 4 blocks: `Изменено`, `Проверки`, `Что проверить вручную`, `Blockers`.
 
 ### NARROW AUDIT
 
@@ -60,9 +60,9 @@ If local file context is enough, stay local.
 ## Short Codex answer format
 
 Use this format by default:
-- `????????:`
-- `????????:`
-- `??? ????????? ???????:`
+- `Изменено:`
+- `Проверки:`
+- `Что проверить вручную:`
 - `Blockers:`
 
 Do not add a long project recap unless there is a blocker, hidden risk, or the user explicitly asks for details.

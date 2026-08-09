@@ -32,7 +32,7 @@ def _error(status_code: int, code: str, message: str):
 
 def _require_admin(user: CurrentUser) -> None:
     if not is_admin(user):
-        _error(403, "admin_only", "????????? ???????? ?????? ??????????????")
+        _error(403, "admin_only", "Настройки доступны только администратору")
 
 
 def _normalize_workflow_type(value: object) -> str:
@@ -843,7 +843,7 @@ def create_bot_button_item(
     if not menu_type:
         _error(422, "menu_type_required", "Не указан тип меню")
     if not label:
-        _error(422, "label_required", "???????? ???? ???????????")
+        _error(422, "label_required", "Название кнопки обязательно")
     if kind not in {"section", "ticket", "task", "auto", "group_task", "group_task_child"}:
         _error(422, "invalid_button_kind", "Недопустимый тип элемента")
     if kind == "section":
