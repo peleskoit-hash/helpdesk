@@ -247,13 +247,6 @@
 
     if (el.greetingBtn) {
       el.greetingBtn.addEventListener("click", async (event) => {
-        const profile = state.card?.client_profile || {};
-        const name = (profile.contact_name || "").trim();
-        if (!name) {
-          event.preventDefault();
-          showError("Поле 'Имя' в карточке клиента не заполнено");
-          return;
-        }
         try {
           setStatus("Отправляю приветствие...");
           await apiPost(`/api/v1/tickets/${state.ticketId}/greeting`);

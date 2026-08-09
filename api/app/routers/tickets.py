@@ -369,6 +369,20 @@ def _telegram_message_id(response: dict | None) -> str | None:
     return str(message_id) if message_id is not None else None
 
 
+def _format_greeting_text(greeting_text: str, contact_name: str | None, telegram_username: str | None) -> str:
+    name = (contact_name or "").strip()
+    if name:
+        return f"{greeting_text}, {name}!"
+
+    username = (telegram_username or "").strip()
+    if username:
+        if not username.startswith("@"):
+            username = f"@{username}"
+        return f"{greeting_text}, {username}!"
+
+    return greeting_text
+
+
 def _send_problem_menu_to_telegram_client(db: Session, ticket: Ticket):
     contact = _telegram_contact_for_client(db, ticket.client_id)
     if contact is not None:
@@ -1191,11 +1205,8 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
         greet = "Добрый вечер"
 
     profile = _get_or_create_client_profile(db, ticket.client_id)
-    name = (profile.contact_name or "").strip()
-    if not name:
-        _error(409, "client_name_required", "Поле 'Имя' в карточке клиента не заполнено")
-
-    text = f"{greet}, {name}!"
+    contact = _telegram_contact_for_client(db, ticket.client_id)
+    text = _format_greeting_text(greet, profile.contact_name, contact.external_username if contact else None)
 
     response = _send_to_telegram_client(db, ticket, text)
     _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
