@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
+from api.app.models import Client, ClientProfile, Company, PendingTaskIntent, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
 from api.app.routers import management_users, telegram
 from api.app.schemas import ClientProfileUpdate
 from api.app.services import telegram_onboarding
@@ -876,9 +876,279 @@ def test_merge_duplicate_plan_finds_canonical_and_duplicate():
     assert plan.duplicate.client_id == duplicate_client.id
     assert plan.ticket_count == 1
     assert "email" in plan.merged_profile_fields
+    assert plan.canonical_chat_id_is_private is True
     assert plan.duplicate_chat_id_is_private is False
     assert plan.canonical_chat_id_preserved is True
     assert plan.canonical_chat_id_after_apply == "453920478"
+    assert plan.duplicate_client_can_delete is True
+
+
+def test_merge_duplicate_preflight_fails_for_different_company():
+    session = _session()
+    canonical_company = _company(session)
+    duplicate_company = _company(session)
+    _seed_user(
+        session,
+        company=canonical_company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    _seed_user(
+        session,
+        company=duplicate_company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+    )
+
+    canonical = telegram_onboarding.telegram_contact_by_chat_id(session, "453920478", company_id=canonical_company.id)
+    duplicate = telegram_onboarding.telegram_contact_by_chat_id(session, "-5267117449", company_id=duplicate_company.id)
+
+    with pytest.raises(SystemExit, match="different companies"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical, duplicate)
+
+
+def test_merge_duplicate_preflight_fails_for_different_user_id():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Fallback Name")
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=client.id, contact_name="Ivan", is_verified=False)
+    contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        external_user_id="999001",
+        external_chat_id="-5267117449",
+        external_username="belfiss",
+        external_display_name="Ivan TG",
+    )
+    ticket = Ticket(id=str(uuid.uuid4()), company_id=company.id, client_id=client.id, subject="Hello")
+    session.add_all([client, profile, contact, ticket])
+    session.commit()
+
+    canonical = telegram_onboarding.telegram_contact_by_chat_id(session, "453920478", company_id=company.id)
+
+    with pytest.raises(SystemExit, match="different external_user_id"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical, contact)
+
+
+def test_merge_duplicate_preflight_fails_for_reversed_roles():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+    )
+
+    canonical = telegram_onboarding.telegram_contact_by_chat_id(session, "-5267117449", company_id=company.id)
+    duplicate = telegram_onboarding.telegram_contact_by_chat_id(session, "453920478", company_id=company.id)
+
+    with pytest.raises(SystemExit, match="external_chat_id exactly equal to external_user_id"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical, duplicate)
+
+
+def test_merge_duplicate_preflight_fails_for_same_contact():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+
+    canonical = telegram_onboarding.telegram_contact_by_chat_id(session, "453920478", company_id=company.id)
+
+    with pytest.raises(SystemExit, match="same TelegramContact"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical, canonical)
+
+
+def test_merge_duplicate_preflight_fails_for_same_client():
+    session = _session()
+    company = _company(session)
+    client, _, canonical_contact = _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    duplicate_contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+        external_username="belfiss",
+        external_display_name="Ivan TG",
+    )
+    session.add(duplicate_contact)
+    session.commit()
+
+    with pytest.raises(SystemExit, match="same Client"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical_contact, duplicate_contact)
+
+
+def test_merge_duplicate_preflight_fails_when_canonical_positive_chat_does_not_match_user_id():
+    session = _session()
+    company = _company(session)
+    canonical_client, _, canonical_contact = _seed_user(
+        session,
+        company=company,
+        username="strict-canonical",
+        external_user_id="123",
+        external_chat_id="999",
+    )
+    duplicate_client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Duplicate")
+    duplicate_profile = ClientProfile(id=str(uuid.uuid4()), client_id=duplicate_client.id, contact_name="Dupe", is_verified=False)
+    duplicate_contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=duplicate_client.id,
+        external_user_id="123",
+        external_chat_id="-1001",
+        external_username="strict-duplicate",
+        external_display_name="Duplicate TG",
+    )
+    duplicate_ticket = Ticket(id=str(uuid.uuid4()), company_id=company.id, client_id=duplicate_client.id, subject="Hello")
+    session.add_all([duplicate_client, duplicate_profile, duplicate_contact, duplicate_ticket])
+    session.commit()
+
+    with pytest.raises(SystemExit, match="external_chat_id exactly equal to external_user_id"):
+        merge_telegram_contact_duplicate.validate_preflight(canonical_contact, duplicate_contact)
+
+
+def test_merge_duplicate_preflight_passes_for_exact_private_canonical_and_negative_duplicate():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="strict-canonical",
+        external_user_id="123",
+        external_chat_id="123",
+    )
+    _seed_user(
+        session,
+        company=company,
+        username="strict-duplicate",
+        external_user_id="123",
+        external_chat_id="-1001",
+    )
+
+    plan = merge_telegram_contact_duplicate.build_plan(session, "123", "123", "-1001")
+
+    assert plan.canonical.external_chat_id == "123"
+    assert plan.duplicate.external_chat_id == "-1001"
+
+
+def test_merge_duplicate_preflight_fails_for_arbitrary_positive_duplicate_chat():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="strict-canonical",
+        external_user_id="123",
+        external_chat_id="123",
+    )
+    duplicate_client, _, duplicate_contact = _seed_user(
+        session,
+        company=company,
+        username="strict-duplicate",
+        external_user_id="123",
+        external_chat_id="999",
+    )
+
+    with pytest.raises(SystemExit, match="negative historical chat id; manual review required"):
+        merge_telegram_contact_duplicate.build_plan(session, "123", "123", duplicate_contact.external_chat_id)
+
+
+def test_merge_duplicate_plan_marks_delete_blocked_when_extra_contact_would_remain():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    duplicate_client, _, duplicate_contact = _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+    )
+    extra_contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=duplicate_client.id,
+        external_user_id="453920478",
+        external_chat_id="-5267117450",
+        external_username="belfiss-archive",
+        external_display_name="Ivan TG Archive",
+    )
+    session.add(extra_contact)
+    session.commit()
+
+    plan = merge_telegram_contact_duplicate.build_plan(session, "453920478", "453920478", duplicate_contact.external_chat_id)
+
+    assert plan.duplicate_client_can_delete is False
+
+
+def test_merge_duplicate_plan_keeps_delete_allowed_when_only_supported_refs_will_be_relinked():
+    session = _session()
+    company = _company(session)
+    _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="453920478",
+    )
+    duplicate_client, _, duplicate_contact = _seed_user(
+        session,
+        company=company,
+        username="belfiss",
+        external_user_id="453920478",
+        external_chat_id="-5267117449",
+    )
+    extra_pending = PendingTaskIntent(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=duplicate_client.id,
+        external_chat_id="-5267117450",
+        subject="Another pending task",
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(hours=1),
+    )
+    session.add(extra_pending)
+    session.commit()
+
+    plan = merge_telegram_contact_duplicate.build_plan(session, "453920478", "453920478", duplicate_contact.external_chat_id)
+
+    assert plan.duplicate_client_can_delete is True
 
 
 def test_merge_duplicate_apply_preserves_private_chat_and_relinks_tickets():

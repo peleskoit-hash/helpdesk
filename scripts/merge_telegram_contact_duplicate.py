@@ -47,6 +47,7 @@ class MergePlan:
     duplicate_client_can_delete: bool
     canonical_chat_id_after_apply: str
     canonical_chat_id_preserved: bool
+    canonical_chat_id_is_private: bool
     duplicate_chat_id_is_private: bool
 
 
@@ -66,6 +67,17 @@ def _is_private_chat_id_for_user(external_chat_id: str | None, external_user_id:
     if user_id and chat_id == user_id:
         return True
     return chat_id.isdigit()
+
+
+def _is_strict_private_chat_id_for_user(external_chat_id: str | None, external_user_id: str | None) -> bool:
+    chat_id = str(external_chat_id or "").strip()
+    user_id = str(external_user_id or "").strip()
+    return bool(chat_id and user_id and chat_id == user_id)
+
+
+def _is_strict_historical_duplicate_chat_id(external_chat_id: str | None) -> bool:
+    chat_id = str(external_chat_id or "").strip()
+    return bool(chat_id and chat_id.startswith("-"))
 
 
 def _should_update_contact_chat_id(current_chat_id: str | None, incoming_chat_id: str | None, external_user_id: str | None) -> bool:
@@ -135,11 +147,56 @@ def _contact_by_chat_id(db: Session, external_user_id: str, external_chat_id: st
     return contact
 
 
+def validate_preflight(canonical: TelegramContact, duplicate: TelegramContact) -> None:
+    if canonical.id == duplicate.id:
+        raise SystemExit("Preflight failed: canonical and duplicate resolve to the same TelegramContact")
+    if canonical.client_id == duplicate.client_id:
+        raise SystemExit("Preflight failed: canonical and duplicate point to the same Client; this tool only supports distinct-client duplicates")
+    if canonical.company_id != duplicate.company_id:
+        raise SystemExit("Preflight failed: canonical and duplicate belong to different companies")
+    if canonical.external_user_id != duplicate.external_user_id:
+        raise SystemExit("Preflight failed: canonical and duplicate have different external_user_id values")
+    if not _is_strict_private_chat_id_for_user(canonical.external_chat_id, canonical.external_user_id):
+        raise SystemExit("Preflight failed: canonical contact must have external_chat_id exactly equal to external_user_id")
+    if not _is_strict_historical_duplicate_chat_id(duplicate.external_chat_id):
+        raise SystemExit("Preflight failed: duplicate contact must have a negative historical chat id; manual review required")
+
+
+def _client_direct_reference_counts(db: Session, client_id: str) -> dict[str, int]:
+    return {
+        "tickets": db.execute(
+            select(func.count()).select_from(Ticket).where(Ticket.client_id == client_id)
+        ).scalar_one(),
+        "pending_task_intents": db.execute(
+            select(func.count()).select_from(PendingTaskIntent).where(PendingTaskIntent.client_id == client_id)
+        ).scalar_one(),
+        "client_profiles": db.execute(
+            select(func.count()).select_from(ClientProfile).where(ClientProfile.client_id == client_id)
+        ).scalar_one(),
+        "telegram_contacts": db.execute(
+            select(func.count()).select_from(TelegramContact).where(TelegramContact.client_id == client_id)
+        ).scalar_one(),
+    }
+
+
+def _project_duplicate_client_reference_counts_after_apply(
+    *,
+    duplicate_reference_counts: dict[str, int],
+    duplicate_profile: ClientProfile | None,
+) -> dict[str, int]:
+    projected = dict(duplicate_reference_counts)
+    projected["tickets"] = 0
+    projected["pending_task_intents"] = 0
+    projected["telegram_contacts"] = max(projected["telegram_contacts"] - 1, 0)
+    if duplicate_profile is not None:
+        projected["client_profiles"] = max(projected["client_profiles"] - 1, 0)
+    return projected
+
+
 def build_plan(db: Session, external_user_id: str, canonical_chat_id: str, duplicate_chat_id: str) -> MergePlan:
     canonical = _contact_by_chat_id(db, external_user_id, canonical_chat_id)
     duplicate = _contact_by_chat_id(db, external_user_id, duplicate_chat_id)
-    if canonical.id == duplicate.id:
-        raise SystemExit("Canonical and duplicate resolve to the same contact")
+    validate_preflight(canonical, duplicate)
 
     canonical_profile = db.execute(
         select(ClientProfile).where(ClientProfile.client_id == canonical.client_id)
@@ -153,7 +210,12 @@ def build_plan(db: Session, external_user_id: str, canonical_chat_id: str, dupli
     pending_intent_count = db.execute(
         select(func.count()).select_from(PendingTaskIntent).where(PendingTaskIntent.client_id == duplicate.client_id)
     ).scalar_one()
-    duplicate_client_can_delete = True
+    duplicate_reference_counts = _client_direct_reference_counts(db, duplicate.client_id)
+    projected_duplicate_reference_counts = _project_duplicate_client_reference_counts_after_apply(
+        duplicate_reference_counts=duplicate_reference_counts,
+        duplicate_profile=duplicate_profile,
+    )
+    duplicate_client_can_delete = sum(projected_duplicate_reference_counts.values()) == 0
     canonical_chat_id_after_apply = _chat_id_after_merge(canonical, duplicate)
     return MergePlan(
         canonical=canonical,
@@ -166,6 +228,7 @@ def build_plan(db: Session, external_user_id: str, canonical_chat_id: str, dupli
         duplicate_client_can_delete=duplicate_client_can_delete,
         canonical_chat_id_after_apply=canonical_chat_id_after_apply,
         canonical_chat_id_preserved=canonical_chat_id_after_apply == canonical.external_chat_id,
+        canonical_chat_id_is_private=_is_private_chat_id_for_user(canonical.external_chat_id, canonical.external_user_id),
         duplicate_chat_id_is_private=_is_private_chat_id_for_user(duplicate.external_chat_id, duplicate.external_user_id),
     )
 
@@ -183,6 +246,7 @@ def print_plan(plan: MergePlan) -> None:
     print(f"duplicate_profile_score={_profile_score(plan.duplicate_profile)}")
     print(f"profile_fields_to_fill={sorted(plan.merged_profile_fields.keys())}")
     print(f"duplicate_client_can_delete_after_relink={plan.duplicate_client_can_delete}")
+    print(f"canonical_chat_id_is_private={str(plan.canonical_chat_id_is_private).lower()}")
     print(f"duplicate_chat_id_is_private={str(plan.duplicate_chat_id_is_private).lower()}")
     print(f"canonical_chat_id_preserved={str(plan.canonical_chat_id_preserved).lower()}")
     print(f"canonical_chat_id_after_apply={plan.canonical_chat_id_after_apply}")
@@ -218,12 +282,7 @@ def apply_plan(db: Session, plan: MergePlan) -> None:
     plan.canonical.external_display_name = duplicate_display_name or plan.canonical.external_display_name
     plan.canonical.updated_at = now
 
-    remaining_refs = (
-        db.execute(select(func.count()).select_from(Ticket).where(Ticket.client_id == plan.duplicate.client_id)).scalar_one()
-        + db.execute(select(func.count()).select_from(PendingTaskIntent).where(PendingTaskIntent.client_id == plan.duplicate.client_id)).scalar_one()
-        + db.execute(select(func.count()).select_from(ClientProfile).where(ClientProfile.client_id == plan.duplicate.client_id)).scalar_one()
-        + db.execute(select(func.count()).select_from(TelegramContact).where(TelegramContact.client_id == plan.duplicate.client_id)).scalar_one()
-    )
+    remaining_refs = sum(_client_direct_reference_counts(db, plan.duplicate.client_id).values())
     if remaining_refs == 0:
         duplicate_client = db.get(Client, plan.duplicate.client_id)
         if duplicate_client is not None:
