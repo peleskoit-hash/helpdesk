@@ -3106,8 +3106,3 @@ def cleanup_expired_task_intents(db: Session) -> int:
             send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
     db.commit()
     return len(expired)
-
-
-@router.post("/webhook/telegram")
-def telegram_webhook(payload: dict, db: Session = Depends(get_db)):
-    return process_telegram_update(db, payload, notify_client=False)
