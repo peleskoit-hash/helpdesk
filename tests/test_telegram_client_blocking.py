@@ -98,19 +98,31 @@ def _seed_ticket(
     return ticket
 
 
-def _message_payload(*, update_id: int, chat_id: str, user_id: str, text: str) -> dict:
+def _message_payload(*, update_id: int, chat_id: str, user_id: str, text: str, chat_type: str = "private") -> dict:
     return {
         "update_id": update_id,
         "message": {
             "message_id": update_id,
-            "chat": {"id": int(chat_id) if str(chat_id).isdigit() else chat_id},
+            "chat": {"id": int(chat_id) if str(chat_id).isdigit() else chat_id, "type": chat_type},
             "from": {"id": int(user_id) if str(user_id).isdigit() else user_id, "first_name": "Ivan", "last_name": "Petrov"},
             "text": text,
         },
     }
 
 
-def _callback_payload(*, update_id: int, chat_id: str, user_id: str, data: str = "btn:test") -> dict:
+def _edited_message_payload(*, update_id: int, chat_id: str, user_id: str, text: str, chat_type: str = "private") -> dict:
+    return {
+        "update_id": update_id,
+        "edited_message": {
+            "message_id": update_id,
+            "chat": {"id": int(chat_id) if str(chat_id).isdigit() else chat_id, "type": chat_type},
+            "from": {"id": int(user_id) if str(user_id).isdigit() else user_id, "first_name": "Ivan", "last_name": "Petrov"},
+            "text": text,
+        },
+    }
+
+
+def _callback_payload(*, update_id: int, chat_id: str, user_id: str, data: str = "btn:test", chat_type: str = "private") -> dict:
     return {
         "update_id": update_id,
         "callback_query": {
@@ -119,7 +131,7 @@ def _callback_payload(*, update_id: int, chat_id: str, user_id: str, data: str =
             "data": data,
             "message": {
                 "message_id": update_id,
-                "chat": {"id": int(chat_id) if str(chat_id).isdigit() else chat_id},
+                "chat": {"id": int(chat_id) if str(chat_id).isdigit() else chat_id, "type": chat_type},
             },
         },
     }
@@ -383,3 +395,219 @@ def test_unblocked_after_block_incoming_works_again():
     assert blocked_result["blocked"] is True
     assert allowed_result["ticket_id"] == ticket.id
     assert _client_message_count(session, ticket.id) == before_count + 1
+
+
+def test_group_message_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+    access_called = {"value": False}
+    contact_called = {"value": False}
+
+    def _fail_access(*args, **kwargs):
+        access_called["value"] = True
+        raise AssertionError("access should not be called for group message")
+
+    def _fail_contact(*args, **kwargs):
+        contact_called["value"] = True
+        raise AssertionError("contact resolution should not be called for group message")
+
+    monkeypatch.setattr(telegram_router, "evaluate_incoming_telegram_access", _fail_access)
+    monkeypatch.setattr(telegram_router, "get_or_create_contact_from_user", _fail_contact)
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=1011, chat_id="-10001", user_id="7001", text="group text", chat_type="group"),
+        notify_client=False,
+    )
+
+    updates = session.execute(select(TelegramUpdate)).scalars().all()
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert access_called["value"] is False
+    assert contact_called["value"] is False
+    assert len(updates) == 1
+    assert updates[0].update_id == "1011"
+    assert session.execute(select(TelegramContact)).scalars().all() == []
+
+
+def test_supergroup_message_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called for supergroup message")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "get_or_create_contact_from_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("contact resolution should not be called for supergroup message")),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=1012, chat_id="-10002", user_id="7002", text="supergroup text", chat_type="supergroup"),
+        notify_client=False,
+    )
+
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert session.execute(select(TelegramUpdate)).scalars().all() != []
+    assert session.execute(select(TelegramContact)).scalars().all() == []
+
+
+def test_channel_message_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called for channel message")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "get_or_create_contact_from_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("contact resolution should not be called for channel message")),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=1013, chat_id="-10003", user_id="7003", text="channel text", chat_type="channel"),
+        notify_client=False,
+    )
+
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert session.execute(select(TelegramUpdate)).scalars().all() != []
+    assert session.execute(select(TelegramContact)).scalars().all() == []
+
+
+def test_message_without_chat_type_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called when chat type is missing")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "get_or_create_contact_from_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("contact resolution should not be called when chat type is missing")),
+    )
+
+    payload = _message_payload(update_id=1017, chat_id="7007", user_id="7007", text="missing type")
+    payload["message"]["chat"].pop("type", None)
+
+    result = telegram_router.process_telegram_update(session, payload, notify_client=False)
+
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert session.execute(select(TelegramUpdate)).scalars().all() != []
+    assert session.execute(select(TelegramContact)).scalars().all() == []
+
+
+def test_message_with_unknown_chat_type_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called for unknown chat type")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "get_or_create_contact_from_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("contact resolution should not be called for unknown chat type")),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(
+            update_id=1018,
+            chat_id="7008",
+            user_id="7008",
+            text="future type",
+            chat_type="future_chat_type",
+        ),
+        notify_client=False,
+    )
+
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert session.execute(select(TelegramUpdate)).scalars().all() != []
+    assert session.execute(select(TelegramContact)).scalars().all() == []
+
+
+def test_group_callback_is_ignored_before_access_or_callback_handlers(monkeypatch):
+    session = _session()
+    _company(session)
+    problem_handler_called = {"value": False}
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called for group callback")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "_process_problem_type_callback",
+        lambda *args, **kwargs: problem_handler_called.__setitem__("value", True),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=1014, chat_id="-10004", user_id="7004", data="btn:create-ticket", chat_type="group"),
+        notify_client=False,
+    )
+
+    updates = session.execute(select(TelegramUpdate)).scalars().all()
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert problem_handler_called["value"] is False
+    assert len(updates) == 1
+    assert updates[0].update_id == "1014"
+
+
+def test_private_callback_continues_existing_flow(monkeypatch):
+    session = _session()
+    _company(session)
+    called = {"value": False}
+
+    def _fake_problem_type_callback(*args, **kwargs):
+        called["value"] = True
+        return {"ok": True, "from_handler": True}
+
+    monkeypatch.setattr(telegram_router, "_process_problem_type_callback", _fake_problem_type_callback)
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=1015, chat_id="7005", user_id="7005", data="btn:create-ticket", chat_type="private"),
+        notify_client=False,
+    )
+
+    assert result == {"ok": True, "from_handler": True}
+    assert called["value"] is True
+
+
+def test_non_private_edited_message_is_ignored_before_access_or_contact_resolution(monkeypatch):
+    session = _session()
+    _company(session)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "evaluate_incoming_telegram_access",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("access should not be called for edited group message")),
+    )
+    monkeypatch.setattr(
+        telegram_router,
+        "get_or_create_contact_from_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("contact resolution should not be called for edited group message")),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _edited_message_payload(update_id=1016, chat_id="-10006", user_id="7006", text="edited text", chat_type="group"),
+        notify_client=False,
+    )
+
+    assert result == {"ok": True, "ignored": "non_private_chat"}
+    assert session.execute(select(TelegramUpdate)).scalars().all() != []

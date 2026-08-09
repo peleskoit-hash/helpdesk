@@ -219,6 +219,13 @@ def _first_company(db: Session) -> Company | None:
     return db.execute(select(Company).order_by(Company.created_at.asc()).limit(1)).scalar_one_or_none()
 
 
+def _is_private_telegram_chat(chat: dict | None) -> bool:
+    if not isinstance(chat, dict):
+        return False
+    chat_type = str(chat.get("type") or "").strip().lower()
+    return chat_type == "private"
+
+
 def _now_for(value: datetime) -> datetime:
     if value.tzinfo is not None:
         return datetime.now(value.tzinfo)
@@ -2523,6 +2530,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             payload_json=json.dumps(payload, ensure_ascii=False),
             created_at=datetime.utcnow(),
         )
+        if not _is_private_telegram_chat(chat):
+            db.add(callback_update)
+            db.commit()
+            return {"ok": True, "ignored": "non_private_chat"}
         if external_chat_id:
             company = _first_company(db)
             if company is None:
@@ -2764,6 +2775,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             created_at=datetime.utcnow(),
         )
     )
+
+    if not _is_private_telegram_chat(chat):
+        db.commit()
+        return {"ok": True, "ignored": "non_private_chat"}
 
     if not external_chat_id:
         db.commit()
