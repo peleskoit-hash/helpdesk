@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -211,6 +211,13 @@ class TicketView(Base):
 
 class TelegramContact(Base):
     __tablename__ = "telegram_contacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "external_user_id",
+            name="uq_telegram_contacts_company_external_user",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))

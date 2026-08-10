@@ -42,6 +42,7 @@ from .services.schema_evolution import (
     ensure_client_card_field_config_columns,
     ensure_call_center_employee_resolver_state_table,
     ensure_client_profile_columns,
+    ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
     ensure_ticket_attachment_table,
     ensure_ticket_columns,
@@ -92,6 +93,7 @@ async def on_startup():
             Base.metadata.create_all(bind=engine)
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()
+            ensure_telegram_contact_company_user_unique()
             ensure_user_columns()
             ensure_ticket_columns()
             ensure_ticket_message_columns()

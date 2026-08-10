@@ -4,6 +4,81 @@ from sqlalchemy import text
 
 from ..db import engine
 
+TELEGRAM_CONTACT_COMPANY_USER_UNIQUE_NAME = "uq_telegram_contacts_company_external_user"
+
+
+def _telegram_contact_duplicate_group_count(conn) -> int:
+    duplicate_groups = conn.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT company_id, external_user_id
+                FROM telegram_contacts
+                GROUP BY company_id, external_user_id
+                HAVING COUNT(*) > 1
+            ) duplicate_groups
+            """
+        )
+    ).scalar_one()
+    return int(duplicate_groups or 0)
+
+
+def _sqlite_has_equivalent_unique_index(conn, table_name: str, columns: tuple[str, ...]) -> bool:
+    rows = conn.execute(text(f"PRAGMA index_list({table_name})")).mappings().all()
+    for row in rows:
+        if not row["unique"]:
+            continue
+        index_name = row["name"]
+        index_columns = conn.execute(text(f"PRAGMA index_info({index_name})")).mappings().all()
+        if tuple(column["name"] for column in index_columns) == columns:
+            return True
+    return False
+
+
+def _postgres_is_equivalent_unique_invariant(row, columns: tuple[str, ...]) -> bool:
+    return (
+        bool(row["is_unique"])
+        and row["predicate_sql"] is None
+        and row["expression_sql"] is None
+        and int(row["key_arity"] or 0) == len(columns)
+        and tuple(row["key_columns"] or ()) == columns
+    )
+
+
+def _postgres_has_equivalent_unique_invariant(conn, table_name: str, columns: tuple[str, ...]) -> bool:
+    rows = conn.execute(
+        text(
+            """
+            SELECT idxrel.relname AS index_name,
+                   con.conname AS constraint_name,
+                   idx.indisunique AS is_unique,
+                   idx.indpred AS predicate_sql,
+                   idx.indexprs AS expression_sql,
+                   idx.indnkeyatts AS key_arity,
+                   ARRAY_AGG(att.attname ORDER BY key_columns.ordinality) AS key_columns
+            FROM pg_index idx
+            JOIN pg_class rel ON rel.oid = idx.indrelid
+            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+            JOIN pg_class idxrel ON idxrel.oid = idx.indexrelid
+            LEFT JOIN pg_constraint con
+              ON con.conindid = idx.indexrelid
+             AND con.contype = 'u'
+            JOIN LATERAL unnest(idx.indkey) WITH ORDINALITY AS key_columns(attnum, ordinality)
+              ON key_columns.ordinality <= idx.indnkeyatts
+            LEFT JOIN pg_attribute att
+              ON att.attrelid = rel.oid
+             AND att.attnum = key_columns.attnum
+            WHERE idx.indisvalid
+              AND nsp.nspname = current_schema()
+              AND rel.relname = :table_name
+            GROUP BY idxrel.relname, con.conname, idx.indisunique, idx.indpred, idx.indexprs, idx.indnkeyatts
+            """
+        ),
+        {"table_name": table_name},
+    ).mappings().all()
+    return any(_postgres_is_equivalent_unique_invariant(row, columns) for row in rows)
+
 
 def ensure_client_profile_columns() -> None:
     required_columns = {
@@ -296,6 +371,45 @@ def ensure_telegram_contact_columns() -> None:
             conn.execute(text("UPDATE telegram_contacts SET menu_message_ids_json = '[]'::jsonb WHERE menu_message_ids_json IS NULL"))
             conn.execute(text("ALTER TABLE telegram_contacts ALTER COLUMN is_blocked SET DEFAULT FALSE"))
             conn.execute(text("ALTER TABLE telegram_contacts ALTER COLUMN is_blocked SET NOT NULL"))
+
+
+def ensure_telegram_contact_company_user_unique() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        columns = ("company_id", "external_user_id")
+
+        if dialect == "sqlite":
+            if _sqlite_has_equivalent_unique_index(conn, "telegram_contacts", columns):
+                return
+        else:
+            if _postgres_has_equivalent_unique_invariant(conn, "telegram_contacts", columns):
+                return
+
+        duplicate_group_count = _telegram_contact_duplicate_group_count(conn)
+        if duplicate_group_count:
+            raise RuntimeError(
+                "Cannot add telegram contact uniqueness invariant: "
+                f"found {duplicate_group_count} duplicate Telegram identity groups in telegram_contacts "
+                "for (company_id, external_user_id)."
+            )
+
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    f"{TELEGRAM_CONTACT_COMPANY_USER_UNIQUE_NAME} "
+                    "ON telegram_contacts(company_id, external_user_id)"
+                )
+            )
+            return
+
+        conn.execute(
+            text(
+                "ALTER TABLE telegram_contacts "
+                f"ADD CONSTRAINT {TELEGRAM_CONTACT_COMPANY_USER_UNIQUE_NAME} "
+                "UNIQUE (company_id, external_user_id)"
+            )
+        )
 
 
 def ensure_user_columns() -> None:

@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 import uuid
 
+import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
@@ -239,10 +241,10 @@ def test_blocked_client_text_does_not_create_message_and_keeps_active_ticket_unc
     assert ticket.closed_at is None
 
 
-def test_blocked_duplicate_identity_is_denied_by_external_user_id():
+def test_duplicate_identity_is_rejected_by_db_invariant():
     session = _session()
     company = _company(session)
-    client, _, canonical_contact = _seed_contact(
+    client, _, _canonical_contact = _seed_contact(
         session,
         company=company,
         external_user_id="453920478",
@@ -260,17 +262,8 @@ def test_blocked_duplicate_identity_is_denied_by_external_user_id():
         is_blocked=True,
     )
     session.add(duplicate_contact)
-    session.commit()
-    ticket = _seed_ticket(session, company_id=company.id, client_id=client.id)
-
-    result = telegram_router.process_telegram_update(
-        session,
-        _message_payload(update_id=1005, chat_id=canonical_contact.external_chat_id, user_id="453920478", text="Need help"),
-        notify_client=False,
-    )
-
-    assert result["blocked"] is True
-    assert _client_message_count(session, ticket.id) == 0
+    with pytest.raises(IntegrityError):
+        session.commit()
 
 
 def test_blocked_callback_does_not_execute_ticket_creation_handler(monkeypatch):
