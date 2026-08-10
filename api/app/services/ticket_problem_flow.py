@@ -9,11 +9,19 @@ from sqlalchemy.orm import Session
 from ..models import BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
 from .automatic_messages import render_automatic_message_text
 from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
+from .ticket_messages import persist_client_delivery_failure
 from .telegram_text_format import strip_telegram_html
 
 
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
+
+
+def _http_error_code(exc: HTTPException) -> str | None:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    error = detail.get("error") if isinstance(detail, dict) else {}
+    code = error.get("code") if isinstance(error, dict) else None
+    return str(code) if code else None
 
 
 def menu_name_for_ticket_client(
@@ -234,7 +242,16 @@ def apply_wrong_problem(
             None,
         )
     else:
-        response = send_to_telegram_client_fn(db, ticket, hint_text)
+        try:
+            response = send_to_telegram_client_fn(db, ticket, hint_text)
+        except HTTPException as exc:
+            if _http_error_code(exc) == "telegram_send_failed":
+                persist_client_delivery_failure(
+                    db=db,
+                    ticket_id=ticket.id,
+                    body="Подсказку по неверной проблеме не удалось отправить клиенту в Telegram.",
+                )
+            raise
         unfreeze_ticket_on_message_fn(ticket)
         system_body = (
             f"Администратор {actor_display_name} подсказал клиенту правильный пункт меню: {target_label}"

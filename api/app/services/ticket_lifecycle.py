@@ -10,14 +10,71 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser
 from ..config import settings
-from ..models import MessageType, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
 from .automatic_messages import render_automatic_message_text
+from .ticket_messages import persist_client_delivery_failure, record_client_delivery_failure
 from .ticket_subject import resolve_ticket_subject
 
 
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
+
+
+def _http_error_code(exc: HTTPException) -> str | None:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    error = detail.get("error") if isinstance(detail, dict) else {}
+    code = error.get("code") if isinstance(error, dict) else None
+    return str(code) if code else None
+
+
+def _ticket_has_telegram_contact(db: Session, ticket: Ticket) -> bool:
+    return db.execute(select(TelegramContact.id).where(TelegramContact.client_id == ticket.client_id).limit(1)).first() is not None
+
+
+def _send_optional_client_message(
+    db: Session,
+    ticket: Ticket,
+    text: str,
+    *,
+    failure_note: str,
+    send_to_telegram_client_fn,
+    remove_keyboard: bool = False,
+) -> dict | None:
+    response = send_to_telegram_client_fn(
+        db,
+        ticket,
+        text,
+        required=False,
+        remove_keyboard=remove_keyboard,
+    )
+    if response is None and _ticket_has_telegram_contact(db, ticket):
+        record_client_delivery_failure(
+            db=db,
+            ticket=ticket,
+            body=failure_note,
+        )
+    return response
+
+
+def _send_required_client_attachment(
+    db: Session,
+    ticket: Ticket,
+    attachment: TicketAttachment,
+    *,
+    failure_note: str,
+    send_attachment_to_telegram_client_fn,
+) -> None:
+    try:
+        send_attachment_to_telegram_client_fn(db, ticket, attachment, required=True)
+    except HTTPException as exc:
+        if _http_error_code(exc) in {"telegram_send_failed", "attachment_file_missing"}:
+            persist_client_delivery_failure(
+                db=db,
+                ticket_id=ticket.id,
+                body=failure_note,
+            )
+        raise
 
 
 def refresh_ticket_auto_close(
@@ -387,7 +444,7 @@ def finalize_group_parent_if_ready(
     if parent_client_message is not None:
         answers, attachments = _group_parent_children_payload(db, parent)
         subject_text = resolve_ticket_subject(db, parent)
-        send_to_telegram_client_fn(
+        _send_optional_client_message(
             db,
             parent,
             _format_group_task_completion_text(
@@ -397,10 +454,18 @@ def finalize_group_parent_if_ready(
                 answers,
                 subject_text=subject_text,
             ),
-            required=False,
+            failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
+            send_to_telegram_client_fn=send_to_telegram_client_fn,
         )
         for attachment in attachments:
-            send_attachment_to_telegram_client_fn(db, parent, attachment, required=True)
+            filename = attachment.original_filename or "файл"
+            _send_required_client_attachment(
+                db,
+                parent,
+                attachment,
+                failure_note=f"Групповая задача завершена, но не удалось отправить клиенту вложение «{filename}».",
+                send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+            )
 
     parent.status = TicketStatus.CLOSED.value
     parent.closed_by_user_id = closed_by_user_id
@@ -448,7 +513,13 @@ def notify_group_parent_completion_before_delete(
 def _send_pending_wrong_problem_hint(db: Session, ticket: Ticket, *, send_to_telegram_client_fn, add_message_fn):
     if not ticket.wrong_problem_hint:
         return
-    if send_to_telegram_client_fn(db, ticket, ticket.wrong_problem_hint, required=False):
+    if _send_optional_client_message(
+        db,
+        ticket,
+        ticket.wrong_problem_hint,
+        failure_note="Подсказку по неверной проблеме не удалось отправить клиенту в Telegram.",
+        send_to_telegram_client_fn=send_to_telegram_client_fn,
+    ):
         add_message_fn(db, ticket, MessageType.SYSTEM, "Подсказка по неверной проблеме отправлена клиенту", None)
         ticket.wrong_problem_hint = None
 
@@ -526,11 +597,12 @@ def _close_task_without_reply(
     if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
         client_message = first_client_message_fn(db, ticket)
         subject_text = resolve_ticket_subject(db, ticket)
-        send_to_telegram_client_fn(
+        _send_optional_client_message(
             db,
             ticket,
             _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=subject_text),
-            required=False,
+            failure_note="Задача закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
+            send_to_telegram_client_fn=send_to_telegram_client_fn,
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
         parent = db.get(Ticket, ticket.parent_ticket_id)
@@ -602,11 +674,12 @@ def close_ticket_by_actor(
             ticket.freeze_until = None
             clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
-            send_to_telegram_client_fn(
+            _send_optional_client_message(
                 db,
                 ticket,
                 ticket_closed_client_text,
-                required=False,
+                failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
+                send_to_telegram_client_fn=send_to_telegram_client_fn,
                 remove_keyboard=True,
             )
             _mark_ticket_completed_once(db, ticket, actor)
@@ -650,7 +723,7 @@ def close_ticket_by_actor(
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
             subject_text = resolve_ticket_subject(db, ticket)
-            send_to_telegram_client_fn(
+            _send_optional_client_message(
                 db,
                 ticket,
                 _format_group_task_completion_text(
@@ -660,10 +733,18 @@ def close_ticket_by_actor(
                     answers,
                     subject_text=subject_text,
                 ),
-                required=False,
+                failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
+                send_to_telegram_client_fn=send_to_telegram_client_fn,
             )
             for attachment in attachments:
-                send_attachment_to_telegram_client_fn(db, ticket, attachment, required=True)
+                filename = attachment.original_filename or "файл"
+                _send_required_client_attachment(
+                    db,
+                    ticket,
+                    attachment,
+                    failure_note=f"Групповая задача завершена, но не удалось отправить клиенту вложение «{filename}».",
+                    send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                )
             _send_pending_wrong_problem_hint(
                 db,
                 ticket,
@@ -685,14 +766,22 @@ def close_ticket_by_actor(
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         else:
             subject_text = resolve_ticket_subject(db, ticket)
-            send_to_telegram_client_fn(
+            _send_optional_client_message(
                 db,
                 ticket,
                 _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
-                required=False,
+                failure_note="Задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
+                send_to_telegram_client_fn=send_to_telegram_client_fn,
             )
             for attachment in message_attachments_fn(db, last_agent_message.id):
-                send_attachment_to_telegram_client_fn(db, ticket, attachment, required=True)
+                filename = attachment.original_filename or "файл"
+                _send_required_client_attachment(
+                    db,
+                    ticket,
+                    attachment,
+                    failure_note=f"Не удалось отправить клиенту вложение «{filename}».",
+                    send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                )
             _send_pending_wrong_problem_hint(
                 db,
                 ticket,
@@ -706,11 +795,12 @@ def close_ticket_by_actor(
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         if bool(ticket.onsite_triggered):
             add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
-        send_to_telegram_client_fn(
+        _send_optional_client_message(
             db,
             ticket,
             ticket_closed_client_text,
-            required=False,
+            failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
+            send_to_telegram_client_fn=send_to_telegram_client_fn,
             remove_keyboard=True,
         )
     else:

@@ -41,7 +41,7 @@ from ..services.client_card_derivation import apply_client_card_profile_save_pip
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
-from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, reply_to_ticket
+from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
 from ..services.ticket_list import build_ticket_counts, list_special_tickets, list_tickets_paginated
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
@@ -1208,7 +1208,18 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     contact = _telegram_contact_for_client(db, ticket.client_id)
     text = _format_greeting_text(greet, profile.contact_name, contact.external_username if contact else None)
 
-    response = _send_to_telegram_client(db, ticket, text)
+    try:
+        response = _send_to_telegram_client(db, ticket, text)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        error = detail.get("error") if isinstance(detail, dict) else {}
+        if error.get("code") == "telegram_send_failed":
+            persist_client_delivery_failure(
+                db=db,
+                ticket_id=ticket.id,
+                body="Не удалось отправить клиенту приветствие в Telegram.",
+            )
+        raise
     _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
     unfreeze_ticket_on_message(ticket)
     _remove_client_close_button(db, ticket)
@@ -1507,7 +1518,13 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
     _add_message(db, ticket, MessageType.SYSTEM, f"{restore_client_text} Инициатор: {actor_name}", None, agent_visible=True)
     if contact is not None:
         try:
-            _send_to_telegram_client(db, ticket, restore_client_text, required=False, remove_keyboard=True)
+            response = _send_to_telegram_client(db, ticket, restore_client_text, required=False, remove_keyboard=True)
+            if response is None:
+                record_client_delivery_failure(
+                    db=db,
+                    ticket=ticket,
+                    body="Заявка восстановлена, но уведомление о восстановлении не удалось отправить клиенту в Telegram.",
+                )
         except Exception:
             pass
 

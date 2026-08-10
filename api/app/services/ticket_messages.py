@@ -24,6 +24,13 @@ def _is_onsite_phrase(text: str | None) -> bool:
     return normalized == "иду к вам"
 
 
+def _http_error_code(exc: HTTPException) -> str | None:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    error = detail.get("error") if isinstance(detail, dict) else {}
+    code = error.get("code") if isinstance(error, dict) else None
+    return str(code) if code else None
+
+
 def add_message(
     *,
     db: Session,
@@ -54,6 +61,40 @@ def add_message(
     db.add(msg)
     ticket.updated_at = datetime.utcnow()
     return msg
+
+
+def record_client_delivery_failure(
+    *,
+    db: Session,
+    ticket: Ticket,
+    body: str,
+) -> TicketMessage:
+    return add_message(
+        db=db,
+        ticket=ticket,
+        message_type=MessageType.SYSTEM,
+        body=body,
+        author_user_id=None,
+        agent_visible=True,
+    )
+
+
+def persist_client_delivery_failure(
+    *,
+    db: Session,
+    ticket_id: str,
+    body: str,
+) -> None:
+    db.rollback()
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        return
+    record_client_delivery_failure(
+        db=db,
+        ticket=ticket,
+        body=body,
+    )
+    db.commit()
 
 
 async def reply_to_ticket(
@@ -104,12 +145,21 @@ async def reply_to_ticket(
 
     sent_message_id = None
     if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value and text:
-        response = send_to_telegram_client(
-            db,
-            ticket,
-            text,
-            reply_to_message_id=quote_telegram_message_id,
-        )
+        try:
+            response = send_to_telegram_client(
+                db,
+                ticket,
+                text,
+                reply_to_message_id=quote_telegram_message_id,
+            )
+        except HTTPException as exc:
+            if _http_error_code(exc) == "telegram_send_failed":
+                persist_client_delivery_failure(
+                    db=db,
+                    ticket_id=ticket.id,
+                    body="Не удалось отправить сообщение клиенту в Telegram.",
+                )
+            raise
         sent_message_id = telegram_message_id_from_response(response)
 
     agent_message = add_message(
@@ -128,7 +178,22 @@ async def reply_to_ticket(
 
     if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
         for attachment in attachments:
-            send_attachment_to_telegram_client(db, ticket, attachment, True)
+            try:
+                send_attachment_to_telegram_client(db, ticket, attachment, True)
+            except HTTPException as exc:
+                error_code = _http_error_code(exc)
+                if error_code in {"telegram_send_failed", "attachment_file_missing"}:
+                    filename = attachment.original_filename or "файл"
+                    if sent_message_id:
+                        failure_body = f"Текст отправлен клиенту, но не удалось отправить вложение «{filename}»."
+                    else:
+                        failure_body = f"Не удалось отправить клиенту вложение «{filename}»."
+                    persist_client_delivery_failure(
+                        db=db,
+                        ticket_id=ticket.id,
+                        body=failure_body,
+                    )
+                raise
 
     unfreeze_ticket_on_message(ticket)
     if (
