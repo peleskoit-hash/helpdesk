@@ -600,6 +600,7 @@ def close_ticket_by_actor(
             ticket.closed_at = datetime.utcnow()
             ticket.is_frozen = False
             ticket.freeze_until = None
+            clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
             send_to_telegram_client_fn(
                 db,
@@ -628,6 +629,8 @@ def close_ticket_by_actor(
     ticket.closed_at = datetime.utcnow()
     ticket.is_frozen = False
     ticket.freeze_until = None
+    if workflow_type == TicketWorkflowType.TICKET.value:
+        clear_ticket_auto_close_timer(ticket)
 
     if workflow_type == TicketWorkflowType.TASK.value:
         client_message = first_client_message_fn(db, ticket)
