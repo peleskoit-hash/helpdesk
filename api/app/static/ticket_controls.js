@@ -193,6 +193,15 @@
     const greetedByMessage = card.messages.some((m) => m.message_type === "agent" && /^добр/i.test((m.body || "").trim()));
     const greeted = greetedByMessage || Boolean(card.greeting_used);
     const workflowType = card.workflow_type || "ticket";
+    const stateActionInFlight = ["close", "restore", "freeze", "unfreeze"].includes(state.stateActionInFlight)
+      ? state.stateActionInFlight
+      : null;
+    const stateActionLocked = Boolean(stateActionInFlight);
+    const restoreCloseCooldownSeconds = Math.max(
+      0,
+      Math.ceil((Number(state.restoreCloseCooldownUntil || 0) - Date.now()) / 1000),
+    );
+    const restoreCloseCooldownActive = restoreCloseCooldownSeconds > 0;
     const isGreetingFlow = workflowType !== "task" && workflowType !== "auto";
     const showGreeting = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed() && !greeted;
     const showClose = !isReadonly && !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
@@ -225,10 +234,16 @@
 
     const isOnsiteTicket = workflowType === "ticket" && card.onsite_triggered;
     if (el.closeBtn) el.closeBtn.textContent = isTask ? "Закрыть задачу" : (isOnsiteTicket ? "Решил на месте" : "Закрыть заявку");
+    if (el.closeBtn && restoreCloseCooldownActive && showClose) {
+      el.closeBtn.textContent = `Закрыть через ${restoreCloseCooldownSeconds} с`;
+    }
     if (el.adminForceCloseBtn) {
       el.adminForceCloseBtn.textContent = "Принудительно закрыть";
     }
     if (el.freezeToggleBtn) el.freezeToggleBtn.textContent = card.is_frozen ? "Разморозить" : "Заморозить";
+    if (el.closeBtn) el.closeBtn.disabled = !showClose || stateActionLocked || restoreCloseCooldownActive;
+    if (el.restoreBtn) el.restoreBtn.disabled = !showRestore || stateActionLocked;
+    if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || stateActionLocked;
     if (el.autoCloseDisabledCheckbox) {
       el.autoCloseDisabledCheckbox.checked = Boolean(card.auto_close_disabled);
     }

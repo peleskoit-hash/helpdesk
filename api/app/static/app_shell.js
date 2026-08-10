@@ -53,9 +53,9 @@
         "/static/ticket_attachments.js?v=20260604a",
         "/static/ticket_client_card.js?v=20260803a",
         "/static/ticket_composer.js?v=20260522a",
-        "/static/ticket_controls.js?v=20260604a",
+        "/static/ticket_controls.js?v=20260810a",
         "/static/ticket_message_view.js?v=20260604a",
-        "/static/ticket.js?v=20260803a",
+        "/static/ticket.js?v=20260810a",
       ],
     },
   ];

@@ -4,6 +4,8 @@ function initTicketCardPage() {
 const params = new URLSearchParams(window.location.search);
 const ticketId = window.location.pathname.split("/").pop();
 const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
+const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);
+const RESTORE_CLOSE_COOLDOWN_MS = 10_000;
 
 function parseReturnPage(value) {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -48,6 +50,8 @@ const state = {
   isSendingReply: false,
   pendingCloseAfterSend: false,
   fileUploadProgress: {},
+  stateActionInFlight: null,
+  restoreCloseCooldownUntil: 0,
 };
 
 const el = {
@@ -201,6 +205,73 @@ let documentClickHandler = null;
 let resizeHandler = null;
 let beforeUnloadHandler = null;
 let destroyed = false;
+let restoreCloseCooldownTimer = null;
+
+function isTicketStateAction(name) {
+  return STATE_ACTION_NAMES.has(String(name || ""));
+}
+
+function restoreCloseCooldownSecondsLeft() {
+  const diffMs = Number(state.restoreCloseCooldownUntil || 0) - Date.now();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return 0;
+  return Math.ceil(diffMs / 1000);
+}
+
+function hasRestoreCloseCooldown() {
+  return restoreCloseCooldownSecondsLeft() > 0;
+}
+
+function renderTicketStateControls() {
+  if (destroyed || !state.card) return;
+  TicketControls.renderTicketControlsView(controlsCtx());
+}
+
+function stopRestoreCloseCooldownTimer() {
+  if (restoreCloseCooldownTimer !== null) {
+    window.clearInterval(restoreCloseCooldownTimer);
+    restoreCloseCooldownTimer = null;
+  }
+}
+
+function clearRestoreCloseCooldown() {
+  state.restoreCloseCooldownUntil = 0;
+  stopRestoreCloseCooldownTimer();
+  renderTicketStateControls();
+}
+
+function syncRestoreCloseCooldown() {
+  if (!state.restoreCloseCooldownUntil) {
+    stopRestoreCloseCooldownTimer();
+    return false;
+  }
+  if (!hasRestoreCloseCooldown()) {
+    clearRestoreCloseCooldown();
+    return false;
+  }
+  renderTicketStateControls();
+  return true;
+}
+
+function ensureRestoreCloseCooldownTimer() {
+  if (!hasRestoreCloseCooldown()) {
+    stopRestoreCloseCooldownTimer();
+    return;
+  }
+  if (restoreCloseCooldownTimer !== null) return;
+  restoreCloseCooldownTimer = window.setInterval(() => {
+    if (destroyed) {
+      stopRestoreCloseCooldownTimer();
+      return;
+    }
+    syncRestoreCloseCooldown();
+  }, 1000);
+}
+
+function startRestoreCloseCooldown() {
+  state.restoreCloseCooldownUntil = Date.now() + RESTORE_CLOSE_COOLDOWN_MS;
+  syncRestoreCloseCooldown();
+  ensureRestoreCloseCooldownTimer();
+}
 
 function shellNavigateOrReload(urlLike) {
   const url = new URL(urlLike, window.location.origin);
@@ -214,6 +285,7 @@ function shellNavigateOrReload(urlLike) {
 
 function cleanupTicketCardPage() {
   destroyed = true;
+  stopRestoreCloseCooldownTimer();
   if (pollTimer !== null) {
     window.clearInterval(pollTimer);
     pollTimer = null;
@@ -916,13 +988,28 @@ async function action(name, body = null) {
     setStatus("Сначала завершается отправка файлов, затем задача будет закрыта.");
     return;
   }
+  if (isTicketStateAction(name) && state.stateActionInFlight) {
+    return;
+  }
   try {
+    if (isTicketStateAction(name)) {
+      state.stateActionInFlight = name;
+      renderTicketStateControls();
+    }
     setStatus("Выполняю действие...");
     await apiPost(`/api/v1/tickets/${state.ticketId}/${name}`, body);
+    if (name === "restore") {
+      startRestoreCloseCooldown();
+    }
     await loadCard();
     setStatus("Готово");
   } catch (e) {
     showError(e.message);
+  } finally {
+    if (isTicketStateAction(name)) {
+      state.stateActionInFlight = null;
+      renderTicketStateControls();
+    }
   }
 }
 
