@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -11,13 +11,15 @@ from ..models import Ticket, TicketAttachment, TicketMessage, TicketView
 
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
     warnings: list[str] = []
+    child_ids = db.execute(select(Ticket.id).where(Ticket.parent_ticket_id == ticket.id)).scalars().all()
+    attachment_ticket_ids = [ticket.id]
+    if child_ids:
+        attachment_ticket_ids.extend(child_ids)
     attachment_rows = db.execute(
-        select(TicketAttachment.local_path).where(TicketAttachment.ticket_id == ticket.id)
+        select(TicketAttachment.local_path).where(TicketAttachment.ticket_id.in_(attachment_ticket_ids))
     ).all()
-    for row in attachment_rows:
-        file_path = row[0]
-        if not file_path:
-            continue
+    attachment_paths = list(dict.fromkeys(row[0] for row in attachment_rows if row[0]))
+    for file_path in attachment_paths:
         try:
             path_obj = Path(file_path)
             if path_obj.exists():
@@ -25,7 +27,6 @@ def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
         except Exception as exc:
             warnings.append(f"{ticket.ticket_number or ticket.id}: {file_path} ({exc})")
 
-    child_ids = db.execute(select(Ticket.id).where(Ticket.parent_ticket_id == ticket.id)).scalars().all()
     if child_ids:
         db.execute(TicketAttachment.__table__.delete().where(TicketAttachment.ticket_id.in_(child_ids)))
         db.execute(TicketMessage.__table__.delete().where(TicketMessage.ticket_id.in_(child_ids)))
