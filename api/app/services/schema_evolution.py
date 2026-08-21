@@ -979,6 +979,7 @@ def ensure_ticket_attachment_table() -> None:
                         telegram_file_id VARCHAR(255),
                         telegram_file_unique_id VARCHAR(255),
                         telegram_file_path VARCHAR(500),
+                        telegram_delivery_status VARCHAR(20),
                         telegram_message_id VARCHAR(100),
                         original_filename VARCHAR(255),
                         mime_type VARCHAR(255),
@@ -993,6 +994,8 @@ def ensure_ticket_attachment_table() -> None:
             existing = {row["name"] for row in rows}
             if "telegram_message_id" not in existing:
                 conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))
+            if "telegram_delivery_status" not in existing:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_delivery_status VARCHAR(20)"))
             return
 
         conn.execute(
@@ -1006,6 +1009,7 @@ def ensure_ticket_attachment_table() -> None:
                     telegram_file_id VARCHAR(255),
                     telegram_file_unique_id VARCHAR(255),
                     telegram_file_path VARCHAR(500),
+                    telegram_delivery_status VARCHAR(20),
                     telegram_message_id VARCHAR(100),
                     original_filename VARCHAR(255),
                     mime_type VARCHAR(255),
@@ -1028,3 +1032,65 @@ def ensure_ticket_attachment_table() -> None:
         existing = {row[0] for row in rows}
         if "telegram_message_id" not in existing:
             conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))
+        if "telegram_delivery_status" not in existing:
+            conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_delivery_status VARCHAR(20)"))
+
+
+def ensure_ticket_attachment_preload_table() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS ticket_attachment_preloads (
+                        id VARCHAR(36) PRIMARY KEY,
+                        ticket_id VARCHAR(36) NOT NULL,
+                        user_id VARCHAR(36) NOT NULL,
+                        original_filename VARCHAR(255),
+                        mime_type VARCHAR(255),
+                        file_size INTEGER,
+                        local_path VARCHAR(1000) NOT NULL,
+                        telegram_file_id VARCHAR(255),
+                        telegram_file_unique_id VARCHAR(255),
+                        archive_group_id VARCHAR(36),
+                        status VARCHAR(20) NOT NULL,
+                        final_attachment_id VARCHAR(36),
+                        reply_to_message_id VARCHAR(100),
+                        prefer_caption BOOLEAN,
+                        telegram_staging_info_message_id VARCHAR(100),
+                        telegram_staging_file_message_id VARCHAR(100),
+                        created_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON ticket_attachment_preloads(ticket_id, user_id)"))
+            return
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS ticket_attachment_preloads (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                    original_filename VARCHAR(255),
+                    mime_type VARCHAR(255),
+                    file_size INTEGER,
+                    local_path VARCHAR(1000) NOT NULL,
+                    telegram_file_id VARCHAR(255),
+                    telegram_file_unique_id VARCHAR(255),
+                    archive_group_id VARCHAR(36),
+                    status VARCHAR(20) NOT NULL,
+                    final_attachment_id VARCHAR(36),
+                    reply_to_message_id VARCHAR(100),
+                    prefer_caption BOOLEAN,
+                    telegram_staging_info_message_id VARCHAR(100),
+                    telegram_staging_file_message_id VARCHAR(100),
+                    created_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON ticket_attachment_preloads(ticket_id, user_id)"))

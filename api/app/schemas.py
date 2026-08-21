@@ -47,6 +47,7 @@ class TicketAttachmentOut(BaseModel):
     original_filename: str | None = None
     mime_type: str | None = None
     file_size: int | None = None
+    telegram_delivery_status: str | None = None
     download_url: str
     is_image: bool = False
     is_unsupported_preview: bool = False

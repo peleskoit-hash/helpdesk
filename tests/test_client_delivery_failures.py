@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
@@ -12,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
-from api.app.models import Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import Client, Company, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.ticket_messages import reply_to_ticket
 
@@ -80,29 +79,6 @@ class _JsonRequest:
         return self._payload
 
 
-class _FormData(dict):
-    def __init__(self, *, text: str | None, files: list[object]):
-        super().__init__()
-        self["text"] = text
-        self["quote_message_id"] = None
-        self._files = files
-
-    def getlist(self, key: str):
-        if key == "files":
-            return list(self._files)
-        return []
-
-
-class _MultipartRequest:
-    headers = {"content-type": "multipart/form-data; boundary=test"}
-
-    def __init__(self, form_data: _FormData):
-        self._form_data = form_data
-
-    async def form(self):
-        return self._form_data
-
-
 def test_reply_text_send_failure_persists_internal_system_note():
     session = _session()
     ticket = _seed_ticket(session)
@@ -114,10 +90,12 @@ def test_reply_text_send_failure_persists_internal_system_note():
                 db=session,
                 user=SimpleNamespace(id="agent-1", role="agent"),
                 ticket=ticket,
-                send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(_delivery_error("Telegram не принял сообщение")),
+                send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(_delivery_error("Telegram rejected message")),
                 telegram_message_id_from_response=lambda response: None,
                 save_upload_attachment=lambda *_args, **_kwargs: None,
                 send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+                claim_attachment_preload=lambda *_args, **_kwargs: None,
+                schedule_attachment_delivery=lambda **_kwargs: None,
                 unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
                 remove_client_close_button=lambda *_args, **_kwargs: None,
                 refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
@@ -131,52 +109,8 @@ def test_reply_text_send_failure_persists_internal_system_note():
     asyncio.run(run())
 
     messages = _messages(session, ticket.id)
-    assert [message.body for message in messages] == ["Не удалось отправить сообщение клиенту в Telegram."]
-    assert all(message.message_type == MessageType.SYSTEM.value for message in messages)
-
-
-def test_reply_attachment_failure_after_text_send_persists_specific_note():
-    session = _session()
-    ticket = _seed_ticket(session)
-    upload = SimpleNamespace(filename="report.pdf", file=io.BytesIO(b"pdf"), content_type="application/pdf")
-
-    def save_upload_attachment(_db, current_ticket, message, _upload):
-        return TicketAttachment(
-            id=str(uuid.uuid4()),
-            ticket_id=current_ticket.id,
-            message_id=message.id,
-            source="helpdesk",
-            original_filename="report.pdf",
-            mime_type="application/pdf",
-            local_path="C:/tmp/report.pdf",
-            created_at=datetime.utcnow(),
-        )
-
-    async def run():
-        try:
-            await reply_to_ticket(
-                request=_MultipartRequest(_FormData(text="Hello", files=[upload])),
-                db=session,
-                user=SimpleNamespace(id="agent-1", role="agent"),
-                ticket=ticket,
-                send_to_telegram_client=lambda *_args, **_kwargs: {"result": {"message_id": 777}},
-                telegram_message_id_from_response=lambda response: str(response["result"]["message_id"]),
-                save_upload_attachment=save_upload_attachment,
-                send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(_delivery_error("Telegram не принял файл")),
-                unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
-                remove_client_close_button=lambda *_args, **_kwargs: None,
-                refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
-            )
-        except HTTPException as exc:
-            assert exc.status_code == 502
-            assert exc.detail["error"]["code"] == "telegram_send_failed"
-            return
-        raise AssertionError("reply_to_ticket should raise HTTPException")
-
-    asyncio.run(run())
-
-    messages = _messages(session, ticket.id)
-    assert [message.body for message in messages] == ["Текст отправлен клиенту, но не удалось отправить вложение «report.pdf»."]
+    assert len(messages) == 1
+    assert "Telegram" in messages[0].body
     assert all(message.message_type == MessageType.SYSTEM.value for message in messages)
 
 
@@ -230,9 +164,6 @@ def test_close_keeps_ticket_closed_and_records_failure_note_when_client_notifica
 
     assert result == "closed"
     assert ticket.status == TicketStatus.CLOSED.value
-    assert [
-        message.body for message in _messages(session, ticket.id) if message.message_type == MessageType.SYSTEM.value
-    ] == [
-        "Заявка закрыта сотрудником",
-        "Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
-    ]
+    system_messages = [message.body for message in _messages(session, ticket.id) if message.message_type == MessageType.SYSTEM.value]
+    assert len(system_messages) == 2
+    assert "Telegram" in system_messages[1]

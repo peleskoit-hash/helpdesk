@@ -45,6 +45,7 @@ from .services.schema_evolution import (
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
     ensure_ticket_attachment_table,
+    ensure_ticket_attachment_preload_table,
     ensure_ticket_columns,
     ensure_ticket_message_columns,
     ensure_user_columns,
@@ -98,6 +99,7 @@ async def on_startup():
             ensure_ticket_columns()
             ensure_ticket_message_columns()
             ensure_ticket_attachment_table()
+            ensure_ticket_attachment_preload_table()
             ensure_bot_button_settings_table()
             ensure_automatic_message_templates_table()
             ensure_bot_menu_level_layouts_table()

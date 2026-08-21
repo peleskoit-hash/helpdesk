@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Callable
 import uuid
@@ -8,9 +9,14 @@ from sqlalchemy import asc, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
-from ..models import MessageType, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType, User
+from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketWorkflowType, User
 from ..schemas import TextPayload
-from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_text
+from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_caption, edit_message_text
+from ..services.telegram_text_format import strip_telegram_html
+
+
+TELEGRAM_CAPTION_LIMIT = 1024
+logger = logging.getLogger(__name__)
 
 
 def _error(status_code: int, code: str, message: str):
@@ -29,6 +35,19 @@ def _http_error_code(exc: HTTPException) -> str | None:
     error = detail.get("error") if isinstance(detail, dict) else {}
     code = error.get("code") if isinstance(error, dict) else None
     return str(code) if code else None
+
+
+def _is_caption_compatible_text(text: str | None) -> bool:
+    if not text:
+        return False
+    return len(strip_telegram_html(text).strip()) <= TELEGRAM_CAPTION_LIMIT
+
+
+def _message_uses_single_attachment_caption(message: TicketMessage, attachments: list[TicketAttachment]) -> bool:
+    if len(attachments) != 1 or not message.telegram_message_id:
+        return False
+    attachment_message_id = str(attachments[0].telegram_message_id or "").strip()
+    return bool(attachment_message_id) and attachment_message_id == str(message.telegram_message_id).strip()
 
 
 def add_message(
@@ -106,7 +125,9 @@ async def reply_to_ticket(
     send_to_telegram_client: Callable[..., dict | None],
     telegram_message_id_from_response: Callable[[dict | None], str | None],
     save_upload_attachment: Callable[[Session, Ticket, TicketMessage, UploadFile], TicketAttachment],
-    send_attachment_to_telegram_client: Callable[[Session, Ticket, TicketAttachment, bool], None],
+    send_attachment_to_telegram_client: Callable[..., dict | None],
+    claim_attachment_preload: Callable[[Session, str, str, str], TicketAttachmentPreload | None],
+    schedule_attachment_delivery: Callable[..., None],
     unfreeze_ticket_on_message: Callable[[Ticket], None],
     remove_client_close_button: Callable[[Session, Ticket], None],
     refresh_ticket_auto_close: Callable[[Session, Ticket, bool], None],
@@ -119,15 +140,21 @@ async def reply_to_ticket(
     content_type = (request.headers.get("content-type") or "").lower()
     text: str | None = None
     quote_message_id: str | None = None
+    preloaded_attachment_id: str | None = None
+    single_attachment_marker = False
     uploaded_files: list[UploadFile] = []
     if "multipart/form-data" in content_type:
         form = await request.form()
         text = (form.get("text") or "").strip() or None
         quote_message_id = (form.get("quote_message_id") or "").strip() or None
+        preloaded_attachment_id = (form.get("preloaded_attachment_id") or "").strip() or None
+        single_attachment_marker = str(form.get("single_attachment") or "").strip().lower() == "true"
         for value in form.getlist("files"):
             if hasattr(value, "filename") and hasattr(value, "file"):
                 uploaded_files.append(value)
-        if not text and not uploaded_files:
+        if preloaded_attachment_id and uploaded_files:
+            _error(400, "reply_payload_conflict", "Нельзя одновременно передавать preload и raw-файл")
+        if not text and not uploaded_files and not preloaded_attachment_id:
             _error(400, "reply_payload_empty", "Нужно передать текст или хотя бы один файл")
     else:
         payload_raw = await request.json()
@@ -143,8 +170,107 @@ async def reply_to_ticket(
         if quoted is not None and quoted.ticket_id == ticket.id:
             quote_telegram_message_id = quoted.telegram_message_id
 
+    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    is_plain_ticket = workflow_type == TicketWorkflowType.TICKET.value
+    has_attachments = bool(uploaded_files) or bool(preloaded_attachment_id)
+    prefer_caption = single_attachment_marker and _is_caption_compatible_text(text)
+
+    if is_plain_ticket and has_attachments:
+        agent_message = add_message(
+            db=db,
+            ticket=ticket,
+            message_type=MessageType.AGENT,
+            body=text or "",
+            author_user_id=user.id,
+            telegram_message_id=None,
+        )
+
+        attachments: list[TicketAttachment] = []
+        attachments_to_schedule: list[dict[str, object]] = []
+        if preloaded_attachment_id:
+            if not user.id:
+                _error(409, "user_id_required", "Для отправки preload нужен корректный пользователь")
+            preload = claim_attachment_preload(db, preloaded_attachment_id, ticket.id, user.id)
+            if preload is None:
+                _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+            if preload.status not in {"uploading", "ready"}:
+                _error(409, "attachment_preload_unavailable", "Предзагруженный файл недоступен для отправки")
+            attachment = TicketAttachment(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket.id,
+                message_id=agent_message.id,
+                source="helpdesk",
+                telegram_file_id=preload.telegram_file_id,
+                telegram_file_unique_id=preload.telegram_file_unique_id,
+                telegram_file_path=None,
+                telegram_delivery_status="sending" if preload.status == "ready" and preload.telegram_file_id else "uploading",
+                telegram_message_id=None,
+                original_filename=preload.original_filename,
+                mime_type=preload.mime_type,
+                file_size=preload.file_size,
+                local_path=preload.local_path,
+                created_at=datetime.utcnow(),
+            )
+            db.add(attachment)
+            db.flush()
+            preload.final_attachment_id = attachment.id
+            preload.reply_to_message_id = quote_telegram_message_id
+            preload.prefer_caption = prefer_caption
+            logger.info(
+                "attachment transport preload=%s mode=%s attachment=%s",
+                preload.id,
+                "ready_preload" if preload.status == "ready" and preload.telegram_file_id else "uploading_preload",
+                attachment.id,
+            )
+            logger.info("preload=%s claimed attachment=%s", preload.id, attachment.id)
+            attachments.append(attachment)
+            if preload.status == "ready" and preload.telegram_file_id:
+                attachments_to_schedule.append(
+                    {
+                        "attachment_id": attachment.id,
+                        "message_id": agent_message.id,
+                        "ticket_id": ticket.id,
+                        "reply_to_message_id": quote_telegram_message_id,
+                        "prefer_caption": prefer_caption,
+                        "preload_id": preload.id,
+                    }
+                )
+        else:
+            logger.info("attachment transport mode=raw_fallback reason=no_preloaded_attachment_id")
+            for upload in uploaded_files:
+                attachment = save_upload_attachment(db, ticket, agent_message, upload)
+                attachment.telegram_delivery_status = "uploading"
+                attachments.append(attachment)
+                attachments_to_schedule.append(
+                    {
+                        "attachment_id": attachment.id,
+                        "message_id": agent_message.id,
+                        "ticket_id": ticket.id,
+                        "reply_to_message_id": quote_telegram_message_id,
+                        "prefer_caption": prefer_caption,
+                    }
+                )
+
+        unfreeze_ticket_on_message(ticket)
+        if user.role == "agent" and _is_onsite_phrase(text):
+            ticket.onsite_triggered = True
+            actor_user = db.get(User, user.id)
+            if actor_user is not None and actor_user.availability_status != "on_ticket":
+                actor_user.availability_status = "on_ticket"
+                actor_user.updated_at = datetime.utcnow()
+
+        remove_client_close_button(db, ticket)
+        if ticket.status == TicketStatus.NEW.value:
+            ticket.status = TicketStatus.PENDING.value
+        refresh_ticket_auto_close(db, ticket, True)
+        db.commit()
+
+        for delivery_kwargs in attachments_to_schedule:
+            schedule_attachment_delivery(**delivery_kwargs)
+        return {"ok": True}
+
     sent_message_id = None
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value and text:
+    if workflow_type != TicketWorkflowType.TASK.value and text:
         try:
             response = send_to_telegram_client(
                 db,
@@ -176,10 +302,16 @@ async def reply_to_ticket(
         attachment = save_upload_attachment(db, ticket, agent_message, upload)
         attachments.append(attachment)
 
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
+    if workflow_type != TicketWorkflowType.TASK.value:
         for attachment in attachments:
             try:
-                send_attachment_to_telegram_client(db, ticket, attachment, True)
+                send_attachment_to_telegram_client(
+                    db,
+                    ticket,
+                    attachment,
+                    True,
+                    show_upload_action=single_attachment_marker and len(uploaded_files) == 1,
+                )
             except HTTPException as exc:
                 error_code = _http_error_code(exc)
                 if error_code in {"telegram_send_failed", "attachment_file_missing"}:
@@ -196,11 +328,7 @@ async def reply_to_ticket(
                 raise
 
     unfreeze_ticket_on_message(ticket)
-    if (
-        (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value
-        and user.role == "agent"
-        and _is_onsite_phrase(text)
-    ):
+    if is_plain_ticket and user.role == "agent" and _is_onsite_phrase(text):
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
         if actor_user is not None and actor_user.availability_status != "on_ticket":
@@ -269,10 +397,19 @@ def edit_agent_message(
             "У этого сообщения нет Telegram ID. Его нельзя изменить в Telegram, потому что оно было отправлено до включения синхронизации сообщений.",
         )
 
+    attachments = db.execute(
+        select(TicketAttachment)
+        .where(TicketAttachment.message_id == message.id)
+        .order_by(asc(TicketAttachment.created_at))
+    ).scalars().all()
+
     external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id)
     if external_chat_id:
         try:
-            edit_message_text(external_chat_id, message.telegram_message_id, payload.text)
+            if _message_uses_single_attachment_caption(message, attachments):
+                edit_message_caption(external_chat_id, message.telegram_message_id, payload.text)
+            else:
+                edit_message_text(external_chat_id, message.telegram_message_id, payload.text)
         except TelegramApiError as exc:
             _error(502, "telegram_edit_failed", f"Telegram не принял редактирование: {exc}")
 
@@ -314,21 +451,29 @@ def delete_agent_message(
     ).scalars().all()
 
     external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id)
-    if external_chat_id and message.telegram_message_id:
-        try:
-            delete_message(external_chat_id, message.telegram_message_id)
-        except TelegramApiError as exc:
-            _error(502, "telegram_delete_failed", f"Telegram не принял удаление: {exc}")
-
     if external_chat_id:
+        telegram_message_ids: list[str] = []
+        if message.telegram_message_id:
+            telegram_message_ids.append(str(message.telegram_message_id).strip())
         for attachment in attachments:
-            telegram_attachment_message_id = (attachment.telegram_message_id or "").strip()
-            if not telegram_attachment_message_id:
-                continue
+            attachment_message_id = str(attachment.telegram_message_id or "").strip()
+            if attachment_message_id:
+                telegram_message_ids.append(attachment_message_id)
+
+        seen_message_ids: set[str] = set()
+        unique_message_ids = [
+            message_id_value
+            for message_id_value in telegram_message_ids
+            if message_id_value and not (message_id_value in seen_message_ids or seen_message_ids.add(message_id_value))
+        ]
+
+        primary_message_id = str(message.telegram_message_id or "").strip()
+        for message_id_value in unique_message_ids:
             try:
-                delete_message(external_chat_id, telegram_attachment_message_id)
-            except TelegramApiError:
-                # Attachment message may already be gone; local deletion should still complete.
+                delete_message(external_chat_id, message_id_value)
+            except TelegramApiError as exc:
+                if primary_message_id and message_id_value == primary_message_id:
+                    _error(502, "telegram_delete_failed", f"Telegram не принял удаление: {exc}")
                 pass
 
     message.message_status = "deleted"

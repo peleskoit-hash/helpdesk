@@ -5,7 +5,7 @@ import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -22,16 +22,25 @@ from ..auth import (
 )
 from ..config import settings
 from ..db import get_db
-from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
+from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
+from ..services.telegram_outbound_delivery import (
+    _discard_preload,
+    _best_effort_delete_preload_archive,
+    claim_attachment_preload,
+    cleanup_stale_attachment_preloads,
+    deliver_attachment_preload,
+    deliver_ticket_attachment,
+)
 from ..services.button_config import DEFAULT_MENU_NAME
 from ..services.ticket_attachments import (
     _attachment_out,
     _ensure_local_attachment_file,
     _message_attachments,
+    _save_attachment_preload,
     _save_upload_attachment,
     _send_attachment_to_telegram_client,
 )
@@ -1140,6 +1149,7 @@ def problem_menu_for_ticket(ticket_id: str, db: Session = Depends(get_db), user:
 async def reply(
     ticket_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -1152,15 +1162,86 @@ async def reply(
         send_to_telegram_client=_send_to_telegram_client,
         telegram_message_id_from_response=_telegram_message_id,
         save_upload_attachment=_save_upload_attachment,
-        send_attachment_to_telegram_client=lambda db_session, t, a, required: _send_attachment_to_telegram_client(
-            db_session, t, a, required=required
+        send_attachment_to_telegram_client=lambda db_session, t, a, required, **kwargs: _send_attachment_to_telegram_client(
+            db_session, t, a, required=required, **kwargs
         ),
+        claim_attachment_preload=lambda db_session, preload_id, expected_ticket_id, expected_user_id: claim_attachment_preload(
+            db_session,
+            preload_id=preload_id,
+            ticket_id=expected_ticket_id,
+            user_id=expected_user_id,
+        ),
+        schedule_attachment_delivery=lambda **kwargs: background_tasks.add_task(deliver_ticket_attachment, **kwargs),
         unfreeze_ticket_on_message=unfreeze_ticket_on_message,
         remove_client_close_button=_remove_client_close_button,
         refresh_ticket_auto_close=lambda db_session, t, restart_from_now: refresh_ticket_auto_close(
             db_session, t, restart_from_now=restart_from_now, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer
         ),
     )
+
+
+@router.post("/{ticket_id}/attachment-preloads")
+async def create_attachment_preload(
+    ticket_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    archive_group_id: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    if not can_manage_ticket(user):
+        _error(403, "readonly_role", "Нет прав на отправку ответа")
+    if ticket.status == TicketStatus.CLOSED.value:
+        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
+        _error(409, "attachment_preload_only_for_ticket", "Предварительная подготовка доступна только для обычной заявки")
+    if not user.id:
+        _error(409, "user_id_required", "Для предзагрузки файла нужен корректный пользователь")
+
+    cleanup_stale_attachment_preloads(db)
+    _ensure_ticket_number(db, ticket)
+    preload = _save_attachment_preload(db, ticket, user.id, file, archive_group_id)
+    db.commit()
+    background_tasks.add_task(deliver_attachment_preload, preload_id=preload.id)
+    return {"id": preload.id, "status": preload.status}
+
+
+@router.get("/{ticket_id}/attachment-preloads/{preload_id}")
+def get_attachment_preload_status(
+    ticket_id: str,
+    preload_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    preload = db.get(TicketAttachmentPreload, preload_id)
+    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+        _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+    return {"id": preload.id, "status": preload.status}
+
+
+@router.delete("/{ticket_id}/attachment-preloads/{preload_id}")
+def delete_attachment_preload(
+    ticket_id: str,
+    preload_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    cleanup_stale_attachment_preloads(db)
+    preload = db.get(TicketAttachmentPreload, preload_id)
+    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+        _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+    if preload.final_attachment_id:
+        _error(409, "attachment_preload_already_claimed", "Предзагруженный файл уже отправляется")
+    if preload.status in {"ready", "failed"}:
+        _discard_preload(db, preload, delete_row=True, unlink_local=True)
+    elif preload.status == "uploading":
+        _discard_preload(db, preload, delete_row=False, unlink_local=False)
+    else:
+        db.commit()
+    return {"ok": True}
 
 
 @router.post("/{ticket_id}/comment")

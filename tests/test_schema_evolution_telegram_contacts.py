@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from api.app.db import Base
-from api.app.models import TelegramContact
+from api.app.models import TelegramContact, TicketAttachmentPreload
 from api.app.services import schema_evolution
 
 
@@ -109,6 +109,22 @@ def _unique_indexes(engine) -> dict[str, tuple[str, ...]]:
         return indexes
 
 
+def _preload_columns(engine) -> dict[str, str]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA table_info(ticket_attachment_preloads)")).mappings().all()
+    return {row["name"]: str(row["type"]) for row in rows}
+
+
+def _preload_indexes(engine) -> dict[str, tuple[str, ...]]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA index_list(ticket_attachment_preloads)")).mappings().all()
+        indexes = {}
+        for row in rows:
+            columns = conn.execute(text(f"PRAGMA index_info({row['name']})")).mappings().all()
+            indexes[row["name"]] = tuple(column["name"] for column in columns)
+    return indexes
+
+
 def test_clean_existing_db_gets_company_user_uniqueness(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     _create_legacy_telegram_contacts_table(engine)
@@ -190,6 +206,68 @@ def test_fresh_schema_remains_idempotent_for_existing_invariant(monkeypatch):
     indexes = _unique_indexes(engine)
     assert any(columns == ("company_id", "external_user_id") for columns in indexes.values())
     assert any(columns == ("external_chat_id",) for columns in indexes.values())
+
+
+def test_ticket_attachment_preload_table_creation_is_idempotent(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_ticket_attachment_preload_table()
+    columns_after_first_run = _preload_columns(engine)
+    indexes_after_first_run = _preload_indexes(engine)
+
+    schema_evolution.ensure_ticket_attachment_preload_table()
+    columns_after_second_run = _preload_columns(engine)
+    indexes_after_second_run = _preload_indexes(engine)
+
+    expected_columns = {
+        "id",
+        "ticket_id",
+        "user_id",
+        "original_filename",
+        "mime_type",
+        "file_size",
+        "local_path",
+        "telegram_file_id",
+        "telegram_file_unique_id",
+        "archive_group_id",
+        "status",
+        "final_attachment_id",
+        "reply_to_message_id",
+        "prefer_caption",
+        "telegram_staging_info_message_id",
+        "telegram_staging_file_message_id",
+        "created_at",
+    }
+
+    assert set(columns_after_first_run) == expected_columns
+    assert columns_after_second_run == columns_after_first_run
+    assert indexes_after_first_run["ix_ticket_attachment_preloads_ticket_user"] == ("ticket_id", "user_id")
+    assert indexes_after_second_run == indexes_after_first_run
+
+
+def test_ticket_attachment_preload_model_metadata_matches_expected_columns():
+    actual_columns = set(TicketAttachmentPreload.__table__.columns.keys())
+
+    assert actual_columns == {
+        "id",
+        "ticket_id",
+        "user_id",
+        "original_filename",
+        "mime_type",
+        "file_size",
+        "local_path",
+        "telegram_file_id",
+        "telegram_file_unique_id",
+        "archive_group_id",
+        "status",
+        "final_attachment_id",
+        "reply_to_message_id",
+        "prefer_caption",
+        "telegram_staging_info_message_id",
+        "telegram_staging_file_message_id",
+        "created_at",
+    }
 
 
 @pytest.mark.parametrize(

@@ -1,13 +1,141 @@
-﻿(function initTicketComposer(global) {
+(function initTicketComposer(global) {
   const { formatFileSize } = global.TicketApi || {};
-
-  function selectedFileKey(file, index) {
-    return `${index}:${file?.name || "file"}:${file?.size || 0}:${file?.lastModified || 0}`;
-  }
 
   function quotedMessage(ctx) {
     const { state } = ctx;
     return (state.card?.messages || []).find((m) => m.id === state.quoteMessageId) || null;
+  }
+
+  function quotedMessageIdForTelegram(ctx) {
+    const quoted = quotedMessage(ctx);
+    return quoted?.telegram_message_id || null;
+  }
+
+  function ensurePreloadMap(state) {
+    if (!(state.filePreloads instanceof Map)) {
+      state.filePreloads = new Map();
+    }
+    return state.filePreloads;
+  }
+
+  function getPreloadState(state, file) {
+    return ensurePreloadMap(state).get(file) || null;
+  }
+
+  function setPreloadState(state, file, nextState) {
+    ensurePreloadMap(state).set(file, nextState);
+    return nextState;
+  }
+
+  function clearPreloadPoll(state, file) {
+    const preload = getPreloadState(state, file);
+    if (!preload?.pollTimer) return;
+    window.clearInterval(preload.pollTimer);
+    preload.pollTimer = null;
+  }
+
+  function abortPreloadRequest(state, file) {
+    const preload = getPreloadState(state, file);
+    if (!preload?.controller) return;
+    try {
+      preload.controller.abort();
+    } catch {
+      // noop
+    }
+    preload.controller = null;
+  }
+
+  function forgetPreloadState(state, file) {
+    clearPreloadPoll(state, file);
+    abortPreloadRequest(state, file);
+    ensurePreloadMap(state).delete(file);
+  }
+
+  function cleanupAllPreloadState(state) {
+    for (const [file] of ensurePreloadMap(state).entries()) {
+      forgetPreloadState(state, file);
+    }
+  }
+
+  function canUseAttachmentPreload(ctx) {
+    return Boolean(ctx.canUseAttachmentPreload?.());
+  }
+
+  function nextArchiveGroupId() {
+    if (global.crypto?.randomUUID) return global.crypto.randomUUID();
+    return `archive-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function ensureArchiveGroupId(state) {
+    if (!state.currentArchiveGroupId) {
+      state.currentArchiveGroupId = nextArchiveGroupId();
+    }
+    return state.currentArchiveGroupId;
+  }
+
+  function stageLabel(preload) {
+    const stage = preload?.stage || "queued";
+    if (stage === "browser_uploading") return "Передается в ES DESK...";
+    if (stage === "uploading") return "Загружается в Telegram...";
+    if (stage === "ready") return "Готов к отправке";
+    if (stage === "failed") return "Не удалось подготовить";
+    if (stage === "cancelled") return "Отменено";
+    if (stage === "sending") return "Передается в ES DESK...";
+    return "Ожидает отправки";
+  }
+
+  function shouldShowSelectedFileProgress(preload) {
+    const stage = preload?.stage || "";
+    return stage === "browser_uploading" || stage === "uploading" || stage === "sending";
+  }
+
+  function createSelectedFileRow(ctx, file) {
+    const { state } = ctx;
+    const preload = getPreloadState(state, file);
+    const item = document.createElement("div");
+    item.className = "selected-file-item";
+
+    const header = document.createElement("div");
+    header.className = "selected-file-head";
+
+    const name = document.createElement("div");
+    name.className = "selected-file-name";
+    name.textContent = file.name || "Файл";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "selected-file-remove";
+    remove.textContent = "Убрать";
+    remove.addEventListener("click", () => {
+      void removeSelectedFile(ctx, file);
+    });
+
+    header.append(name, remove);
+
+    const footer = document.createElement("div");
+    footer.className = "selected-file-foot";
+
+    const meta = document.createElement("div");
+    meta.className = "selected-file-size";
+    const stageText = preload ? stageLabel(preload) : "Ожидает отправки";
+    meta.textContent = `${formatFileSize(file.size)} · ${stageText}`;
+    footer.append(meta);
+
+    if (preload?.stage === "ready") {
+      item.classList.add("selected-file-item-ready");
+    }
+    if (shouldShowSelectedFileProgress(preload)) {
+      item.classList.add("selected-file-item-active");
+      const progress = document.createElement("div");
+      progress.className = "selected-file-progress";
+      const progressFill = document.createElement("div");
+      progressFill.className = "selected-file-progress-fill";
+      progress.append(progressFill);
+      footer.append(progress);
+    }
+
+    item.append(header, footer);
+    return item;
   }
 
   function refreshComposerActions(ctx) {
@@ -44,69 +172,158 @@
   function renderSelectedFiles(ctx) {
     const { state, el } = ctx;
     if (!el.selectedFilesList) return;
+    const previousScrollTop = Number(el.selectedFilesList.scrollTop) || 0;
     el.selectedFilesList.innerHTML = "";
     el.selectedFilesList.classList.toggle("hidden", state.selectedFiles.length === 0);
 
-    state.selectedFiles.forEach((file, index) => {
-      const fileKey = selectedFileKey(file, index);
-      const progress = state.fileUploadProgress[fileKey];
-      const item = document.createElement("div");
-      item.className = "selected-file-item";
-
-      const meta = document.createElement("div");
-      meta.className = "selected-file-meta";
-      const name = document.createElement("div");
-      name.className = "selected-file-name";
-      name.textContent = file.name || "Файл";
-      const size = document.createElement("div");
-      size.className = "selected-file-size";
-      size.textContent = formatFileSize(file.size);
-      if (progress) {
-        const stageText = progress.stage === "sending"
-          ? `Отправляется в Telegram (${progress.current || 0}/${progress.total || 0})`
-          : progress.stage === "done"
-            ? "Отправлено"
-            : progress.stage === "queued"
-              ? "Ожидает отправки"
-              : progress.stage === "error"
-                ? `Ошибка: ${progress.message || "не удалось отправить"}`
-                : "";
-        if (stageText) size.textContent = `${size.textContent} В· ${stageText}`;
-      }
-      meta.append(name, size);
-      item.append(meta);
-
-      if (progress && progress.stage === "done") {
-        item.classList.add("selected-file-item-ready");
-      } else {
-        item.classList.remove("selected-file-item-ready");
-      }
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "selected-file-remove";
-      remove.textContent = "Убрать";
-      remove.addEventListener("click", () => {
-        state.selectedFiles.splice(index, 1);
-        state.fileUploadProgress = {};
-        state.selectedFiles.forEach((nextFile, nextIndex) => {
-          state.fileUploadProgress[selectedFileKey(nextFile, nextIndex)] = { stage: "queued", percent: 0 };
-        });
-        if (el.replyFilesInput) el.replyFilesInput.value = "";
-        renderSelectedFiles(ctx);
-      });
-
-      item.append(remove);
-      el.selectedFilesList.appendChild(item);
+    state.selectedFiles.forEach((file) => {
+      el.selectedFilesList.appendChild(createSelectedFileRow(ctx, file));
     });
+    el.selectedFilesList.scrollTop = previousScrollTop;
+  }
+
+  async function pollPreloadStatus(ctx, file, preloadId) {
+    const { state, api } = ctx;
+    const preload = getPreloadState(state, file);
+    if (!preload || preload.preloadId !== preloadId) return;
+    try {
+      const payload = await api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preloadId}`);
+      const next = getPreloadState(state, file);
+      if (!next || next.preloadId !== preloadId) return;
+      next.status = payload?.status || next.status;
+      next.stage = payload?.status || next.stage;
+      next.error = next.stage === "failed" ? "Не удалось подготовить" : null;
+      if (["ready", "failed", "cancelled"].includes(next.stage)) {
+        clearPreloadPoll(state, file);
+      }
+      renderSelectedFiles(ctx);
+    } catch (e) {
+      const next = getPreloadState(state, file);
+      if (!next || next.preloadId !== preloadId) return;
+      next.stage = "failed";
+      next.error = e.message || "Не удалось подготовить";
+      clearPreloadPoll(state, file);
+      renderSelectedFiles(ctx);
+    }
+  }
+
+  function startPreloadPolling(ctx, file, preloadId) {
+    const { state } = ctx;
+    const preload = getPreloadState(state, file);
+    if (!preload || preload.preloadId !== preloadId) return;
+    clearPreloadPoll(state, file);
+    preload.pollTimer = window.setInterval(() => {
+      void pollPreloadStatus(ctx, file, preloadId);
+    }, 1500);
+  }
+
+  async function startAttachmentPreload(ctx, file, archiveGroupIdOverride = null) {
+    const { state, api } = ctx;
+    if (!canUseAttachmentPreload(ctx)) return;
+    const archiveGroupId = archiveGroupIdOverride || ensureArchiveGroupId(state);
+    const controller = new AbortController();
+    setPreloadState(state, file, {
+      stage: "browser_uploading",
+      status: null,
+      preloadId: null,
+      controller,
+      pollTimer: null,
+      error: null,
+      removed: false,
+    });
+    renderSelectedFiles(ctx);
+
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+    formData.append("archive_group_id", archiveGroupId);
+    try {
+      const payload = await api(`/api/v1/tickets/${state.ticketId}/attachment-preloads`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+      const preload = getPreloadState(state, file);
+      if (!preload || preload.removed) return;
+      preload.preloadId = payload?.id || null;
+      preload.status = payload?.status || "uploading";
+      preload.stage = preload.status;
+      preload.controller = null;
+      preload.error = null;
+      renderSelectedFiles(ctx);
+      if (preload.preloadId && preload.stage === "uploading") {
+        startPreloadPolling(ctx, file, preload.preloadId);
+      }
+    } catch (e) {
+      const preload = getPreloadState(state, file);
+      if (!preload) return;
+      if (e?.name === "AbortError") {
+        preload.stage = "cancelled";
+        preload.controller = null;
+        return;
+      }
+      preload.stage = "failed";
+      preload.error = e.message || "Не удалось подготовить";
+      preload.controller = null;
+      clearPreloadPoll(state, file);
+      renderSelectedFiles(ctx);
+    }
+  }
+
+  async function removeSelectedFile(ctx, file) {
+    const { state, api, el } = ctx;
+    const preload = getPreloadState(state, file);
+    if (preload) {
+      preload.removed = true;
+      abortPreloadRequest(state, file);
+      clearPreloadPoll(state, file);
+      if (preload.preloadId) {
+        api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preload.preloadId}`, {
+          method: "DELETE",
+        }).catch(() => {});
+      }
+    }
+    state.selectedFiles = state.selectedFiles.filter((item) => item !== file);
+    forgetPreloadState(state, file);
+    if (state.selectedFiles.length === 0) {
+      state.currentArchiveGroupId = null;
+    }
+    if (el.replyFilesInput) el.replyFilesInput.value = "";
+    renderSelectedFiles(ctx);
   }
 
   function clearSelectedFiles(ctx) {
     const { state, el } = ctx;
+    cleanupAllPreloadState(state);
     state.selectedFiles = [];
-    state.fileUploadProgress = {};
+    state.currentArchiveGroupId = null;
     if (el.replyFilesInput) el.replyFilesInput.value = "";
     renderSelectedFiles(ctx);
+  }
+
+  function queueSelectedFiles(ctx, files) {
+    const { state, el } = ctx;
+    const queue = Array.from(files || []);
+    if (!queue.length) return null;
+    const archiveGroupId = canUseAttachmentPreload(ctx) ? ensureArchiveGroupId(state) : null;
+    for (const file of queue) {
+      state.selectedFiles.push(file);
+      if (canUseAttachmentPreload(ctx)) {
+        void startAttachmentPreload(ctx, file, archiveGroupId);
+      } else {
+        setPreloadState(state, file, {
+          stage: "queued",
+          status: null,
+          preloadId: null,
+          controller: null,
+          pollTimer: null,
+          error: null,
+          removed: false,
+        });
+      }
+    }
+    if (el.replyFilesInput) el.replyFilesInput.value = "";
+    renderSelectedFiles(ctx);
+    return archiveGroupId;
   }
 
   function applyComposeModeUi(ctx) {
@@ -120,6 +337,46 @@
       el.addFilesBtn.disabled = !isReply || Boolean(state.card?.status === "closed");
       el.addFilesBtn.title = isReply ? "Прикрепить файлы к ответу клиенту" : "Файлы доступны только для ответа клиенту";
     }
+  }
+
+  function resolveAttachmentTransport(ctx, file) {
+    const { state } = ctx;
+    const preload = getPreloadState(state, file);
+    const canUsePreload = canUseAttachmentPreload(ctx);
+    if (preload?.stage === "failed") return { mode: "raw", reason: "preload_failed" };
+    if (preload?.stage === "cancelled") return { mode: "raw", reason: "preload_cancelled" };
+    if (canUsePreload && preload?.stage === "browser_uploading" && !preload.preloadId) {
+      abortPreloadRequest(state, file);
+      return { mode: "raw", reason: "browser_uploading_without_preload_id" };
+    }
+    if (canUsePreload && preload?.preloadId && (preload.status === "ready" || preload.status === "uploading")) {
+      return {
+        mode: "preloaded",
+        preloadId: preload.preloadId,
+        preloadStatus: preload.status,
+      };
+    }
+    if (preload?.preloadId && preload?.status && !["ready", "uploading"].includes(preload.status)) {
+      return { mode: "raw", reason: `preload_unusable_${preload.status}` };
+    }
+    return { mode: "raw", reason: preload?.preloadId ? "preload_missing_usable_status" : "preload_id_missing" };
+  }
+
+  function buildReplyFormData(ctx, file, index, totalFiles, text, quoteMessageId, transport = null) {
+    const selectedTransport = transport || resolveAttachmentTransport(ctx, file);
+    const formData = new FormData();
+    const isSingleAttachmentReply = totalFiles === 1;
+    formData.append("text", index === 0 ? text : "");
+    if (index === 0 && quoteMessageId) formData.append("quote_message_id", quoteMessageId);
+    if (index === 0 && isSingleAttachmentReply) formData.append("single_attachment", "true");
+
+    if (selectedTransport.mode === "preloaded") {
+      formData.append("preloaded_attachment_id", selectedTransport.preloadId);
+      return formData;
+    }
+
+    formData.append("files", file, file.name);
+    return formData;
   }
 
   async function sendByMode(ctx) {
@@ -147,23 +404,30 @@
         const queue = [...state.selectedFiles];
         for (let index = 0; index < queue.length; index += 1) {
           const file = queue[index];
-          const fileKey = selectedFileKey(file, index);
-          state.fileUploadProgress[fileKey] = { stage: "sending", current: index + 1, total: queue.length };
+          const transport = resolveAttachmentTransport(ctx, file);
+          const preload = getPreloadState(state, file);
+          if (preload) {
+            preload.stage = "sending";
+          } else {
+            setPreloadState(state, file, {
+              stage: "sending",
+              status: null,
+              preloadId: null,
+              controller: null,
+              pollTimer: null,
+              error: null,
+              removed: false,
+            });
+          }
           renderSelectedFiles(ctx);
-          ctx.setStatus(`Отправка в Telegram: ${index + 1}/${queue.length}`);
-          const formData = new FormData();
-          formData.append("text", index === 0 ? text : "");
-          if (index === 0 && quoteMessageId) formData.append("quote_message_id", quoteMessageId);
-          formData.append("files", file, file.name);
+          ctx.setStatus(`Передача в ES DESK: ${index + 1}/${queue.length}`);
+          const formData = buildReplyFormData(ctx, file, index, queue.length, text, quoteMessageId, transport);
           await api(`/api/v1/tickets/${state.ticketId}/reply`, {
             method: "POST",
             body: formData,
           });
-          state.fileUploadProgress[fileKey] = { stage: "done" };
-          renderSelectedFiles(ctx);
-          const idxInState = state.selectedFiles.indexOf(file);
-          if (idxInState >= 0) state.selectedFiles.splice(idxInState, 1);
-          delete state.fileUploadProgress[fileKey];
+          state.selectedFiles = state.selectedFiles.filter((item) => item !== file);
+          forgetPreloadState(state, file);
           renderSelectedFiles(ctx);
           await ctx.loadCard(true);
         }
@@ -192,10 +456,19 @@
         ctx.setStatus("Сообщение отправлено");
       }
     } catch (e) {
-      if (state.selectedFiles.length) {
-        const file = state.selectedFiles[0];
-        const fileKey = selectedFileKey(file, 0);
-        state.fileUploadProgress[fileKey] = { stage: "error", message: e.message || "ошибка отправки" };
+      const file = state.selectedFiles[0];
+      if (file) {
+        const preload = getPreloadState(state, file) || setPreloadState(state, file, {
+          stage: "failed",
+          status: null,
+          preloadId: null,
+          controller: null,
+          pollTimer: null,
+          error: null,
+          removed: false,
+        });
+        preload.stage = "failed";
+        preload.error = e.message || "ошибка отправки";
         renderSelectedFiles(ctx);
       }
       ctx.showError(e.message);
@@ -231,13 +504,7 @@
       el.replyFilesInput.click();
     });
     el.replyFilesInput.addEventListener("change", () => {
-      state.selectedFiles.push(...Array.from(el.replyFilesInput.files || []));
-      state.fileUploadProgress = {};
-      state.selectedFiles.forEach((file, index) => {
-        state.fileUploadProgress[selectedFileKey(file, index)] = { stage: "queued", percent: 0 };
-      });
-      el.replyFilesInput.value = "";
-      renderSelectedFiles(ctx);
+      queueSelectedFiles(ctx, el.replyFilesInput.files || []);
     });
     el.clearQuoteBtn.addEventListener("click", () => clearQuote(ctx));
 
@@ -249,6 +516,10 @@
     });
   }
 
+  function destroyComposerState(ctx) {
+    cleanupAllPreloadState(ctx.state);
+  }
+
   global.TicketComposer = {
     refreshComposerActions,
     quoteMessage,
@@ -258,6 +529,13 @@
     sendByMode,
     applyComposeModeUi,
     bindComposerHandlers,
-    selectedFileKey,
+    destroyComposerState,
+    resolveAttachmentTransport,
+    buildReplyFormData,
+    createSelectedFileRow,
+    shouldShowSelectedFileProgress,
+    ensureArchiveGroupId,
+    queueSelectedFiles,
+    removeSelectedFile,
   };
 })(window);

@@ -47,9 +47,18 @@
         mime_type: attachment.mime_type || "",
         original_filename: attachment.original_filename || "",
         file_size: attachment.file_size || 0,
+        telegram_delivery_status: attachment.telegram_delivery_status || "",
         download_url: attachment.download_url || "",
       })),
     })));
+  }
+
+  function deliveryStatusLabel(attachment) {
+    const status = attachment?.telegram_delivery_status || "";
+    if (status === "uploading") return "Загружается в Telegram...";
+    if (status === "sending") return "Отправляется клиенту...";
+    if (status === "failed") return "Не удалось отправить";
+    return "";
   }
 
   function cleanupAttachmentObjectUrls(currentAttachmentIds) {
@@ -298,6 +307,12 @@
       const meta = document.createElement("div");
       meta.className = "attachment-meta";
       meta.textContent = attachmentMeta(attachment);
+      const deliveryStatusText = deliveryStatusLabel(attachment);
+      const deliveryStatus = deliveryStatusText ? document.createElement("div") : null;
+      if (deliveryStatus) {
+        deliveryStatus.className = `attachment-delivery-status attachment-delivery-status-${attachment.telegram_delivery_status || "unknown"}`;
+        deliveryStatus.textContent = deliveryStatusText;
+      }
 
       if (isStickerAttachment(attachment)) {
         item.classList.add("attachment-sticker");
@@ -355,6 +370,7 @@
         }
 
         item.append(media, metaSticker);
+        if (deliveryStatus) item.appendChild(deliveryStatus);
         item.addEventListener("click", () => downloadAttachment(ctx, attachment));
       } else if (attachment.is_unsupported_preview) {
         item.classList.add("attachment-unsupported");
@@ -362,6 +378,7 @@
         unsupported.className = "attachment-unsupported-text";
         unsupported.textContent = attachment.unsupported_preview_text || "Предпросмотр не поддерживается";
         item.append(unsupported, meta);
+        if (deliveryStatus) item.appendChild(deliveryStatus);
         item.addEventListener("click", () => downloadAttachment(ctx, attachment));
       } else if (attachment.is_image) {
         const img = document.createElement("img");
@@ -388,9 +405,11 @@
           img.remove();
         }, { once: true });
         item.append(img, meta);
+        if (deliveryStatus) item.appendChild(deliveryStatus);
         item.addEventListener("click", () => openImagePreview(ctx, attachment));
       } else {
         item.append(name, meta);
+        if (deliveryStatus) item.appendChild(deliveryStatus);
         item.addEventListener("click", () => downloadAttachment(ctx, attachment));
       }
       wrap.appendChild(item);

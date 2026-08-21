@@ -27,6 +27,20 @@ def is_test_callback_query_id(callback_query_id: str | None) -> bool:
 
 
 def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
+    document = None
+    if method == "sendDocument":
+        document_value = (payload or {}).get("document")
+        if isinstance(document_value, str) and document_value:
+            document = {
+                "file_id": document_value,
+                "file_unique_id": f"{document_value}-unique",
+            }
+        else:
+            file_seed = (payload or {}).get("filename") or "test-document"
+            document = {
+                "file_id": f"{file_seed}-file-id",
+                "file_unique_id": f"{file_seed}-unique",
+            }
     result = {
         "fake": True,
         "method": method,
@@ -34,6 +48,8 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
     }
     if method in {"sendMessage", "sendDocument", "sendPhoto"}:
         result["message_id"] = 1
+    if document is not None:
+        result["document"] = document
     if method == "getFile":
         file_id = (payload or {}).get("file_id") or "test-file"
         result["file_id"] = file_id
@@ -245,6 +261,24 @@ def edit_message_text(chat_id: str, message_id: str | int, text: str) -> dict:
     return telegram_request("editMessageText", payload=payload)
 
 
+def edit_message_caption(
+    chat_id: str,
+    message_id: str | int,
+    caption: str,
+    parse_mode: str | None = None,
+) -> dict:
+    payload = {
+        "chat_id": chat_id,
+        "message_id": int(message_id),
+        "caption": caption,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("editMessageCaption", payload)
+    return telegram_request("editMessageCaption", payload=payload)
+
+
 def delete_message(chat_id: str, message_id: str | int) -> dict:
     payload = {"chat_id": chat_id, "message_id": int(message_id)}
     if is_test_chat_id(chat_id):
@@ -258,6 +292,9 @@ def send_document(
     filename: str | None = None,
     caption: str | None = None,
     mime_type: str | None = None,
+    parse_mode: str | None = None,
+    reply_to_message_id: str | int | None = None,
+    timeout: int = 60,
 ) -> dict:
     binary_content: bytes | None = None
     if isinstance(file_path, (bytes, bytearray)):
@@ -268,6 +305,10 @@ def send_document(
     payload = {"chat_id": chat_id}
     if caption:
         payload["caption"] = caption
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = json.dumps({"message_id": int(reply_to_message_id)}, ensure_ascii=False)
     if is_test_chat_id(chat_id):
         return fake_telegram_response(
             "sendDocument",
@@ -277,17 +318,77 @@ def send_document(
                 "mime_type": mime_type or "application/octet-stream",
             },
         )
-    return telegram_multipart_request(
-        "sendDocument",
-        payload,
-        {
-            "document": {
-                "filename": filename or path.name,
-                "content_type": mime_type or "application/octet-stream",
-                "content": binary_content if binary_content is not None else path.read_bytes(),
-            }
-        },
-    )
+    try:
+        return telegram_multipart_request(
+            "sendDocument",
+            payload,
+            {
+                "document": {
+                    "filename": filename or path.name,
+                    "content_type": mime_type or "application/octet-stream",
+                    "content": binary_content if binary_content is not None else path.read_bytes(),
+                }
+            },
+            timeout=timeout,
+        )
+    except TelegramApiError as exc:
+        if parse_mode == "HTML" and caption:
+            logger.warning("Telegram rejected HTML document caption, falling back to plain text: %s", exc)
+            fallback_payload = dict(payload)
+            fallback_payload.pop("parse_mode", None)
+            fallback_payload["caption"] = strip_telegram_html(caption)
+            return telegram_multipart_request(
+                "sendDocument",
+                fallback_payload,
+                {
+                    "document": {
+                        "filename": filename or path.name,
+                        "content_type": mime_type or "application/octet-stream",
+                        "content": binary_content if binary_content is not None else path.read_bytes(),
+                    }
+                },
+                timeout=timeout,
+            )
+        raise
+
+
+def send_document_by_file_id(
+    chat_id: str,
+    telegram_file_id: str,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_to_message_id: str | int | None = None,
+) -> dict:
+    payload: dict = {
+        "chat_id": chat_id,
+        "document": telegram_file_id,
+    }
+    if caption:
+        payload["caption"] = caption
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("sendDocument", payload)
+    try:
+        return telegram_request("sendDocument", payload=payload)
+    except TelegramApiError as exc:
+        if parse_mode == "HTML" and caption:
+            logger.warning("Telegram rejected HTML document caption, falling back to plain text: %s", exc)
+            fallback_payload = dict(payload)
+            fallback_payload.pop("parse_mode", None)
+            fallback_payload["caption"] = strip_telegram_html(caption)
+            return telegram_request("sendDocument", payload=fallback_payload)
+        raise
+
+
+def send_chat_action(chat_id: str, action: str) -> dict:
+    payload = {"chat_id": chat_id, "action": action}
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("sendChatAction", payload)
+    return telegram_request("sendChatAction", payload=payload)
 
 
 def send_photo(

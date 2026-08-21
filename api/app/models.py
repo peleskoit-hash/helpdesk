@@ -190,6 +190,7 @@ class TicketAttachment(Base):
     telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_file_unique_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    telegram_delivery_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     telegram_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -197,6 +198,28 @@ class TicketAttachment(Base):
     local_path: Mapped[str] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     message: Mapped[TicketMessage] = relationship(back_populates="attachments")
+
+
+class TicketAttachmentPreload(Base):
+    __tablename__ = "ticket_attachment_preloads"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(nullable=True)
+    local_path: Mapped[str] = mapped_column(String(1000))
+    telegram_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_file_unique_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    archive_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="uploading")
+    final_attachment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reply_to_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    prefer_caption: Mapped[bool] = mapped_column(Boolean, default=False)
+    telegram_staging_info_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    telegram_staging_file_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 class TicketView(Base):

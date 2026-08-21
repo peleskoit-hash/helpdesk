@@ -41,6 +41,7 @@ const state = {
   quoteMessageId: null,
   composeMode: "reply",
   selectedFiles: [],
+  currentArchiveGroupId: null,
   isLoading: false,
   clientCardViewConfig: null,
   counts: { unassigned: 0, active: 0, special: 0, frozen: 0, closed: 0 },
@@ -49,7 +50,7 @@ const state = {
   completionOpen: false,
   isSendingReply: false,
   pendingCloseAfterSend: false,
-  fileUploadProgress: {},
+  filePreloads: new Map(),
   stateActionInFlight: null,
   restoreCloseCooldownUntil: 0,
 };
@@ -313,6 +314,7 @@ function cleanupTicketCardPage() {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
     beforeUnloadHandler = null;
   }
+  TicketComposer.destroyComposerState?.(composerCtx());
   try {
     TicketAttachments.destroyAllAttachmentResources?.();
   } catch {
@@ -375,6 +377,7 @@ function composerCtx() {
     renderAvailabilityStatus,
     messageAuthorLabel,
     isOnsitePhraseJs,
+    canUseAttachmentPreload: () => state.composeMode === "reply" && (state.card?.workflow_type || "ticket") === "ticket",
   };
 }
 
@@ -674,11 +677,6 @@ async function loadTabCounts(options = {}) {
   } catch (e) {
     if (!silent) setStatus(`Ошибка счётчиков: ${e.message}`);
   }
-}
-
-
-function selectedFileKey(file, index) {
-  return TicketComposer.selectedFileKey(file, index);
 }
 
 function messageAuthorLabel(message) {
