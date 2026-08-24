@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 import threading
 import uuid
 
@@ -90,6 +91,67 @@ def _document_payload(
     }
 
 
+def _photo_payload(
+    *,
+    update_id: int,
+    chat_id: str,
+    user_id: str,
+    file_id: str = "telegram-photo-1",
+    media_group_id: str | None = None,
+) -> dict:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "chat": {"id": int(chat_id), "type": "private"},
+            "from": {"id": int(user_id), "first_name": "Ivan", "last_name": "Petrov"},
+            "media_group_id": media_group_id,
+            "photo": [
+                {
+                    "file_id": f"{file_id}-small",
+                    "file_unique_id": f"uniq-{file_id}-small",
+                    "file_size": 100,
+                    "width": 10,
+                    "height": 10,
+                },
+                {
+                    "file_id": file_id,
+                    "file_unique_id": f"uniq-{file_id}",
+                    "file_size": 500,
+                    "width": 40,
+                    "height": 40,
+                },
+            ],
+        },
+    }
+
+
+def _video_payload(
+    *,
+    update_id: int,
+    chat_id: str,
+    user_id: str,
+    file_id: str = "telegram-video-1",
+    media_group_id: str | None = None,
+) -> dict:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "chat": {"id": int(chat_id), "type": "private"},
+            "from": {"id": int(user_id), "first_name": "Ivan", "last_name": "Petrov"},
+            "media_group_id": media_group_id,
+            "video": {
+                "file_id": file_id,
+                "file_unique_id": f"uniq-{file_id}",
+                "file_size": 2048,
+                "mime_type": "video/mp4",
+                "file_name": "clip.mp4",
+            },
+        },
+    }
+
+
 def _too_large_document_payload(*, update_id: int, chat_id: str, user_id: str) -> dict:
     payload = _document_payload(update_id=update_id, chat_id=chat_id, user_id=user_id, file_id="too-large-file")
     payload["message"]["document"]["file_size"] = 999999999
@@ -114,6 +176,33 @@ def test_extract_attachment_keeps_media_group_id():
 
     assert attachment is not None
     assert attachment["media_group_id"] == "mg-1"
+
+
+def test_copy_message_helper_includes_caption_even_when_empty(monkeypatch):
+    calls = []
+
+    def _telegram_request(method, payload=None, timeout=30):
+        calls.append((method, payload, timeout))
+        return {"ok": True, "result": {"message_id": 321}}
+
+    from api.app.services import telegram_bot as telegram_bot_service
+    monkeypatch.setattr(telegram_bot_service, "telegram_request", _telegram_request)
+
+    telegram_bot_service.copy_message("dst-chat", "src-chat", "42", caption="", parse_mode="HTML")
+
+    assert calls == [
+        (
+            "copyMessage",
+            {
+                "chat_id": "dst-chat",
+                "from_chat_id": "src-chat",
+                "message_id": 42,
+                "caption": "",
+                "parse_mode": "HTML",
+            },
+            30,
+        )
+    ]
 
 
 def test_archive_info_pending_token_fits_varchar_100():
@@ -171,10 +260,14 @@ def test_store_telegram_attachment_does_not_archive_synchronously(monkeypatch, t
     )
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("archive must not run inside _store_telegram_attachment")),
     )
-    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "_try_prefetch_attachment_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prefetch must not run inside _store_telegram_attachment")),
+    )
 
     attachment = telegram_attachments_service._store_telegram_attachment(
         session,
@@ -198,6 +291,66 @@ def test_store_telegram_attachment_does_not_archive_synchronously(monkeypatch, t
     assert saved.telegram_archive_message_id is None
     assert saved.telegram_archive_info_message_id is None
     assert saved.telegram_media_group_id is None
+
+
+def test_ensure_local_attachment_file_restores_missing_file_via_telegram_file_id(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, _contact = _seed_ticket_context(session)
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="Attachment inbound",
+        created_at=datetime.utcnow(),
+    )
+    session.add(message)
+    session.commit()
+
+    local_path = tmp_path / "downloads" / "restored.pdf"
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="document",
+        telegram_file_id="telegram-file-restore",
+        telegram_file_unique_id="uniq-restore",
+        telegram_file_path=None,
+        original_filename="restored.pdf",
+        mime_type="application/pdf",
+        file_size=123,
+        local_path=str(local_path),
+        created_at=datetime.utcnow(),
+    )
+    session.add(attachment)
+    session.commit()
+
+    calls = {"get_file": 0, "download_file": 0}
+
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: calls.__setitem__("get_file", calls["get_file"] + 1) or {
+            "result": {"file_path": "docs/restored.pdf"}
+        },
+    )
+
+    def _download_file(file_path, path, **_kwargs):
+        calls["download_file"] += 1
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"restored")
+
+    monkeypatch.setattr(telegram_attachments_service, "download_file", _download_file)
+
+    restored = telegram_attachments_service._ensure_local_attachment_file(attachment, external_chat_id="100500")
+
+    assert restored == local_path
+    assert restored.exists()
+    assert restored.read_bytes() == b"restored"
+    assert attachment.telegram_file_path == "docs/restored.pdf"
+    assert calls == {"get_file": 1, "download_file": 1}
 
 
 def test_archive_is_scheduled_only_after_attachment_commit(monkeypatch, tmp_path):
@@ -249,7 +402,7 @@ def test_main_inbound_attachment_is_saved_even_when_background_archive_fails(mon
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(telegram_attachments_service.TelegramApiError("staging failed")),
     )
     monkeypatch.setattr(telegram_router, "start_background_archive_inbound_attachment", telegram_attachments_service._archive_inbound_attachment_worker)
@@ -309,6 +462,7 @@ def test_background_archive_worker_finds_attachment_in_new_db_session(monkeypatc
         message_type=MessageType.CLIENT.value,
         author_user_id=None,
         body="Attachment inbound",
+        telegram_message_id="3003",
         created_at=datetime.utcnow(),
     )
     attachment = TicketAttachment(
@@ -333,7 +487,7 @@ def test_background_archive_worker_finds_attachment_in_new_db_session(monkeypatc
     archive_calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *args, **kwargs: archive_calls.append((args, kwargs)) or {"result": {"message_id": 903}},
     )
 
@@ -346,10 +500,10 @@ def test_background_archive_worker_finds_attachment_in_new_db_session(monkeypatc
         assert saved.telegram_archive_message_id == "903"
         assert saved.telegram_archive_info_message_id is None
     assert len(archive_calls) == 1
-    assert archive_calls[0][0] == ("staging-chat", "telegram-file-3")
+    assert archive_calls[0][0] == ("staging-chat", "100500", "3003")
+    assert "report-3.pdf" in archive_calls[0][1]["caption"]
 
-
-def test_single_inbound_file_without_media_group_keeps_existing_archive_behavior(monkeypatch, tmp_path):
+def test_single_document_inbound_file_archives_via_copy_message(monkeypatch, tmp_path):
     _engine, Session = _session_bundle(tmp_path)
     session = Session()
     ticket, contact = _seed_ticket_context(session)
@@ -363,13 +517,18 @@ def test_single_inbound_file_without_media_group_keeps_existing_archive_behavior
     monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
     _run_inline_archive_worker(monkeypatch, Session)
-    calls = {"send_message": 0, "edit_message_text": 0, "send_document_by_file_id": []}
+    calls = {"send_message": 0, "edit_message_text": 0, "copy_message": []}
     monkeypatch.setattr(telegram_attachments_service, "send_message", lambda *_args, **_kwargs: calls.__setitem__("send_message", calls["send_message"] + 1))
     monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: calls.__setitem__("edit_message_text", calls["edit_message_text"] + 1))
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
-        lambda *args, **kwargs: calls["send_document_by_file_id"].append((args, kwargs)) or {"result": {"message_id": 910}},
+        "copy_message",
+        lambda *args, **kwargs: calls["copy_message"].append((args, kwargs)) or {"result": {"message_id": 910}},
+    )
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "download_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("archive must not download local binary")),
     )
 
     result = telegram_router.process_telegram_update(
@@ -385,8 +544,83 @@ def test_single_inbound_file_without_media_group_keeps_existing_archive_behavior
     assert saved.telegram_media_group_id is None
     assert calls["send_message"] == 0
     assert calls["edit_message_text"] == 0
-    assert len(calls["send_document_by_file_id"]) == 1
-    assert "caption" in calls["send_document_by_file_id"][0][1]
+    assert len(calls["copy_message"]) == 1
+    assert calls["copy_message"][0][0] == ("staging-chat", contact.external_chat_id, "2004")
+    assert "caption" in calls["copy_message"][0][1]
+
+
+def test_single_photo_inbound_file_archives_via_copy_message_without_local_binary(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"photos/{file_id}.jpg", "file_unique_id": f"uniq-{file_id}"}} ,
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_inline_archive_worker(monkeypatch, Session)
+    calls = {"copy_message": 0}
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *args, **kwargs: calls.__setitem__("copy_message", calls["copy_message"] + 1) or {"result": {"message_id": 911}},
+    )
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "download_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("copyMessage must not require local binary")),
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _photo_payload(update_id=2005, chat_id=contact.external_chat_id, user_id=contact.external_user_id, file_id="photo-main"),
+        notify_client=False,
+    )
+
+    saved = session.execute(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id)).scalar_one()
+    assert result["ok"] is True
+    assert saved.source == "photo"
+    assert saved.telegram_archive_message_id == "911"
+    assert not Path(saved.local_path).exists()
+    assert calls == {"copy_message": 1}
+
+
+def test_single_video_inbound_file_archives_via_copy_message(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"video/{file_id}.mp4", "file_unique_id": f"uniq-{file_id}"}} ,
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_inline_archive_worker(monkeypatch, Session)
+    calls = {"copy_message": []}
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *args, **kwargs: calls["copy_message"].append((args, kwargs)) or {"result": {"message_id": 912}},
+    )
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _video_payload(update_id=2006, chat_id=contact.external_chat_id, user_id=contact.external_user_id, file_id="video-main"),
+        notify_client=False,
+    )
+
+    saved = session.execute(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id)).scalar_one()
+    assert result["ok"] is True
+    assert saved.source == "video"
+    assert saved.telegram_archive_message_id == "912"
+    assert len(calls["copy_message"]) == 1
 
 
 def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch, tmp_path):
@@ -416,7 +650,7 @@ def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch,
     )
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *args, **kwargs: state["send_document_by_file_id"].append((args, kwargs)) or {"result": {"message_id": 600 + len(state["send_document_by_file_id"]) }},
     )
 
@@ -439,7 +673,7 @@ def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch,
     assert attachments[0].telegram_archive_info_message_id == "501"
     assert len(state["send_message"]) == 1
     assert len(state["send_document_by_file_id"]) == 3
-    assert all("caption" not in kwargs for _args, kwargs in state["send_document_by_file_id"])
+    assert all(kwargs.get("caption") == "" for _args, kwargs in state["send_document_by_file_id"])
     final_info_text = state["edit_message_text"][-1][0][2]
     assert "• A.csv" in final_info_text
     assert "• B.csv" in final_info_text
@@ -475,7 +709,7 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
     )
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *args, **kwargs: state["send_document_by_file_id"].append((args, kwargs)) or {"result": {"message_id": 800 + len(state["send_document_by_file_id"]) }},
     )
 
@@ -498,7 +732,7 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
     assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
     assert len(state["send_message"]) == 1
     assert len(state["send_document_by_file_id"]) == 3
-    assert all(args[1] != "file-big" for args, _kwargs in state["send_document_by_file_id"])
+    assert all(args[2] != "2203" for args, _kwargs in state["send_document_by_file_id"])
     final_info_text = state["edit_message_text"][-1][0][2]
     assert "BIG.7z" not in final_info_text
     assert "• A.csv" in final_info_text
@@ -517,6 +751,7 @@ def test_concurrent_background_archive_start_does_not_create_duplicate(monkeypat
         message_type=MessageType.CLIENT.value,
         author_user_id=None,
         body="Attachment inbound",
+        telegram_message_id="3004",
         created_at=datetime.utcnow(),
     )
     attachment = TicketAttachment(
@@ -539,12 +774,12 @@ def test_concurrent_background_archive_start_does_not_create_duplicate(monkeypat
     monkeypatch.setattr(telegram_attachments_service, "SessionLocal", Session)
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
     release_send = threading.Event()
-    calls = {"send_document_by_file_id": 0}
-    def _send_document_by_file_id(*_args, **_kwargs):
-        calls["send_document_by_file_id"] += 1
+    calls = {"copy_message": 0}
+    def _copy_message(*_args, **_kwargs):
+        calls["copy_message"] += 1
         release_send.wait(timeout=5)
         return {"result": {"message_id": 904}}
-    monkeypatch.setattr(telegram_attachments_service, "send_document_by_file_id", _send_document_by_file_id)
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
 
     first = threading.Thread(target=telegram_attachments_service._archive_inbound_attachment_worker, args=(attachment.id,))
     second = threading.Thread(target=telegram_attachments_service._archive_inbound_attachment_worker, args=(attachment.id,))
@@ -558,7 +793,7 @@ def test_concurrent_background_archive_start_does_not_create_duplicate(monkeypat
         saved = check.get(TicketAttachment, attachment.id)
         assert saved is not None
         assert saved.telegram_archive_message_id == "904"
-    assert calls["send_document_by_file_id"] == 1
+    assert calls["copy_message"] == 1
 
 
 def test_media_group_parallel_workers_do_not_create_second_info_card_or_duplicate_files(monkeypatch, tmp_path):
@@ -574,6 +809,7 @@ def test_media_group_parallel_workers_do_not_create_second_info_card_or_duplicat
             message_type=MessageType.CLIENT.value,
             author_user_id=None,
             body=f"Attachment {index}",
+            telegram_message_id=str(4000 + index),
             created_at=datetime.utcnow(),
         )
         attachment = TicketAttachment(
@@ -605,11 +841,11 @@ def test_media_group_parallel_workers_do_not_create_second_info_card_or_duplicat
         lambda *_args, **_kwargs: calls.__setitem__("send_message", calls["send_message"] + 1) or {"result": {"message_id": 990}},
     )
     monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
-    def _send_document_by_file_id(*_args, **_kwargs):
+    def _copy_message(*_args, **_kwargs):
         calls["send_document_by_file_id"] += 1
         release_send.wait(timeout=5)
         return {"result": {"message_id": 1000 + calls["send_document_by_file_id"]}}
-    monkeypatch.setattr(telegram_attachments_service, "send_document_by_file_id", _send_document_by_file_id)
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
 
     workers = [threading.Thread(target=telegram_attachments_service._archive_inbound_attachment_worker, args=(attachment.id,)) for attachment in attachments]
     for worker in workers:
@@ -638,6 +874,7 @@ def test_unexpected_background_archive_exception_clears_pending_token_for_retry(
         message_type=MessageType.CLIENT.value,
         author_user_id=None,
         body="Attachment inbound",
+        telegram_message_id="3005",
         created_at=datetime.utcnow(),
     )
     attachment = TicketAttachment(
@@ -661,13 +898,13 @@ def test_unexpected_background_archive_exception_clears_pending_token_for_retry(
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
     first_call = {"raised": False}
 
-    def _send_document_by_file_id(*_args, **_kwargs):
+    def _copy_message(*_args, **_kwargs):
         if not first_call["raised"]:
             first_call["raised"] = True
             raise ValueError("unexpected boom")
         return {"result": {"message_id": 905}}
 
-    monkeypatch.setattr(telegram_attachments_service, "send_document_by_file_id", _send_document_by_file_id)
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
 
     telegram_attachments_service._archive_inbound_attachment_worker(attachment.id)
     with Session() as check:
@@ -694,6 +931,7 @@ def test_unexpected_group_info_exception_clears_pending_info_token_for_retry(mon
             message_type=MessageType.CLIENT.value,
             author_user_id=None,
             body=f"Attachment {index}",
+            telegram_message_id=str(5000 + index),
             created_at=datetime.utcnow(),
         )
         attachment = TicketAttachment(
@@ -731,7 +969,7 @@ def test_unexpected_group_info_exception_clears_pending_info_token_for_retry(mon
     monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
     monkeypatch.setattr(
         telegram_attachments_service,
-        "send_document_by_file_id",
+        "copy_message",
         lambda *_args, **_kwargs: sent_files.__setitem__("count", sent_files["count"] + 1) or {"result": {"message_id": 1200 + sent_files["count"]}},
     )
 
@@ -749,3 +987,96 @@ def test_unexpected_group_info_exception_clears_pending_info_token_for_retry(mon
         ).scalars().all()
         assert len({row.telegram_archive_info_message_id for row in retried_rows}) == 1
         assert retried_rows[0].telegram_archive_info_message_id == "991"
+
+
+def test_missing_source_message_is_best_effort_failure(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, _contact = _seed_ticket_context(session)
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="Attachment inbound",
+        telegram_message_id=None,
+        created_at=datetime.utcnow(),
+    )
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="photo",
+        telegram_file_id="photo-file-1",
+        telegram_file_unique_id="uniq-photo-file-1",
+        telegram_file_path="photos/photo-file-1.jpg",
+        original_filename="photo.jpg",
+        mime_type="image/jpeg",
+        file_size=123,
+        local_path=str(tmp_path / "photo.jpg"),
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([message, attachment])
+    session.commit()
+
+    monkeypatch.setattr(telegram_attachments_service, "SessionLocal", Session)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("copy must not run without source message")),
+    )
+
+    telegram_attachments_service._archive_inbound_attachment_worker(attachment.id)
+
+    with Session() as check:
+        saved = check.get(TicketAttachment, attachment.id)
+        assert saved is not None
+        assert saved.telegram_archive_message_id is None
+
+
+def test_missing_source_chat_is_best_effort_failure(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    contact.external_chat_id = ""
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="Attachment inbound",
+        telegram_message_id="3999",
+        created_at=datetime.utcnow(),
+    )
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="video",
+        telegram_file_id="video-file-1",
+        telegram_file_unique_id="uniq-video-file-1",
+        telegram_file_path="video/video-file-1.mp4",
+        original_filename="clip.mp4",
+        mime_type="video/mp4",
+        file_size=456,
+        local_path=str(tmp_path / "clip.mp4"),
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([message, attachment])
+    session.commit()
+
+    monkeypatch.setattr(telegram_attachments_service, "SessionLocal", Session)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("copy must not run without source chat")),
+    )
+
+    telegram_attachments_service._archive_inbound_attachment_worker(attachment.id)
+
+    with Session() as check:
+        saved = check.get(TicketAttachment, attachment.id)
+        assert saved is not None
+        assert saved.telegram_archive_message_id is None

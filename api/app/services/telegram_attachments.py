@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Client, ClientProfile, TelegramContact, Ticket, TicketAttachment, TicketMessage
-from .telegram_bot import TelegramApiError, download_file, edit_message_text, get_file, send_document_by_file_id, send_message
+from .telegram_bot import TelegramApiError, copy_message, download_file, edit_message_text, get_file, send_message
 from .telegram_outbound_delivery import _archive_ticket_header, _format_project_dt, _lock_stmt, _staging_chat_id, _telegram_message_id
 
 
@@ -150,7 +150,6 @@ def _store_telegram_attachment(
     )
     db.add(attachment)
     ticket.updated_at = datetime.utcnow()
-    _try_prefetch_attachment_file(attachment, external_chat_id=external_chat_id)
     return attachment
 
 
@@ -393,6 +392,25 @@ def _best_effort_edit_inbound_group_archive_info_message(
         logger.warning("Failed to edit inbound archive group info ticket_id=%s media_group_id=%s: %s", ticket.id, attachments[0].telegram_media_group_id if attachments else "", exc)
 
 
+def _inbound_archive_source_chat_id(db: Session, ticket: Ticket) -> str:
+    stmt = select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)
+    if ticket.company_id:
+        stmt = stmt.where(TelegramContact.company_id == ticket.company_id)
+    contact = db.execute(stmt).scalar_one_or_none()
+    chat_id = str(contact.external_chat_id if contact is not None else "").strip()
+    if not chat_id:
+        raise RuntimeError("Inbound archive source Telegram chat is missing")
+    return chat_id
+
+
+def _inbound_archive_source_message_id(db: Session, attachment: TicketAttachment) -> str:
+    message = db.get(TicketMessage, attachment.message_id)
+    message_id = str(message.telegram_message_id if message is not None else "").strip()
+    if not message_id:
+        raise RuntimeError("Inbound archive source Telegram message is missing")
+    return message_id
+
+
 def _ensure_inbound_group_info_message(db: Session, ticket: Ticket, attachment: TicketAttachment) -> str | None:
     media_group_id = str(attachment.telegram_media_group_id or "").strip()
     if not media_group_id:
@@ -470,19 +488,23 @@ def _best_effort_archive_inbound_attachment(db: Session, ticket: Ticket, attachm
     if archive_message_id and not _is_pending_archive_message_id(archive_message_id):
         return
 
-    file_id = str(attachment.telegram_file_id or "").strip()
-    if not file_id:
-        return
-
     try:
+        source_chat_id = _inbound_archive_source_chat_id(db, ticket)
+        source_message_id = _inbound_archive_source_message_id(db, attachment)
         media_group_id = str(attachment.telegram_media_group_id or "").strip()
         if media_group_id:
             _ensure_inbound_group_info_message(db, ticket, attachment)
-            response = send_document_by_file_id(_staging_chat_id(), file_id)
-        else:
-            response = send_document_by_file_id(
+            response = copy_message(
                 _staging_chat_id(),
-                file_id,
+                source_chat_id,
+                source_message_id,
+                caption="",
+            )
+        else:
+            response = copy_message(
+                _staging_chat_id(),
+                source_chat_id,
+                source_message_id,
                 caption=_inbound_attachment_archive_caption(db, ticket, attachment),
             )
         message_id = _telegram_message_id(response)

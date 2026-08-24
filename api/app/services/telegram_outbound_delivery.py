@@ -66,6 +66,10 @@ def _safe_unlink(path_value: str | None) -> None:
         logger.warning("Failed to remove file %s", path, exc_info=True)
 
 
+def _unlink_attachment_local_file(path_value: str | None) -> None:
+    _safe_unlink(path_value)
+
+
 def _project_dt(value: datetime | None) -> datetime:
     source = value or datetime.now(timezone.utc)
     if source.tzinfo is None:
@@ -812,6 +816,7 @@ def deliver_ticket_attachment(
 
         if not (attachment.telegram_file_id or "").strip():
             filename = attachment.original_filename or "файл"
+            cleanup_path = attachment.local_path
             try:
                 file_id, file_unique_id, _staging_message_id = _send_staging_document_from_path(
                     local_path=attachment.local_path,
@@ -843,6 +848,7 @@ def deliver_ticket_attachment(
             db.commit()
             db.refresh(attachment)
             db.refresh(message)
+            _unlink_attachment_local_file(cleanup_path)
 
         _deliver_attachment_to_client(
             db,
@@ -935,6 +941,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         preload.telegram_file_id = file_id
         preload.telegram_file_unique_id = file_unique_id
         preload.telegram_staging_file_message_id = file_message_id or preload.telegram_staging_file_message_id
+        cleanup_path = preload.local_path
 
         if preload.status == "cancelled":
             finalize_db.commit()
@@ -944,6 +951,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if not preload.final_attachment_id:
             preload.status = "ready"
             finalize_db.commit()
+            _safe_unlink(cleanup_path)
             if ticket is not None:
                 group_rows = _archive_rows_for_display(
                     _load_group_preloads(
@@ -964,7 +972,6 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
 
         attachment = finalize_db.get(TicketAttachment, preload.final_attachment_id)
         if attachment is None:
-            cleanup_path = preload.local_path
             finalize_db.delete(preload)
             finalize_db.commit()
             _safe_unlink(cleanup_path)
@@ -972,7 +979,6 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
 
         message = finalize_db.get(TicketMessage, attachment.message_id)
         if message is None or ticket is None:
-            cleanup_path = preload.local_path
             finalize_db.delete(preload)
             finalize_db.commit()
             _safe_unlink(cleanup_path)
@@ -989,12 +995,14 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if already_sent:
             preload.status = "sent"
             finalize_db.commit()
+            _safe_unlink(cleanup_path)
             _finalize_claimed_preload_archive(preload_id=preload.id, final_status="sent")
             return
 
         preload.status = "sending"
         attachment.telegram_delivery_status = "sending"
         finalize_db.commit()
+        _safe_unlink(cleanup_path)
     finally:
         finalize_db.close()
 

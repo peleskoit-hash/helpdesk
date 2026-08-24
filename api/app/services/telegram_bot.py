@@ -46,7 +46,7 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
         "method": method,
         "payload": payload or {},
     }
-    if method in {"sendMessage", "sendDocument", "sendPhoto"}:
+    if method in {"sendMessage", "sendDocument", "sendPhoto", "copyMessage"}:
         result["message_id"] = 1
     if document is not None:
         result["document"] = document
@@ -284,6 +284,37 @@ def delete_message(chat_id: str, message_id: str | int) -> dict:
     if is_test_chat_id(chat_id):
         return fake_telegram_response("deleteMessage", payload)
     return telegram_request("deleteMessage", payload=payload)
+
+
+def copy_message(
+    chat_id: str,
+    from_chat_id: str | int,
+    message_id: str | int,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+) -> dict:
+    payload: dict = {
+        "chat_id": chat_id,
+        "from_chat_id": from_chat_id,
+        "message_id": int(message_id),
+    }
+    if caption is not None:
+        payload["caption"] = caption
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("copyMessage", payload)
+    try:
+        return telegram_request("copyMessage", payload=payload)
+    except TelegramApiError as exc:
+        if parse_mode == "HTML" and caption is not None:
+            logger.warning("Telegram rejected HTML copy caption, falling back to plain text: %s", exc)
+            fallback_payload = dict(payload)
+            fallback_payload.pop("parse_mode", None)
+            fallback_payload["caption"] = strip_telegram_html(caption)
+            return telegram_request("copyMessage", payload=fallback_payload)
+        raise
 
 
 def send_document(

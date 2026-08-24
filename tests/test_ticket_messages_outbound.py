@@ -319,12 +319,64 @@ def test_background_delivery_short_text_uses_staging_and_file_id_caption(monkeyp
     finally:
         check.close()
 
+    assert not path.exists()
     assert calls["send_message"] == 0
     assert calls["delete_message"] == 0
     assert len(calls["send_document"]) == 1
     assert len(calls["send_document_by_file_id"]) == 1
     assert calls["send_document_by_file_id"][0][0][1] == "stage-file-id"
     assert calls["send_document_by_file_id"][0][1]["caption"]
+
+
+def test_background_delivery_staging_failure_keeps_local_file(monkeypatch, tmp_path):
+    _engine, SessionFactory, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Короткий ответ",
+        author_user_id="agent-1",
+        created_at=datetime.utcnow(),
+    )
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"pdf")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="helpdesk",
+        original_filename="report.pdf",
+        mime_type="application/pdf",
+        local_path=str(path),
+        telegram_delivery_status="uploading",
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([message, attachment])
+    session.commit()
+
+    monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
+    monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(outbound_service, "send_document", lambda *_args, **_kwargs: (_ for _ in ()).throw(outbound_service.TelegramApiError("staging failed")))
+    monkeypatch.setattr(outbound_service, "send_message", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("client text send should not run")))
+    monkeypatch.setattr(outbound_service, "send_document_by_file_id", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("client file send should not run")))
+
+    outbound_service.deliver_ticket_attachment(
+        attachment_id=attachment.id,
+        message_id=message.id,
+        ticket_id=ticket.id,
+        prefer_caption=True,
+    )
+
+    check = SessionFactory()
+    try:
+        saved_attachment = check.get(TicketAttachment, attachment.id)
+        assert saved_attachment.telegram_file_id is None
+        assert saved_attachment.telegram_delivery_status == "failed"
+    finally:
+        check.close()
+
+    assert path.exists()
 
 
 def test_background_delivery_delete_staging_failure_does_not_break_final_send(monkeypatch, tmp_path):
@@ -384,6 +436,85 @@ def test_background_delivery_delete_staging_failure_does_not_break_final_send(mo
         assert saved_attachment.telegram_message_id == "801"
     finally:
         check.close()
+
+    assert not path.exists()
+
+
+def test_background_delivery_commit_failure_keeps_local_file_and_skips_unlink(monkeypatch, tmp_path):
+    _engine, SessionFactory, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Короткий ответ",
+        author_user_id="agent-1",
+        created_at=datetime.utcnow(),
+    )
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"pdf")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="helpdesk",
+        original_filename="report.pdf",
+        mime_type="application/pdf",
+        local_path=str(path),
+        telegram_delivery_status="uploading",
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([message, attachment])
+    session.commit()
+
+    delivery_session = SessionFactory()
+    original_commit = delivery_session.commit
+    commit_calls = {"count": 0}
+
+    def _failing_commit():
+        commit_calls["count"] += 1
+        if commit_calls["count"] == 1:
+            raise RuntimeError("commit failed")
+        return original_commit()
+
+    delivery_session.commit = _failing_commit
+
+    monkeypatch.setattr(outbound_service, "SessionLocal", lambda: delivery_session)
+    monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(
+        outbound_service,
+        "send_document",
+        lambda *_args, **_kwargs: {
+            "result": {
+                "message_id": 301,
+                "document": {"file_id": "stage-file-id", "file_unique_id": "stage-unique-id"},
+            }
+        },
+    )
+    unlinked = []
+    monkeypatch.setattr(outbound_service, "_unlink_attachment_local_file", lambda path_value: unlinked.append(path_value))
+
+    try:
+        outbound_service.deliver_ticket_attachment(
+            attachment_id=attachment.id,
+            message_id=message.id,
+            ticket_id=ticket.id,
+            prefer_caption=True,
+        )
+        raise AssertionError("deliver_ticket_attachment should raise when commit fails")
+    except RuntimeError as exc:
+        assert str(exc) == "commit failed"
+
+    check = SessionFactory()
+    try:
+        saved_attachment = check.get(TicketAttachment, attachment.id)
+        assert saved_attachment.telegram_file_id is None
+        assert saved_attachment.telegram_delivery_status == "uploading"
+    finally:
+        check.close()
+
+    assert path.exists()
+    assert unlinked == []
 
 
 def test_background_delivery_long_text_sends_message_then_file_by_id(monkeypatch, tmp_path):
@@ -2277,6 +2408,7 @@ def test_preload_worker_finishes_claimed_uploading_preload_and_delivers_once(mon
     )
 
     outbound_service.deliver_attachment_preload(preload_id=preload.id)
+    assert not Path(attachment.local_path).exists()
     outbound_service.deliver_ticket_attachment(
         attachment_id=attachment.id,
         message_id=message.id,
@@ -2451,6 +2583,7 @@ def test_preload_worker_skips_duplicate_final_send_when_attachment_already_sent(
         assert saved_attachment.telegram_message_id == "888"
     finally:
         check.close()
+    assert not Path(attachment.local_path).exists()
 
 
 def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monkeypatch, tmp_path):
