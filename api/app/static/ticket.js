@@ -40,6 +40,7 @@ const state = {
   wrongProblemMenu: null,
   quoteMessageId: null,
   composeMode: "reply",
+  sendByEnter: false,
   selectedFiles: [],
   currentArchiveGroupId: null,
   isLoading: false,
@@ -51,6 +52,7 @@ const state = {
   isSendingReply: false,
   pendingCloseAfterSend: false,
   filePreloads: new Map(),
+  isSavingSendByEnterPreference: false,
   stateActionInFlight: null,
   restoreCloseCooldownUntil: 0,
 };
@@ -112,6 +114,8 @@ const el = {
   sendNowBtn: document.getElementById("sendNowBtn"),
   modeReplyBtn: document.getElementById("modeReplyBtn"),
   modeCommentBtn: document.getElementById("modeCommentBtn"),
+  sendByEnterCheckbox: document.getElementById("sendByEnterCheckbox"),
+  sendHotkeyHint: document.getElementById("sendHotkeyHint"),
   freezeUntil: document.getElementById("freezeUntil"),
   autoCloseBox: document.getElementById("autoCloseBox"),
   autoCloseDueText: document.getElementById("autoCloseDueText"),
@@ -377,6 +381,7 @@ function composerCtx() {
     renderAvailabilityStatus,
     messageAuthorLabel,
     isOnsitePhraseJs,
+    updateSendByEnterPreference,
     canUseAttachmentPreload: () => state.composeMode === "reply" && (state.card?.workflow_type || "ticket") === "ticket",
   };
 }
@@ -805,6 +810,14 @@ function applyComposeModeUi() {
   }
 }
 
+function refreshSendByEnterUi() {
+  if (typeof TicketComposer.refreshSendByEnterUi === "function") {
+    TicketComposer.refreshSendByEnterUi(composerCtx());
+  } else if (el.sendHotkeyHint) {
+    el.sendHotkeyHint.textContent = state.sendByEnter ? "Новая строка: Shift+Enter" : "Отправка: Ctrl+Enter";
+  }
+}
+
 function defaultClientCardViewConfig() {
   return TicketClientCard.defaultClientCardViewConfig();
 }
@@ -1089,6 +1102,42 @@ async function loadMe() {
   }
 }
 
+async function loadComposerPreferences(options = {}) {
+  const silent = Boolean(options.silent);
+  try {
+    const payload = await api("/api/v1/users/me/preferences");
+    state.sendByEnter = Boolean(payload?.send_by_enter);
+    refreshSendByEnterUi();
+  } catch (e) {
+    state.sendByEnter = false;
+    refreshSendByEnterUi();
+    if (!silent) {
+      showError(`Ошибка настройки composer: ${e.message}`);
+    }
+  }
+}
+
+async function updateSendByEnterPreference(nextValue) {
+  const previousValue = Boolean(state.sendByEnter);
+  if (state.isSavingSendByEnterPreference) return;
+  state.isSavingSendByEnterPreference = true;
+  state.sendByEnter = Boolean(nextValue);
+  refreshSendByEnterUi();
+  try {
+    const payload = await apiPatch("/api/v1/users/me/preferences", {
+      send_by_enter: state.sendByEnter,
+    });
+    state.sendByEnter = Boolean(payload?.send_by_enter);
+    setStatus("Настройка composer сохранена");
+  } catch (e) {
+    state.sendByEnter = previousValue;
+    showError(`Не удалось сохранить настройку composer: ${e.message}`);
+  } finally {
+    state.isSavingSendByEnterPreference = false;
+    refreshSendByEnterUi();
+  }
+}
+
 function syncSidebarState(sidebarState) {
   if (destroyed || !sidebarState) return;
   const prevRole = state.role;
@@ -1145,6 +1194,7 @@ function init() {
   el.agentSelect.value = state.userId;
   updateTabLinks();
   applyComposeModeUi();
+  refreshSendByEnterUi();
 
   el.roleSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
@@ -1277,7 +1327,7 @@ function init() {
     renderAgentSelect();
   }
   try {
-    await loadMe();
+    await Promise.all([loadMe(), loadComposerPreferences()]);
   } catch (e) {
     console.error("loadMe failed", e);
   }

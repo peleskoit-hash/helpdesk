@@ -810,20 +810,24 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_js = (repo_root / "api" / "app" / "static" / "ticket.js").read_text(encoding="utf-8")
 
     assert 'formData.append("single_attachment", "true")' in composer
-    assert "/static/ticket_composer.js?v=20260821b" in template
-    assert "/static/ticket_composer.js?v=20260821b" in app_shell
+    assert "/static/ticket_composer.js?v=20260824a" in template
+    assert "/static/ticket_composer.js?v=20260824a" in app_shell
     assert "/static/ticket_attachments.js?v=20260810b" in template
     assert "/static/ticket_attachments.js?v=20260810b" in app_shell
     assert "/static/app_shell.js?v=20260821b" in template
-    assert '/static/styles.css?v=20260821b' in template
-    assert '/static/styles.css?v=20260821b' in index_template
-    assert "/static/ticket.js?v=20260821b" in template
-    assert "/static/ticket.js?v=20260821b" in app_shell
+    assert '/static/styles.css?v=20260824a' in template
+    assert '/static/styles.css?v=20260824a' in index_template
+    assert "/static/ticket.js?v=20260824a" in template
+    assert "/static/ticket.js?v=20260824a" in app_shell
     assert "/static/app_shell.js?v=20260811b" not in template
     assert "/static/ticket_composer.js?v=20260811d" not in template
     assert "/static/ticket.js?v=20260810a" not in template
     assert "/static/ticket.js?v=20260810a" not in app_shell
     assert "preloaded_attachment_id" in composer
+    assert "sendByEnterCheckbox" in composer
+    assert "e.isComposing" in composer
+    assert '"/api/v1/users/me/preferences"' in ticket_js
+    assert "updateSendByEnterPreference" in ticket_js
     assert 'formData.append("archive_group_id", archiveGroupId)' in composer
     assert "currentArchiveGroupId" in composer
     assert "new Map()" in composer

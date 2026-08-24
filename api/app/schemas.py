@@ -223,6 +223,14 @@ class UserStatusUpdate(BaseModel):
     availability_status: AvailabilityStatus
 
 
+class UserPreferencesOut(BaseModel):
+    send_by_enter: bool = False
+
+
+class UserPreferencesUpdate(BaseModel):
+    send_by_enter: bool
+
+
 class AgentOut(BaseModel):
     id: str
     full_name: str

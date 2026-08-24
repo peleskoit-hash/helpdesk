@@ -413,6 +413,21 @@
     }
   }
 
+  function sendHotkeyHint(state) {
+    return state.sendByEnter ? "Новая строка: Shift+Enter" : "Отправка: Ctrl+Enter";
+  }
+
+  function refreshSendByEnterUi(ctx) {
+    const { state, el } = ctx;
+    if (el.sendByEnterCheckbox) {
+      el.sendByEnterCheckbox.checked = Boolean(state.sendByEnter);
+      el.sendByEnterCheckbox.disabled = Boolean(state.isSavingSendByEnterPreference);
+    }
+    if (el.sendHotkeyHint) {
+      el.sendHotkeyHint.textContent = sendHotkeyHint(state);
+    }
+  }
+
   function resolveAttachmentTransport(ctx, file) {
     const { state } = ctx;
     const preload = getPreloadState(state, file);
@@ -617,9 +632,23 @@
       queueSelectedFiles(ctx, el.replyFilesInput.files || []);
     });
     el.clearQuoteBtn.addEventListener("click", () => clearQuote(ctx));
+    if (el.sendByEnterCheckbox) {
+      el.sendByEnterCheckbox.addEventListener("change", async () => {
+        await ctx.updateSendByEnterPreference?.(Boolean(el.sendByEnterCheckbox.checked));
+      });
+    }
 
     el.messageInput.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter" && e.ctrlKey) {
+      if (e.key !== "Enter" || e.isComposing) return;
+      if (state.sendByEnter) {
+        if (e.shiftKey) return;
+        if (e.ctrlKey || (!e.shiftKey && !e.altKey && !e.metaKey)) {
+          e.preventDefault();
+          await sendByMode(ctx);
+        }
+        return;
+      }
+      if (e.ctrlKey) {
         e.preventDefault();
         await sendByMode(ctx);
       }
@@ -638,6 +667,7 @@
     clearSelectedFiles,
     sendByMode,
     applyComposeModeUi,
+    refreshSendByEnterUi,
     bindComposerHandlers,
     destroyComposerState,
     resolveAttachmentTransport,

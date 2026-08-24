@@ -8,7 +8,15 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, get_current_user, is_admin, is_readonly_chiki_piki
 from ..db import get_db
 from ..models import Ticket, TicketTaskKind, TicketWorkflowType, User
-from ..schemas import AgentOut, CompletionPeriodStats, CompletionStatsOut, UserStatusOut, UserStatusUpdate
+from ..schemas import (
+    AgentOut,
+    CompletionPeriodStats,
+    CompletionStatsOut,
+    UserPreferencesOut,
+    UserPreferencesUpdate,
+    UserStatusOut,
+    UserStatusUpdate,
+)
 from ..services.assignment import assign_unassigned_fairly
 
 
@@ -26,6 +34,13 @@ def _current_user_model(db: Session, current_user: CurrentUser) -> User:
         user = db.execute(
             select(User).where(User.role == "admin", User.is_active.is_(True)).order_by(User.created_at.asc()).limit(1)
         ).scalar_one_or_none()
+    if user is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+    return user
+
+
+def _real_user_model(db: Session, current_user: CurrentUser) -> User:
+    user = db.execute(select(User).where(User.id == current_user.real_user_id)).scalar_one_or_none()
     if user is None:
         _error(404, "user_not_found", "Пользователь не найден")
     return user
@@ -67,6 +82,29 @@ def _is_task_ticket(ticket: Ticket) -> bool:
 @router.get("/me", response_model=UserStatusOut)
 def get_me(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     return _status_out(_current_user_model(db, current_user))
+
+
+@router.get("/me/preferences", response_model=UserPreferencesOut)
+def get_my_preferences(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter))
+
+
+@router.patch("/me/preferences", response_model=UserPreferencesOut)
+def update_my_preferences(
+    payload: UserPreferencesUpdate,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    user.send_by_enter = bool(payload.send_by_enter)
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter))
 
 
 @router.get("/me/completion-stats", response_model=CompletionStatsOut)
@@ -246,6 +284,3 @@ def update_user_status(
     db.commit()
     db.refresh(user)
     return _status_out(user)
-
-
-

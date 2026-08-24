@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from api.app.db import Base
-from api.app.models import TelegramContact, TicketAttachment, TicketAttachmentPreload
+from api.app.models import TelegramContact, TicketAttachment, TicketAttachmentPreload, User
 from api.app.services import schema_evolution
 
 
@@ -47,6 +47,45 @@ def _create_legacy_telegram_contacts_table(engine) -> None:
                     external_chat_id VARCHAR(100) NOT NULL UNIQUE,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+
+
+def _create_legacy_users_table(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE users (
+                    id VARCHAR(36) PRIMARY KEY,
+                    company_id VARCHAR(36) NOT NULL,
+                    email VARCHAR(255),
+                    full_name VARCHAR(200) NOT NULL,
+                    role VARCHAR(20) NOT NULL,
+                    is_active BOOLEAN
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO users (
+                    id,
+                    company_id,
+                    email,
+                    full_name,
+                    role,
+                    is_active
+                ) VALUES (
+                    'user-1',
+                    'company-1',
+                    'user-1@example.test',
+                    'User One',
+                    'agent',
+                    TRUE
                 )
                 """
             )
@@ -310,6 +349,30 @@ def test_ticket_attachment_model_metadata_matches_expected_columns():
         "local_path",
         "created_at",
     }
+
+
+def test_user_send_by_enter_column_is_added_idempotently_for_existing_schema(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]: row
+            for row in conn.execute(text("PRAGMA table_info(users)")).mappings().all()
+        }
+        send_by_enter = conn.execute(text("SELECT send_by_enter FROM users WHERE id = 'user-1'")).scalar_one()
+
+    assert "send_by_enter" in columns
+    assert columns["send_by_enter"]["notnull"] == 1
+    assert send_by_enter in (0, False)
+
+
+def test_user_model_metadata_contains_send_by_enter_column():
+    assert "send_by_enter" in User.__table__.columns.keys()
 
 
 @pytest.mark.parametrize(

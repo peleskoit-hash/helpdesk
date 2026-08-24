@@ -1483,6 +1483,23 @@ textarea {
   align-items: center;
 }
 
+.composer-enter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.composer-enter-toggle input {
+  margin: 0;
+}
+
+.composer-hotkey-hint {
+  white-space: nowrap;
+}
+
 .selected-files {
   display: flex;
   flex-direction: column;
@@ -1625,6 +1642,15 @@ textarea {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+@media (max-width: 640px) {
+  .composer-send-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
 }
 
 button.action {

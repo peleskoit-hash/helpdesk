@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -60,6 +60,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     availability_status: Mapped[str] = mapped_column(String(40), default="online")
+    send_by_enter: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
