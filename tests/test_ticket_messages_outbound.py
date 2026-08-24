@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
 from api.app.models import Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType
-from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status
+from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status, get_ticket
 from api.app.services import telegram_bot as telegram_bot_service
 from api.app.services import telegram_outbound_delivery as outbound_service
 from api.app.services import ticket_messages as ticket_messages_service
@@ -679,15 +679,15 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_js = (repo_root / "api" / "app" / "static" / "ticket.js").read_text(encoding="utf-8")
 
     assert 'formData.append("single_attachment", "true")' in composer
-    assert "/static/ticket_composer.js?v=20260821a" in template
-    assert "/static/ticket_composer.js?v=20260821a" in app_shell
+    assert "/static/ticket_composer.js?v=20260821b" in template
+    assert "/static/ticket_composer.js?v=20260821b" in app_shell
     assert "/static/ticket_attachments.js?v=20260810b" in template
     assert "/static/ticket_attachments.js?v=20260810b" in app_shell
-    assert "/static/app_shell.js?v=20260821a" in template
+    assert "/static/app_shell.js?v=20260821b" in template
     assert '/static/styles.css?v=20260821b' in template
     assert '/static/styles.css?v=20260821b' in index_template
-    assert "/static/ticket.js?v=20260811a" in template
-    assert "/static/ticket.js?v=20260811a" in app_shell
+    assert "/static/ticket.js?v=20260821b" in template
+    assert "/static/ticket.js?v=20260821b" in app_shell
     assert "/static/app_shell.js?v=20260811b" not in template
     assert "/static/ticket_composer.js?v=20260811d" not in template
     assert "/static/ticket.js?v=20260810a" not in template
@@ -1117,6 +1117,69 @@ console.log(JSON.stringify({{
     assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["staleFailedEntries"])
 
 
+def test_virtual_restored_failed_preload_never_falls_back_to_raw_and_requires_reselect():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.FormData = class FakeFormData {{
+  constructor() {{
+    this._entries = [];
+  }}
+  append(key, value, filename) {{
+    if (filename) {{
+      this._entries.push([key, {{ name: filename }}]);
+      return;
+    }}
+    this._entries.push([key, value]);
+  }}
+  entries() {{
+    return this._entries[Symbol.iterator]();
+  }}
+}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+const file = {{
+  name: "restored.zip",
+  size: 8,
+  __attachmentPreloadVirtual: true,
+  __attachmentPreloadId: "preload-restored",
+}};
+const ctx = {{
+  state: {{
+    filePreloads: new Map([[file, {{
+      preloadId: "preload-restored",
+      status: "failed",
+      stage: "failed",
+    }}]]),
+  }},
+  canUseAttachmentPreload: () => true,
+}};
+const transport = global.TicketComposer.resolveAttachmentTransport(ctx, file);
+let buildError = null;
+try {{
+  global.TicketComposer.buildReplyFormData(ctx, file, 0, 1, "Hello", null, transport);
+}} catch (error) {{
+  buildError = error.message;
+}}
+console.log(JSON.stringify({{ transport, buildError }}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["transport"]["mode"] == "error"
+    assert payload["transport"]["reason"] == "virtual_preload_failed"
+    assert payload["transport"]["message"]
+    assert payload["buildError"] == payload["transport"]["message"]
+
+
 def test_selected_file_row_markup_uses_header_remove_and_progress_only_for_active_states():
     repo_root = Path(__file__).resolve().parents[1]
     composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
@@ -1352,6 +1415,208 @@ console.log(JSON.stringify({{
     payload = json.loads(result.stdout)
 
     assert payload == {"scrollTop": 91, "childCount": 3}
+
+
+def test_destroy_composer_state_keeps_preloaded_files_for_restore():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.document = {{
+  createElement() {{
+    return {{
+      className: "",
+      textContent: "",
+      children: [],
+      append(...children) {{ this.children.push(...children); }},
+      appendChild(child) {{ this.children.push(child); return child; }},
+      addEventListener() {{}},
+      classList: {{ add() {{}}, remove() {{}}, toggle() {{}}, contains() {{ return false; }} }},
+    }};
+  }},
+}};
+let cleared = 0;
+let aborted = 0;
+global.window.clearInterval = () => {{ cleared += 1; }};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+const file = {{ name: "restore.pdf", size: 5 }};
+const controller = {{ abort() {{ aborted += 1; }} }};
+const state = {{
+  selectedFiles: [file],
+  filePreloads: new Map([[file, {{
+    stage: "ready",
+    status: "ready",
+    preloadId: "preload-1",
+    controller,
+    pollTimer: 42,
+    error: null,
+    removed: false,
+  }}]]),
+}};
+
+global.TicketComposer.destroyComposerState({{ state }});
+const saved = state.filePreloads.get(file);
+    console.log(JSON.stringify({{
+      selectedCount: state.selectedFiles.length,
+      preloadCount: state.filePreloads.size,
+      preloadId: saved?.preloadId || null,
+      pollTimerIsNull: saved?.pollTimer === null,
+      controllerIsNull: saved?.controller === null,
+      cleared,
+      aborted,
+    }}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == {
+        "selectedCount": 1,
+        "preloadCount": 1,
+        "preloadId": "preload-1",
+        "pollTimerIsNull": True,
+        "controllerIsNull": True,
+        "cleared": 1,
+        "aborted": 1,
+    }
+
+
+def test_sync_restored_preloads_restores_ready_and_uploading_after_reopen():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+
+function makeClassList() {{
+  return {{ add() {{}}, remove() {{}}, toggle() {{}}, contains() {{ return false; }} }};
+}}
+
+function makeNode(tagName) {{
+  return {{
+    tagName,
+    className: "",
+    textContent: "",
+    children: [],
+    scrollTop: 0,
+    append(...children) {{ this.children.push(...children); }},
+    appendChild(child) {{ this.children.push(child); return child; }},
+    addEventListener() {{}},
+    classList: makeClassList(),
+    _html: "",
+    set innerHTML(value) {{ this._html = value; this.children = []; }},
+    get innerHTML() {{ return this._html; }},
+  }};
+}}
+
+global.document = {{
+  createElement(tagName) {{
+    return makeNode(tagName);
+  }},
+}};
+let timerId = 10;
+const activeTimers = [];
+global.window.setInterval = () => {{
+  timerId += 1;
+  activeTimers.push(timerId);
+  return timerId;
+}};
+global.window.clearInterval = () => {{}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+const selectedFilesList = makeNode("div");
+const localPendingFile = {{ name: "local.bin", size: 1 }};
+const ctx = {{
+  state: {{
+    ticketId: "ticket-1",
+    selectedFiles: [localPendingFile],
+    filePreloads: new Map([[localPendingFile, {{
+      stage: "browser_uploading",
+      status: null,
+      preloadId: null,
+      controller: null,
+      pollTimer: null,
+      error: null,
+      removed: false,
+    }}]]),
+  }},
+  el: {{
+    selectedFilesList,
+  }},
+  canUseAttachmentPreload: () => true,
+  api: () => Promise.resolve({{ id: "ignored", status: "ready" }}),
+}};
+
+global.TicketComposer.syncRestoredPreloads(ctx, [
+  {{ id: "preload-uploading", original_filename: "uploading.pdf", file_size: 3, status: "uploading" }},
+  {{ id: "preload-ready", original_filename: "ready.pdf", file_size: 4, status: "ready" }},
+  {{ id: "preload-failed", original_filename: "failed.pdf", file_size: 5, status: "failed" }},
+  {{ id: "preload-cancelled", original_filename: "cancelled.pdf", file_size: 6, status: "cancelled" }},
+]);
+
+const summary = ctx.state.selectedFiles.map((file) => {{
+  const preload = ctx.state.filePreloads.get(file);
+  return {{
+    name: file.name,
+    virtual: Boolean(file.__attachmentPreloadVirtual),
+    preloadId: preload?.preloadId || null,
+    stage: preload?.stage || null,
+    status: preload?.status || null,
+    pollTimer: preload?.pollTimer || null,
+  }};
+}});
+console.log(JSON.stringify({{
+  selectedCount: ctx.state.selectedFiles.length,
+  renderedCount: selectedFilesList.children.length,
+  summary,
+}}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["selectedCount"] == 3
+    assert payload["renderedCount"] == 3
+    assert payload["summary"] == [
+        {
+            "name": "local.bin",
+            "virtual": False,
+            "preloadId": None,
+            "stage": "browser_uploading",
+            "status": None,
+            "pollTimer": None,
+        },
+        {
+            "name": "uploading.pdf",
+            "virtual": True,
+            "preloadId": "preload-uploading",
+            "stage": "uploading",
+            "status": "uploading",
+            "pollTimer": 11,
+        },
+        {
+            "name": "ready.pdf",
+            "virtual": True,
+            "preloadId": "preload-ready",
+            "stage": "ready",
+            "status": "ready",
+            "pollTimer": None,
+        },
+    ]
 
 
 def test_staging_binary_upload_uses_extended_timeout(monkeypatch, tmp_path):
@@ -1661,6 +1926,119 @@ def test_preload_get_returns_current_status(tmp_path):
     )
 
     assert result == {"id": preload.id, "status": "ready"}
+
+
+def test_ticket_card_returns_only_active_attachment_preloads(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    now = datetime.utcnow()
+
+    active_uploading = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="uploading.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(tmp_path / "uploading.pdf"),
+        status="uploading",
+        created_at=now,
+    )
+    active_ready = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="ready.pdf",
+        mime_type="application/pdf",
+        file_size=4,
+        local_path=str(tmp_path / "ready.pdf"),
+        status="ready",
+        created_at=now,
+    )
+    failed = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="failed.pdf",
+        mime_type="application/pdf",
+        file_size=5,
+        local_path=str(tmp_path / "failed.pdf"),
+        status="failed",
+        created_at=now,
+    )
+    cancelled = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="cancelled.pdf",
+        mime_type="application/pdf",
+        file_size=6,
+        local_path=str(tmp_path / "cancelled.pdf"),
+        status="cancelled",
+        created_at=now,
+    )
+    stale_ready = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="stale.pdf",
+        mime_type="application/pdf",
+        file_size=7,
+        local_path=str(tmp_path / "stale.pdf"),
+        status="ready",
+        created_at=now - outbound_service.timedelta(hours=25),
+    )
+    foreign_user = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-2",
+        original_filename="foreign.pdf",
+        mime_type="application/pdf",
+        file_size=8,
+        local_path=str(tmp_path / "foreign.pdf"),
+        status="ready",
+        created_at=now,
+    )
+    claimed = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="claimed.pdf",
+        mime_type="application/pdf",
+        file_size=9,
+        local_path=str(tmp_path / "claimed.pdf"),
+        status="ready",
+        final_attachment_id="att-1",
+        created_at=now,
+    )
+    session.add_all([active_uploading, active_ready, failed, cancelled, stale_ready, foreign_user, claimed])
+    session.commit()
+
+    result = get_ticket(
+        ticket_id=ticket.id,
+        db=session,
+        user=SimpleNamespace(id="agent-1", role="admin"),
+    )
+
+    expected_active = [
+        {
+            "id": active_uploading.id,
+            "original_filename": "uploading.pdf",
+            "file_size": 3,
+            "status": "uploading",
+            "created_at": active_uploading.created_at,
+        },
+        {
+            "id": active_ready.id,
+            "original_filename": "ready.pdf",
+            "file_size": 4,
+            "status": "ready",
+            "created_at": active_ready.created_at,
+        },
+    ]
+    expected_active.sort(key=lambda row: (row["created_at"], row["id"]))
+
+    assert result.active_attachment_preloads == expected_active
 
 
 def test_remove_ready_preload_deletes_local_file_and_row(tmp_path):

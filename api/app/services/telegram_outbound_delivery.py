@@ -381,8 +381,10 @@ def _send_staging_document_from_path(
         )
     result = (response or {}).get("result") or {}
     document = result.get("document") or {}
-    file_id = str(document.get("file_id") or "").strip()
-    file_unique_id = str(document.get("file_unique_id") or "").strip() or None
+    media = result.get("video") or document
+
+    file_id = str(media.get("file_id") or "").strip()
+    file_unique_id = str(media.get("file_unique_id") or "").strip() or None
     message_id = str(result.get("message_id") or "").strip()
     if not file_id:
         raise RuntimeError("Telegram staging upload returned no file_id")

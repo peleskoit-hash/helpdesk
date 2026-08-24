@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import uuid
@@ -884,6 +884,27 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         ).scalars().all()
         for attachment in attachments:
             attachments_by_message.setdefault(attachment.message_id, []).append(attachment)
+    active_preload_threshold = datetime.utcnow() - timedelta(hours=24)
+    active_attachment_preloads = [
+        {
+            "id": preload.id,
+            "original_filename": preload.original_filename,
+            "file_size": preload.file_size,
+            "status": preload.status,
+            "created_at": preload.created_at,
+        }
+        for preload in db.execute(
+            select(TicketAttachmentPreload)
+            .where(
+                TicketAttachmentPreload.ticket_id == t.id,
+                TicketAttachmentPreload.user_id == user.id,
+                TicketAttachmentPreload.final_attachment_id.is_(None),
+                TicketAttachmentPreload.status.in_(["uploading", "ready"]),
+                TicketAttachmentPreload.created_at >= active_preload_threshold,
+            )
+            .order_by(asc(TicketAttachmentPreload.created_at), asc(TicketAttachmentPreload.id))
+        ).scalars().all()
+    ]
     instruction_title, instruction_text = _instruction_for_ticket(db, t)
 
     return TicketCard(
@@ -927,6 +948,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             telegram_display_name,
             _call_center_profile_overrides(t),
         ),
+        active_attachment_preloads=active_attachment_preloads,
         messages=[
             {
                 "id": m.id,

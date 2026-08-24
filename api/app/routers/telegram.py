@@ -62,6 +62,7 @@ from ..services.telegram_attachments import (
     _forbidden_attachment_type,
     _safe_filename,
     _store_telegram_attachment,
+    start_background_archive_inbound_attachment,
 )
 from ..services.telegram_menu_flow import (
     _confirm_callback_data,
@@ -2966,6 +2967,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         if automation_result is not None:
             return automation_result
         client_message = None
+        archived_attachment_id = None
         if client_body or not attachment_too_large:
             client_message = _append_client_message(db, collecting_ticket, client_body, telegram_message_id)
         if attachment_too_large:
@@ -2983,7 +2985,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 notify_client=notify_client,
             )
         elif attachment_data is not None and client_message is not None:
-            _store_telegram_attachment(db, collecting_ticket, client_message, attachment_data, external_chat_id)
+            attachment = _store_telegram_attachment(db, collecting_ticket, client_message, attachment_data, external_chat_id)
+            archived_attachment_id = attachment.id if attachment is not None else None
         refresh_ticket_auto_close_timer(db, collecting_ticket, restart_from_now=False)
 
         if button is not None:
@@ -2996,6 +2999,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         ):
             _create_group_children_from_collecting(db, collecting_ticket, button, client_body, assigned_agent)
         db.commit()
+        if archived_attachment_id:
+            start_background_archive_inbound_attachment(archived_attachment_id)
         if notify_client:
             try:
                 task_created_text, task_created_parse_mode = _automatic_telegram_text(
@@ -3047,6 +3052,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         .limit(1)
     ).scalar_one_or_none() is not None
     client_message = None
+    archived_attachment_id = None
     if text or not attachment_too_large:
         client_message = _append_client_message(db, ticket, text, telegram_message_id)
     if attachment_too_large:
@@ -3064,9 +3070,12 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             notify_client=notify_client,
         )
     elif attachment_data is not None and client_message is not None:
-        _store_telegram_attachment(db, ticket, client_message, attachment_data, external_chat_id)
+        attachment = _store_telegram_attachment(db, ticket, client_message, attachment_data, external_chat_id)
+        archived_attachment_id = attachment.id if attachment is not None else None
     refresh_ticket_auto_close_timer(db, ticket, restart_from_now=False)
     db.commit()
+    if archived_attachment_id:
+        start_background_archive_inbound_attachment(archived_attachment_id)
 
     if not had_client_messages:
         button = _button_from_callback(

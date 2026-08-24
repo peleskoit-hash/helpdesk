@@ -981,6 +981,9 @@ def ensure_ticket_attachment_table() -> None:
                         telegram_file_path VARCHAR(500),
                         telegram_delivery_status VARCHAR(20),
                         telegram_message_id VARCHAR(100),
+                        telegram_archive_message_id VARCHAR(100),
+                        telegram_archive_info_message_id VARCHAR(100),
+                        telegram_media_group_id VARCHAR(255),
                         original_filename VARCHAR(255),
                         mime_type VARCHAR(255),
                         file_size INTEGER,
@@ -996,6 +999,12 @@ def ensure_ticket_attachment_table() -> None:
                 conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))
             if "telegram_delivery_status" not in existing:
                 conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_delivery_status VARCHAR(20)"))
+            if "telegram_archive_message_id" not in existing:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_archive_message_id VARCHAR(100)"))
+            if "telegram_archive_info_message_id" not in existing:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_archive_info_message_id VARCHAR(100)"))
+            if "telegram_media_group_id" not in existing:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_media_group_id VARCHAR(255)"))
             return
 
         conn.execute(
@@ -1011,6 +1020,9 @@ def ensure_ticket_attachment_table() -> None:
                     telegram_file_path VARCHAR(500),
                     telegram_delivery_status VARCHAR(20),
                     telegram_message_id VARCHAR(100),
+                    telegram_archive_message_id VARCHAR(100),
+                    telegram_archive_info_message_id VARCHAR(100),
+                    telegram_media_group_id VARCHAR(255),
                     original_filename VARCHAR(255),
                     mime_type VARCHAR(255),
                     file_size INTEGER,
@@ -1034,6 +1046,12 @@ def ensure_ticket_attachment_table() -> None:
             conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_message_id VARCHAR(100)"))
         if "telegram_delivery_status" not in existing:
             conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_delivery_status VARCHAR(20)"))
+        if "telegram_archive_message_id" not in existing:
+            conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_archive_message_id VARCHAR(100)"))
+        if "telegram_archive_info_message_id" not in existing:
+            conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_archive_info_message_id VARCHAR(100)"))
+        if "telegram_media_group_id" not in existing:
+            conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_media_group_id VARCHAR(255)"))
 
 
 def ensure_ticket_attachment_preload_table() -> None:

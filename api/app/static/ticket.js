@@ -960,6 +960,7 @@ async function loadCard(options = {}) {
     }
     if (destroyed) return;
     state.card = card;
+    TicketComposer.syncRestoredPreloads?.(composerCtx(), card.active_attachment_preloads || []);
     state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
       ? cardConfig
       : defaultClientCardViewConfig();

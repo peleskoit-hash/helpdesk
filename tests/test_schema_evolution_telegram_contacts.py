@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from api.app.db import Base
-from api.app.models import TelegramContact, TicketAttachmentPreload
+from api.app.models import TelegramContact, TicketAttachment, TicketAttachmentPreload
 from api.app.services import schema_evolution
 
 
@@ -266,6 +266,48 @@ def test_ticket_attachment_preload_model_metadata_matches_expected_columns():
         "prefer_caption",
         "telegram_staging_info_message_id",
         "telegram_staging_file_message_id",
+        "created_at",
+    }
+
+
+def test_ticket_attachment_table_creation_is_idempotent(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_ticket_attachment_table()
+    schema_evolution.ensure_ticket_attachment_table()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]
+            for row in conn.execute(text("PRAGMA table_info(ticket_attachments)")).mappings().all()
+        }
+
+    assert "telegram_archive_message_id" in columns
+    assert "telegram_archive_info_message_id" in columns
+    assert "telegram_media_group_id" in columns
+
+
+def test_ticket_attachment_model_metadata_matches_expected_columns():
+    actual_columns = set(TicketAttachment.__table__.columns.keys())
+
+    assert actual_columns == {
+        "id",
+        "ticket_id",
+        "message_id",
+        "source",
+        "telegram_file_id",
+        "telegram_file_unique_id",
+        "telegram_file_path",
+        "telegram_delivery_status",
+        "telegram_message_id",
+        "telegram_archive_message_id",
+        "telegram_archive_info_message_id",
+        "telegram_media_group_id",
+        "original_filename",
+        "mime_type",
+        "file_size",
+        "local_path",
         "created_at",
     }
 

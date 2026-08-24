@@ -51,6 +51,13 @@
     ensurePreloadMap(state).delete(file);
   }
 
+  function cleanupPreloadRuntimeState(state) {
+    for (const [file] of ensurePreloadMap(state).entries()) {
+      clearPreloadPoll(state, file);
+      abortPreloadRequest(state, file);
+    }
+  }
+
   function cleanupAllPreloadState(state) {
     for (const [file] of ensurePreloadMap(state).entries()) {
       forgetPreloadState(state, file);
@@ -87,6 +94,27 @@
   function shouldShowSelectedFileProgress(preload) {
     const stage = preload?.stage || "";
     return stage === "browser_uploading" || stage === "uploading" || stage === "sending";
+  }
+
+  function isRestorablePreloadStatus(status) {
+    return status === "uploading" || status === "ready";
+  }
+
+  function createRestoredPreloadFile(preload) {
+    return {
+      name: preload?.original_filename || "Файл",
+      size: Number(preload?.file_size) || 0,
+      __attachmentPreloadVirtual: true,
+      __attachmentPreloadId: preload?.id || null,
+    };
+  }
+
+  function isVirtualPreloadFile(file) {
+    return Boolean(file?.__attachmentPreloadVirtual);
+  }
+
+  function findSelectedFileByPreloadId(state, preloadId) {
+    return state.selectedFiles.find((file) => getPreloadState(state, file)?.preloadId === preloadId) || null;
   }
 
   function createSelectedFileRow(ctx, file) {
@@ -180,6 +208,52 @@
       el.selectedFilesList.appendChild(createSelectedFileRow(ctx, file));
     });
     el.selectedFilesList.scrollTop = previousScrollTop;
+  }
+
+  function syncRestoredPreloads(ctx, serverPreloads) {
+    const { state } = ctx;
+    const activePreloads = Array.from(serverPreloads || []).filter((preload) => isRestorablePreloadStatus(preload?.status));
+    const nextSelectedFiles = state.selectedFiles.filter((file) => {
+      const preload = getPreloadState(state, file);
+      return !preload?.preloadId;
+    });
+    const keepFiles = new Set(nextSelectedFiles);
+
+    for (const serverPreload of activePreloads) {
+      let file = findSelectedFileByPreloadId(state, serverPreload.id);
+      if (!file) {
+        file = createRestoredPreloadFile(serverPreload);
+      }
+      keepFiles.add(file);
+      if (!nextSelectedFiles.includes(file)) {
+        nextSelectedFiles.push(file);
+      }
+      const previousState = getPreloadState(state, file);
+      setPreloadState(state, file, {
+        stage: serverPreload.status,
+        status: serverPreload.status,
+        preloadId: serverPreload.id,
+        controller: null,
+        pollTimer: previousState?.pollTimer || null,
+        error: null,
+        removed: false,
+        restored: true,
+      });
+      if (serverPreload.status === "uploading") {
+        startPreloadPolling(ctx, file, serverPreload.id);
+      } else {
+        clearPreloadPoll(state, file);
+      }
+    }
+
+    for (const [file] of ensurePreloadMap(state).entries()) {
+      if (!keepFiles.has(file)) {
+        forgetPreloadState(state, file);
+      }
+    }
+
+    state.selectedFiles = nextSelectedFiles;
+    renderSelectedFiles(ctx);
   }
 
   async function pollPreloadStatus(ctx, file, preloadId) {
@@ -343,8 +417,26 @@
     const { state } = ctx;
     const preload = getPreloadState(state, file);
     const canUsePreload = canUseAttachmentPreload(ctx);
-    if (preload?.stage === "failed") return { mode: "raw", reason: "preload_failed" };
-    if (preload?.stage === "cancelled") return { mode: "raw", reason: "preload_cancelled" };
+    if (preload?.stage === "failed") {
+      if (isVirtualPreloadFile(file)) {
+        return {
+          mode: "error",
+          reason: "virtual_preload_failed",
+          message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
+        };
+      }
+      return { mode: "raw", reason: "preload_failed" };
+    }
+    if (preload?.stage === "cancelled") {
+      if (isVirtualPreloadFile(file)) {
+        return {
+          mode: "error",
+          reason: "virtual_preload_cancelled",
+          message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
+        };
+      }
+      return { mode: "raw", reason: "preload_cancelled" };
+    }
     if (canUsePreload && preload?.stage === "browser_uploading" && !preload.preloadId) {
       abortPreloadRequest(state, file);
       return { mode: "raw", reason: "browser_uploading_without_preload_id" };
@@ -357,7 +449,21 @@
       };
     }
     if (preload?.preloadId && preload?.status && !["ready", "uploading"].includes(preload.status)) {
+      if (isVirtualPreloadFile(file)) {
+        return {
+          mode: "error",
+          reason: `virtual_preload_unusable_${preload.status}`,
+          message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
+        };
+      }
       return { mode: "raw", reason: `preload_unusable_${preload.status}` };
+    }
+    if (isVirtualPreloadFile(file) && preload?.preloadId) {
+      return {
+        mode: "error",
+        reason: "virtual_preload_missing_usable_status",
+        message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
+      };
     }
     return { mode: "raw", reason: preload?.preloadId ? "preload_missing_usable_status" : "preload_id_missing" };
   }
@@ -373,6 +479,10 @@
     if (selectedTransport.mode === "preloaded") {
       formData.append("preloaded_attachment_id", selectedTransport.preloadId);
       return formData;
+    }
+
+    if (selectedTransport.mode === "error") {
+      throw new Error(selectedTransport.message || "Подготовленный файл больше недоступен. Удалите его и выберите заново.");
     }
 
     formData.append("files", file, file.name);
@@ -517,7 +627,7 @@
   }
 
   function destroyComposerState(ctx) {
-    cleanupAllPreloadState(ctx.state);
+    cleanupPreloadRuntimeState(ctx.state);
   }
 
   global.TicketComposer = {
@@ -534,6 +644,7 @@
     buildReplyFormData,
     createSelectedFileRow,
     shouldShowSelectedFileProgress,
+    syncRestoredPreloads,
     ensureArchiveGroupId,
     queueSelectedFiles,
     removeSelectedFile,

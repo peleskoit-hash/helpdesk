@@ -155,6 +155,7 @@ class TicketCard(BaseModel):
     call_center_employee_bitrix_login: str | None = None
     client_name: str
     client_profile: ClientProfileOut
+    active_attachment_preloads: list[dict] = Field(default_factory=list)
     messages: list[TicketMessageOut]
 
 
