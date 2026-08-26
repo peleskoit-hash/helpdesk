@@ -147,6 +147,9 @@
   }
 
   function renderTelegramPreviewHtml(text) {
+    if (global.TelegramTextEditor?.renderTelegramPreviewHtml) {
+      return global.TelegramTextEditor.renderTelegramPreviewHtml(text);
+    }
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${String(text || "")}</div>`, "text/html");
     const root = doc.body.firstElementChild || doc.body;
@@ -221,7 +224,7 @@
           <strong>${escapeModalHtml(title || "Редактирование текста")}</strong>
         </div>
         <div class="modal-body bot-text-editor-body ${withTelegramPreview ? "bot-text-editor-body-split" : ""} ${withTelegramToolbar ? "bot-text-editor-body-toolbar" : ""}">
-          ${withTelegramToolbar ? `
+          ${withTelegramToolbar ? (global.TelegramTextEditor?.toolbarHtml ? global.TelegramTextEditor.toolbarHtml() : `
             <div class="bot-text-toolbar" id="botTextToolbar">
               <button type="button" class="action" data-format-action="bold"><b>Ж</b></button>
               <button type="button" class="action" data-format-action="italic"><i>К</i></button>
@@ -236,7 +239,7 @@
               <button type="button" class="action bot-emoji-trigger" data-format-action="emoji" aria-expanded="false" aria-haspopup="dialog">🙂</button>
               <button type="button" class="action" data-format-action="clear">Очистить формат</button>
             </div>
-          ` : ""}
+          `) : ""}
           <textarea id="botTextEditorTextarea" class="input bot-text-editor-textarea" placeholder="${escapeModalHtml(placeholder)}">${escapeModalHtml(value || "")}</textarea>
           ${withTelegramPreview ? `
             <div class="bot-telegram-preview-wrap">
@@ -296,7 +299,11 @@
     textarea?.addEventListener("select", rememberSelection);
     syncPreview();
 
-    if (withTelegramToolbar) {
+    if (withTelegramToolbar && global.TelegramTextEditor?.bindToolbar) {
+      global.TelegramTextEditor.bindToolbar(overlay, textarea);
+    }
+
+    if (withTelegramToolbar && !global.TelegramTextEditor?.bindToolbar) {
       toolbar?.addEventListener("mousedown", (event) => {
         if (event.target?.closest?.("[data-format-action], .bot-emoji-picker")) {
           event.preventDefault();
@@ -915,6 +922,7 @@
 
   EditorView.cleanup = function cleanup() {
     closeTextEditorModal();
+    if (global.TelegramTextEditor?.closeEmojiPicker) global.TelegramTextEditor.closeEmojiPicker();
   };
 
   EditorView.openTextEditorModal = openTextEditorModal;

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import AutomaticMessageTemplate, TelegramContact, Ticket, User
-from .telegram_text_format import prepare_telegram_html_message
+from .telegram_text_format import TelegramHtmlValidationError, prepare_telegram_html_message, validate_telegram_html
 from .template_fields import template_context
 
 _FIELD_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
@@ -371,7 +371,124 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
     ),
 )
 
+
+NOTIFICATION_BOT_BASIC_CATEGORY = "notification_bot_basic"
+
+NOTIFICATION_BOT_BASIC_DEFINITIONS: tuple[AutomaticMessageDefinition, ...] = (
+    AutomaticMessageDefinition(
+        key="telegram.notification_bot.basic.new_assignment",
+        title="Новая заявка",
+        description="Уведомление сотруднику о новой назначенной заявке",
+        category=NOTIFICATION_BOT_BASIC_CATEGORY,
+        category_title="Базовые уведомления в боте",
+        sort_order=10,
+        default_text=(
+            "Вам назначена новая [Тип заявки]\n\n"
+            "Автор: [Автор заявки/задачи]\n"
+            "Подразделение: [Подразделение автора]\n"
+            "Заголовок: [Заголовок заявки]\n\n"
+            "[Ссылка на заявку]"
+        ),
+        channel="employee_telegram",
+        runtime_enabled=False,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.notification_bot.basic.new_message",
+        title="Новое сообщение",
+        description="Уведомление сотруднику о новом сообщении в заявке",
+        category=NOTIFICATION_BOT_BASIC_CATEGORY,
+        category_title="Базовые уведомления в боте",
+        sort_order=20,
+        default_text=(
+            "Новое сообщение в заявке\n\n"
+            "Автор: [Автор сообщения]\n"
+            "Вид: [Вид сообщения]\n\n"
+            "[Тело сообщения]\n\n"
+            "[Ссылка на заявку]"
+        ),
+        channel="employee_telegram",
+        runtime_enabled=False,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.notification_bot.basic.transfer_to_agent",
+        title="Перевод на агента",
+        description="Уведомление сотруднику о переданной ему заявке",
+        category=NOTIFICATION_BOT_BASIC_CATEGORY,
+        category_title="Базовые уведомления в боте",
+        sort_order=30,
+        default_text=(
+            "Вам передана заявка\n\n"
+            "Предыдущий агент: [Предыдущий агент]\n"
+            "Заголовок: [Заголовок заявки]\n\n"
+            "[Ссылка на заявку]"
+        ),
+        channel="employee_telegram",
+        runtime_enabled=False,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.notification_bot.basic.transfer_from_agent",
+        title="Перевод с агента",
+        description="Уведомление сотруднику о заявке, переданной от него",
+        category=NOTIFICATION_BOT_BASIC_CATEGORY,
+        category_title="Базовые уведомления в боте",
+        sort_order=40,
+        default_text=(
+            "Ваша заявка передана\n\n"
+            "Куда передана: [Куда передана заявка]\n"
+            "Администратор: [Администратор перевода]\n"
+            "Заголовок: [Заголовок заявки]\n\n"
+            "[Ссылка на заявку]"
+        ),
+        channel="employee_telegram",
+        runtime_enabled=False,
+    ),
+)
+
 _REGISTRY_BY_KEY = {item.key: item for item in AUTOMATIC_MESSAGE_REGISTRY}
+_NOTIFICATION_BOT_BASIC_BY_TYPE = {
+    definition.key.rsplit(".", 1)[-1]: definition
+    for definition in NOTIFICATION_BOT_BASIC_DEFINITIONS
+}
+
+NOTIFICATION_BOT_BASIC_TAGS: dict[str, tuple[str, ...]] = {
+    "new_assignment": (
+        "[Номер заявки]",
+        "[Тип заявки]",
+        "[Заголовок заявки]",
+        "[Автор заявки/задачи]",
+        "[Подразделение автора]",
+        "[Дата создания]",
+        "[Ссылка на заявку]",
+    ),
+    "new_message": (
+        "[Номер заявки]",
+        "[Тип заявки]",
+        "[Заголовок заявки]",
+        "[Автор сообщения]",
+        "[Вид сообщения]",
+        "[Тело сообщения]",
+        "[Дата сообщения]",
+        "[Ссылка на заявку]",
+    ),
+    "transfer_to_agent": (
+        "[Номер заявки]",
+        "[Тип заявки]",
+        "[Заголовок заявки]",
+        "[Предыдущий агент]",
+        "[Администратор перевода]",
+        "[Дата перевода]",
+        "[Ссылка на заявку]",
+    ),
+    "transfer_from_agent": (
+        "[Номер заявки]",
+        "[Тип заявки]",
+        "[Заголовок заявки]",
+        "[Куда передана заявка]",
+        "[Администратор перевода]",
+        "[Дата перевода]",
+        "[Ссылка на заявку]",
+    ),
+}
 
 VARIABLE_DESCRIPTIONS: dict[str, str] = {
     "agent_answer": "Текст ответа сотрудника",
@@ -504,6 +621,14 @@ def list_automatic_message_definitions() -> list[AutomaticMessageDefinition]:
     return list(AUTOMATIC_MESSAGE_REGISTRY)
 
 
+def get_notification_bot_basic_definition(notification_type: str) -> AutomaticMessageDefinition | None:
+    return _NOTIFICATION_BOT_BASIC_BY_TYPE.get(str(notification_type or "").strip())
+
+
+def list_notification_bot_basic_definitions() -> list[AutomaticMessageDefinition]:
+    return list(NOTIFICATION_BOT_BASIC_DEFINITIONS)
+
+
 def _normalize_body(value: str | None) -> str | None:
     if value is None:
         return None
@@ -596,6 +721,74 @@ def serialize_automatic_message(db: Session, definition: AutomaticMessageDefinit
         "html_enabled": bool(row.html_enabled) if row is not None and row.html_enabled is not None else definition.html_enabled,
         "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
     }
+
+
+def serialize_notification_bot_basic_template(db: Session, definition: AutomaticMessageDefinition) -> dict:
+    row = get_automatic_message_row(db, definition.key)
+    body = _normalize_body(row.body if row is not None else None)
+    is_overridden = bool(row and row.is_overridden and body is not None)
+    enabled = bool(row.enabled) if row is not None and row.enabled is not None else True
+    notification_type = definition.key.rsplit(".", 1)[-1]
+    return {
+        "type": notification_type,
+        "key": definition.key,
+        "title": definition.title,
+        "description": definition.description,
+        "enabled": enabled,
+        "template": body if is_overridden else ("" if row is not None and not enabled and body is None else definition.default_text),
+        "default_template": definition.default_text,
+        "is_overridden": is_overridden,
+        "html_enabled": bool(row.html_enabled) if row is not None and row.html_enabled is not None else definition.html_enabled,
+        "disable_link_preview": bool(row.disable_link_preview) if row is not None else False,
+        "send_silently": bool(row.send_silently) if row is not None else False,
+        "tags": list(NOTIFICATION_BOT_BASIC_TAGS.get(notification_type, ())),
+        "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
+    }
+
+
+def validate_notification_bot_basic_template(*, enabled: bool, template: str | None) -> str | None:
+    body = _normalize_body(template)
+    if enabled and body is None:
+        raise ValueError("Добавьте текст уведомления или отключите этот тип")
+    try:
+        validate_telegram_html(body or "")
+    except TelegramHtmlValidationError as exc:
+        raise ValueError(str(exc) or "Некорректная Telegram-разметка") from exc
+    return body
+
+
+def upsert_notification_bot_basic_template(
+    db: Session,
+    notification_type: str,
+    *,
+    enabled: bool,
+    template: str | None,
+    disable_link_preview: bool = False,
+    send_silently: bool = False,
+    html_enabled: bool = True,
+) -> AutomaticMessageTemplate:
+    definition = get_notification_bot_basic_definition(notification_type)
+    if definition is None:
+        raise KeyError(notification_type)
+    body = validate_notification_bot_basic_template(enabled=enabled, template=template)
+    now = datetime.utcnow()
+    row = get_automatic_message_row(db, definition.key)
+    if row is None:
+        row = AutomaticMessageTemplate(
+            id=str(uuid.uuid4()),
+            key=definition.key,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    row.body = body
+    row.is_overridden = body is not None and body != definition.default_text
+    row.html_enabled = bool(html_enabled)
+    row.enabled = bool(enabled)
+    row.disable_link_preview = bool(disable_link_preview)
+    row.send_silently = bool(send_silently)
+    row.updated_at = now
+    return row
 
 
 def upsert_automatic_message_override(db: Session, key: str, body: str | None, *, html_enabled: bool | None = None) -> AutomaticMessageTemplate:

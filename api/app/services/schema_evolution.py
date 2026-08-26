@@ -1066,6 +1066,9 @@ def ensure_automatic_message_templates_table() -> None:
                     body TEXT,
                     is_overridden {bool_type},
                     html_enabled {bool_type},
+                    enabled {bool_type},
+                    disable_link_preview {bool_type},
+                    send_silently {bool_type},
                     created_at {timestamp_type},
                     updated_at {timestamp_type}
                 )
@@ -1073,8 +1076,31 @@ def ensure_automatic_message_templates_table() -> None:
             )
         )
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_automatic_message_templates_key ON automatic_message_templates(key)"))
+        if conn.dialect.name == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(automatic_message_templates)")).mappings().all()
+            existing = {row["name"] for row in rows}
+        else:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'automatic_message_templates'
+                    """
+                )
+            ).fetchall()
+            existing = {row[0] for row in rows}
+        if "enabled" not in existing:
+            conn.execute(text("ALTER TABLE automatic_message_templates ADD COLUMN enabled BOOLEAN"))
+        if "disable_link_preview" not in existing:
+            conn.execute(text("ALTER TABLE automatic_message_templates ADD COLUMN disable_link_preview BOOLEAN"))
+        if "send_silently" not in existing:
+            conn.execute(text("ALTER TABLE automatic_message_templates ADD COLUMN send_silently BOOLEAN"))
         conn.execute(text("UPDATE automatic_message_templates SET is_overridden = FALSE WHERE is_overridden IS NULL"))
         conn.execute(text("UPDATE automatic_message_templates SET html_enabled = TRUE WHERE html_enabled IS NULL"))
+        conn.execute(text("UPDATE automatic_message_templates SET enabled = TRUE WHERE enabled IS NULL"))
+        conn.execute(text("UPDATE automatic_message_templates SET disable_link_preview = FALSE WHERE disable_link_preview IS NULL"))
+        conn.execute(text("UPDATE automatic_message_templates SET send_silently = FALSE WHERE send_silently IS NULL"))
 
 
 def ensure_ticket_message_columns() -> None:

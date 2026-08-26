@@ -35,6 +35,10 @@ _HAS_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9\-]*)\b")
 _STRIP_TAG_RE = re.compile(r"</?[^>]+>")
 
 
+class TelegramHtmlValidationError(ValueError):
+    pass
+
+
 def _is_safe_href(value: str) -> bool:
     href = (value or "").strip()
     if not href:
@@ -137,6 +141,70 @@ def sanitize_telegram_html(text: str) -> str:
     return parser.getvalue()
 
 
+class _TelegramHtmlValidator(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.stack: list[tuple[str, str]] = []
+
+    def _fail(self, message: str) -> None:
+        raise TelegramHtmlValidationError(message)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        raw = (tag or "").lower()
+        fragment = self.get_starttag_text() or f"<{raw}>"
+        if raw not in _ALLOWED_TAGS:
+            self._fail(f"Неподдерживаемый Telegram-тег {fragment}")
+        normalized = _TAG_NORMALIZE.get(raw, raw)
+        if normalized == "a":
+            href_values = [value for key, value in attrs if (key or "").lower() == "href"]
+            if len(href_values) != 1 or not _is_safe_href(href_values[0] or ""):
+                self._fail(f"Некорректная ссылка в {fragment}")
+            extra_attrs = [key for key, _ in attrs if (key or "").lower() != "href"]
+            if extra_attrs:
+                self._fail(f"Запрещённый атрибут в {fragment}")
+        elif normalized == "blockquote":
+            for key, value in attrs:
+                if (key or "").lower() != "expandable" or value not in (None, "", "expandable"):
+                    self._fail(f"Запрещённый атрибут в {fragment}")
+        elif attrs:
+            self._fail(f"Запрещённый атрибут в {fragment}")
+        self.stack.append((normalized, fragment))
+
+    def handle_endtag(self, tag: str) -> None:
+        raw = (tag or "").lower()
+        if raw not in _ALLOWED_TAGS:
+            self._fail(f"Неподдерживаемый Telegram-тег </{raw}>")
+        expected = _TAG_NORMALIZE.get(raw, raw)
+        if not self.stack:
+            self._fail(f"Закрывающий Telegram-тег </{raw}> без открывающего")
+        opened, fragment = self.stack.pop()
+        if opened != expected:
+            self._fail(f"Некорректное пересечение Telegram-тегов: {fragment} закрывается </{raw}>")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        raw = (tag or "").lower()
+        fragment = self.get_starttag_text() or f"<{raw}/>"
+        self._fail(f"Самозакрывающийся Telegram-тег не поддерживается: {fragment}")
+
+    def close(self) -> None:
+        super().close()
+        if self.stack:
+            _opened, fragment = self.stack[-1]
+            self._fail(f"Незакрытый Telegram-тег {fragment}")
+
+
+def validate_telegram_html(text: str) -> None:
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    parser = _TelegramHtmlValidator()
+    try:
+        parser.feed(raw)
+        parser.close()
+    except TelegramHtmlValidationError:
+        raise
+    except Exception as exc:
+        raise TelegramHtmlValidationError("Некорректная Telegram-разметка") from exc
+
+
 def prepare_telegram_html_message(text: str) -> tuple[str, str | None]:
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not raw:
@@ -147,4 +215,3 @@ def prepare_telegram_html_message(text: str) -> tuple[str, str | None]:
     if not has_telegram_html(safe):
         return strip_telegram_html(safe), None
     return safe, "HTML"
-

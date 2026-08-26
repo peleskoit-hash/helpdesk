@@ -467,5 +467,8 @@ class AutomaticMessageTemplate(Base):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
     html_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    disable_link_preview: Mapped[bool] = mapped_column(Boolean, default=False)
+    send_silently: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

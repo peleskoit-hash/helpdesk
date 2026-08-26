@@ -5355,3 +5355,102 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
     max-height: 38vh;
   }
 }
+
+.notification-bot-basic-panel {
+  display: block;
+}
+
+.notification-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.notification-tab {
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.notification-tab.active {
+  border-color: var(--accent);
+  background: var(--system);
+}
+
+.notification-pane {
+  display: grid;
+  gap: 16px;
+}
+
+.notification-enabled-row {
+  justify-content: flex-start;
+}
+
+.notification-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  gap: 16px;
+  align-items: start;
+}
+
+.notification-editor-main,
+.notification-tags {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-template-textarea {
+  min-height: 260px;
+  width: 100%;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.telegram-editor-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.notification-tag-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notification-tag-btn {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 34px;
+  white-space: normal;
+  text-align: left;
+}
+
+.notification-validation {
+  min-height: 20px;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.notification-preview-wrap {
+  width: 100%;
+}
+
+.notification-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .notification-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .notification-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,68 @@
+[
+  {
+    "name": "plain static text",
+    "text": "Обычный статический текст",
+    "ok": true
+  },
+  {
+    "name": "plain symbols are allowed",
+    "text": "2 < 3, 5 > 4, A & B, \"quote\"",
+    "ok": true
+  },
+  {
+    "name": "bold tag",
+    "text": "Текст <b>жирный</b>",
+    "ok": true
+  },
+  {
+    "name": "nested markup",
+    "text": "<b>жирный <i>курсив</i></b>",
+    "ok": true
+  },
+  {
+    "name": "unclosed tag",
+    "text": "<b>broken",
+    "ok": false,
+    "message_contains": "Незакрытый Telegram-тег <b>"
+  },
+  {
+    "name": "closing without opener",
+    "text": "broken</b>",
+    "ok": false,
+    "message_contains": "Закрывающий Telegram-тег </b> без открывающего"
+  },
+  {
+    "name": "crossed tags",
+    "text": "<b><i>broken</b></i>",
+    "ok": false,
+    "message_contains": "Некорректное пересечение Telegram-тегов"
+  },
+  {
+    "name": "unsupported tag",
+    "text": "<div>broken</div>",
+    "ok": false,
+    "message_contains": "Неподдерживаемый Telegram-тег <div>"
+  },
+  {
+    "name": "valid hidden link",
+    "text": "<a href=\"https://example.com/ticket/1\">Заявка</a>",
+    "ok": true
+  },
+  {
+    "name": "invalid hidden link",
+    "text": "<a href=\"javascript:alert(1)\">Заявка</a>",
+    "ok": false,
+    "message_contains": "Некорректная ссылка в <a href=\"javascript:alert(1)\">"
+  },
+  {
+    "name": "forbidden attribute",
+    "text": "<b class=\"x\">broken</b>",
+    "ok": false,
+    "message_contains": "Запрещённый атрибут в <b class=\"x\">"
+  },
+  {
+    "name": "expandable blockquote",
+    "text": "<blockquote expandable>Под кат</blockquote>",
+    "ok": true
+  }
+]

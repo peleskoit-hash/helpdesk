@@ -18,6 +18,7 @@
         "/static/bot_buttons_api.js?v=20260520a",
         "/static/bot_buttons_files.js?v=20260629a",
         "/static/bot_buttons_level_view.js?v=20260520a",
+        "/static/telegram_text_editor.js?v=20260826a",
         "/static/bot_buttons_editor.js?v=20260629a",
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
@@ -30,6 +31,14 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/settings_automatic_messages.js?v=20260605a",
+      ],
+    }],
+    ["/settings/notification-bot-basic", {
+      page: "settings-notification-bot-basic",
+      scripts: [
+        "/static/bot_buttons_emoji_data.js?v=20260605a",
+        "/static/telegram_text_editor.js?v=20260826a",
+        "/static/settings_notification_bot_basic.js?v=20260826a",
       ],
     }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],

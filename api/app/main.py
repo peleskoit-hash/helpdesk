@@ -28,6 +28,7 @@ from .routers.settings_bot_button_items import router as settings_bot_button_ite
 from .routers.settings_bot_menu_profiles import router as settings_bot_menu_profiles_router
 from .routers.settings_bot_button_structure import router as settings_bot_button_structure_router
 from .routers.settings_client_card import router as settings_client_card_router
+from .routers.settings_notification_bot_basic import router as settings_notification_bot_basic_router
 from .routers.settings_users import router as settings_users_router
 from .routers.telegram import router as telegram_router
 from .routers.tickets import router as tickets_router
@@ -78,6 +79,7 @@ app.include_router(settings_bot_menu_profiles_router)
 app.include_router(settings_bot_button_structure_router)
 app.include_router(settings_users_router)
 app.include_router(settings_client_card_router)
+app.include_router(settings_notification_bot_basic_router)
 app.include_router(mass_notifications_router)
 app.include_router(management_users_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -322,6 +324,16 @@ def settings_automatic_messages_page(request: Request, db: Session = Depends(get
     if not user.is_real_admin:
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "settings_automatic_messages.html"))
+
+
+@app.get("/settings/notification-bot-basic")
+def settings_notification_bot_basic_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/settings/notification-bot-basic")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "settings_notification_bot_basic.html"))
 
 
 @app.get("/statuses")
