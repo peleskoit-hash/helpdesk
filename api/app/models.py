@@ -260,6 +260,23 @@ class TelegramContact(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class TelegramNotificationAccount(Base):
+    __tablename__ = "telegram_notification_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    telegram_user_id: Mapped[str] = mapped_column(String(100), unique=True)
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    telegram_display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    bound_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), unique=True, nullable=True)
+    request_status: Mapped[str] = mapped_column(String(30), default="pending", server_default=text("'pending'"), nullable=False)
+    delivery_available: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    is_notification_bot_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class TelegramUpdate(Base):
     __tablename__ = "telegram_updates"
 

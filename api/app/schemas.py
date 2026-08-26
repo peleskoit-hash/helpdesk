@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TicketListItem(BaseModel):
@@ -249,11 +249,15 @@ class SettingsUserOut(BaseModel):
     is_active: bool
     availability_status: AvailabilityStatus
     legacy_ticket_count: int = 0
+    telegram_notification_bound: bool = False
+    telegram_notification_display: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class SettingsUserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     full_name: str = Field(min_length=1)
     login: str = Field(min_length=1)
     password: str = Field(min_length=1)
@@ -264,6 +268,8 @@ class SettingsUserCreate(BaseModel):
 
 
 class SettingsUserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     full_name: str | None = None
     login: str | None = None
     password: str | None = None

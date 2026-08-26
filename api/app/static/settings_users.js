@@ -3,6 +3,7 @@ function initSettingsUsersPage() {
 const state = {
   users: [],
   editingUserId: null,
+  currentTelegramNotification: null,
 };
 
 const roleLabels = { admin: "Администратор", agent: "Сотрудник", trainee: "Стажёр", chiki_piki: "Чики-пики" };
@@ -24,6 +25,9 @@ const el = {
   fRole: document.getElementById("fRole"),
   fIsActive: document.getElementById("fIsActive"),
   fLegacyTicketCount: document.getElementById("fLegacyTicketCount"),
+  telegramNotificationBlock: document.getElementById("telegramNotificationBlock"),
+  telegramNotificationStatus: document.getElementById("telegramNotificationStatus"),
+  telegramNotificationDisplay: document.getElementById("telegramNotificationDisplay"),
   errorModal: document.getElementById("errorModal"),
   errorText: document.getElementById("errorText"),
   closeErrorModalBtn: document.getElementById("closeErrorModalBtn"),
@@ -69,6 +73,13 @@ function closeOnBackdropClick(modal, closeHandler) {
 
 function fillModal(user = null) {
   state.editingUserId = user?.id || null;
+  state.currentTelegramNotification = user ? {
+    bound: Boolean(user.telegram_notification_bound),
+    display: user.telegram_notification_display || null,
+  } : {
+    bound: false,
+    display: null,
+  };
   el.userModalTitle.textContent = user ? "Редактирование пользователя" : "Создание пользователя";
   el.fFullName.value = user?.full_name || "";
   el.fLogin.value = user?.login || "";
@@ -77,6 +88,23 @@ function fillModal(user = null) {
   el.fRole.value = user?.role || "agent";
   el.fIsActive.checked = user ? Boolean(user.is_active) : true;
   if (el.fLegacyTicketCount) el.fLegacyTicketCount.value = String(Math.max(0, Number(user?.legacy_ticket_count || 0)));
+  syncTelegramNotificationBlock();
+}
+
+function shouldShowTelegramNotification(role) {
+  return role === "admin" || role === "agent";
+}
+
+function syncTelegramNotificationBlock() {
+  const role = el.fRole.value || "agent";
+  const visible = shouldShowTelegramNotification(role);
+  el.telegramNotificationBlock.classList.toggle("hidden", !visible);
+  if (!visible) return;
+
+  const bound = Boolean(state.currentTelegramNotification?.bound);
+  el.telegramNotificationStatus.textContent = `Бот уведомлений: ${bound ? "привязан" : "не привязан"}`;
+  el.telegramNotificationDisplay.textContent = state.currentTelegramNotification?.display || "";
+  el.telegramNotificationDisplay.classList.toggle("hidden", !(bound && state.currentTelegramNotification?.display));
 }
 
 function openUserModal(user = null) {
@@ -180,6 +208,7 @@ const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); c
   el.createUserBtn.addEventListener("click", () => openUserModal());
   el.closeUserModalBtn.addEventListener("click", closeUserModal);
   el.saveUserBtn.addEventListener("click", saveUser);
+  el.fRole.addEventListener("change", syncTelegramNotificationBlock);
   closeOnBackdropClick(el.userModal, closeUserModal);
   el.closeErrorModalBtn.addEventListener("click", closeError);
   el.okErrorBtn.addEventListener("click", closeError);

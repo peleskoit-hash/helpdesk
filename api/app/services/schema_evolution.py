@@ -5,6 +5,7 @@ from sqlalchemy import text
 from ..db import engine
 
 TELEGRAM_CONTACT_COMPANY_USER_UNIQUE_NAME = "uq_telegram_contacts_company_external_user"
+TELEGRAM_NOTIFICATION_ACCOUNT_USER_ID_UNIQUE_NAME = "uq_telegram_notification_accounts_bound_user_id"
 
 
 def _telegram_contact_duplicate_group_count(conn) -> int:
@@ -410,6 +411,152 @@ def ensure_telegram_contact_company_user_unique() -> None:
                 "UNIQUE (company_id, external_user_id)"
             )
         )
+
+
+def ensure_telegram_notification_accounts_table() -> None:
+    required_columns = {
+        "telegram_chat_id": "VARCHAR(100)",
+        "telegram_username": "VARCHAR(100)",
+        "telegram_display_name": "VARCHAR(200)",
+        "bound_user_id": "VARCHAR(36)",
+        "request_status": "VARCHAR(30)",
+        "delivery_available": "BOOLEAN",
+        "is_blocked": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "is_notification_bot_admin": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP",
+    }
+
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS telegram_notification_accounts (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    telegram_user_id VARCHAR(100) NOT NULL UNIQUE,
+                    telegram_chat_id VARCHAR(100),
+                    telegram_username VARCHAR(100),
+                    telegram_display_name VARCHAR(200),
+                    bound_user_id VARCHAR(36) REFERENCES users(id) UNIQUE,
+                    request_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                    delivery_available BOOLEAN NOT NULL DEFAULT TRUE,
+                    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_notification_bot_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL
+                )
+                """
+            )
+        )
+
+        if dialect == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(telegram_notification_accounts)")).mappings().all()
+            existing = {row["name"] for row in rows}
+        else:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'telegram_notification_accounts'
+                    """
+                )
+            ).fetchall()
+            existing = {row[0] for row in rows}
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing:
+                conn.execute(text(f"ALTER TABLE telegram_notification_accounts ADD COLUMN {column_name} {column_type}"))
+
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET request_status = 'pending' "
+                "WHERE request_status IS NULL OR request_status = ''"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET delivery_available = TRUE "
+                "WHERE delivery_available IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET is_blocked = FALSE "
+                "WHERE is_blocked IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET is_notification_bot_admin = FALSE "
+                "WHERE is_notification_bot_admin IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET created_at = CURRENT_TIMESTAMP "
+                "WHERE created_at IS NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE telegram_notification_accounts "
+                "SET updated_at = CURRENT_TIMESTAMP "
+                "WHERE updated_at IS NULL"
+            )
+        )
+
+        if dialect == "sqlite":
+            if not _sqlite_has_equivalent_unique_index(conn, "telegram_notification_accounts", ("telegram_user_id",)):
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_notification_accounts_user_id "
+                        "ON telegram_notification_accounts(telegram_user_id)"
+                    )
+                )
+            if not _sqlite_has_equivalent_unique_index(conn, "telegram_notification_accounts", ("bound_user_id",)):
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        f"{TELEGRAM_NOTIFICATION_ACCOUNT_USER_ID_UNIQUE_NAME} "
+                        "ON telegram_notification_accounts(bound_user_id)"
+                    )
+                )
+            return
+
+        if not _postgres_has_equivalent_unique_invariant(conn, "telegram_notification_accounts", ("telegram_user_id",)):
+            conn.execute(
+                text(
+                    "ALTER TABLE telegram_notification_accounts "
+                    "ADD CONSTRAINT uq_telegram_notification_accounts_telegram_user_id "
+                    "UNIQUE (telegram_user_id)"
+                )
+            )
+        if not _postgres_has_equivalent_unique_invariant(conn, "telegram_notification_accounts", ("bound_user_id",)):
+            conn.execute(
+                text(
+                    "ALTER TABLE telegram_notification_accounts "
+                    f"ADD CONSTRAINT {TELEGRAM_NOTIFICATION_ACCOUNT_USER_ID_UNIQUE_NAME} "
+                    "UNIQUE (bound_user_id)"
+                )
+            )
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN request_status SET DEFAULT 'pending'"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN request_status SET NOT NULL"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN delivery_available SET DEFAULT TRUE"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN delivery_available SET NOT NULL"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN is_blocked SET DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN is_blocked SET NOT NULL"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN is_notification_bot_admin SET DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN is_notification_bot_admin SET NOT NULL"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN created_at SET NOT NULL"))
+        conn.execute(text("ALTER TABLE telegram_notification_accounts ALTER COLUMN updated_at SET NOT NULL"))
 
 
 def ensure_user_columns() -> None:

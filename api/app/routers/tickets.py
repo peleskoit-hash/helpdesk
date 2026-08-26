@@ -24,7 +24,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
-from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook
+from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
 from ..services.telegram_outbound_delivery import (
@@ -260,6 +260,7 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
             ticket.status = TicketStatus.UNASSIGNED.value
         ticket.updated_at = datetime.utcnow()
         append_system_message(db, ticket, assignee_change_message(old_assignee, None))
+        schedule_employee_assignment_notification(db, ticket, old_assignee=old_assignee, new_assignee=None)
         return
 
     if _handle_special_assignment(
@@ -274,6 +275,12 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         notify_client_about_assignee_fn=notify_client_about_assignee,
         error_fn=_error,
     ):
+        schedule_employee_assignment_notification(
+            db,
+            ticket,
+            old_assignee=old_assignee,
+            new_assignee=assignee,
+        )
         return
 
     ticket.assignee_id = assignee.id
@@ -283,6 +290,7 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
     ticket.updated_at = datetime.utcnow()
     append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
     run_group_parent_assigned_hook(db, ticket, assignee)
+    schedule_employee_assignment_notification(db, ticket, old_assignee=old_assignee, new_assignee=assignee)
     if is_admin(actor):
         # Admin took ticket from support queue.
         if assignee.id == actor.id and old_assignee is not None and old_assignee.id != actor.id:

@@ -65,20 +65,21 @@ class TelegramApiError(RuntimeError):
     pass
 
 
-def _api_url(method: str) -> str:
-    if not settings.telegram_bot_token:
+def _api_url(method: str, *, bot_token: str | None = None) -> str:
+    token = settings.telegram_bot_token if bot_token is None else bot_token
+    if not token:
         raise TelegramApiError("Telegram bot token is not configured")
-    return f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
+    return f"https://api.telegram.org/bot{token}/{method}"
 
 
-def telegram_request(method: str, payload: dict | None = None, timeout: int = 30) -> dict:
+def telegram_request(method: str, payload: dict | None = None, timeout: int = 30, *, bot_token: str | None = None) -> dict:
     data = None
     headers = {}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
 
-    request = Request(_api_url(method), data=data, headers=headers, method="POST" if payload is not None else "GET")
+    request = Request(_api_url(method, bot_token=bot_token), data=data, headers=headers, method="POST" if payload is not None else "GET")
     try:
         with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -94,7 +95,7 @@ def telegram_request(method: str, payload: dict | None = None, timeout: int = 30
         raise TelegramApiError(str(exc)) from exc
 
 
-def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: int = 60) -> dict:
+def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: int = 60, *, bot_token: str | None = None) -> dict:
     boundary = f"----helpdesk-{uuid.uuid4().hex}"
     body = bytearray()
 
@@ -122,7 +123,7 @@ def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: 
 
     body.extend(f"--{boundary}--\r\n".encode("utf-8"))
     request = Request(
-        _api_url(method),
+        _api_url(method, bot_token=bot_token),
         data=bytes(body),
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
@@ -142,7 +143,7 @@ def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: 
         raise TelegramApiError(str(exc)) from exc
 
 
-def get_updates(offset: int | None, timeout: int) -> list[dict]:
+def get_updates(offset: int | None, timeout: int, *, bot_token: str | None = None) -> list[dict]:
     query = {
         "timeout": timeout,
         "allowed_updates": json.dumps(["message", "edited_message", "callback_query"], ensure_ascii=False),
@@ -150,7 +151,7 @@ def get_updates(offset: int | None, timeout: int) -> list[dict]:
     if offset is not None:
         query["offset"] = offset
 
-    url = f"{_api_url('getUpdates')}?{urlencode(query)}"
+    url = f"{_api_url('getUpdates', bot_token=bot_token)}?{urlencode(query)}"
     request = Request(url, method="GET")
     with urlopen(request, timeout=timeout + 10) as response:
         payload = json.loads(response.read().decode("utf-8"))
@@ -160,16 +161,17 @@ def get_updates(offset: int | None, timeout: int) -> list[dict]:
     return payload.get("result", [])
 
 
-def set_bot_commands() -> dict:
+def set_bot_commands(commands: list[dict] | None = None, *, bot_token: str | None = None) -> dict:
     return telegram_request(
         "setMyCommands",
         payload={
-            "commands": [
+            "commands": commands or [
                 {"command": "start", "description": "Новая заявка"},
                 {"command": "close", "description": "Закрыть заявку"},
             ],
             "scope": {"type": "default"},
         },
+        bot_token=bot_token,
     )
 
 
@@ -205,13 +207,13 @@ def remove_inline_keyboard(chat_id: str, message_id: int) -> dict:
     )
 
 
-def answer_callback_query(callback_query_id: str, text: str | None = None) -> dict:
+def answer_callback_query(callback_query_id: str, text: str | None = None, bot_token: str | None = None) -> dict:
     payload = {"callback_query_id": callback_query_id}
     if text:
         payload["text"] = text
     if is_test_callback_query_id(callback_query_id):
         return fake_telegram_response("answerCallbackQuery", payload)
-    return telegram_request("answerCallbackQuery", payload=payload)
+    return telegram_request("answerCallbackQuery", payload=payload, bot_token=bot_token)
 
 
 def send_message(
@@ -221,6 +223,7 @@ def send_message(
     reply_markup: dict | None = None,
     remove_keyboard: bool = False,
     reply_to_message_id: str | int | None = None,
+    bot_token: str | None = None,
 ) -> dict:
     payload: dict = {
         "chat_id": chat_id,
@@ -238,14 +241,14 @@ def send_message(
     if is_test_chat_id(chat_id):
         return fake_telegram_response("sendMessage", payload)
     try:
-        return telegram_request("sendMessage", payload=payload)
+        return telegram_request("sendMessage", payload=payload, bot_token=bot_token)
     except TelegramApiError as exc:
         if parse_mode == "HTML":
             logger.warning("Telegram rejected HTML message, falling back to plain text: %s", exc)
             fallback_payload = dict(payload)
             fallback_payload.pop("parse_mode", None)
             fallback_payload["text"] = strip_telegram_html(text)
-            return telegram_request("sendMessage", payload=fallback_payload)
+            return telegram_request("sendMessage", payload=fallback_payload, bot_token=bot_token)
         raise
 
 

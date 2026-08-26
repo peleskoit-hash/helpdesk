@@ -13,9 +13,13 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://helpdesk:helpdesk@localhost:5432/helpdesk"
     app_timezone: str = "Europe/Moscow"
     telegram_bot_token: str | None = None
+    employee_telegram_bot_token: str | None = None
+    telegram_notification_bot_owner_id: str | None = None
     telegram_staging_chat_id: str | None = None
     telegram_polling_enabled: bool = False
     telegram_polling_timeout: int = 25
+    employee_telegram_polling_enabled: bool = False
+    employee_telegram_polling_timeout: int = 25
     telegram_default_agent_id: str = "00000000-0000-0000-0000-000000000001"
     initial_seed_enabled: bool | None = None
     attachment_storage_dir: str = "/app/storage/attachments"

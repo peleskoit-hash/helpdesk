@@ -44,6 +44,7 @@ from .services.schema_evolution import (
     ensure_client_profile_columns,
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
+    ensure_telegram_notification_accounts_table,
     ensure_ticket_attachment_table,
     ensure_ticket_attachment_preload_table,
     ensure_ticket_columns,
@@ -51,6 +52,8 @@ from .services.schema_evolution import (
     ensure_user_columns,
 )
 from .services.seed_data import ensure_client_card_defaults, ensure_initial_seed_data
+from .services.employee_telegram_bot import set_employee_bot_commands
+from .services.employee_telegram_polling import employee_telegram_polling_loop
 from .services.telegram_bot import TelegramApiError, set_bot_commands
 from .services.telegram_polling import telegram_polling_loop
 
@@ -79,12 +82,13 @@ app.include_router(mass_notifications_router)
 app.include_router(management_users_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 telegram_polling_task: asyncio.Task | None = None
+employee_telegram_polling_task: asyncio.Task | None = None
 call_center_employee_refresh_thread = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global telegram_polling_task, call_center_employee_refresh_thread
+    global telegram_polling_task, employee_telegram_polling_task, call_center_employee_refresh_thread
 
     settings.validate_runtime_guards()
 
@@ -95,6 +99,7 @@ async def on_startup():
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()
             ensure_telegram_contact_company_user_unique()
+            ensure_telegram_notification_accounts_table()
             ensure_user_columns()
             ensure_ticket_columns()
             ensure_ticket_message_columns()
@@ -122,11 +127,23 @@ async def on_startup():
         except TelegramApiError as exc:
             print(f"Telegram command menu setup error: {exc}")
 
+    if settings.employee_telegram_bot_token:
+        try:
+            set_employee_bot_commands()
+        except TelegramApiError as exc:
+            print(f"Employee Telegram command menu setup error: {exc}")
+
     if settings.initial_seed_enabled_effective:
         ensure_initial_seed_data()
 
     if settings.telegram_polling_enabled and settings.telegram_bot_token and telegram_polling_task is None:
         telegram_polling_task = asyncio.create_task(telegram_polling_loop())
+    if (
+        settings.employee_telegram_polling_enabled
+        and settings.employee_telegram_bot_token
+        and employee_telegram_polling_task is None
+    ):
+        employee_telegram_polling_task = asyncio.create_task(employee_telegram_polling_loop())
 
     if call_center_employee_refresh_thread is None:
         call_center_employee_refresh_thread = start_periodic_refresh_loop()
@@ -134,7 +151,7 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global telegram_polling_task, call_center_employee_refresh_thread
+    global telegram_polling_task, employee_telegram_polling_task, call_center_employee_refresh_thread
 
     if telegram_polling_task is not None:
         telegram_polling_task.cancel()
@@ -143,6 +160,13 @@ async def on_shutdown():
         except asyncio.CancelledError:
             pass
         telegram_polling_task = None
+    if employee_telegram_polling_task is not None:
+        employee_telegram_polling_task.cancel()
+        try:
+            await employee_telegram_polling_task
+        except asyncio.CancelledError:
+            pass
+        employee_telegram_polling_task = None
     stop_periodic_refresh_loop()
     call_center_employee_refresh_thread = None
 

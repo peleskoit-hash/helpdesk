@@ -6,8 +6,9 @@ from datetime import datetime
 import pytest
 from sqlalchemy import create_engine, text
 
-from api.app.db import Base
-from api.app.models import TelegramContact, TicketAttachment, TicketAttachmentPreload, User
+from sqlalchemy.exc import IntegrityError
+
+from api.app.models import TelegramContact, TelegramNotificationAccount, TicketAttachment, TicketAttachmentPreload, User
 from api.app.services import schema_evolution
 
 
@@ -90,6 +91,51 @@ def _create_legacy_users_table(engine) -> None:
                 """
             )
         )
+
+
+def _create_minimal_users_table(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE users (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY
+                )
+                """
+            )
+        )
+        conn.execute(text("INSERT INTO users (id) VALUES ('user-1')"))
+
+
+def _telegram_notification_columns(engine) -> dict[str, dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA table_info(telegram_notification_accounts)")).mappings().all()
+    return {
+        row["name"]: {
+            "type": str(row["type"]),
+            "notnull": int(row["notnull"]),
+            "default": row["dflt_value"],
+            "pk": int(row["pk"]),
+        }
+        for row in rows
+    }
+
+
+def _telegram_notification_indexes(engine) -> dict[str, tuple[str, ...]]:
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA index_list(telegram_notification_accounts)")).mappings().all()
+        indexes = {}
+        for row in rows:
+            if not row["unique"]:
+                continue
+            columns = conn.execute(text(f"PRAGMA index_info({row['name']})")).mappings().all()
+            indexes[row["name"]] = tuple(column["name"] for column in columns)
+    return indexes
+
+
+def _telegram_notification_foreign_keys(engine) -> list[dict]:
+    with engine.connect() as conn:
+        return conn.execute(text("PRAGMA foreign_key_list(telegram_notification_accounts)")).mappings().all()
 
 
 def _insert_contact(
@@ -237,6 +283,7 @@ def test_telegram_contact_model_metadata_contains_composite_unique():
 
 def test_fresh_schema_remains_idempotent_for_existing_invariant(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
+    from api.app.db import Base
     Base.metadata.create_all(engine)
     monkeypatch.setattr(schema_evolution, "engine", engine)
 
@@ -373,6 +420,169 @@ def test_user_send_by_enter_column_is_added_idempotently_for_existing_schema(mon
 
 def test_user_model_metadata_contains_send_by_enter_column():
     assert "send_by_enter" in User.__table__.columns.keys()
+
+
+def test_telegram_notification_accounts_table_creation_is_idempotent(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_minimal_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_telegram_notification_accounts_table()
+    columns_after_first_run = _telegram_notification_columns(engine)
+    indexes_after_first_run = _telegram_notification_indexes(engine)
+    foreign_keys_after_first_run = _telegram_notification_foreign_keys(engine)
+
+    schema_evolution.ensure_telegram_notification_accounts_table()
+    columns_after_second_run = _telegram_notification_columns(engine)
+    indexes_after_second_run = _telegram_notification_indexes(engine)
+    foreign_keys_after_second_run = _telegram_notification_foreign_keys(engine)
+
+    assert columns_after_second_run == columns_after_first_run
+    assert indexes_after_second_run == indexes_after_first_run
+    assert foreign_keys_after_second_run == foreign_keys_after_first_run
+    assert columns_after_second_run["id"]["type"] == "VARCHAR(36)"
+    assert columns_after_second_run["id"]["notnull"] == 1
+    assert columns_after_second_run["id"]["pk"] == 1
+    assert columns_after_second_run["telegram_user_id"]["type"] == "VARCHAR(100)"
+    assert columns_after_second_run["telegram_user_id"]["notnull"] == 1
+    assert columns_after_second_run["request_status"]["notnull"] == 1
+    assert columns_after_second_run["request_status"]["default"] == "'pending'"
+    assert columns_after_second_run["delivery_available"]["notnull"] == 1
+    assert columns_after_second_run["delivery_available"]["default"] in ("TRUE", "1")
+    assert columns_after_second_run["is_blocked"]["notnull"] == 1
+    assert columns_after_second_run["is_blocked"]["default"] in ("FALSE", "0")
+    assert columns_after_second_run["is_notification_bot_admin"]["notnull"] == 1
+    assert columns_after_second_run["is_notification_bot_admin"]["default"] in ("FALSE", "0")
+    assert columns_after_second_run["created_at"]["notnull"] == 1
+    assert columns_after_second_run["updated_at"]["notnull"] == 1
+    assert any(columns == ("telegram_user_id",) for columns in indexes_after_second_run.values())
+    assert any(columns == ("bound_user_id",) for columns in indexes_after_second_run.values())
+    assert len(foreign_keys_after_second_run) == 1
+    assert foreign_keys_after_second_run[0]["from"] == "bound_user_id"
+    assert foreign_keys_after_second_run[0]["table"] == "users"
+    assert foreign_keys_after_second_run[0]["to"] == "id"
+
+
+def test_telegram_notification_account_unique_telegram_user_id(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_minimal_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_telegram_notification_accounts_table()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO telegram_notification_accounts (
+                    id, telegram_user_id, request_status, delivery_available, created_at, updated_at
+                ) VALUES (
+                    'acc-1', 'tg-1', 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO telegram_notification_accounts (
+                        id, telegram_user_id, request_status, delivery_available, created_at, updated_at
+                    ) VALUES (
+                        'acc-2', 'tg-1', 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+
+def test_telegram_notification_account_bound_user_id_is_one_to_one_when_not_null(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_minimal_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_telegram_notification_accounts_table()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO telegram_notification_accounts (
+                    id, telegram_user_id, bound_user_id, request_status, delivery_available, created_at, updated_at
+                ) VALUES (
+                    'acc-1', 'tg-1', 'user-1', 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO telegram_notification_accounts (
+                        id, telegram_user_id, bound_user_id, request_status, delivery_available, created_at, updated_at
+                    ) VALUES (
+                        'acc-2', 'tg-2', 'user-1', 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO telegram_notification_accounts (
+                    id, telegram_user_id, bound_user_id, request_status, delivery_available, created_at, updated_at
+                ) VALUES (
+                    'acc-3', 'tg-3', NULL, 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO telegram_notification_accounts (
+                    id, telegram_user_id, bound_user_id, request_status, delivery_available, created_at, updated_at
+                ) VALUES (
+                    'acc-4', 'tg-4', NULL, 'pending', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+    with engine.connect() as conn:
+        null_bound_count = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM telegram_notification_accounts
+                WHERE bound_user_id IS NULL
+                """
+            )
+        ).scalar_one()
+
+    assert null_bound_count == 2
+
+
+def test_telegram_notification_account_model_metadata_matches_expected_columns():
+    assert set(TelegramNotificationAccount.__table__.columns.keys()) == {
+        "id",
+        "telegram_user_id",
+        "telegram_chat_id",
+        "telegram_username",
+        "telegram_display_name",
+        "bound_user_id",
+        "request_status",
+        "delivery_available",
+        "is_blocked",
+        "is_notification_bot_admin",
+        "created_at",
+        "updated_at",
+    }
 
 
 @pytest.mark.parametrize(

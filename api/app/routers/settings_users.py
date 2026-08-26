@@ -2,13 +2,16 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, hash_password, is_admin
 from ..db import get_db
-from ..models import Company, User
+from ..models import Company, TelegramNotificationAccount, User
 from ..schemas import SettingsUserCreate, SettingsUserOut, SettingsUserUpdate
+from ..services import telegram_employee_binding
+from ..services.telegram_employee_binding import TelegramBindingOperationError
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -21,6 +24,34 @@ ROLE_LABELS = {
 }
 
 
+class TelegramBindingPendingOut(BaseModel):
+    telegram_user_id: str
+    telegram_chat_id: str | None = None
+    telegram_username: str | None = None
+    telegram_display_name: str | None = None
+    bound_user_id: str | None = None
+    request_status: str
+    delivery_available: bool
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class TelegramBindingApprovePayload(BaseModel):
+    user_id: str
+
+
+class TelegramBindingAccountOut(BaseModel):
+    telegram_user_id: str
+    telegram_chat_id: str | None = None
+    telegram_username: str | None = None
+    telegram_display_name: str | None = None
+    bound_user_id: str | None = None
+    request_status: str
+    delivery_available: bool
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
@@ -28,6 +59,10 @@ def _error(status_code: int, code: str, message: str):
 def _require_admin(user: CurrentUser) -> None:
     if not is_admin(user):
         _error(403, "admin_only", "Настройки доступны только администратору")
+
+
+def _binding_operation_error(exc: TelegramBindingOperationError):
+    _error(409, exc.code, exc.message)
 
 
 def role_label(role: str) -> str:
@@ -42,6 +77,34 @@ def _company_id(db: Session) -> str:
 
 
 def _user_out(user: User) -> SettingsUserOut:
+    return _user_out_with_notification(user, None)
+
+
+def _telegram_binding_account_out(account: TelegramNotificationAccount) -> TelegramBindingAccountOut:
+    return TelegramBindingAccountOut(
+        telegram_user_id=account.telegram_user_id,
+        telegram_chat_id=account.telegram_chat_id,
+        telegram_username=account.telegram_username,
+        telegram_display_name=account.telegram_display_name,
+        bound_user_id=account.bound_user_id,
+        request_status=account.request_status,
+        delivery_available=bool(account.delivery_available),
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
+
+
+def _telegram_notification_display(account: TelegramNotificationAccount) -> str:
+    username = (account.telegram_username or "").strip()
+    if username:
+        return f"@{username} (Tg ID: {account.telegram_user_id})"
+    return f"Без username (Tg ID: {account.telegram_user_id})"
+
+
+def _user_out_with_notification(
+    user: User,
+    notification_account: TelegramNotificationAccount | None,
+) -> SettingsUserOut:
     return SettingsUserOut(
         id=user.id,
         full_name=user.full_name,
@@ -51,6 +114,8 @@ def _user_out(user: User) -> SettingsUserOut:
         is_active=bool(user.is_active),
         availability_status=user.availability_status or "offline",
         legacy_ticket_count=int(user.legacy_ticket_count or 0),
+        telegram_notification_bound=notification_account is not None,
+        telegram_notification_display=_telegram_notification_display(notification_account) if notification_account else None,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
@@ -68,7 +133,111 @@ def _ensure_unique_login(db: Session, login: str, exclude_user_id: str | None = 
 def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _require_admin(user)
     users = db.execute(select(User).order_by(User.full_name.asc())).scalars().all()
-    return [_user_out(item) for item in users]
+    user_ids = [item.id for item in users]
+    accounts_by_user_id: dict[str, TelegramNotificationAccount] = {}
+    if user_ids:
+        accounts = db.execute(
+            select(TelegramNotificationAccount).where(TelegramNotificationAccount.bound_user_id.in_(user_ids))
+        ).scalars().all()
+        accounts_by_user_id = {
+            item.bound_user_id: item
+            for item in accounts
+            if item.bound_user_id
+        }
+    return [_user_out_with_notification(item, accounts_by_user_id.get(item.id)) for item in users]
+
+
+@router.get("/users/telegram-binding-requests", response_model=list[TelegramBindingPendingOut])
+def list_telegram_binding_requests(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+    accounts = telegram_employee_binding.list_pending_requests(db)
+    return [
+        TelegramBindingPendingOut(
+            telegram_user_id=account.telegram_user_id,
+            telegram_chat_id=account.telegram_chat_id,
+            telegram_username=account.telegram_username,
+            telegram_display_name=account.telegram_display_name,
+            bound_user_id=account.bound_user_id,
+            request_status=account.request_status,
+            delivery_available=bool(account.delivery_available),
+            created_at=account.created_at,
+            updated_at=account.updated_at,
+        )
+        for account in accounts
+    ]
+
+
+@router.post("/users/telegram-binding-requests/{telegram_user_id}/approve", response_model=TelegramBindingAccountOut)
+def approve_telegram_binding_request(
+    telegram_user_id: str,
+    payload: TelegramBindingApprovePayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    target_user = db.get(User, payload.user_id)
+    if target_user is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+
+    try:
+        account = telegram_employee_binding.approve_binding(
+            db,
+            user_id=target_user.id,
+            telegram_user_id=telegram_user_id,
+        )
+    except TelegramBindingOperationError as exc:
+        db.rollback()
+        _binding_operation_error(exc)
+    if account is None:
+        _error(404, "telegram_binding_request_not_found", "Telegram-запрос на привязку не найден")
+
+    db.commit()
+    db.refresh(account)
+    return _telegram_binding_account_out(account)
+
+
+@router.post("/users/telegram-binding-requests/{telegram_user_id}/reject", response_model=TelegramBindingAccountOut)
+def reject_telegram_binding_request(
+    telegram_user_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    try:
+        account = telegram_employee_binding.reject_binding(db, telegram_user_id=telegram_user_id)
+    except TelegramBindingOperationError as exc:
+        db.rollback()
+        _binding_operation_error(exc)
+    if account is None:
+        _error(404, "telegram_binding_request_not_found", "Telegram-запрос на привязку не найден")
+
+    response = _telegram_binding_account_out(account)
+    db.commit()
+    return response
+
+
+@router.delete("/users/{user_id}/telegram-binding", response_model=TelegramBindingAccountOut)
+def unbind_user_telegram(
+    user_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    target_user = db.get(User, user_id)
+    if target_user is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+
+    try:
+        account = telegram_employee_binding.unbind_employee(db, user_id=user_id)
+    except TelegramBindingOperationError as exc:
+        db.rollback()
+        _binding_operation_error(exc)
+    if account is None:
+        _error(404, "telegram_binding_not_found", "У сотрудника нет Telegram-привязки")
+
+    response = _telegram_binding_account_out(account)
+    db.commit()
+    return response
 
 
 @router.post("/users", response_model=SettingsUserOut)
@@ -141,4 +310,7 @@ def update_user(
 
     db.commit()
     db.refresh(target)
-    return _user_out(target)
+    notification_account = db.execute(
+        select(TelegramNotificationAccount).where(TelegramNotificationAccount.bound_user_id == target.id)
+    ).scalar_one_or_none()
+    return _user_out_with_notification(target, notification_account)

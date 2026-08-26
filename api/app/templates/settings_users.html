@@ -83,7 +83,7 @@
         <div id="userModalTitle" style="font-weight:700;">Пользователь</div>
         <button id="closeUserModalBtn" type="button" class="action">Закрыть</button>
       </div>
-      <div class="modal-body">
+        <div class="modal-body">
         <div class="modal-field-section modal-field-section-profile">
           <label>ФИО<input id="fFullName" autocomplete="off" /></label>
           <label>Login<input id="fLogin" autocomplete="off" /></label>
@@ -101,6 +101,10 @@
             <input id="fIsActive" type="checkbox" />
           </label>
           <label>Количество заявок из старого Helpdesk<input id="fLegacyTicketCount" type="number" min="0" step="1" autocomplete="off" /></label>
+          <div id="telegramNotificationBlock" class="settings-telegram-card hidden" aria-live="polite">
+            <div id="telegramNotificationStatus" class="settings-telegram-card-title">Бот уведомлений: не привязан</div>
+            <div id="telegramNotificationDisplay" class="settings-telegram-card-meta hidden"></div>
+          </div>
         </div>
       </div>
       <div class="modal-foot">
@@ -131,6 +135,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/app_shell.js?v=20260821b"></script>
-  <script src="/static/settings_users.js?v=20260603b"></script>
+  <script src="/static/settings_users.js?v=20260824a"></script>
 </body>
 </html>

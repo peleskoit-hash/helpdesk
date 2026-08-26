@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType, User
 from .automatic_messages import render_automatic_message_for_telegram
+from .employee_telegram_notifications import schedule_assignment_notification
 from .telegram_bot import TelegramApiError, send_message
 
 GroupParentAssignedHook = Callable[[Session, Ticket, User], None]
@@ -72,6 +73,21 @@ def notify_client_about_assignee(db: Session, ticket: Ticket, agent: User):
         pass
 
 
+def schedule_employee_assignment_notification(
+    db: Session,
+    ticket: Ticket,
+    *,
+    old_assignee: User | None,
+    new_assignee: User | None,
+) -> None:
+    schedule_assignment_notification(
+        db,
+        old_assignee_id=old_assignee.id if old_assignee is not None else None,
+        new_assignee_id=new_assignee.id if new_assignee is not None else None,
+        ticket=ticket,
+    )
+
+
 def agent_active_load(db: Session, agent: User) -> int:
     return db.execute(
         select(func.count())
@@ -122,7 +138,7 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     if agent.role != "agent" or not agent.is_active or agent.availability_status != "online":
         return False
 
-    old_assignee = None
+    old_assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
     ticket.assignee_id = agent.id
     ticket.status = TicketStatus.NEW.value
     ticket.updated_at = datetime.utcnow()
@@ -131,6 +147,7 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     run_group_parent_assigned_hook(db, ticket, agent)
     if notify_client and (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value:
         notify_client_about_assignee(db, ticket, agent)
+    schedule_employee_assignment_notification(db, ticket, old_assignee=old_assignee, new_assignee=agent)
     return True
 
 
