@@ -5360,11 +5360,30 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   display: block;
 }
 
+.notification-control-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+}
+
+.notification-page-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .notification-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.notification-tabs-personal {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .notification-tab {
@@ -5390,6 +5409,37 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
 .notification-enabled-row {
   justify-content: flex-start;
+}
+
+.notification-delivery-switches,
+.notification-delivery-column {
+  display: grid;
+  gap: 12px;
+}
+
+.notification-delivery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+}
+
+.notification-delivery-row {
+  min-height: 38px;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.notification-delivery-row input[type="checkbox"],
+.notification-page-mode input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.notification-switch-disabled {
+  color: var(--muted);
+  opacity: 0.72;
 }
 
 .notification-editor-grid {
@@ -5445,6 +5495,18 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   justify-content: flex-end;
 }
 
+.notification-actions-with-binding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notification-binding-status {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 @media (max-width: 900px) {
   .notification-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5452,5 +5514,14 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
   .notification-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .notification-delivery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-page-mode {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

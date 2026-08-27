@@ -149,7 +149,8 @@
       const validation = pane?.querySelector("[data-validation]");
       state.activeTextarea = textarea || null;
 
-      if (tg.bindToolbar && textarea && pane) tg.bindToolbar(pane, textarea);
+      if (tg.bindAtomicTokens && textarea) tg.bindAtomicTokens(textarea, draft?.tags || []);
+      if (tg.bindToolbar && textarea && pane) tg.bindToolbar(pane, textarea, { tags: draft?.tags || [] });
       const sync = () => {
         syncActiveDraftFromDom();
         if (preview && tg.renderTelegramPreviewHtml) preview.innerHTML = tg.renderTelegramPreviewHtml(draft?.template || "");

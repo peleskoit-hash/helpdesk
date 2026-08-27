@@ -124,6 +124,101 @@
     document.querySelectorAll("[data-format-action='emoji']").forEach((btn) => btn.setAttribute("aria-expanded", "false"));
   }
 
+  function normalizedAtomicTags(tags) {
+    const unique = new Set((Array.isArray(tags) ? tags : [])
+      .map((tag) => String(tag || ""))
+      .filter(Boolean));
+    return [...unique].sort((a, b) => b.length - a.length);
+  }
+
+  function findAtomicTagRanges(text, tags) {
+    const source = String(text || "");
+    const ranges = [];
+    normalizedAtomicTags(tags).forEach((tag) => {
+      let fromIndex = 0;
+      while (fromIndex <= source.length) {
+        const index = source.indexOf(tag, fromIndex);
+        if (index === -1) break;
+        const end = index + tag.length;
+        if (!ranges.some((range) => index < range.end && end > range.start)) {
+          ranges.push({ start: index, end, text: tag });
+        }
+        fromIndex = Math.max(end, index + 1);
+      }
+    });
+    return ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+  }
+
+  function rangeTouches(range, start, end) {
+    if (start === end) return start > range.start && start < range.end;
+    return start < range.end && end > range.start;
+  }
+
+  function expandSelectionToAtomicTags(text, tags, start, end) {
+    let nextStart = Math.max(0, Math.min(Number(start || 0), String(text || "").length));
+    let nextEnd = Math.max(nextStart, Math.min(Number(end ?? nextStart), String(text || "").length));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      findAtomicTagRanges(text, tags).forEach((range) => {
+        if (!rangeTouches(range, nextStart, nextEnd)) return;
+        if (range.start < nextStart) {
+          nextStart = range.start;
+          changed = true;
+        }
+        if (range.end > nextEnd) {
+          nextEnd = range.end;
+          changed = true;
+        }
+      });
+    }
+    return { start: nextStart, end: nextEnd };
+  }
+
+  function snapCaretToAtomicBoundary(text, tags, position, direction = "nearest") {
+    const source = String(text || "");
+    const pos = Math.max(0, Math.min(Number(position || 0), source.length));
+    const range = findAtomicTagRanges(source, tags).find((item) => pos > item.start && pos < item.end);
+    if (!range) return pos;
+    if (direction === "left") return range.start;
+    if (direction === "right") return range.end;
+    return (pos - range.start) <= (range.end - pos) ? range.start : range.end;
+  }
+
+  function atomicKeyEdit(text, tags, start, end, key) {
+    const source = String(text || "");
+    let range = expandSelectionToAtomicTags(source, tags, start, end);
+    if (range.start === range.end && key === "Backspace") {
+      const previous = findAtomicTagRanges(source, tags).find((item) => item.end === range.start);
+      if (previous) range = { start: previous.start, end: previous.end };
+    }
+    if (range.start === range.end && key === "Delete") {
+      const next = findAtomicTagRanges(source, tags).find((item) => item.start === range.start);
+      if (next) range = { start: next.start, end: next.end };
+    }
+    return range;
+  }
+
+  function replaceTextRange(textarea, text, range, selectionMode = "end") {
+    const source = textarea.value || "";
+    textarea.focus();
+    textarea.setSelectionRange(range.start, range.end);
+    if (document.execCommand && document.execCommand("insertText", false, text)) return;
+    if (textarea.setRangeText) {
+      textarea.setRangeText(text, range.start, range.end, selectionMode);
+    } else {
+      textarea.value = source.slice(0, range.start) + text + source.slice(range.end);
+      const cursor = range.start + text.length;
+      if (selectionMode === "select") textarea.setSelectionRange(range.start, cursor);
+      else textarea.setSelectionRange(cursor, cursor);
+    }
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function atomicReplaceText(textarea, text, range) {
+    replaceTextRange(textarea, text, range, "end");
+  }
+
   function renderEmojiPickerHtml() {
     const categories = getEmojiCategories();
     return `
@@ -147,32 +242,106 @@
 
   function applyTagToSelection(textarea, before, after = "") {
     if (!textarea) return;
-    const start = textarea.selectionStart ?? 0;
-    const end = textarea.selectionEnd ?? 0;
     const source = textarea.value || "";
+    const atomicRange = expandSelectionToAtomicTags(
+      source,
+      textarea.__telegramAtomicTags || [],
+      textarea.selectionStart ?? 0,
+      textarea.selectionEnd ?? 0,
+    );
+    const start = atomicRange.start;
+    const end = atomicRange.end;
     const selected = source.slice(start, end);
-    textarea.value = source.slice(0, start) + before + selected + after + source.slice(end);
-    const cursor = start + before.length + selected.length;
-    textarea.focus();
-    if (selected) textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
-    else textarea.setSelectionRange(cursor, cursor);
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    replaceTextRange(textarea, before + selected + after, { start, end }, selected ? "select" : "end");
+    if (selected) {
+      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
+    }
   }
 
   function insertTextAtSelection(textarea, text, range = null) {
     if (!textarea || !text) return;
     const source = textarea.value || "";
-    const start = Math.max(0, Math.min(range?.start ?? textarea.selectionStart ?? 0, source.length));
-    const end = Math.max(start, Math.min(range?.end ?? textarea.selectionEnd ?? start, source.length));
-    textarea.value = source.slice(0, start) + text + source.slice(end);
-    const cursor = start + text.length;
-    textarea.focus();
-    textarea.setSelectionRange(cursor, cursor);
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    const rawStart = Math.max(0, Math.min(range?.start ?? textarea.selectionStart ?? 0, source.length));
+    const rawEnd = Math.max(rawStart, Math.min(range?.end ?? textarea.selectionEnd ?? rawStart, source.length));
+    const atomicRange = expandSelectionToAtomicTags(source, textarea.__telegramAtomicTags || [], rawStart, rawEnd);
+    const start = snapCaretToAtomicBoundary(source, textarea.__telegramAtomicTags || [], atomicRange.start);
+    const end = snapCaretToAtomicBoundary(source, textarea.__telegramAtomicTags || [], atomicRange.end);
+    replaceTextRange(textarea, text, { start, end }, "end");
   }
 
   function stripAllowedTelegramTags(text) {
     return String(text || "").replace(/<\/?(?:b|strong|i|em|u|ins|s|strike|del|tg-spoiler|code|pre|blockquote|a)(?:\s+[^>]*)?>/gi, "");
+  }
+
+  function bindAtomicTokens(textarea, tags = []) {
+    if (!textarea) return;
+    textarea.__telegramAtomicTags = normalizedAtomicTags(tags);
+    if (textarea.dataset.telegramAtomicBound === "1") return;
+    textarea.dataset.telegramAtomicBound = "1";
+
+    const snapCurrentCaret = () => {
+      if ((textarea.selectionStart ?? 0) !== (textarea.selectionEnd ?? 0)) return;
+      const source = textarea.value || "";
+      const current = textarea.selectionStart ?? 0;
+      const snapped = snapCaretToAtomicBoundary(source, textarea.__telegramAtomicTags || [], current);
+      if (snapped !== current) textarea.setSelectionRange(snapped, snapped);
+    };
+
+    textarea.addEventListener("keydown", (event) => {
+      const source = textarea.value || "";
+      const tagsForInput = textarea.__telegramAtomicTags || [];
+      const start = textarea.selectionStart ?? 0;
+      const end = textarea.selectionEnd ?? start;
+      if (event.key === "Backspace" || event.key === "Delete") {
+        const range = atomicKeyEdit(source, tagsForInput, start, end, event.key);
+        if (range.start !== start || range.end !== end) {
+          event.preventDefault();
+          atomicReplaceText(textarea, "", range);
+        }
+        return;
+      }
+      if (event.key === "ArrowLeft" && start === end) {
+        const previous = findAtomicTagRanges(source, tagsForInput).find((range) => range.end === start);
+        if (previous) {
+          event.preventDefault();
+          textarea.setSelectionRange(previous.start, previous.start);
+        }
+        return;
+      }
+      if (event.key === "ArrowRight" && start === end) {
+        const next = findAtomicTagRanges(source, tagsForInput).find((range) => range.start === start);
+        if (next) {
+          event.preventDefault();
+          textarea.setSelectionRange(next.end, next.end);
+        }
+      }
+    });
+    textarea.addEventListener("beforeinput", (event) => {
+      const source = textarea.value || "";
+      const tagsForInput = textarea.__telegramAtomicTags || [];
+      const start = textarea.selectionStart ?? 0;
+      const end = textarea.selectionEnd ?? start;
+      const inputType = String(event.inputType || "");
+      if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
+        const range = atomicKeyEdit(source, tagsForInput, start, end, inputType === "deleteContentBackward" ? "Backspace" : "Delete");
+        if (range.start !== start || range.end !== end) {
+          event.preventDefault();
+          atomicReplaceText(textarea, "", range);
+        }
+        return;
+      }
+      if (!inputType.startsWith("insert")) return;
+      const range = expandSelectionToAtomicTags(source, tagsForInput, start, end);
+      const snappedStart = snapCaretToAtomicBoundary(source, tagsForInput, range.start);
+      const snappedEnd = snapCaretToAtomicBoundary(source, tagsForInput, range.end);
+      if (snappedStart === start && snappedEnd === end && range.start === start && range.end === end) return;
+      event.preventDefault();
+      const inserted = event.dataTransfer?.getData?.("text/plain") ?? event.data ?? "";
+      atomicReplaceText(textarea, String(inserted), { start: snappedStart, end: snappedEnd });
+    });
+    textarea.addEventListener("click", snapCurrentCaret);
+    textarea.addEventListener("mouseup", snapCurrentCaret);
+    textarea.addEventListener("keyup", snapCurrentCaret);
   }
 
   function toolbarHtml() {
@@ -197,6 +366,9 @@
   function bindToolbar(root, textarea, options = {}) {
     const toolbar = root.querySelector("[data-telegram-toolbar]");
     if (!toolbar || !textarea) return;
+    if (Array.isArray(options.tags)) {
+      textarea.__telegramAtomicTags = normalizedAtomicTags(options.tags);
+    }
     let lastSelection = { start: textarea.selectionStart ?? 0, end: textarea.selectionEnd ?? 0 };
     const rememberSelection = () => {
       lastSelection = { start: textarea.selectionStart ?? 0, end: textarea.selectionEnd ?? 0 };
@@ -264,8 +436,14 @@
         }
         if (action === "clear") {
           const source = textarea.value || "";
-          const start = textarea.selectionStart ?? 0;
-          const end = textarea.selectionEnd ?? 0;
+          const atomicRange = expandSelectionToAtomicTags(
+            source,
+            textarea.__telegramAtomicTags || [],
+            textarea.selectionStart ?? 0,
+            textarea.selectionEnd ?? 0,
+          );
+          const start = atomicRange.start;
+          const end = atomicRange.end;
           const selected = source.slice(start, end);
           if (selected) {
             const cleaned = stripAllowedTelegramTags(selected);
@@ -321,6 +499,14 @@
   Editor.bindToolbar = bindToolbar;
   Editor.bindPreview = bindPreview;
   Editor.insertTextAtSelection = insertTextAtSelection;
+  Editor.normalizedAtomicTags = normalizedAtomicTags;
+  Editor.findAtomicTagRanges = findAtomicTagRanges;
+  Editor.expandSelectionToAtomicTags = expandSelectionToAtomicTags;
+  Editor.snapCaretToAtomicBoundary = snapCaretToAtomicBoundary;
+  Editor.atomicKeyEdit = atomicKeyEdit;
+  Editor.replaceTextRange = replaceTextRange;
+  Editor.atomicReplaceText = atomicReplaceText;
+  Editor.bindAtomicTokens = bindAtomicTokens;
   Editor.renderTelegramPreviewHtml = renderTelegramPreviewHtml;
   Editor.validateTelegramHtml = validateTelegramHtml;
   Editor.closeEmojiPicker = closeEmojiPicker;

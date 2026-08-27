@@ -15,6 +15,9 @@ from api.app.services.automatic_messages import (
     NOTIFICATION_BOT_BASIC_DEFINITIONS,
     get_notification_bot_basic_definition,
     list_notification_bot_basic_definitions,
+    normalize_notification_bot_basic_semantic_tag_labels,
+    notification_bot_basic_tag_labels_by_semantic,
+    render_notification_bot_basic_semantic_tags,
     serialize_notification_bot_basic_template,
 )
 
@@ -195,6 +198,52 @@ def test_registry_extension_does_not_mix_with_runtime_automatic_messages():
     keys = {definition.key for definition in list_notification_bot_basic_definitions()}
     assert keys
     assert all(key.startswith("telegram.notification_bot.basic.") for key in keys)
+
+
+def test_recipient_tg_username_semantic_tag_is_available_for_all_admin_types():
+    session = _session()
+    labels = notification_bot_basic_tag_labels_by_semantic(context="admin")
+
+    assert labels["recipient_telegram_username"] == "[TG @username адресата]"
+    for definition in list_notification_bot_basic_definitions():
+        item = serialize_notification_bot_basic_template(session, definition)
+        assert "[TG @username адресата]" in item["tags"]
+
+
+def test_recipient_tg_username_semantic_tag_substitution_is_shared_for_admin_and_personal_labels():
+    text = "Admin: [TG @username адресата]\nPersonal: [Мой TG @username]"
+
+    assert render_notification_bot_basic_semantic_tags(text, recipient_telegram_username="agent_one") == (
+        "Admin: @agent_one\nPersonal: @agent_one"
+    )
+    assert render_notification_bot_basic_semantic_tags(text, recipient_telegram_username="@agent_two") == (
+        "Admin: @agent_two\nPersonal: @agent_two"
+    )
+
+
+def test_notification_bot_basic_serializer_normalizes_template_and_default_template_by_context(monkeypatch):
+    monkeypatch.setattr(settings_notification_bot_basic, "_require_admin", lambda user: None)
+    session = _session()
+    _save(session, "new_assignment", enabled=True, template="Привет, [TG @username адресата]")
+
+    admin_item = serialize_notification_bot_basic_template(
+        session,
+        get_notification_bot_basic_definition("new_assignment"),
+        tag_context="admin",
+    )
+    personal_item = serialize_notification_bot_basic_template(
+        session,
+        get_notification_bot_basic_definition("new_assignment"),
+        tag_context="personal",
+    )
+
+    assert admin_item["template"] == "Привет, [TG @username адресата]"
+    assert personal_item["template"] == "Привет, [Мой TG @username]"
+    assert "[TG @username адресата]" not in personal_item["template"]
+    assert personal_item["default_template"] == normalize_notification_bot_basic_semantic_tag_labels(
+        get_notification_bot_basic_definition("new_assignment").default_text,
+        context="personal",
+    )
 
 
 def test_notification_bot_basic_save_route_uses_put_not_patch():

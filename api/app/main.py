@@ -20,6 +20,7 @@ from .auth import (
 from .config import settings
 from .db import Base, engine, get_db
 from .models import User
+from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
 from .routers.settings import router as settings_router
@@ -43,6 +44,7 @@ from .services.schema_evolution import (
     ensure_client_card_field_config_columns,
     ensure_call_center_employee_resolver_state_table,
     ensure_client_profile_columns,
+    ensure_employee_notification_preferences_table,
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
     ensure_telegram_notification_accounts_table,
@@ -80,6 +82,7 @@ app.include_router(settings_bot_button_structure_router)
 app.include_router(settings_users_router)
 app.include_router(settings_client_card_router)
 app.include_router(settings_notification_bot_basic_router)
+app.include_router(employee_notification_preferences_router)
 app.include_router(mass_notifications_router)
 app.include_router(management_users_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -113,6 +116,7 @@ async def on_startup():
             ensure_bot_menu_profiles_tables()
             ensure_client_card_field_config_columns()
             ensure_call_center_employee_resolver_state_table()
+            ensure_employee_notification_preferences_table()
             ensure_client_card_defaults()
             last_error = None
             break
@@ -334,6 +338,13 @@ def settings_notification_bot_basic_page(request: Request, db: Session = Depends
     if not user.is_real_admin:
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "settings_notification_bot_basic.html"))
+
+
+@app.get("/profile/notification-bot")
+def profile_notification_bot_page(request: Request, db: Session = Depends(get_db)):
+    if _require_page_auth(request, db) is None:
+        return _redirect_login("/profile/notification-bot")
+    return FileResponse(str(BASE_DIR / "templates" / "profile_notification_bot.html"))
 
 
 @app.get("/statuses")

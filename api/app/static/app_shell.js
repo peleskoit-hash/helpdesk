@@ -41,6 +41,14 @@
         "/static/settings_notification_bot_basic.js?v=20260826a",
       ],
     }],
+    ["/profile/notification-bot", {
+      page: "profile-notification-bot",
+      scripts: [
+        "/static/bot_buttons_emoji_data.js?v=20260605a",
+        "/static/telegram_text_editor.js?v=20260826a",
+        "/static/profile_notification_bot.js?v=20260826a",
+      ],
+    }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
     ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],

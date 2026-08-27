@@ -1103,6 +1103,103 @@ def ensure_automatic_message_templates_table() -> None:
         conn.execute(text("UPDATE automatic_message_templates SET send_silently = FALSE WHERE send_silently IS NULL"))
 
 
+def ensure_employee_notification_preferences_table() -> None:
+    with engine.begin() as conn:
+        timestamp_type = "TIMESTAMP"
+        bool_type = "BOOLEAN"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS employee_notification_preferences (
+                    id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36) UNIQUE NOT NULL,
+                    use_base_new_assignment_settings {bool_type} NOT NULL DEFAULT TRUE,
+                    use_base_new_message_settings {bool_type} NOT NULL DEFAULT TRUE,
+                    personal_new_assignment_template TEXT,
+                    personal_new_assignment_html_enabled {bool_type} NOT NULL DEFAULT TRUE,
+                    personal_new_assignment_disable_link_preview {bool_type} NOT NULL DEFAULT FALSE,
+                    personal_new_assignment_send_silently {bool_type} NOT NULL DEFAULT FALSE,
+                    personal_new_message_template TEXT,
+                    personal_new_message_html_enabled {bool_type} NOT NULL DEFAULT TRUE,
+                    personal_new_message_disable_link_preview {bool_type} NOT NULL DEFAULT FALSE,
+                    personal_new_message_send_silently {bool_type} NOT NULL DEFAULT FALSE,
+                    receive_transfer_to_agent {bool_type} NOT NULL DEFAULT TRUE,
+                    receive_transfer_from_agent {bool_type} NOT NULL DEFAULT TRUE,
+                    receive_new_message {bool_type} NOT NULL DEFAULT TRUE,
+                    created_at {timestamp_type},
+                    updated_at {timestamp_type}
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_employee_notification_preferences_user_id ON employee_notification_preferences(user_id)"))
+        if conn.dialect.name == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(employee_notification_preferences)")).mappings().all()
+            existing = {row["name"] for row in rows}
+        else:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employee_notification_preferences'
+                    """
+                )
+            ).fetchall()
+            existing = {row[0] for row in rows}
+        required_columns = {
+            "use_base_new_assignment_settings": "BOOLEAN",
+            "use_base_new_message_settings": "BOOLEAN",
+            "personal_new_assignment_template": "TEXT",
+            "personal_new_assignment_html_enabled": "BOOLEAN",
+            "personal_new_assignment_disable_link_preview": "BOOLEAN",
+            "personal_new_assignment_send_silently": "BOOLEAN",
+            "personal_new_message_template": "TEXT",
+            "personal_new_message_html_enabled": "BOOLEAN",
+            "personal_new_message_disable_link_preview": "BOOLEAN",
+            "personal_new_message_send_silently": "BOOLEAN",
+            "receive_transfer_to_agent": "BOOLEAN",
+            "receive_transfer_from_agent": "BOOLEAN",
+            "receive_new_message": "BOOLEAN",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing:
+                conn.execute(text(f"ALTER TABLE employee_notification_preferences ADD COLUMN {column_name} {column_type}"))
+        if "use_base_new_assignment_settings" not in existing:
+            if "use_base_settings" in existing:
+                conn.execute(
+                    text(
+                        "UPDATE employee_notification_preferences "
+                        "SET use_base_new_assignment_settings = COALESCE(use_base_settings, TRUE)"
+                    )
+                )
+            else:
+                conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_assignment_settings = TRUE"))
+        if "use_base_new_message_settings" not in existing:
+            if "use_base_settings" in existing:
+                conn.execute(
+                    text(
+                        "UPDATE employee_notification_preferences "
+                        "SET use_base_new_message_settings = COALESCE(use_base_settings, TRUE)"
+                    )
+                )
+            else:
+                conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_message_settings = TRUE"))
+        conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_assignment_settings = TRUE WHERE use_base_new_assignment_settings IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_message_settings = TRUE WHERE use_base_new_message_settings IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_html_enabled = TRUE WHERE personal_new_assignment_html_enabled IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_disable_link_preview = FALSE WHERE personal_new_assignment_disable_link_preview IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_send_silently = FALSE WHERE personal_new_assignment_send_silently IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_html_enabled = TRUE WHERE personal_new_message_html_enabled IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_disable_link_preview = FALSE WHERE personal_new_message_disable_link_preview IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_send_silently = FALSE WHERE personal_new_message_send_silently IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_to_agent = TRUE WHERE receive_transfer_to_agent IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_from_agent = TRUE WHERE receive_transfer_from_agent IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET receive_new_message = TRUE WHERE receive_new_message IS NULL"))
+
+
 def ensure_ticket_message_columns() -> None:
     required_columns = {
         "agent_visible": "BOOLEAN",

@@ -44,6 +44,17 @@ test("notification bot page keeps draft state before tab switching", () => {
   assert.match(source, /button\.addEventListener\("click", \(\) => \{\s+syncActiveDraftFromDom\(\);\s+state\.activeType/s);
 });
 
+test("admin notification bot editor uses shared atomic tag helper with backend tags", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "settings_notification_bot_basic.js"), "utf8");
+
+  assert.match(source, /tg\.bindAtomicTokens\(textarea, draft\?\.tags \|\| \[\]\)/);
+  assert.match(source, /tg\.bindToolbar\(pane, textarea, \{ tags: draft\?\.tags \|\| \[\] \}\)/);
+  assert.match(source, /draft\.tags\.map/);
+  assert.doesNotMatch(source, /\[Номер заявки\]/);
+  assert.doesNotMatch(source, /\[Тело сообщения\]/);
+  assert.doesNotMatch(source, /\[TG @username адресата\]/);
+});
+
 test("legacy bot button editor reuses toolbar without delivery flag controls", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "bot_buttons_editor_view.js"), "utf8");
 

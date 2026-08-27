@@ -277,6 +277,28 @@ class TelegramNotificationAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class EmployeeNotificationPreference(Base):
+    __tablename__ = "employee_notification_preferences"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
+    use_base_new_assignment_settings: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    use_base_new_message_settings: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    personal_new_assignment_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    personal_new_assignment_html_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    personal_new_assignment_disable_link_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    personal_new_assignment_send_silently: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    personal_new_message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    personal_new_message_html_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    personal_new_message_disable_link_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    personal_new_message_send_silently: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    receive_transfer_to_agent: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    receive_transfer_from_agent: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    receive_new_message: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class TelegramUpdate(Base):
     __tablename__ = "telegram_updates"
 

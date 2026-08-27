@@ -34,6 +34,16 @@ class AutomaticMessageDefinition:
     runtime_enabled: bool = False
 
 
+@dataclass(frozen=True)
+class NotificationBotBasicTag:
+    semantic: str
+    admin_label: str
+    personal_label: str
+
+    def label(self, context: str) -> str:
+        return self.personal_label if context == "personal" else self.admin_label
+
+
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
     AutomaticMessageDefinition(
         key="telegram.onboarding.first_connection.client",
@@ -450,6 +460,16 @@ _NOTIFICATION_BOT_BASIC_BY_TYPE = {
     for definition in NOTIFICATION_BOT_BASIC_DEFINITIONS
 }
 
+NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG = NotificationBotBasicTag(
+    semantic="recipient_telegram_username",
+    admin_label="[TG @username адресата]",
+    personal_label="[Мой TG @username]",
+)
+
+NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS: tuple[NotificationBotBasicTag, ...] = (
+    NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG,
+)
+
 NOTIFICATION_BOT_BASIC_TAGS: dict[str, tuple[str, ...]] = {
     "new_assignment": (
         "[Номер заявки]",
@@ -489,6 +509,46 @@ NOTIFICATION_BOT_BASIC_TAGS: dict[str, tuple[str, ...]] = {
         "[Ссылка на заявку]",
     ),
 }
+
+
+def notification_bot_basic_tags(notification_type: str, *, context: str = "admin") -> list[str]:
+    tags = list(NOTIFICATION_BOT_BASIC_TAGS.get(notification_type, ()))
+    tags.extend(tag.label(context) for tag in NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS)
+    return tags
+
+
+def notification_bot_basic_tag_labels_by_semantic(*, context: str = "admin") -> dict[str, str]:
+    return {tag.semantic: tag.label(context) for tag in NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS}
+
+
+def normalize_notification_bot_basic_semantic_tag_labels(text: str | None, *, context: str = "admin") -> str:
+    normalized = str(text or "")
+    for tag in NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS:
+        target = tag.label(context)
+        normalized = normalized.replace(tag.admin_label, target).replace(tag.personal_label, target)
+    return normalized
+
+
+def _format_recipient_tg_username(value: str | None) -> str:
+    username = str(value or "").strip()
+    if not username:
+        return _EMPTY
+    return username if username.startswith("@") else f"@{username}"
+
+
+def render_notification_bot_basic_semantic_tags(
+    text: str | None,
+    *,
+    recipient_telegram_username: str | None,
+) -> str:
+    rendered = str(text or "")
+    values = {
+        "recipient_telegram_username": _format_recipient_tg_username(recipient_telegram_username),
+    }
+    for tag in NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS:
+        value = values.get(tag.semantic, _EMPTY)
+        rendered = rendered.replace(tag.admin_label, value).replace(tag.personal_label, value)
+    return rendered
 
 VARIABLE_DESCRIPTIONS: dict[str, str] = {
     "agent_answer": "Текст ответа сотрудника",
@@ -723,25 +783,31 @@ def serialize_automatic_message(db: Session, definition: AutomaticMessageDefinit
     }
 
 
-def serialize_notification_bot_basic_template(db: Session, definition: AutomaticMessageDefinition) -> dict:
+def serialize_notification_bot_basic_template(
+    db: Session,
+    definition: AutomaticMessageDefinition,
+    *,
+    tag_context: str = "admin",
+) -> dict:
     row = get_automatic_message_row(db, definition.key)
     body = _normalize_body(row.body if row is not None else None)
     is_overridden = bool(row and row.is_overridden and body is not None)
     enabled = bool(row.enabled) if row is not None and row.enabled is not None else True
     notification_type = definition.key.rsplit(".", 1)[-1]
+    template = body if is_overridden else ("" if row is not None and not enabled and body is None else definition.default_text)
     return {
         "type": notification_type,
         "key": definition.key,
         "title": definition.title,
         "description": definition.description,
         "enabled": enabled,
-        "template": body if is_overridden else ("" if row is not None and not enabled and body is None else definition.default_text),
-        "default_template": definition.default_text,
+        "template": normalize_notification_bot_basic_semantic_tag_labels(template, context=tag_context),
+        "default_template": normalize_notification_bot_basic_semantic_tag_labels(definition.default_text, context=tag_context),
         "is_overridden": is_overridden,
         "html_enabled": bool(row.html_enabled) if row is not None and row.html_enabled is not None else definition.html_enabled,
         "disable_link_preview": bool(row.disable_link_preview) if row is not None else False,
         "send_silently": bool(row.send_silently) if row is not None else False,
-        "tags": list(NOTIFICATION_BOT_BASIC_TAGS.get(notification_type, ())),
+        "tags": notification_bot_basic_tags(notification_type, context=tag_context),
         "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
     }
 

@@ -366,6 +366,14 @@
           }
           return;
         }
+        if (action === "bot-notifications") {
+          if (window.HelpdeskAppShell?.navigate) {
+            window.HelpdeskAppShell.navigate("/profile/notification-bot");
+          } else {
+            window.location.href = "/profile/notification-bot";
+          }
+          return;
+        }
         console.info(`[sidebar-user-menu] Placeholder action: ${action || "unknown"}`);
       });
     });
