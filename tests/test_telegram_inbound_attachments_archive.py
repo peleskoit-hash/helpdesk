@@ -181,7 +181,7 @@ def test_extract_attachment_keeps_media_group_id():
 def test_copy_message_helper_includes_caption_even_when_empty(monkeypatch):
     calls = []
 
-    def _telegram_request(method, payload=None, timeout=30):
+    def _telegram_request(method, payload=None, timeout=30, **kwargs):
         calls.append((method, payload, timeout))
         return {"ok": True, "result": {"message_id": 321}}
 

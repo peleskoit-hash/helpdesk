@@ -7,7 +7,7 @@ from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import and_, asc, desc, func, or_, select
+from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
@@ -62,6 +62,7 @@ from ..services.ticket_lifecycle import (
     unfreeze_ticket_on_message,
     update_ticket_auto_close,
 )
+from ..services.ticket_numbering import ensure_ticket_number
 from ..services.ticket_problem_flow import (
     apply_wrong_problem,
     get_problem_menu_for_ticket,
@@ -108,15 +109,6 @@ def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
 
-def _ensure_ticket_number(db: Session, ticket: Ticket) -> int:
-    if ticket.ticket_number is not None:
-        return ticket.ticket_number
-    max_number = db.execute(select(func.max(Ticket.ticket_number))).scalar_one() or 0
-    ticket.ticket_number = int(max_number) + 1
-    db.flush()
-    return ticket.ticket_number
-
-
 def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket:
     if ticket_id.isdigit():
         stmt = select(Ticket).where(Ticket.ticket_number == int(ticket_id))
@@ -126,7 +118,7 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
     if not ticket:
         _error(404, "ticket_not_found", "Тикет не найден")
     if ticket.ticket_number is None:
-        _ensure_ticket_number(db, ticket)
+        ensure_ticket_number(db, ticket)
         db.commit()
     if is_support_user(user):
         if ticket.status != TicketStatus.CLOSED.value and (ticket.assignee_id != user.id or ticket.agent_visible is False):
@@ -247,6 +239,7 @@ def _actor_display_name(db: Session, actor: CurrentUser) -> str:
 
 def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, actor: CurrentUser):
     old_assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
+    old_is_special = bool(ticket.is_special)
     old_status = ticket.status
     actor_user = db.get(User, actor.id) if actor.id else None
     actor_name = actor_user.full_name if actor_user and actor_user.full_name else "Администратор"
@@ -260,7 +253,15 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
             ticket.status = TicketStatus.UNASSIGNED.value
         ticket.updated_at = datetime.utcnow()
         append_system_message(db, ticket, assignee_change_message(old_assignee, None))
-        schedule_employee_assignment_notification(db, ticket, old_assignee=old_assignee, new_assignee=None)
+        schedule_employee_assignment_notification(
+            db,
+            ticket,
+            old_assignee=old_assignee,
+            new_assignee=None,
+            old_is_special=old_is_special,
+            new_is_special=bool(ticket.is_special),
+            actor_user_id=actor_user.id if actor_user is not None else None,
+        )
         return
 
     if _handle_special_assignment(
@@ -280,6 +281,9 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
             ticket,
             old_assignee=old_assignee,
             new_assignee=assignee,
+            old_is_special=old_is_special,
+            new_is_special=bool(ticket.is_special),
+            actor_user_id=actor_user.id if actor_user is not None else None,
         )
         return
 
@@ -290,7 +294,15 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
     ticket.updated_at = datetime.utcnow()
     append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
     run_group_parent_assigned_hook(db, ticket, assignee)
-    schedule_employee_assignment_notification(db, ticket, old_assignee=old_assignee, new_assignee=assignee)
+    schedule_employee_assignment_notification(
+        db,
+        ticket,
+        old_assignee=old_assignee,
+        new_assignee=assignee,
+        old_is_special=old_is_special,
+        new_is_special=bool(ticket.is_special),
+        actor_user_id=actor_user.id if actor_user is not None else None,
+    )
     if is_admin(actor):
         # Admin took ticket from support queue.
         if assignee.id == actor.id and old_assignee is not None and old_assignee.id != actor.id:
@@ -531,7 +543,7 @@ def list_active(
         limit=limit,
         query=query,
         admin_assignee_ids=assignee_ids,
-        ensure_ticket_number_fn=_ensure_ticket_number,
+        ensure_ticket_number_fn=ensure_ticket_number,
     )
 
 
@@ -558,7 +570,7 @@ def list_unassigned(
         admin_assignee_ids=None,
         filter_admin_assignees=False,
         require_admin_or_chiki=True,
-        ensure_ticket_number_fn=_ensure_ticket_number,
+        ensure_ticket_number_fn=ensure_ticket_number,
     )
 
 
@@ -585,7 +597,7 @@ def list_frozen(
         limit=limit,
         query=query,
         admin_assignee_ids=assignee_ids,
-        ensure_ticket_number_fn=_ensure_ticket_number,
+        ensure_ticket_number_fn=ensure_ticket_number,
     )
 
 
@@ -616,7 +628,7 @@ def list_closed(
         include_special_open=False,
         include_support_special_closed=True,
         include_support_all_closed=True,
-        ensure_ticket_number_fn=_ensure_ticket_number,
+        ensure_ticket_number_fn=ensure_ticket_number,
     )
 
 
@@ -638,7 +650,7 @@ def list_special(
         page=page,
         limit=limit,
         query=query,
-        ensure_ticket_number_fn=_ensure_ticket_number,
+        ensure_ticket_number_fn=ensure_ticket_number,
     )
 
 
@@ -1230,7 +1242,7 @@ async def create_attachment_preload(
         _error(409, "user_id_required", "Для предзагрузки файла нужен корректный пользователь")
 
     cleanup_stale_attachment_preloads(db)
-    _ensure_ticket_number(db, ticket)
+    ensure_ticket_number(db, ticket)
     preload = _save_attachment_preload(db, ticket, user.id, file, archive_group_id)
     db.commit()
     background_tasks.add_task(deliver_attachment_preload, preload_id=preload.id)
@@ -1454,6 +1466,15 @@ def move_to_special(ticket_id: str, db: Session = Depends(get_db), user: Current
         old_assignee,
         append_system_message_fn=append_system_message,
         clear_auto_close_timer_fn=clear_ticket_auto_close_timer,
+    )
+    schedule_employee_assignment_notification(
+        db,
+        ticket,
+        old_assignee=old_assignee,
+        new_assignee=admin_user,
+        old_is_special=False,
+        new_is_special=True,
+        actor_user_id=admin_user.id,
     )
     db.commit()
     return {"ok": True}

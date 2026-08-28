@@ -79,12 +79,18 @@ def schedule_employee_assignment_notification(
     *,
     old_assignee: User | None,
     new_assignee: User | None,
+    old_is_special: bool = False,
+    new_is_special: bool = False,
+    actor_user_id: str | None = None,
 ) -> None:
     schedule_assignment_notification(
         db,
         old_assignee_id=old_assignee.id if old_assignee is not None else None,
         new_assignee_id=new_assignee.id if new_assignee is not None else None,
         ticket=ticket,
+        old_is_special=old_is_special,
+        new_is_special=new_is_special,
+        actor_user_id=actor_user_id,
     )
 
 

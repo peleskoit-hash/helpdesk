@@ -303,8 +303,8 @@ def test_admin_reassign_a_to_b_creates_transfer_event_after_commit(monkeypatch):
 
     real_builder = employee_telegram_notifications.build_assignment_notification_event
 
-    def capture_event(*, old_assignee_id, new_assignee_id):
-        event = real_builder(old_assignee_id=old_assignee_id, new_assignee_id=new_assignee_id)
+    def capture_event(**kwargs):
+        event = real_builder(**kwargs)
         if event is not None:
             captured_events.append(event)
         return event

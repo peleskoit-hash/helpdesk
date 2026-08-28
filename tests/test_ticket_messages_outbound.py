@@ -1784,7 +1784,7 @@ def test_staging_binary_upload_uses_extended_timeout(monkeypatch, tmp_path):
 def test_regular_telegram_calls_keep_default_timeouts(monkeypatch):
     calls = []
 
-    def _telegram_request(method, payload=None, timeout=30):
+    def _telegram_request(method, payload=None, timeout=30, **kwargs):
         calls.append((method, timeout))
         if method == "sendDocument":
             return {"ok": True, "result": {"message_id": 1, "document": {"file_id": "file-1", "file_unique_id": "uniq-1"}}}

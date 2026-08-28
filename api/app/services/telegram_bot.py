@@ -224,12 +224,16 @@ def send_message(
     remove_keyboard: bool = False,
     reply_to_message_id: str | int | None = None,
     bot_token: str | None = None,
+    disable_web_page_preview: bool = True,
+    disable_notification: bool = False,
 ) -> dict:
     payload: dict = {
         "chat_id": chat_id,
         "text": text,
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": bool(disable_web_page_preview),
     }
+    if disable_notification:
+        payload["disable_notification"] = True
     if parse_mode:
         payload["parse_mode"] = parse_mode
     if reply_to_message_id is not None:

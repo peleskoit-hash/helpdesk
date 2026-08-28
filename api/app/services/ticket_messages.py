@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
 from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketWorkflowType, User
 from ..schemas import TextPayload
+from ..services.employee_telegram_notifications import schedule_new_message_notification
 from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_caption, edit_message_text
 from ..services.telegram_text_format import strip_telegram_html
 
@@ -79,6 +80,8 @@ def add_message(
     )
     db.add(msg)
     ticket.updated_at = datetime.utcnow()
+    if message_type in {MessageType.CLIENT, MessageType.AGENT, MessageType.INTERNAL}:
+        schedule_new_message_notification(db, ticket=ticket, message=msg)
     return msg
 
 

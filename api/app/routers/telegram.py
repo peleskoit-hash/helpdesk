@@ -44,7 +44,9 @@ from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
 from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
+from ..services.assignment import schedule_employee_assignment_notification
 from ..services.assignment import set_group_parent_assigned_hook
+from ..services.employee_telegram_notifications import schedule_new_message_notification
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
 from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
@@ -1368,6 +1370,7 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
     if assignee_id:
         assignee.last_assigned_at = datetime.utcnow()
         append_system_message(db, new_ticket, assignee_change_message(None, assignee))
+        schedule_employee_assignment_notification(db, new_ticket, old_assignee=None, new_assignee=assignee)
     else:
         append_system_message(db, new_ticket, "На распределении")
 
@@ -1396,6 +1399,7 @@ def _create_task_from_intent(db: Session, intent: PendingTaskIntent, body: str) 
     if assignee_id:
         assignee.last_assigned_at = datetime.utcnow()
         append_system_message(db, task, assignee_change_message(None, assignee))
+        schedule_employee_assignment_notification(db, task, old_assignee=None, new_assignee=assignee)
     else:
         append_system_message(db, task, "На распределении")
     _append_client_message(db, task, body or "(пустое сообщение)")
@@ -1427,6 +1431,7 @@ def _append_client_message(
     telegram_message_id: str | None = None,
     *,
     replaced_message_id: str | None = None,
+    schedule_notification: bool = True,
 ):
     has_messages = db.execute(select(TicketMessage.id).where(TicketMessage.ticket_id == ticket.id).limit(1)).first()
     if has_messages is None and ticket.subject == "Новое обращение" and body.strip():
@@ -1448,7 +1453,22 @@ def _append_client_message(
         ticket.freeze_until = None
     ticket.updated_at = datetime.utcnow()
     db.flush()
+    if schedule_notification:
+        schedule_new_message_notification(db, ticket=ticket, message=msg)
     return msg
+
+
+def _store_telegram_attachment_and_schedule_employee_notification(
+    db: Session,
+    ticket: Ticket,
+    message: TicketMessage,
+    attachment_data: dict,
+    external_chat_id: str,
+) -> TicketAttachment | None:
+    attachment = _store_telegram_attachment(db, ticket, message, attachment_data, external_chat_id)
+    if attachment is not None:
+        schedule_new_message_notification(db, ticket=ticket, message=message, attachment=attachment)
+    return attachment
 
 
 def _handle_edited_client_message(
@@ -2952,8 +2972,14 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             external_chat_id=external_chat_id,
             notify_client=notify_client,
             append_system_message_fn=append_system_message,
-            append_client_message_fn=_append_client_message,
-            store_telegram_attachment_fn=_store_telegram_attachment,
+            append_client_message_fn=lambda db_session, t, body, msg_id: _append_client_message(
+                db_session,
+                t,
+                body,
+                msg_id,
+                schedule_notification=attachment_data is None or attachment_too_large,
+            ),
+            store_telegram_attachment_fn=_store_telegram_attachment_and_schedule_employee_notification,
             remove_client_close_button_fn=lambda _db, _ticket: remove_client_close_button(
                 _db, _ticket, remove_inline_keyboard_fn=remove_inline_keyboard
             ),
@@ -2969,7 +2995,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         client_message = None
         archived_attachment_id = None
         if client_body or not attachment_too_large:
-            client_message = _append_client_message(db, collecting_ticket, client_body, telegram_message_id)
+            client_message = _append_client_message(
+                db,
+                collecting_ticket,
+                client_body,
+                telegram_message_id,
+                schedule_notification=attachment_data is None or attachment_too_large,
+            )
         if attachment_too_large:
             append_system_message(
                 db,
@@ -2985,7 +3017,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 notify_client=notify_client,
             )
         elif attachment_data is not None and client_message is not None:
-            attachment = _store_telegram_attachment(db, collecting_ticket, client_message, attachment_data, external_chat_id)
+            attachment = _store_telegram_attachment_and_schedule_employee_notification(db, collecting_ticket, client_message, attachment_data, external_chat_id)
             archived_attachment_id = attachment.id if attachment is not None else None
         refresh_ticket_auto_close_timer(db, collecting_ticket, restart_from_now=False)
 
@@ -3054,7 +3086,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     client_message = None
     archived_attachment_id = None
     if text or not attachment_too_large:
-        client_message = _append_client_message(db, ticket, text, telegram_message_id)
+        client_message = _append_client_message(
+            db,
+            ticket,
+            text,
+            telegram_message_id,
+            schedule_notification=attachment_data is None or attachment_too_large,
+        )
     if attachment_too_large:
         append_system_message(
             db,
@@ -3070,7 +3108,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             notify_client=notify_client,
         )
     elif attachment_data is not None and client_message is not None:
-        attachment = _store_telegram_attachment(db, ticket, client_message, attachment_data, external_chat_id)
+        attachment = _store_telegram_attachment_and_schedule_employee_notification(db, ticket, client_message, attachment_data, external_chat_id)
         archived_attachment_id = attachment.id if attachment is not None else None
     refresh_ticket_auto_close_timer(db, ticket, restart_from_now=False)
     db.commit()
