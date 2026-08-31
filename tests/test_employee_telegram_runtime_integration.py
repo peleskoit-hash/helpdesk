@@ -22,6 +22,7 @@ from api.app.models import (
     TicketAttachment,
     TicketIntakeState,
     TicketMessage,
+    TicketTaskKind,
     TicketStatus,
     TicketWorkflowType,
     User,
@@ -90,17 +91,29 @@ def _user(session, *, company_id: str, full_name: str, role: str = "agent", is_a
     return user
 
 
-def _ticket(session, *, company_id: str, client_id: str, assignee_id: str | None = None, workflow_type: str = "ticket") -> Ticket:
+def _ticket(
+    session,
+    *,
+    company_id: str,
+    client_id: str,
+    assignee_id: str | None = None,
+    ticket_number: int | None = 742,
+    workflow_type: str = "ticket",
+    task_kind: str = TicketTaskKind.NORMAL.value,
+    parent_ticket_id: str | None = None,
+) -> Ticket:
     now = datetime(2026, 8, 27, 9, 30)
     ticket = Ticket(
         id=str(uuid.uuid4()),
-        ticket_number=742,
+        ticket_number=ticket_number,
         company_id=company_id,
         client_id=client_id,
         assignee_id=assignee_id,
         subject="<b>unsafe</b> & test",
         workflow_type=workflow_type,
         intake_state=TicketIntakeState.READY.value,
+        task_kind=task_kind,
+        parent_ticket_id=parent_ticket_id,
         status=TicketStatus.NEW.value if assignee_id else TicketStatus.UNASSIGNED.value,
         created_at=now,
         updated_at=now,
@@ -835,6 +848,64 @@ def test_text_only_message_schedules_one_immediate_notification():
     assert notifications._PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY not in session.info
 
 
+def test_regular_ticket_new_message_runtime_delivery_still_sends(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Agent")
+    ticket = _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent.id, workflow_type=TicketWorkflowType.TICKET.value)
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="client ping",
+        agent_visible=True,
+        created_at=datetime(2026, 8, 27, 10, 15),
+    )
+    session.add(message)
+    session.flush()
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_new_message_notification(session, ticket=ticket, message=message)
+    session.commit()
+
+    assert sent == [("chat-agent", "client ping")]
+
+
+def test_regular_task_assignment_runtime_delivery_still_sends(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Task Agent")
+    task = _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent.id, workflow_type=TicketWorkflowType.TASK.value)
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_assignment", "Assigned [Номер заявки]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_assignment_notification(
+        session,
+        old_assignee_id=None,
+        new_assignee_id=agent.id,
+        ticket=task,
+    )
+    session.commit()
+
+    assert sent == [("chat-agent", "Assigned 742")]
+
+
 def test_two_standalone_attachment_messages_schedule_two_notifications():
     session = _session()
     company = _company(session)
@@ -851,6 +922,249 @@ def test_two_standalone_attachment_messages_schedule_two_notifications():
 
     assert [item["message_id"] for item in session.info[notifications._PENDING_MESSAGE_NOTIFICATIONS_KEY]] == [first.id, second.id]
     assert notifications._PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY not in session.info
+
+
+def test_group_parent_assignment_runtime_delivery_is_preserved(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Group Parent Agent")
+    parent = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_assignment", "Parent [Номер заявки]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_assignment_notification(
+        session,
+        old_assignee_id=None,
+        new_assignee_id=agent.id,
+        ticket=parent,
+    )
+    session.commit()
+
+    assert sent == [("chat-agent", "Parent 742")]
+
+
+def test_group_child_new_message_runtime_delivery_is_suppressed(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Child Agent")
+    parent = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        ticket_number=900,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    child = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        ticket_number=901,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+    )
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=child.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="child client ping",
+        agent_visible=True,
+        created_at=datetime(2026, 8, 27, 10, 15),
+    )
+    session.add(message)
+    session.flush()
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_new_message_notification(session, ticket=child, message=message)
+    session.commit()
+
+    assert sent == []
+
+
+def test_group_child_assignment_runtime_delivery_is_suppressed(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Child Agent")
+    parent = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        ticket_number=910,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    child = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        ticket_number=911,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+    )
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_assignment", "Child [Номер заявки]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_assignment_notification(
+        session,
+        old_assignee_id=None,
+        new_assignee_id=agent.id,
+        ticket=child,
+    )
+    session.commit()
+
+    assert sent == []
+
+
+def test_group_child_transfer_runtime_delivery_is_preserved(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent_a = _user(session, company_id=company.id, full_name="Agent A")
+    agent_b = _user(session, company_id=company.id, full_name="Agent B")
+    parent = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        ticket_number=915,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    child = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent_b.id,
+        ticket_number=916,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+    )
+    _account(session, user_id=agent_a.id, chat_id="chat-a")
+    _account(session, user_id=agent_b.id, chat_id="chat-b")
+    _base(session, "transfer_to_agent", "To [Предыдущий агент]")
+    _base(session, "transfer_from_agent", "From [Куда передана заявка]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_assignment_notification(
+        session,
+        old_assignee_id=agent_a.id,
+        new_assignee_id=agent_b.id,
+        ticket=child,
+    )
+    session.commit()
+
+    assert sent == [
+        ("chat-b", "To Agent A"),
+        ("chat-a", "From Agent B"),
+    ]
+
+
+def test_multiple_group_child_messages_do_not_create_employee_spam(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Child Agent")
+    parent = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        ticket_number=920,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    first_child = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        ticket_number=921,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+    )
+    second_child = _ticket(
+        session,
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        ticket_number=922,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+    )
+    first_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=first_child.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="child one",
+        agent_visible=True,
+        created_at=datetime(2026, 8, 27, 10, 15),
+    )
+    second_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=second_child.id,
+        message_type=MessageType.CLIENT.value,
+        author_user_id=None,
+        body="child two",
+        agent_visible=True,
+        created_at=datetime(2026, 8, 27, 10, 16),
+    )
+    session.add_all([first_message, second_message])
+    session.flush()
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+
+    notifications.schedule_new_message_notification(session, ticket=first_child, message=first_message)
+    notifications.schedule_new_message_notification(session, ticket=second_child, message=second_message)
+    session.commit()
+
+    assert sent == []
 
 
 def test_media_group_debounce_resets_timer_sends_once_and_cleans_registry(monkeypatch):

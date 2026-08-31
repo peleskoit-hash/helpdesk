@@ -23,6 +23,7 @@ from ..models import (
     Ticket,
     TicketAttachment,
     TicketMessage,
+    TicketTaskKind,
     TicketWorkflowType,
     User,
 )
@@ -237,6 +238,17 @@ def _ticket_number(ticket: Ticket, *, html_enabled: bool) -> str:
 def _ticket_type(ticket: Ticket) -> str:
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     return "задача" if workflow_type == TicketWorkflowType.TASK.value else "заявка"
+
+
+def _is_group_child_ticket(ticket: Ticket | None) -> bool:
+    if ticket is None:
+        return False
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
+        return False
+    return (
+        (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.GROUP_CHILD.value
+        and bool(str(ticket.parent_ticket_id or "").strip())
+    )
 
 
 def _ticket_link(ticket: Ticket, *, html_enabled: bool) -> str:
@@ -548,6 +560,8 @@ def resolve_assignment_telegram_deliveries(
     ticket = ticket or (db.get(Ticket, ticket_id) if ticket_id else None)
     if ticket is None:
         return ()
+    if _is_group_child_ticket(ticket) and event.kind == ASSIGNMENT_EVENT_NEW:
+        return ()
     old_assignee = db.get(User, event.old_assignee_id) if event.old_assignee_id else None
     new_assignee = db.get(User, event.new_assignee_id) if event.new_assignee_id else None
     actor_user = db.get(User, event.actor_user_id) if event.actor_user_id else None
@@ -615,6 +629,8 @@ def schedule_assignment_notification(
     )
     if event_payload is None or not event_payload.deliveries:
         return event_payload
+    if _is_group_child_ticket(ticket) and event_payload.kind == ASSIGNMENT_EVENT_NEW:
+        return event_payload
     ensure_ticket_number(db, ticket)
     db.info.setdefault(_PENDING_ASSIGNMENT_NOTIFICATIONS_KEY, []).append(
         {
@@ -639,6 +655,8 @@ def schedule_new_message_notification(
     message: TicketMessage,
     attachment: TicketAttachment | None = None,
 ) -> None:
+    if _is_group_child_ticket(ticket):
+        return
     if not ticket.assignee_id:
         return
     if message.message_type == MessageType.SYSTEM.value:
@@ -675,6 +693,8 @@ def _resolve_new_message_delivery(
     message_body: str | None = None,
 ) -> EmployeeTelegramDelivery | None:
     notification_type = "new_message"
+    if _is_group_child_ticket(ticket):
+        return None
     if message.message_type == MessageType.SYSTEM.value:
         return None
     if message.agent_visible is False:
