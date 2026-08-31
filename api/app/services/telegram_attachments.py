@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 from mimetypes import guess_extension
 from pathlib import Path
-from threading import Thread
+import re
+from threading import Lock, Thread, Timer
+import time
 import uuid
 
 from sqlalchemy import Select, asc, or_, select, update
@@ -23,6 +26,25 @@ FORBIDDEN_ATTACHMENT_TYPES = {"voice", "video_note"}
 TELEGRAM_DOWNLOAD_PREFETCH_LIMIT_BYTES = 20 * 1024 * 1024
 ARCHIVE_PENDING_PREFIX = "pending:"
 ARCHIVE_INFO_PENDING_PREFIX = "pending:info:"
+INBOUND_MEDIA_GROUP_ARCHIVE_QUIET_SECONDS = 30.0
+INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS = 3
+INBOUND_ARCHIVE_COPY_RETRY_DELAY_SECONDS = 1.0
+INBOUND_ARCHIVE_COPY_RETRY_MAX_DELAY_SECONDS = 30.0
+TELEGRAM_MEDIA_GROUP_MAX_ATTACHMENTS = 10
+_RETRY_AFTER_RE = re.compile(r"retry after\s+(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+@dataclass
+class _InboundMediaGroupArchiveState:
+    generation: int
+    timer: Timer
+
+
+_MEDIA_GROUP_ARCHIVE_LOCK = Lock()
+_MEDIA_GROUP_ARCHIVE: dict[tuple[str, str], _InboundMediaGroupArchiveState] = {}
+_MEDIA_GROUP_ARCHIVE_TIMER_FACTORY = Timer
+_TICKET_MEDIA_GROUP_ARCHIVE_LOCKS_LOCK = Lock()
+_TICKET_MEDIA_GROUP_ARCHIVE_LOCKS: dict[str, Lock] = {}
 
 
 def _safe_filename(value: str | None, fallback: str) -> str:
@@ -245,6 +267,15 @@ def _load_media_group_attachments(
     return db.execute(stmt).scalars().all()
 
 
+def _media_group_attachment_count(
+    db: Session,
+    *,
+    ticket_id: str,
+    media_group_id: str,
+) -> int:
+    return len(_load_media_group_attachments(db, ticket_id=ticket_id, media_group_id=media_group_id, for_update=False))
+
+
 def _actual_inbound_group_info_message_id(attachments: list[TicketAttachment]) -> str | None:
     for attachment in attachments:
         message_id = str(attachment.telegram_archive_info_message_id or "").strip()
@@ -411,8 +442,68 @@ def _inbound_archive_source_message_id(db: Session, attachment: TicketAttachment
     return message_id
 
 
-def _ensure_inbound_group_info_message(db: Session, ticket: Ticket, attachment: TicketAttachment) -> str | None:
-    media_group_id = str(attachment.telegram_media_group_id or "").strip()
+def _telegram_retry_delay_seconds(exc: TelegramApiError) -> float:
+    retry_after = getattr(exc, "retry_after", None)
+    try:
+        if retry_after is not None:
+            return min(max(float(retry_after), 0.0), INBOUND_ARCHIVE_COPY_RETRY_MAX_DELAY_SECONDS)
+    except (TypeError, ValueError):
+        pass
+    match = _RETRY_AFTER_RE.search(str(exc))
+    if match:
+        return min(max(float(match.group(1)), 0.0), INBOUND_ARCHIVE_COPY_RETRY_MAX_DELAY_SECONDS)
+    return INBOUND_ARCHIVE_COPY_RETRY_DELAY_SECONDS
+
+
+def _copy_message_with_retry(*args, **kwargs) -> dict:
+    last_exc: TelegramApiError | None = None
+    for attempt in range(1, INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS + 1):
+        try:
+            return copy_message(*args, **kwargs)
+        except TelegramApiError as exc:
+            last_exc = exc
+            if attempt >= INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS:
+                break
+            delay = _telegram_retry_delay_seconds(exc)
+            logger.warning(
+                "Retrying inbound Telegram archive copy after error attempt=%s/%s delay=%s: %s",
+                attempt,
+                INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise last_exc or TelegramApiError("Telegram archive copy failed")
+
+
+def _send_message_with_retry(*args, **kwargs) -> dict:
+    last_exc: TelegramApiError | None = None
+    for attempt in range(1, INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS + 1):
+        try:
+            return send_message(*args, **kwargs)
+        except TelegramApiError as exc:
+            last_exc = exc
+            if attempt >= INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS:
+                break
+            delay = _telegram_retry_delay_seconds(exc)
+            logger.warning(
+                "Retrying inbound Telegram archive summary after error attempt=%s/%s delay=%s: %s",
+                attempt,
+                INBOUND_ARCHIVE_COPY_RETRY_ATTEMPTS,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise last_exc or TelegramApiError("Telegram archive summary send failed")
+
+
+def _ensure_inbound_group_info_message_for_group(
+    db: Session,
+    *,
+    ticket: Ticket,
+    media_group_id: str,
+) -> str | None:
+    media_group_id = str(media_group_id or "").strip()
     if not media_group_id:
         return None
 
@@ -446,9 +537,10 @@ def _ensure_inbound_group_info_message(db: Session, ticket: Ticket, attachment: 
 
     try:
         refreshed_rows = _load_media_group_attachments(db, ticket_id=ticket.id, media_group_id=media_group_id, for_update=False)
-        response = send_message(
+        summary_text = _inbound_group_archive_info_text(ticket, refreshed_rows, _client_name_for_archive(db, ticket))
+        response = _send_message_with_retry(
             _staging_chat_id(),
-            _inbound_group_archive_info_text(ticket, refreshed_rows, _client_name_for_archive(db, ticket)),
+            summary_text,
         )
         message_id = _telegram_message_id(response)
         if not message_id:
@@ -483,6 +575,14 @@ def _ensure_inbound_group_info_message(db: Session, ticket: Ticket, attachment: 
         return None
 
 
+def _ensure_inbound_group_info_message(db: Session, ticket: Ticket, attachment: TicketAttachment) -> str | None:
+    return _ensure_inbound_group_info_message_for_group(
+        db,
+        ticket=ticket,
+        media_group_id=str(attachment.telegram_media_group_id or "").strip(),
+    )
+
+
 def _best_effort_archive_inbound_attachment(db: Session, ticket: Ticket, attachment: TicketAttachment) -> None:
     archive_message_id = str(attachment.telegram_archive_message_id or "").strip()
     if archive_message_id and not _is_pending_archive_message_id(archive_message_id):
@@ -494,14 +594,14 @@ def _best_effort_archive_inbound_attachment(db: Session, ticket: Ticket, attachm
         media_group_id = str(attachment.telegram_media_group_id or "").strip()
         if media_group_id:
             _ensure_inbound_group_info_message(db, ticket, attachment)
-            response = copy_message(
+            response = _copy_message_with_retry(
                 _staging_chat_id(),
                 source_chat_id,
                 source_message_id,
                 caption="",
             )
         else:
-            response = copy_message(
+            response = _copy_message_with_retry(
                 _staging_chat_id(),
                 source_chat_id,
                 source_message_id,
@@ -538,6 +638,135 @@ def _best_effort_archive_inbound_attachment(db: Session, ticket: Ticket, attachm
         )
 
 
+def _cleanup_media_group_archive_state(key: tuple[str, str], generation: int) -> None:
+    with _MEDIA_GROUP_ARCHIVE_LOCK:
+        state = _MEDIA_GROUP_ARCHIVE.get(key)
+        if state is not None and state.generation == generation:
+            _MEDIA_GROUP_ARCHIVE.pop(key, None)
+
+
+def _is_current_media_group_archive_generation(key: tuple[str, str], generation: int) -> bool:
+    with _MEDIA_GROUP_ARCHIVE_LOCK:
+        state = _MEDIA_GROUP_ARCHIVE.get(key)
+        return state is not None and state.generation == generation
+
+
+def _ticket_media_group_archive_lock(ticket_id: str) -> Lock:
+    normalized_ticket_id = str(ticket_id or "").strip()
+    with _TICKET_MEDIA_GROUP_ARCHIVE_LOCKS_LOCK:
+        lock = _TICKET_MEDIA_GROUP_ARCHIVE_LOCKS.get(normalized_ticket_id)
+        if lock is None:
+            lock = Lock()
+            _TICKET_MEDIA_GROUP_ARCHIVE_LOCKS[normalized_ticket_id] = lock
+        return lock
+
+
+def _schedule_inbound_media_group_archive_worker(
+    *,
+    ticket_id: str,
+    media_group_id: str,
+    attachment_count: int | None,
+    delay_seconds: float,
+) -> None:
+    key = (ticket_id, media_group_id)
+    with _MEDIA_GROUP_ARCHIVE_LOCK:
+        previous = _MEDIA_GROUP_ARCHIVE.get(key)
+        generation = (previous.generation + 1) if previous is not None else 1
+        if previous is not None:
+            previous.timer.cancel()
+        timer = _MEDIA_GROUP_ARCHIVE_TIMER_FACTORY(
+            delay_seconds,
+            _archive_inbound_media_group_worker,
+            args=(ticket_id, media_group_id, generation),
+        )
+        timer.daemon = True
+        _MEDIA_GROUP_ARCHIVE[key] = _InboundMediaGroupArchiveState(generation=generation, timer=timer)
+    timer.start()
+
+
+def _archive_inbound_media_group_attachment(db: Session, *, ticket: Ticket, attachment_id: str) -> None:
+    pending_token = _claim_inbound_attachment_archive(db, attachment_id)
+    if not pending_token:
+        return
+    try:
+        attachment = db.get(TicketAttachment, attachment_id)
+        if attachment is None:
+            _release_inbound_attachment_archive_claim(db, attachment_id, pending_token)
+            return
+        _best_effort_archive_inbound_attachment(db, ticket, attachment)
+        if str(attachment.telegram_archive_message_id or "").strip() == pending_token:
+            attachment.telegram_archive_message_id = None
+        db.commit()
+    except Exception:
+        logger.exception("Unexpected inbound attachment archive failure attachment_id=%s", attachment_id)
+        db.rollback()
+        _release_inbound_attachment_archive_claim(db, attachment_id, pending_token)
+
+
+def _archive_inbound_media_group_worker(ticket_id: str, media_group_id: str, generation: int) -> None:
+    key = (ticket_id, media_group_id)
+    if not _is_current_media_group_archive_generation(key, generation):
+        return
+    try:
+        with _ticket_media_group_archive_lock(ticket_id):
+            if not _is_current_media_group_archive_generation(key, generation):
+                return
+            with SessionLocal() as db:
+                ticket = db.get(Ticket, ticket_id)
+                if ticket is None:
+                    return
+                group_rows = _load_media_group_attachments(db, ticket_id=ticket_id, media_group_id=media_group_id, for_update=False)
+                if not group_rows:
+                    return
+                summary_message_id = _ensure_inbound_group_info_message_for_group(db, ticket=ticket, media_group_id=media_group_id)
+                group_rows = _load_media_group_attachments(db, ticket_id=ticket_id, media_group_id=media_group_id, for_update=False)
+                if not summary_message_id:
+                    summary_message_id = _actual_inbound_group_info_message_id(group_rows)
+                if not summary_message_id:
+                    _schedule_inbound_media_group_archive_worker(
+                        ticket_id=ticket_id,
+                        media_group_id=media_group_id,
+                        attachment_count=len(group_rows),
+                        delay_seconds=INBOUND_MEDIA_GROUP_ARCHIVE_QUIET_SECONDS,
+                    )
+                    return
+                for attachment in group_rows:
+                    if not _is_current_media_group_archive_generation(key, generation):
+                        return
+                    archive_message_id = str(attachment.telegram_archive_message_id or "").strip()
+                    if archive_message_id and not _is_pending_archive_message_id(archive_message_id):
+                        continue
+                    _archive_inbound_media_group_attachment(db, ticket=ticket, attachment_id=attachment.id)
+                refreshed_rows = _load_media_group_attachments(db, ticket_id=ticket_id, media_group_id=media_group_id, for_update=False)
+                if refreshed_rows:
+                    _best_effort_edit_inbound_group_archive_info_message(
+                        db=db,
+                        ticket=ticket,
+                        attachments=refreshed_rows,
+                    )
+    finally:
+        _cleanup_media_group_archive_state(key, generation)
+
+
+def _start_inbound_media_group_archive_debounce(*, ticket_id: str, media_group_id: str) -> None:
+    normalized_group_id = str(media_group_id or "").strip()
+    if not ticket_id or not normalized_group_id:
+        return
+    with SessionLocal() as db:
+        attachment_count = _media_group_attachment_count(
+            db,
+            ticket_id=ticket_id,
+            media_group_id=normalized_group_id,
+        )
+    delay_seconds = 0.0 if attachment_count >= TELEGRAM_MEDIA_GROUP_MAX_ATTACHMENTS else INBOUND_MEDIA_GROUP_ARCHIVE_QUIET_SECONDS
+    _schedule_inbound_media_group_archive_worker(
+        ticket_id=ticket_id,
+        media_group_id=normalized_group_id,
+        attachment_count=attachment_count,
+        delay_seconds=delay_seconds,
+    )
+
+
 def _archive_inbound_attachment_worker(attachment_id: str) -> None:
     with SessionLocal() as db:
         pending_token = _claim_inbound_attachment_archive(db, attachment_id)
@@ -566,11 +795,16 @@ def start_background_archive_inbound_attachment(attachment_id: str | None) -> No
     normalized = str(attachment_id or "").strip()
     if not normalized:
         return
-    Thread(
-        target=_archive_inbound_attachment_worker,
-        args=(normalized,),
-        daemon=True,
-    ).start()
+    with SessionLocal() as db:
+        attachment = db.get(TicketAttachment, normalized)
+        if attachment is None:
+            return
+        media_group_id = str(attachment.telegram_media_group_id or "").strip()
+        ticket_id = str(attachment.ticket_id or "").strip()
+    if media_group_id and ticket_id:
+        _start_inbound_media_group_archive_debounce(ticket_id=ticket_id, media_group_id=media_group_id)
+        return
+    Thread(target=_archive_inbound_attachment_worker, args=(normalized,), daemon=True).start()
 
 
 def _ensure_local_attachment_file(attachment: TicketAttachment, external_chat_id: str | int | None = None) -> Path:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import html
 import re
 import uuid
 
@@ -711,8 +712,12 @@ def get_effective_automatic_message_text(db: Session, key: str, fallback: str | 
     return default_text or ""
 
 
-def _render_fields(text: str, context: dict[str, object]) -> str:
-    values = {key: str(value) for key, value in context.items() if value is not None}
+def _render_fields(text: str, context: dict[str, object], *, escape_values_for_html: bool = False) -> str:
+    values = {
+        key: html.escape(str(value), quote=False) if escape_values_for_html else str(value)
+        for key, value in context.items()
+        if value is not None
+    }
     return _FIELD_RE.sub(lambda match: values.get(match.group(1), _EMPTY), text)
 
 
@@ -726,6 +731,7 @@ def render_automatic_message_text(
     agent: User | None = None,
     client_message: str | None = None,
     extra: dict[str, object] | None = None,
+    escape_values_for_html: bool = False,
 ) -> str:
     base = get_effective_automatic_message_text(db, key, fallback)
     context = template_context(db, ticket=ticket, contact=contact, agent=agent, client_message=client_message)
@@ -737,7 +743,7 @@ def render_automatic_message_text(
     })
     if extra:
         context.update(extra)
-    return _render_fields(base, context)
+    return _render_fields(base, context, escape_values_for_html=escape_values_for_html)
 
 
 def render_automatic_message_for_telegram(
@@ -760,6 +766,7 @@ def render_automatic_message_for_telegram(
         agent=agent,
         client_message=client_message,
         extra=extra,
+        escape_values_for_html=True,
     )
     return prepare_telegram_html_message(text)
 

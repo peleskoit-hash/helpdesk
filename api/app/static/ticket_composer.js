@@ -68,6 +68,14 @@
     return Boolean(ctx.canUseAttachmentPreload?.());
   }
 
+  function workflowType(ctx) {
+    return String(ctx.workflowType?.() || ctx.state?.card?.workflow_type || "ticket").trim().toLowerCase() || "ticket";
+  }
+
+  function isTaskReply(ctx) {
+    return ctx.state?.composeMode === "reply" && workflowType(ctx) === "task";
+  }
+
   function nextArchiveGroupId() {
     if (global.crypto?.randomUUID) return global.crypto.randomUUID();
     return `archive-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -453,8 +461,22 @@
       return { mode: "raw", reason: "preload_cancelled" };
     }
     if (canUsePreload && preload?.stage === "browser_uploading" && !preload.preloadId) {
+      if (isTaskReply(ctx)) {
+        return {
+          mode: "error",
+          reason: "task_preload_browser_uploading",
+          message: "Файл ещё передаётся в ES DESK. Дождитесь готовности и отправьте ответ снова.",
+        };
+      }
       abortPreloadRequest(state, file);
       return { mode: "raw", reason: "browser_uploading_without_preload_id" };
+    }
+    if (canUsePreload && isTaskReply(ctx) && preload?.preloadId && preload.status === "uploading") {
+      return {
+        mode: "error",
+        reason: "task_preload_uploading",
+        message: "Файл ещё загружается в Telegram. Дождитесь готовности и отправьте ответ снова.",
+      };
     }
     if (canUsePreload && preload?.preloadId && (preload.status === "ready" || preload.status === "uploading")) {
       return {
@@ -504,6 +526,26 @@
     return formData;
   }
 
+  function buildTaskReplyFormData(ctx, files, text, quoteMessageId) {
+    const formData = new FormData();
+    formData.append("text", text);
+    if (quoteMessageId) formData.append("quote_message_id", quoteMessageId);
+    const queue = Array.from(files || []);
+    if (queue.length === 1) formData.append("single_attachment", "true");
+    for (const file of queue) {
+      const selectedTransport = resolveAttachmentTransport(ctx, file);
+      if (selectedTransport.mode === "error") {
+        throw new Error(selectedTransport.message || "Подготовленный файл больше недоступен. Удалите его и выберите заново.");
+      }
+      if (selectedTransport.mode === "preloaded") {
+        formData.append("preloaded_attachment_id", selectedTransport.preloadId);
+      } else {
+        formData.append("files", file, file.name);
+      }
+    }
+    return formData;
+  }
+
   async function sendByMode(ctx) {
     const { state, el, api } = ctx;
     if (state.isSendingReply) return;
@@ -525,7 +567,20 @@
       state.pendingCloseAfterSend = false;
       ctx.setStatus("Отправка...");
       const quoteMessageId = state.quoteMessageId;
-      if (state.composeMode === "reply" && hasFiles) {
+      if (hasFiles && isTaskReply(ctx)) {
+        const queue = [...state.selectedFiles];
+        for (const file of queue) {
+          const preload = getPreloadState(state, file);
+          if (preload) preload.stage = "sending";
+        }
+        renderSelectedFiles(ctx);
+        ctx.setStatus("Сохранение ответа задачи...");
+        const formData = buildTaskReplyFormData(ctx, queue, text, quoteMessageId);
+        await api(`/api/v1/tickets/${state.ticketId}/reply`, {
+          method: "POST",
+          body: formData,
+        });
+      } else if (state.composeMode === "reply" && hasFiles) {
         const queue = [...state.selectedFiles];
         for (let index = 0; index < queue.length; index += 1) {
           const file = queue[index];
@@ -570,12 +625,12 @@
       if (
         state.role === "agent"
         && state.composeMode === "reply"
-        && (state.card?.workflow_type || "ticket") === "ticket"
+        && workflowType(ctx) === "ticket"
         && ctx.isOnsitePhraseJs(text)
       ) {
         ctx.renderAvailabilityStatus("on_ticket");
       }
-      if (state.card?.workflow_type === "task" && state.composeMode === "reply") {
+      if (isTaskReply(ctx)) {
         ctx.setStatus("Ответ сохранён. Клиент получит сообщение и файлы после завершения задачи.");
       } else {
         ctx.setStatus("Сообщение отправлено");
@@ -671,7 +726,10 @@
     bindComposerHandlers,
     destroyComposerState,
     resolveAttachmentTransport,
+    workflowType,
+    isTaskReply,
     buildReplyFormData,
+    buildTaskReplyFormData,
     createSelectedFileRow,
     shouldShowSelectedFileProgress,
     syncRestoredPreloads,

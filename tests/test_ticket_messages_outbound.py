@@ -23,7 +23,8 @@ from api.app.routers.tickets import create_attachment_preload, delete_attachment
 from api.app.services import telegram_bot as telegram_bot_service
 from api.app.services import telegram_outbound_delivery as outbound_service
 from api.app.services import ticket_messages as ticket_messages_service
-from api.app.services.ticket_attachments import _attachment_out
+from api.app.services.auto_close import refresh_ticket_auto_close_timer
+from api.app.services.ticket_attachments import _attachment_out, _send_attachment_to_telegram_client
 from api.app.services.ticket_messages import delete_agent_message, edit_agent_message, reply_to_ticket
 from api.app.services import schema_evolution
 
@@ -93,17 +94,31 @@ def _attachments(session, message_id: str) -> list[TicketAttachment]:
 
 
 class _FormData(dict):
-    def __init__(self, *, text: str | None, files: list[object], quote_message_id: str | None = None, single_attachment: bool = False):
+    def __init__(
+        self,
+        *,
+        text: str | None,
+        files: list[object],
+        quote_message_id: str | None = None,
+        single_attachment: bool = False,
+        preloaded_attachment_ids: list[str] | None = None,
+    ):
         super().__init__()
         self["text"] = text
         self["quote_message_id"] = quote_message_id
         if single_attachment:
             self["single_attachment"] = "true"
         self._files = files
+        self._preloaded_attachment_ids = list(preloaded_attachment_ids or [])
 
     def getlist(self, key: str):
         if key == "files":
             return list(self._files)
+        if key == "preloaded_attachment_id":
+            values = list(self._preloaded_attachment_ids)
+            if self.get("preloaded_attachment_id"):
+                values.append(self["preloaded_attachment_id"])
+            return values
         return []
 
 
@@ -117,9 +132,24 @@ class _MultipartRequest:
         return self._form_data
 
 
+class _JsonRequest:
+    headers = {"content-type": "application/json"}
+
+    def __init__(self, payload: dict[str, object]):
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
 def _multipart_request_with_preload(*, text: str | None, preload_id: str, single_attachment: bool = False, quote_message_id: str | None = None):
-    form_data = _FormData(text=text, files=[], quote_message_id=quote_message_id, single_attachment=single_attachment)
-    form_data["preloaded_attachment_id"] = preload_id
+    form_data = _FormData(
+        text=text,
+        files=[],
+        quote_message_id=quote_message_id,
+        single_attachment=single_attachment,
+        preloaded_attachment_ids=[preload_id],
+    )
     return _MultipartRequest(form_data)
 
 
@@ -803,37 +833,67 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
+    app_shell_version = "20260828a"
+    ticket_static_version = "20260828a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
     app_shell = (repo_root / "api" / "app" / "static" / "app_shell.js").read_text(encoding="utf-8")
     ticket_js = (repo_root / "api" / "app" / "static" / "ticket.js").read_text(encoding="utf-8")
+    template_sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in (repo_root / "api" / "app" / "templates").glob("*.html")
+    }
+    app_shell_entrypoints = {
+        name: source
+        for name, source in template_sources.items()
+        if "/static/app_shell.js?v=" in source
+    }
 
     assert 'formData.append("single_attachment", "true")' in composer
-    assert "/static/ticket_composer.js?v=20260824a" in template
-    assert "/static/ticket_composer.js?v=20260824a" in app_shell
-    assert "/static/ticket_attachments.js?v=20260810b" in template
-    assert "/static/ticket_attachments.js?v=20260810b" in app_shell
-    assert "/static/app_shell.js?v=20260821b" in template
+    assert app_shell_entrypoints
+    assert all(f"/static/app_shell.js?v={app_shell_version}" in source for source in app_shell_entrypoints.values())
+    assert all("/static/app_shell.js?v=20260821b" not in source for source in app_shell_entrypoints.values())
+    assert all("/static/app_shell.js?v=20260826a" not in source for source in app_shell_entrypoints.values())
+    assert f"/static/ticket_composer.js?v={ticket_static_version}" in template
+    assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
+    assert f"/static/ticket_attachments.js?v={ticket_static_version}" in template
+    assert f"/static/ticket_attachments.js?v={ticket_static_version}" in app_shell
     assert '/static/styles.css?v=20260824a' in template
     assert '/static/styles.css?v=20260824a' in index_template
-    assert "/static/ticket.js?v=20260824a" in template
-    assert "/static/ticket.js?v=20260824a" in app_shell
-    assert "/static/app_shell.js?v=20260811b" not in template
-    assert "/static/ticket_composer.js?v=20260811d" not in template
-    assert "/static/ticket.js?v=20260810a" not in template
+    assert f"/static/ticket.js?v={ticket_static_version}" in template
+    assert f"/static/ticket.js?v={ticket_static_version}" in app_shell
+    for source in app_shell_entrypoints.values():
+        assert "/static/app_shell.js?v=20260811b" not in source
+        assert "/static/ticket_composer.js?v=20260811d" not in source
+        assert "/static/ticket.js?v=20260810a" not in source
     assert "/static/ticket.js?v=20260810a" not in app_shell
     assert "preloaded_attachment_id" in composer
     assert "sendByEnterCheckbox" in composer
     assert "e.isComposing" in composer
     assert '"/api/v1/users/me/preferences"' in ticket_js
     assert "updateSendByEnterPreference" in ticket_js
+    assert "pendingCardReloadOptions" in ticket_js
+    assert "await loadCard(pendingOptions)" in ticket_js
     assert 'formData.append("archive_group_id", archiveGroupId)' in composer
     assert "currentArchiveGroupId" in composer
     assert "new Map()" in composer
     assert "filePreloads: new Map()" in ticket_js
     assert "canUseAttachmentPreload" in ticket_js
+    assert "workflowType: () => state.card?.workflow_type || \"ticket\"" in ticket_js
     assert "AbortController" in composer
+
+
+def test_attachment_cards_show_size_without_mime_and_download_sets_start_status():
+    repo_root = Path(__file__).resolve().parents[1]
+    attachments_source = (repo_root / "api" / "app" / "static" / "ticket_attachments.js").read_text(encoding="utf-8")
+
+    attachment_meta_body = attachments_source.split("function attachmentMeta(attachment) {", 1)[1].split("}", 1)[0]
+    download_body = attachments_source.split("async function downloadAttachment(ctx, attachment) {", 1)[1].split("async function renderTgsStickerInline", 1)[0]
+
+    assert "attachment.mime_type" not in attachment_meta_body
+    assert "formatFileSize(attachment.file_size)" in attachment_meta_body
+    assert 'ctx.setStatus?.("Скачивание начато...")' in download_body
 
 
 def test_selected_files_css_contract_keeps_rows_non_shrinking_and_container_scrollable():
@@ -1250,6 +1310,271 @@ console.log(JSON.stringify({{
     assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["failedEntries"])
     assert any(entry[0] == "files" and entry[1] == "report.pdf" for entry in payload["staleFailedEntries"])
     assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["staleFailedEntries"])
+
+
+def test_task_transport_selector_waits_for_preload_ready_before_reply():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    ticket_js = (repo_root / "api" / "app" / "static" / "ticket.js").read_text(encoding="utf-8")
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+const file = {{ name: "report.pdf", size: 3 }};
+const productionTaskCard = {{
+  id: "task-1",
+  ticket_number: 742,
+  subject: "Task from Telegram",
+  workflow_type: "task",
+  task_kind: "normal",
+  status: "pending",
+  active_attachment_preloads: [],
+  messages: [],
+}};
+const makeCtx = (preload) => ({{
+  state: {{
+    composeMode: "reply",
+    card: productionTaskCard,
+    filePreloads: new Map([[file, preload]]),
+  }},
+  workflowType: () => productionTaskCard.workflow_type,
+  canUseAttachmentPreload: () => true,
+}});
+const canUseAttachmentPreload = ["ticket", "task"].includes(productionTaskCard.workflow_type || "ticket");
+const uploading = global.TicketComposer.resolveAttachmentTransport(makeCtx({{
+  preloadId: "preload-uploading",
+  status: "uploading",
+  stage: "uploading",
+}}), file);
+const ready = global.TicketComposer.resolveAttachmentTransport(makeCtx({{
+  preloadId: "preload-ready",
+  status: "ready",
+  stage: "ready",
+}}), file);
+const helperWorkflow = global.TicketComposer.workflowType(makeCtx(null));
+const helperIsTaskReply = global.TicketComposer.isTaskReply(makeCtx(null));
+console.log(JSON.stringify({{ canUseAttachmentPreload, helperWorkflow, helperIsTaskReply, uploading, ready }}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert 'workflowType: () => state.card?.workflow_type || "ticket"' in ticket_js
+    assert payload["canUseAttachmentPreload"] is True
+    assert payload["helperWorkflow"] == "task"
+    assert payload["helperIsTaskReply"] is True
+    assert payload["uploading"]["mode"] == "error"
+    assert payload["uploading"]["reason"] == "task_preload_uploading"
+    assert payload["ready"] == {
+        "mode": "preloaded",
+        "preloadId": "preload-ready",
+        "preloadStatus": "ready",
+    }
+
+
+def test_task_reply_form_data_groups_multiple_ready_preloads_in_one_request():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.FormData = class FakeFormData {{
+  constructor() {{
+    this._entries = [];
+  }}
+  append(key, value, filename) {{
+    this._entries.push([key, filename || value]);
+  }}
+  entries() {{
+    return this._entries[Symbol.iterator]();
+  }}
+}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+const fileA = {{ name: "a.pdf", size: 3 }};
+const fileB = {{ name: "b.pdf", size: 4 }};
+const productionTaskCard = {{
+  id: "task-1",
+  ticket_number: 742,
+  subject: "Task from Telegram",
+  workflow_type: "task",
+  task_kind: "normal",
+  status: "pending",
+  active_attachment_preloads: [
+    {{ id: "preload-a", original_filename: "a.pdf", file_size: 3, status: "ready" }},
+    {{ id: "preload-b", original_filename: "b.pdf", file_size: 4, status: "ready" }},
+  ],
+  messages: [],
+}};
+const ctx = {{
+  state: {{
+    composeMode: "reply",
+    card: productionTaskCard,
+    filePreloads: new Map([
+      [fileA, {{ preloadId: "preload-a", status: "ready", stage: "ready" }}],
+      [fileB, {{ preloadId: "preload-b", status: "ready", stage: "ready" }}],
+    ]),
+  }},
+  workflowType: () => productionTaskCard.workflow_type,
+  canUseAttachmentPreload: () => true,
+}};
+const form = global.TicketComposer.buildTaskReplyFormData(ctx, [fileA, fileB], "Answer", null);
+console.log(JSON.stringify(Array.from(form.entries())));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == [
+        ["text", "Answer"],
+        ["preloaded_attachment_id", "preload-a"],
+        ["preloaded_attachment_id", "preload-b"],
+    ]
+
+
+def test_task_send_by_mode_with_production_card_groups_four_ready_preloads_in_one_reply_request():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.FormData = class FakeFormData {{
+  constructor() {{
+    this._entries = [];
+  }}
+  append(key, value, filename) {{
+    this._entries.push([key, filename || value]);
+  }}
+  entries() {{
+    return this._entries[Symbol.iterator]();
+  }}
+}};
+global.document = {{
+  createElement() {{
+    return {{
+      className: "",
+      textContent: "",
+      append() {{}},
+      appendChild() {{}},
+      addEventListener() {{}},
+      classList: {{ add() {{}}, remove() {{}}, toggle() {{}} }},
+    }};
+  }},
+}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+(async () => {{
+const files = [
+  {{ name: "MISSION_CHECKLIST_DRAFT_v21.txt", size: 11 }},
+  {{ name: "run_e2e_trace.log", size: 12 }},
+  {{ name: "run_v6_integrated.py", size: 13 }},
+  {{ name: "task_job.json", size: 14 }},
+];
+const productionTaskCard = {{
+  id: "task-1",
+  ticket_number: 742,
+  subject: "Task from Telegram",
+  workflow_type: "task",
+  task_kind: "normal",
+  status: "pending",
+  active_attachment_preloads: files.map((file, index) => ({{
+    id: `preload-${{index + 1}}`,
+    original_filename: file.name,
+    file_size: file.size,
+    status: "ready",
+  }})),
+  messages: [],
+}};
+const preloadEntries = files.map((file, index) => [
+  file,
+  {{ preloadId: `preload-${{index + 1}}`, status: "ready", stage: "ready" }},
+]);
+const replyCalls = [];
+const statuses = [];
+let loadCardCalls = 0;
+const ctx = {{
+  state: {{
+    ticketId: productionTaskCard.id,
+    selectedFiles: files.slice(),
+    filePreloads: new Map(preloadEntries),
+    currentArchiveGroupId: "archive-group-1",
+    composeMode: "reply",
+    role: "agent",
+    card: productionTaskCard,
+    quoteMessageId: null,
+    isSendingReply: false,
+    pendingCloseAfterSend: false,
+  }},
+  el: {{
+    replyFilesInput: {{ value: "" }},
+    selectedFilesList: null,
+    messageInput: {{ value: "task answer" }},
+  }},
+  workflowType: () => productionTaskCard.workflow_type,
+  canUseAttachmentPreload: () => true,
+  api: (url, options = {{}}) => {{
+    if (url.endsWith("/reply")) {{
+      replyCalls.push(Array.from(options.body.entries()));
+      return Promise.resolve({{ ok: true }});
+    }}
+    throw new Error(`Unexpected URL: ${{url}}`);
+  }},
+  loadCard: async () => {{ loadCardCalls += 1; }},
+  setStatus: (value) => statuses.push(value),
+  showError: (message) => {{ throw new Error(message); }},
+  isOnsitePhraseJs: () => false,
+  renderAvailabilityStatus: () => {{}},
+  action: async () => {{}},
+}};
+
+await global.TicketComposer.sendByMode(ctx);
+console.log(JSON.stringify({{
+  replyCalls,
+  loadCardCalls,
+  selectedFilesCount: ctx.state.selectedFiles.length,
+  currentArchiveGroupId: ctx.state.currentArchiveGroupId,
+  messageInput: ctx.el.messageInput.value,
+  finalStatus: statuses[statuses.length - 1],
+}}));
+}})().catch((error) => {{
+  console.error(error);
+  process.exit(1);
+}});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert len(payload["replyCalls"]) == 1
+    assert payload["replyCalls"][0] == [
+        ["text", "task answer"],
+        ["preloaded_attachment_id", "preload-1"],
+        ["preloaded_attachment_id", "preload-2"],
+        ["preloaded_attachment_id", "preload-3"],
+        ["preloaded_attachment_id", "preload-4"],
+    ]
+    assert payload["loadCardCalls"] == 1
+    assert payload["selectedFilesCount"] == 0
+    assert payload["currentArchiveGroupId"] is None
+    assert payload["messageInput"] == ""
+    assert payload["finalStatus"]
 
 
 def test_virtual_restored_failed_preload_never_falls_back_to_raw_and_requires_reselect():
@@ -2033,6 +2358,313 @@ def test_preload_post_saves_local_file_and_schedules_staging_without_touching_ti
     assert ticket.status == TicketStatus.PENDING.value
     assert ticket.updated_at == original_updated_at
     assert len(background_tasks.tasks) == 1
+
+
+def test_task_preload_post_saves_before_close_without_touching_ticket_state(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.workflow_type = TicketWorkflowType.TASK.value
+    session.commit()
+    original_updated_at = ticket.updated_at
+    background_tasks = BackgroundTasks()
+
+    result = asyncio.run(
+        create_attachment_preload(
+            ticket_id=ticket.id,
+            background_tasks=background_tasks,
+            file=_upload("task report.pdf", b"pdf"),
+            archive_group_id="task-group-1",
+            db=session,
+            user=SimpleNamespace(id="admin-1", role="admin"),
+        )
+    )
+
+    preloads = session.execute(select(outbound_service.TicketAttachmentPreload)).scalars().all()
+    session.refresh(ticket)
+
+    assert result["status"] == "uploading"
+    assert len(preloads) == 1
+    assert Path(preloads[0].local_path).exists()
+    assert preloads[0].ticket_id == ticket.id
+    assert preloads[0].archive_group_id == "task-group-1"
+    assert _messages(session, ticket.id) == []
+    assert ticket.updated_at == original_updated_at
+    assert len(background_tasks.tasks) == 1
+
+
+def test_task_reply_claims_ready_preload_without_client_delivery_or_background_schedule(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.workflow_type = TicketWorkflowType.TASK.value
+    path = tmp_path / "task-report.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="task-report.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        telegram_file_id="ready-file-id",
+        telegram_file_unique_id="ready-unique-id",
+        status="ready",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+
+    sent_to_client = []
+    scheduled = []
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_multipart_request_with_preload(text="Task answer", preload_id=preload.id),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("text"),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("file"),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+    claimed_preload = session.get(outbound_service.TicketAttachmentPreload, preload.id)
+
+    assert sent_to_client == []
+    assert scheduled == []
+    assert messages[0].body == "Task answer"
+    assert attachments[0].telegram_file_id == "ready-file-id"
+    assert attachments[0].telegram_delivery_status is None
+    assert claimed_preload.final_attachment_id == attachments[0].id
+
+
+def test_task_reply_claims_multiple_ready_preloads_into_one_agent_message(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.workflow_type = TicketWorkflowType.TASK.value
+    preloads = []
+    for filename, file_id in [
+        ("MISSION_CHECKLIST_DRAFT_v21.txt", "file-a"),
+        ("run_e2e_trace.log", "file-b"),
+        ("run_v6_integrated.py", "file-c"),
+        ("task_job.json", "file-d"),
+    ]:
+        path = tmp_path / filename
+        path.write_bytes(b"pdf")
+        preload = outbound_service.TicketAttachmentPreload(
+            id=str(uuid.uuid4()),
+            ticket_id=ticket.id,
+            user_id="agent-1",
+            original_filename=filename,
+            mime_type="application/pdf",
+            file_size=3,
+            local_path=str(path),
+            telegram_file_id=file_id,
+            status="ready",
+            created_at=datetime.utcnow(),
+        )
+        preloads.append(preload)
+    session.add_all(preloads)
+    session.commit()
+
+    sent_to_client = []
+    scheduled = []
+    async def run():
+        result = await reply_to_ticket(
+            request=_MultipartRequest(_FormData(text="выввыв", files=[], preloaded_attachment_ids=[preload.id for preload in preloads])),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("text"),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("file"),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+    assert len(messages) == 1
+    assert messages[0].body == "выввыв"
+    assert [attachment.original_filename for attachment in attachments] == [
+        "MISSION_CHECKLIST_DRAFT_v21.txt",
+        "run_e2e_trace.log",
+        "run_v6_integrated.py",
+        "task_job.json",
+    ]
+    assert sent_to_client == []
+    assert scheduled == []
+    assert all(attachment.telegram_delivery_status is None for attachment in attachments)
+
+
+def test_plain_ticket_text_reply_persists_card_message_and_starts_auto_close_timer():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.status = TicketStatus.NEW.value
+    ticket.assignee_id = "agent-1"
+    session.commit()
+    sent_messages = []
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_JsonRequest({"text": "Plain answer", "quote_message_id": None}),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: sent_messages.append(_kwargs) or {"result": {"message_id": 901}},
+            telegram_message_id_from_response=lambda response: str(response["result"]["message_id"]),
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("file send should not be used")),
+            claim_attachment_preload=lambda *_args, **_kwargs: None,
+            schedule_attachment_delivery=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("background delivery should not be used")),
+            unfreeze_ticket_on_message=lambda current_ticket: setattr(current_ticket, "is_frozen", False),
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda db, current_ticket, restart_from_now: refresh_ticket_auto_close_timer(db, current_ticket, restart_from_now),
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+    session.refresh(ticket)
+    messages = _messages(session, ticket.id)
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="agent-1", role="agent"))
+    agent_messages = [message for message in card.messages if message.message_type == MessageType.AGENT.value]
+
+    assert len(sent_messages) == 1
+    assert ticket.status == TicketStatus.PENDING.value
+    assert ticket.auto_close_started_at is not None
+    assert ticket.auto_close_due_at is not None
+    assert len(messages) == 1
+    assert messages[0].message_type == MessageType.AGENT.value
+    assert messages[0].body == "Plain answer"
+    assert messages[0].telegram_message_id == "901"
+    assert len(agent_messages) == 1
+    assert agent_messages[0].body == "Plain answer"
+
+
+def test_plain_ticket_file_reply_persists_card_attachment_and_starts_auto_close_timer(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.status = TicketStatus.NEW.value
+    ticket.assignee_id = "agent-1"
+    path = tmp_path / "ready.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="ready.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        telegram_file_id="ready-file-id",
+        status="ready",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+    scheduled = []
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_multipart_request_with_preload(text="Plain answer with file", preload_id=preload.id, single_attachment=True),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("caption preload should schedule delivery")),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("immediate file send should not be used")),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
+            unfreeze_ticket_on_message=lambda current_ticket: setattr(current_ticket, "is_frozen", False),
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda db, current_ticket, restart_from_now: refresh_ticket_auto_close_timer(db, current_ticket, restart_from_now),
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+    session.refresh(ticket)
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="agent-1", role="agent"))
+    agent_messages = [message for message in card.messages if message.message_type == MessageType.AGENT.value]
+
+    assert ticket.status == TicketStatus.PENDING.value
+    assert ticket.auto_close_started_at is not None
+    assert ticket.auto_close_due_at is not None
+    assert len(messages) == 1
+    assert messages[0].body == "Plain answer with file"
+    assert len(attachments) == 1
+    assert attachments[0].telegram_delivery_status == "sending"
+    assert len(scheduled) == 1
+    assert scheduled[0]["attachment_id"] == attachments[0].id
+    assert len(agent_messages) == 1
+    assert agent_messages[0].attachments[0].original_filename == "ready.pdf"
+
+
+def test_send_attachment_to_client_uses_telegram_file_id_when_local_preload_file_was_cleaned(monkeypatch, tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    missing_path = tmp_path / "already-cleaned.pdf"
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=str(uuid.uuid4()),
+        source="helpdesk",
+        original_filename="already-cleaned.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(missing_path),
+        telegram_file_id="ready-file-id",
+        created_at=datetime.utcnow(),
+    )
+    session.add(attachment)
+    session.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        "api.app.services.ticket_attachments.send_document_by_file_id",
+        lambda chat_id, file_id, **kwargs: calls.append((chat_id, file_id, kwargs)) or {"result": {"message_id": 501}},
+    )
+
+    _send_attachment_to_telegram_client(session, ticket, attachment, required=True)
+
+    assert calls[0][0] == "chat-42"
+    assert calls[0][1] == "ready-file-id"
+    assert attachment.telegram_message_id == "501"
 
 
 def test_preload_get_returns_current_status(tmp_path):

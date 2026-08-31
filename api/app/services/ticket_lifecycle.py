@@ -5,7 +5,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import and_, asc, desc, select
+from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser
@@ -107,7 +107,7 @@ def _last_client_visible_support_message_author_id(db: Session, ticket: Ticket) 
             and_(
                 TicketMessage.ticket_id == ticket.id,
                 TicketMessage.message_type == MessageType.AGENT.value,
-                TicketMessage.message_status != "deleted",
+                _active_message_status_filter(),
                 User.role.in_(["agent", "trainee"]),
             )
         )
@@ -129,7 +129,7 @@ def _has_client_visible_support_message_by_user(db: Session, ticket: Ticket, use
             and_(
                 TicketMessage.ticket_id == ticket.id,
                 TicketMessage.message_type == MessageType.AGENT.value,
-                TicketMessage.message_status != "deleted",
+                _active_message_status_filter(),
                 TicketMessage.author_user_id == user_id,
                 User.role.in_(["agent", "trainee"]),
             )
@@ -161,6 +161,37 @@ def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser)
     ticket.completed_counted_at = datetime.utcnow()
 
 
+def _active_message_status_filter():
+    return or_(TicketMessage.message_status.is_(None), TicketMessage.message_status != "deleted")
+
+
+def _attachment_completion_label(attachment: TicketAttachment) -> str:
+    source = (attachment.source or "").strip().lower()
+    if source == "photo":
+        return "Фото"
+    if source == "video":
+        return "Видео"
+    mime_type = (attachment.mime_type or "").strip().lower()
+    if source in {"helpdesk", "task", "upload"}:
+        if mime_type.startswith("image/"):
+            return "Фото"
+        if mime_type.startswith("video/"):
+            return "Видео"
+    return (attachment.original_filename or "").strip() or "Файл"
+
+
+def _agent_answer_with_attachment_list(db: Session, agent_message: TicketMessage, agent_text: str) -> str:
+    attachments = db.execute(
+        select(TicketAttachment)
+        .where(TicketAttachment.message_id == agent_message.id)
+        .order_by(asc(TicketAttachment.created_at), asc(TicketAttachment.id))
+    ).scalars().all()
+    if not attachments:
+        return agent_text
+    file_lines = [_attachment_completion_label(attachment) for attachment in attachments]
+    return f"{agent_text}\n\nФайлы:\n" + "\n".join(file_lines)
+
+
 def _format_task_completion_text(
     db: Session,
     ticket: Ticket,
@@ -178,11 +209,12 @@ def _format_task_completion_text(
     agent_text = (agent_message.body or "").strip()
     client_text = client_message.body or ""
     if agent_text:
+        agent_answer = _agent_answer_with_attachment_list(db, agent_message, agent_text)
         fallback_text = (
             f"По Вашей задаче \"{subject}\" от {created_text}\n"
             f"\"{client_text}\"\n"
             "\nПолучен ответ:\n"
-            f"{agent_text}"
+            f"{agent_answer}"
         )
         if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value:
             try:
@@ -193,11 +225,12 @@ def _format_task_completion_text(
                     ticket=ticket,
                     client_message=client_text,
                     extra={
-                        "agent_answer": agent_text,
+                        "agent_answer": agent_answer,
                         "ticket_created_at": created_text,
                         "ticket_subject": subject,
                         "subject": subject,
                     },
+                    escape_values_for_html=True,
                 )
             except Exception:
                 return fallback_text
@@ -347,7 +380,7 @@ def _group_parent_children_payload(db: Session, parent: Ticket) -> tuple[list[st
             and_(
                 TicketMessage.ticket_id == parent.id,
                 TicketMessage.message_type == MessageType.AGENT.value,
-                TicketMessage.message_status != "deleted",
+                _active_message_status_filter(),
             )
         )
         .order_by(asc(TicketMessage.created_at))

@@ -904,6 +904,7 @@ def test_media_group_debounce_resets_timer_sends_once_and_cleans_registry(monkey
     notifications.start_media_group_notification_debounce(ticket_id=ticket.id, media_group_id="mg-1")
 
     assert len(FakeTimer.instances) == 2
+    assert [timer.interval for timer in FakeTimer.instances] == [10.0, 10.0]
     assert FakeTimer.instances[0].cancelled is True
     FakeTimer.instances[0].force_fire()
     assert sent == []
@@ -911,6 +912,165 @@ def test_media_group_debounce_resets_timer_sends_once_and_cleans_registry(monkey
     assert [(chat_id, text) for chat_id, text, _kwargs in sent] == [("chat-agent", "Файлы:\nФото\nВидео")]
     with notifications._MEDIA_GROUP_DEBOUNCE_LOCK:
         assert (ticket.id, "mg-1") not in notifications._MEDIA_GROUP_DEBOUNCE
+
+
+def test_media_group_debounce_waits_for_late_parts_and_sends_one_complete_notification(monkeypatch):
+    class FakeTimer:
+        instances = []
+
+        def __init__(self, interval, function, args=(), kwargs=None):
+            self.interval = interval
+            self.function = function
+            self.args = args
+            self.kwargs = kwargs or {}
+            self.daemon = False
+            self.cancelled = False
+            FakeTimer.instances.append(self)
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self.cancelled = True
+
+        def force_fire(self):
+            self.function(*self.args, **self.kwargs)
+
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Agent")
+    ticket = _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent.id)
+    for index in range(7):
+        message = _message(session, ticket_id=ticket.id, body="", telegram_message_id=str(100 + index))
+        _attachment(session, ticket_id=ticket.id, message_id=message.id, filename=f"file-{index}.pdf", media_group_id="mg-late")
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    with notifications._MEDIA_GROUP_DEBOUNCE_LOCK:
+        notifications._MEDIA_GROUP_DEBOUNCE.clear()
+    monkeypatch.setattr(notifications, "_MEDIA_GROUP_TIMER_FACTORY", FakeTimer)
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text, kwargs)) or {"ok": True})
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+
+    notifications.start_media_group_notification_debounce(ticket_id=ticket.id, media_group_id="mg-late")
+    for index in range(7, 10):
+        message = _message(session, ticket_id=ticket.id, body="", telegram_message_id=str(100 + index))
+        _attachment(session, ticket_id=ticket.id, message_id=message.id, filename=f"file-{index}.pdf", media_group_id="mg-late")
+    session.commit()
+    notifications.start_media_group_notification_debounce(ticket_id=ticket.id, media_group_id="mg-late")
+
+    FakeTimer.instances[0].force_fire()
+    assert sent == []
+    FakeTimer.instances[1].force_fire()
+
+    assert len(sent) == 1
+    assert sent[0][0] == "chat-agent"
+    assert sent[0][1].splitlines() == ["Файлы:"] + [f"file-{index}.pdf" for index in range(10)]
+
+
+def test_media_group_of_ten_files_finalizes_immediately(monkeypatch):
+    class FakeTimer:
+        instances = []
+
+        def __init__(self, interval, function, args=(), kwargs=None):
+            self.interval = interval
+            self.function = function
+            self.args = args
+            self.kwargs = kwargs or {}
+            self.daemon = False
+            self.cancelled = False
+            FakeTimer.instances.append(self)
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self.cancelled = True
+
+        def fire(self):
+            if not self.cancelled:
+                self.function(*self.args, **self.kwargs)
+
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Agent")
+    ticket = _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent.id)
+    for index in range(10):
+        message = _message(session, ticket_id=ticket.id, body="", telegram_message_id=str(200 + index))
+        _attachment(session, ticket_id=ticket.id, message_id=message.id, filename=f"ten-{index}.pdf", media_group_id="mg-10")
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    with notifications._MEDIA_GROUP_DEBOUNCE_LOCK:
+        notifications._MEDIA_GROUP_DEBOUNCE.clear()
+    monkeypatch.setattr(notifications, "_MEDIA_GROUP_TIMER_FACTORY", FakeTimer)
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+
+    notifications.start_media_group_notification_debounce(ticket_id=ticket.id, media_group_id="mg-10")
+
+    assert [timer.interval for timer in FakeTimer.instances] == [0.0]
+    FakeTimer.instances[0].fire()
+    assert sent == [("chat-agent", "Файлы:\n" + "\n".join(f"ten-{index}.pdf" for index in range(10)))]
+
+
+def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch):
+    class FakeTimer:
+        instances = []
+
+        def __init__(self, interval, function, args=(), kwargs=None):
+            self.interval = interval
+            self.function = function
+            self.args = args
+            self.kwargs = kwargs or {}
+            self.daemon = False
+            self.cancelled = False
+            FakeTimer.instances.append(self)
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self.cancelled = True
+
+        def fire(self):
+            if not self.cancelled:
+                self.function(*self.args, **self.kwargs)
+
+    Session = _session_factory()
+    session = Session()
+    company = _company(session)
+    client = _client(session, company.id)
+    agent = _user(session, company_id=company.id, full_name="Agent")
+    ticket = _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent.id)
+    for index in range(8):
+        message = _message(session, ticket_id=ticket.id, body="", telegram_message_id=str(300 + index))
+        _attachment(session, ticket_id=ticket.id, message_id=message.id, filename=f"eight-{index}.pdf", media_group_id="mg-8")
+    _account(session, user_id=agent.id, chat_id="chat-agent")
+    _base(session, "new_message", "[Тело сообщения]")
+    sent = []
+
+    with notifications._MEDIA_GROUP_DEBOUNCE_LOCK:
+        notifications._MEDIA_GROUP_DEBOUNCE.clear()
+    monkeypatch.setattr(notifications, "_MEDIA_GROUP_TIMER_FACTORY", FakeTimer)
+    monkeypatch.setattr(notifications, "SessionLocal", Session)
+    monkeypatch.setattr(notifications, "send_message", lambda chat_id, text, **kwargs: sent.append((chat_id, text)) or {"ok": True})
+    monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+
+    notifications.start_media_group_notification_debounce(ticket_id=ticket.id, media_group_id="mg-8")
+
+    assert [timer.interval for timer in FakeTimer.instances] == [10.0]
+    assert sent == []
+    FakeTimer.instances[0].fire()
+    assert sent == [("chat-agent", "Файлы:\n" + "\n".join(f"eight-{index}.pdf" for index in range(8)))]
 
 
 def test_media_group_stale_callback_returns_before_db_resolve(monkeypatch):

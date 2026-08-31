@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import threading
+import time
 import uuid
 
 from sqlalchemy import create_engine, select
@@ -163,6 +164,17 @@ def _run_inline_archive_worker(monkeypatch, Session):
     monkeypatch.setattr(telegram_router, "start_background_archive_inbound_attachment", telegram_attachments_service._archive_inbound_attachment_worker)
 
 
+def _run_media_group_archive_scheduler(monkeypatch, Session, timer_factory=None):
+    if timer_factory is None:
+        timer_factory = _ManualTimer
+    _ManualTimer.instances = []
+    monkeypatch.setattr(telegram_attachments_service, "SessionLocal", Session)
+    monkeypatch.setattr(telegram_attachments_service, "_MEDIA_GROUP_ARCHIVE_TIMER_FACTORY", timer_factory)
+    monkeypatch.setattr(telegram_router, "start_background_archive_inbound_attachment", telegram_attachments_service.start_background_archive_inbound_attachment)
+    with telegram_attachments_service._MEDIA_GROUP_ARCHIVE_LOCK:
+        telegram_attachments_service._MEDIA_GROUP_ARCHIVE.clear()
+
+
 def test_extract_attachment_keeps_media_group_id():
     attachment = telegram_attachments_service._extract_attachment(
         _document_payload(
@@ -236,6 +248,29 @@ class _InlineThread:
 
     def start(self):
         self._target(*self._args)
+
+
+class _ManualTimer:
+    instances = []
+
+    def __init__(self, interval, function, args=(), kwargs=None):
+        self.interval = interval
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs or {}
+        self.daemon = False
+        self.cancelled = False
+        _ManualTimer.instances.append(self)
+
+    def start(self):
+        return None
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        if not self.cancelled:
+            self.function(*self.args, **self.kwargs)
 
 
 def test_store_telegram_attachment_does_not_archive_synchronously(monkeypatch, tmp_path):
@@ -623,7 +658,7 @@ def test_single_video_inbound_file_archives_via_copy_message(monkeypatch, tmp_pa
     assert len(calls["copy_message"]) == 1
 
 
-def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch, tmp_path):
+def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch, tmp_path):
     _engine, Session = _session_bundle(tmp_path)
     session = Session()
     ticket, contact = _seed_ticket_context(session)
@@ -636,8 +671,8 @@ def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch,
     )
     monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
-    _run_inline_archive_worker(monkeypatch, Session)
-    state = {"send_message": [], "edit_message_text": [], "send_document_by_file_id": []}
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"send_message": [], "edit_message_text": [], "copy_message": []}
     monkeypatch.setattr(
         telegram_attachments_service,
         "send_message",
@@ -651,33 +686,433 @@ def test_media_group_archives_three_valid_files_under_one_info_card(monkeypatch,
     monkeypatch.setattr(
         telegram_attachments_service,
         "copy_message",
-        lambda *args, **kwargs: state["send_document_by_file_id"].append((args, kwargs)) or {"result": {"message_id": 600 + len(state["send_document_by_file_id"]) }},
+        lambda *args, **kwargs: state["copy_message"].append((args, kwargs)) or {"result": {"message_id": 600 + len(state["copy_message"]) }},
     )
 
-    payloads = [
-        _document_payload(update_id=2101, chat_id=contact.external_chat_id, user_id=contact.external_user_id, file_id="file-a", filename="A.csv", media_group_id="mg-42"),
-        _document_payload(update_id=2102, chat_id=contact.external_chat_id, user_id=contact.external_user_id, file_id="file-b", filename="B.csv", media_group_id="mg-42"),
-        _document_payload(update_id=2103, chat_id=contact.external_chat_id, user_id=contact.external_user_id, file_id="file-d", filename="D.xlsx", media_group_id="mg-42"),
-    ]
-    for payload in payloads:
-        result = telegram_router.process_telegram_update(session, payload, notify_client=False)
+    for index in range(8):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2101 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"file-{index}",
+                filename=f"file-{index}.pdf",
+                media_group_id="mg-42",
+            ),
+            notify_client=False,
+        )
         assert result["ok"] is True
 
     attachments = session.execute(
         select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
     ).scalars().all()
-    assert len(attachments) == 3
-    assert {row.original_filename for row in attachments} == {"A.csv", "B.csv", "D.xlsx"}
+    assert len(attachments) == 8
     assert {row.telegram_media_group_id for row in attachments} == {"mg-42"}
+    assert len(_ManualTimer.instances) == 8
+    assert [timer.interval for timer in _ManualTimer.instances] == [30.0] * 8
+    assert _ManualTimer.instances[:-1]
+    assert all(timer.cancelled for timer in _ManualTimer.instances[:-1])
+    assert len(state["send_message"]) == 0
+    assert len(state["copy_message"]) == 0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
     assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
     assert attachments[0].telegram_archive_info_message_id == "501"
+    assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
     assert len(state["send_message"]) == 1
-    assert len(state["send_document_by_file_id"]) == 3
-    assert all(kwargs.get("caption") == "" for _args, kwargs in state["send_document_by_file_id"])
+    assert len(state["copy_message"]) == 8
+    assert all(kwargs.get("caption") == "" for _args, kwargs in state["copy_message"])
     final_info_text = state["edit_message_text"][-1][0][2]
-    assert "• A.csv" in final_info_text
-    assert "• B.csv" in final_info_text
-    assert "• D.xlsx" in final_info_text
+    assert all(f"• file-{index}.pdf" in final_info_text for index in range(8))
+
+
+def test_media_group_archives_ten_files_under_one_info_card(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"send_message": [], "edit_message_text": [], "copy_message": []}
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "send_message",
+        lambda *args, **kwargs: state["send_message"].append((args, kwargs)) or {"result": {"message_id": 801}},
+    )
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "edit_message_text",
+        lambda *args, **kwargs: state["edit_message_text"].append((args, kwargs)) or {"result": True},
+    )
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *args, **kwargs: state["copy_message"].append((args, kwargs)) or {"result": {"message_id": 900 + len(state["copy_message"]) }},
+    )
+
+    for index in range(10):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2300 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"file-{index}",
+                filename=f"file-{index}.pdf",
+                media_group_id="mg-10",
+            ),
+            notify_client=False,
+        )
+        assert result["ok"] is True
+
+    attachments = session.execute(
+        select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+    ).scalars().all()
+    assert len(attachments) == 10
+    assert len(_ManualTimer.instances) == 10
+    assert [timer.interval for timer in _ManualTimer.instances[:-1]] == [30.0] * 9
+    assert _ManualTimer.instances[-1].interval == 0.0
+    assert len(state["copy_message"]) == 0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+    assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
+    assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
+    assert len(state["send_message"]) == 1
+    assert len(state["copy_message"]) == 10
+    final_info_text = state["edit_message_text"][-1][0][2]
+    assert all(f"• file-{index}.pdf" in final_info_text for index in range(10))
+
+
+def test_repeated_media_group_finalizer_is_idempotent_for_summary_and_files(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"send_message": 0, "copy_message": 0}
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "send_message",
+        lambda *_args, **_kwargs: state.__setitem__("send_message", state["send_message"] + 1) or {"result": {"message_id": 851}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *_args, **_kwargs: state.__setitem__("copy_message", state["copy_message"] + 1) or {"result": {"message_id": 950 + state["copy_message"]}},
+    )
+
+    for index in range(10):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2450 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"idem-{index}",
+                filename=f"idem-{index}.pdf",
+                media_group_id="mg-idem",
+            ),
+            notify_client=False,
+        )
+        assert result["ok"] is True
+
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+        leader_id = attachments[0].id
+        assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
+        assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
+
+    telegram_attachments_service.start_background_archive_inbound_attachment(leader_id)
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+        assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
+        assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
+
+    assert state == {"send_message": 1, "copy_message": 10}
+
+
+def test_media_group_archive_retries_temporary_telegram_error_and_keeps_all_files(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"copy_message": [], "raised": False, "sleeps": []}
+    monkeypatch.setattr(telegram_attachments_service, "send_message", lambda *_args, **_kwargs: {"result": {"message_id": 811}})
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
+
+    def _copy_message(*args, **kwargs):
+        state["copy_message"].append((args, kwargs))
+        if args[2] == "2404" and not state["raised"]:
+            state["raised"] = True
+            raise telegram_attachments_service.TelegramApiError("Too Many Requests: retry after 2")
+        return {"result": {"message_id": 910 + len(state["copy_message"])}}
+
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
+    monkeypatch.setattr(telegram_attachments_service.time, "sleep", lambda seconds: state["sleeps"].append(seconds))
+
+    for index in range(10):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2400 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"retry-file-{index}",
+                filename=f"retry-{index}.pdf",
+                media_group_id="mg-retry-copy",
+            ),
+            notify_client=False,
+        )
+        assert result["ok"] is True
+
+    attachments = session.execute(
+        select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+    ).scalars().all()
+    assert len(attachments) == 10
+    assert _ManualTimer.instances[-1].interval == 0.0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+    assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
+    assert len(state["copy_message"]) == 11
+    assert state["sleeps"] == [2.0]
+
+
+def test_media_group_summary_retries_before_any_attachment_copy(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"order": [], "send_attempts": 0, "sleeps": []}
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
+
+    def _send_message(*_args, **_kwargs):
+        state["send_attempts"] += 1
+        if state["send_attempts"] == 1:
+            state["order"].append("summary-attempt-1")
+            raise telegram_attachments_service.TelegramApiError("Too Many Requests: retry after 2")
+        if state["send_attempts"] == 2:
+            state["order"].append("summary-attempt-2")
+            raise telegram_attachments_service.TelegramApiError("Bad Gateway")
+        state["order"].append("summary-success")
+        return {"result": {"message_id": 812}}
+
+    def _copy_message(_dst_chat_id, _src_chat_id, message_id, **_kwargs):
+        state["order"].append(f"copy-{message_id}")
+        return {"result": {"message_id": 910 + len(state['order'])}}
+
+    monkeypatch.setattr(telegram_attachments_service, "send_message", _send_message)
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
+    monkeypatch.setattr(telegram_attachments_service.time, "sleep", lambda seconds: state["sleeps"].append(seconds))
+
+    for index in range(2):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2600 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"summary-retry-{index}",
+                filename=f"summary-retry-{index}.pdf",
+                media_group_id="mg-summary-retry",
+            ),
+            notify_client=False,
+        )
+        assert result["ok"] is True
+
+    assert _ManualTimer.instances[-1].interval == 30.0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+    assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
+    assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
+    assert state["order"] == [
+        "summary-attempt-1",
+        "summary-attempt-2",
+        "summary-success",
+        "copy-2600",
+        "copy-2601",
+    ]
+    assert state["sleeps"] == [2.0, 1.0]
+
+
+def test_media_group_does_not_copy_attachments_when_summary_creation_fails(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"send_attempts": 0, "copy_message": 0, "sleeps": []}
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
+
+    def _send_message(*_args, **_kwargs):
+        state["send_attempts"] += 1
+        raise telegram_attachments_service.TelegramApiError("Too Many Requests: retry after 2")
+
+    monkeypatch.setattr(telegram_attachments_service, "send_message", _send_message)
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "copy_message",
+        lambda *_args, **_kwargs: state.__setitem__("copy_message", state["copy_message"] + 1) or {"result": {"message_id": 950}},
+    )
+    monkeypatch.setattr(telegram_attachments_service.time, "sleep", lambda seconds: state["sleeps"].append(seconds))
+
+    for index in range(2):
+        result = telegram_router.process_telegram_update(
+            session,
+            _document_payload(
+                update_id=2700 + index,
+                chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id,
+                file_id=f"summary-fail-{index}",
+                filename=f"summary-fail-{index}.pdf",
+                media_group_id="mg-summary-fail",
+            ),
+            notify_client=False,
+        )
+        assert result["ok"] is True
+
+    initial_timer_count = len(_ManualTimer.instances)
+    assert _ManualTimer.instances[-1].interval == 30.0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+    assert all(row.telegram_archive_info_message_id is None for row in attachments)
+    assert all(row.telegram_archive_message_id is None for row in attachments)
+    assert state["send_attempts"] == 3
+    assert state["copy_message"] == 0
+    assert state["sleeps"] == [2.0, 2.0]
+    assert len(_ManualTimer.instances) == initial_timer_count + 1
+    assert _ManualTimer.instances[-1].interval == 30.0
+    assert _ManualTimer.instances[-1].cancelled is False
+
+
+def test_media_group_archive_final_error_does_not_stop_other_files(monkeypatch, tmp_path, caplog):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, contact = _seed_ticket_context(session)
+    _seed_existing_client_message(session, ticket.id)
+    monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(
+        telegram_attachments_service,
+        "get_file",
+        lambda file_id, **_kwargs: {"result": {"file_path": f"docs/{file_id}.pdf", "file_unique_id": f"uniq-{file_id}"}},
+    )
+    monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    monkeypatch.setattr(telegram_attachments_service.time, "sleep", lambda _seconds: None)
+    _run_media_group_archive_scheduler(monkeypatch, Session)
+    state = {"copy_message": []}
+    monkeypatch.setattr(telegram_attachments_service, "send_message", lambda *_args, **_kwargs: {"result": {"message_id": 821}})
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"result": True})
+
+    def _copy_message(*args, **kwargs):
+        state["copy_message"].append((args, kwargs))
+        if args[2] == "2505":
+            raise telegram_attachments_service.TelegramApiError("Bad Gateway")
+        return {"result": {"message_id": 920 + len(state["copy_message"])}}
+
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
+
+    with caplog.at_level("WARNING"):
+        for index in range(10):
+            result = telegram_router.process_telegram_update(
+                session,
+                _document_payload(
+                    update_id=2500 + index,
+                    chat_id=contact.external_chat_id,
+                    user_id=contact.external_user_id,
+                    file_id=f"partial-file-{index}",
+                    filename=f"partial-{index}.pdf",
+                    media_group_id="mg-final-error",
+                ),
+                notify_client=False,
+            )
+            assert result["ok"] is True
+
+    assert _ManualTimer.instances[-1].interval == 0.0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+    failed = [row for row in attachments if row.original_filename == "partial-5.pdf"]
+    delivered = [row for row in attachments if row.original_filename != "partial-5.pdf"]
+    assert len(failed) == 1
+    assert failed[0].telegram_archive_message_id is None
+    assert len(delivered) == 9
+    assert all(str(row.telegram_archive_message_id or "").strip() for row in delivered)
+    assert len(state["copy_message"]) == 12
+    assert any("Failed to archive inbound Telegram attachment" in record.getMessage() for record in caplog.records)
 
 
 def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(monkeypatch, tmp_path):
@@ -693,9 +1128,9 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
     )
     monkeypatch.setattr(telegram_attachments_service, "_try_prefetch_attachment_file", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
-    _run_inline_archive_worker(monkeypatch, Session)
+    _run_media_group_archive_scheduler(monkeypatch, Session)
     warnings = {"too_large": 0}
-    state = {"send_message": [], "edit_message_text": [], "send_document_by_file_id": []}
+    state = {"send_message": [], "edit_message_text": [], "copy_message": []}
     monkeypatch.setattr(telegram_router, "send_too_large_attachment_client_messages", lambda *_args, **_kwargs: warnings.__setitem__("too_large", warnings["too_large"] + 1))
     monkeypatch.setattr(
         telegram_attachments_service,
@@ -710,7 +1145,7 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
     monkeypatch.setattr(
         telegram_attachments_service,
         "copy_message",
-        lambda *args, **kwargs: state["send_document_by_file_id"].append((args, kwargs)) or {"result": {"message_id": 800 + len(state["send_document_by_file_id"]) }},
+        lambda *args, **kwargs: state["copy_message"].append((args, kwargs)) or {"result": {"message_id": 800 + len(state["copy_message"]) }},
     )
 
     payloads = [
@@ -723,16 +1158,25 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
         result = telegram_router.process_telegram_update(session, payload, notify_client=False)
         assert result["ok"] is True
 
-    attachments = session.execute(
-        select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
-    ).scalars().all()
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
     assert len(attachments) == 3
     assert {row.original_filename for row in attachments} == {"A.csv", "B.csv", "D.xlsx"}
     assert {row.telegram_media_group_id for row in attachments} == {"mg-43"}
+    assert len(state["send_message"]) == 0
+    assert len(state["copy_message"]) == 0
+    _ManualTimer.instances[-1].fire()
+
+    with Session() as check:
+        attachments = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
     assert len({row.telegram_archive_info_message_id for row in attachments}) == 1
     assert len(state["send_message"]) == 1
-    assert len(state["send_document_by_file_id"]) == 3
-    assert all(args[2] != "2203" for args, _kwargs in state["send_document_by_file_id"])
+    assert len(state["copy_message"]) == 3
+    assert all(args[2] != "2203" for args, _kwargs in state["copy_message"])
     final_info_text = state["edit_message_text"][-1][0][2]
     assert "BIG.7z" not in final_info_text
     assert "• A.csv" in final_info_text
@@ -862,6 +1306,111 @@ def test_media_group_parallel_workers_do_not_create_second_info_card_or_duplicat
         assert all(str(row.telegram_archive_message_id or "").strip() for row in rows)
     assert calls["send_message"] == 1
     assert calls["send_document_by_file_id"] == 3
+
+
+def test_media_group_workers_for_same_ticket_serialize_external_archive_order(monkeypatch, tmp_path):
+    _engine, Session = _session_bundle(tmp_path)
+    session = Session()
+    ticket, _contact = _seed_ticket_context(session)
+    groups = {
+        "mg-a": [("A-1.pdf", "5101"), ("A-2.pdf", "5102")],
+        "mg-b": [("B-1.pdf", "5201"), ("B-2.pdf", "5202")],
+    }
+    attachments_by_group: dict[str, list[TicketAttachment]] = {}
+    base_time = datetime(2026, 8, 31, 12, 0, 0)
+    for group_index, (media_group_id, files) in enumerate(groups.items()):
+        group_rows: list[TicketAttachment] = []
+        for file_index, (filename, telegram_message_id) in enumerate(files):
+            created_at = base_time + timedelta(minutes=group_index, seconds=file_index)
+            message = TicketMessage(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket.id,
+                message_type=MessageType.CLIENT.value,
+                author_user_id=None,
+                body=filename,
+                telegram_message_id=telegram_message_id,
+                created_at=created_at,
+            )
+            attachment = TicketAttachment(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket.id,
+                message_id=message.id,
+                source="document",
+                telegram_file_id=f"file-{telegram_message_id}",
+                telegram_file_unique_id=f"uniq-{telegram_message_id}",
+                telegram_file_path=f"docs/{telegram_message_id}.pdf",
+                telegram_media_group_id=media_group_id,
+                original_filename=filename,
+                mime_type="application/pdf",
+                file_size=123,
+                local_path=str(tmp_path / filename),
+                created_at=created_at,
+            )
+            session.add_all([message, attachment])
+            group_rows.append(attachment)
+        attachments_by_group[media_group_id] = group_rows
+    session.commit()
+
+    monkeypatch.setattr(telegram_attachments_service, "SessionLocal", Session)
+    monkeypatch.setattr(telegram_attachments_service, "_staging_chat_id", lambda: "staging-chat")
+    with telegram_attachments_service._MEDIA_GROUP_ARCHIVE_LOCK:
+        telegram_attachments_service._MEDIA_GROUP_ARCHIVE.clear()
+        for media_group_id in groups:
+            telegram_attachments_service._MEDIA_GROUP_ARCHIVE[(ticket.id, media_group_id)] = telegram_attachments_service._InboundMediaGroupArchiveState(
+                generation=1,
+                timer=_ManualTimer(0.0, lambda: None),
+            )
+    with telegram_attachments_service._TICKET_MEDIA_GROUP_ARCHIVE_LOCKS_LOCK:
+        telegram_attachments_service._TICKET_MEDIA_GROUP_ARCHIVE_LOCKS.clear()
+
+    order: list[str] = []
+    first_group_entered = threading.Event()
+    allow_first_group_finish = threading.Event()
+
+    def _send_message(_chat_id, text, **_kwargs):
+        group = "A" if "A-1.pdf" in text else "B"
+        order.append(f"summary-{group}")
+        return {"result": {"message_id": 900 if group == "A" else 901}}
+
+    def _copy_message(_dst_chat_id, _src_chat_id, message_id, **_kwargs):
+        group = "A" if str(message_id) in {"5101", "5102"} else "B"
+        order.append(f"copy-{group}-{message_id}")
+        if str(message_id) == "5101":
+            first_group_entered.set()
+            allow_first_group_finish.wait(timeout=5)
+        return {"result": {"message_id": 1000 + len(order)}}
+
+    monkeypatch.setattr(telegram_attachments_service, "send_message", _send_message)
+    monkeypatch.setattr(telegram_attachments_service, "copy_message", _copy_message)
+    monkeypatch.setattr(telegram_attachments_service, "edit_message_text", lambda *_args, **_kwargs: {"ok": True})
+
+    first = threading.Thread(target=telegram_attachments_service._archive_inbound_media_group_worker, args=(ticket.id, "mg-a", 1))
+    second = threading.Thread(target=telegram_attachments_service._archive_inbound_media_group_worker, args=(ticket.id, "mg-b", 1))
+    first.start()
+    assert first_group_entered.wait(timeout=5) is True
+    second.start()
+    time.sleep(0.2)
+    assert order == ["summary-A", "copy-A-5101"]
+    allow_first_group_finish.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert order == [
+        "summary-A",
+        "copy-A-5101",
+        "copy-A-5102",
+        "summary-B",
+        "copy-B-5201",
+        "copy-B-5202",
+    ]
+    with Session() as check:
+        rows = check.execute(
+            select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
+        ).scalars().all()
+        assert len(rows) == 4
+        assert all(str(row.telegram_archive_message_id or "").strip() for row in rows)
+        assert len({row.telegram_archive_info_message_id for row in rows if row.telegram_media_group_id == "mg-a"}) == 1
+        assert len({row.telegram_archive_info_message_id for row in rows if row.telegram_media_group_id == "mg-b"}) == 1
 
 
 def test_unexpected_background_archive_exception_clears_pending_token_for_retry(monkeypatch, tmp_path):

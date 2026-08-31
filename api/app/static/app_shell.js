@@ -67,12 +67,12 @@
       test: (url) => /^\/tickets\/[^/]+$/.test(url.pathname),
       scripts: [
         "/static/ticket_api.js?v=20260521a",
-        "/static/ticket_attachments.js?v=20260810b",
+        "/static/ticket_attachments.js?v=20260828a",
         "/static/ticket_client_card.js?v=20260803a",
-        "/static/ticket_composer.js?v=20260824a",
+        "/static/ticket_composer.js?v=20260828a",
         "/static/ticket_controls.js?v=20260810a",
         "/static/ticket_message_view.js?v=20260810b",
-        "/static/ticket.js?v=20260824a",
+        "/static/ticket.js?v=20260828a",
       ],
     },
   ];

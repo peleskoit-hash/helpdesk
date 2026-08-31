@@ -33,6 +33,7 @@ _TAG_NORMALIZE = {
 _URL_SCHEMES = {"http", "https", "tg", "mailto"}
 _HAS_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9\-]*)\b")
 _STRIP_TAG_RE = re.compile(r"</?[^>]+>")
+_HAS_ESCAPED_TAG_BOUNDARY_RE = re.compile(r"&(?:lt|gt);")
 
 
 class TelegramHtmlValidationError(ValueError):
@@ -209,9 +210,12 @@ def prepare_telegram_html_message(text: str) -> tuple[str, str | None]:
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not raw:
         return "", None
-    if not has_telegram_html(raw):
+    has_escaped_tag_boundary = bool(_HAS_ESCAPED_TAG_BOUNDARY_RE.search(raw))
+    if not has_telegram_html(raw) and not has_escaped_tag_boundary:
         return raw, None
     safe = sanitize_telegram_html(raw)
+    if has_escaped_tag_boundary:
+        return safe, "HTML"
     if not has_telegram_html(safe):
         return strip_telegram_html(safe), None
     return safe, "HTML"

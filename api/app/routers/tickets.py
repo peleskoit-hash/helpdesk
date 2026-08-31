@@ -1,5 +1,7 @@
 from datetime import datetime, time, timedelta
 from pathlib import Path
+import re
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 import uuid
 from urllib.error import HTTPError, URLError
@@ -107,6 +109,14 @@ def _ticket_closed_client_text(db: Session, ticket: Ticket | None = None) -> str
 
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    normalized = (filename or "").strip() or "file"
+    ascii_filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", normalized).strip() or "file"
+    ascii_filename = ascii_filename.replace("\\", "_").replace('"', "_")
+    encoded_filename = quote(normalized, safe="")
+    return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
 def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket:
@@ -1016,9 +1026,10 @@ def download_attachment(
     media_type = attachment.mime_type or "application/octet-stream"
     filename = attachment.original_filename or Path(attachment.local_path).name
     path = Path(attachment.local_path)
+    headers = {"Content-Disposition": _content_disposition_attachment(filename)}
 
     if path.exists() and path.is_file():
-        return FileResponse(path, media_type=media_type, filename=filename)
+        return FileResponse(path, media_type=media_type, headers=headers)
 
     file_path = (attachment.telegram_file_path or "").strip()
     if not file_path:
@@ -1043,23 +1054,29 @@ def download_attachment(
 
     stream_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
     request = UrlRequest(stream_url, method="GET")
+    try:
+        telegram_response = urlopen(request, timeout=120)
+    except HTTPError as exc:
+        if exc.code == 404:
+            _error(404, "attachment_file_missing", "Telegram file is not available")
+        _error(502, "attachment_download_failed", f"Telegram file download failed: HTTP {exc.code}")
+    except URLError as exc:
+        _error(502, "attachment_download_failed", f"Файл временно недоступен: {exc}")
 
     def _iter_stream():
         try:
-            with urlopen(request, timeout=120) as response:
-                while True:
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(body or str(exc))
-        except URLError as exc:
-            raise RuntimeError(str(exc))
+            while True:
+                chunk = telegram_response.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            telegram_response.close()
 
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    if attachment.file_size:
+    telegram_content_length = telegram_response.headers.get("Content-Length")
+    if telegram_content_length:
+        headers["Content-Length"] = telegram_content_length
+    elif attachment.file_size:
         headers["Content-Length"] = str(attachment.file_size)
     return StreamingResponse(_iter_stream(), media_type=media_type, headers=headers)
 
@@ -1171,7 +1188,13 @@ def _first_client_message(db: Session, ticket: Ticket) -> TicketMessage | None:
 def _last_agent_message(db: Session, ticket: Ticket) -> TicketMessage | None:
     return db.execute(
         select(TicketMessage)
-        .where(and_(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.AGENT.value))
+        .where(
+            and_(
+                TicketMessage.ticket_id == ticket.id,
+                TicketMessage.message_type == MessageType.AGENT.value,
+                or_(TicketMessage.message_status.is_(None), TicketMessage.message_status != "deleted"),
+            )
+        )
         .order_by(desc(TicketMessage.created_at))
         .limit(1)
     ).scalar_one_or_none()
@@ -1236,8 +1259,9 @@ async def create_attachment_preload(
         _error(403, "readonly_role", "Нет прав на отправку ответа")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
-        _error(409, "attachment_preload_only_for_ticket", "Предварительная подготовка доступна только для обычной заявки")
+    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    if workflow_type not in {TicketWorkflowType.TICKET.value, TicketWorkflowType.TASK.value}:
+        _error(409, "attachment_preload_unsupported_workflow", "Предварительная подготовка доступна только для заявки или задачи")
     if not user.id:
         _error(409, "user_id_required", "Для предзагрузки файла нужен корректный пользователь")
 

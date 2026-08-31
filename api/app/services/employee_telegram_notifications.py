@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 _PENDING_ASSIGNMENT_NOTIFICATIONS_KEY = "employee_assignment_notifications"
 _PENDING_MESSAGE_NOTIFICATIONS_KEY = "employee_message_notifications"
 _PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY = "employee_media_group_notifications"
-EMPLOYEE_MEDIA_GROUP_DEBOUNCE_SECONDS = 1.0
+EMPLOYEE_MEDIA_GROUP_DEBOUNCE_SECONDS = 10.0
+TELEGRAM_MEDIA_GROUP_MAX_ATTACHMENTS = 10
 EMPLOYEE_NOTIFICATION_MESSAGE_TEXT_LIMIT = 200
 ASSIGNMENT_EVENT_NEW = "new_assignment"
 ASSIGNMENT_EVENT_TRANSFER = "transfer_between_agents"
@@ -773,6 +774,15 @@ def _send_delivery(delivery: EmployeeTelegramDelivery) -> None:
     )
 
 
+def _media_group_attachment_count(
+    db: Session,
+    *,
+    ticket_id: str,
+    media_group_id: str,
+) -> int:
+    return len(_load_media_group_rows(db, ticket_id=ticket_id, media_group_id=media_group_id))
+
+
 def _cleanup_media_group_debounce(key: tuple[str, str], generation: int) -> None:
     with _MEDIA_GROUP_DEBOUNCE_LOCK:
         state = _MEDIA_GROUP_DEBOUNCE.get(key)
@@ -809,6 +819,13 @@ def start_media_group_notification_debounce(*, ticket_id: str, media_group_id: s
     normalized_group_id = str(media_group_id or "").strip()
     if not ticket_id or not normalized_group_id:
         return
+    with SessionLocal() as db:
+        attachment_count = _media_group_attachment_count(
+            db,
+            ticket_id=ticket_id,
+            media_group_id=normalized_group_id,
+        )
+    delay_seconds = 0.0 if attachment_count >= TELEGRAM_MEDIA_GROUP_MAX_ATTACHMENTS else EMPLOYEE_MEDIA_GROUP_DEBOUNCE_SECONDS
     key = (ticket_id, normalized_group_id)
     with _MEDIA_GROUP_DEBOUNCE_LOCK:
         previous = _MEDIA_GROUP_DEBOUNCE.get(key)
@@ -816,7 +833,7 @@ def start_media_group_notification_debounce(*, ticket_id: str, media_group_id: s
         if previous is not None:
             previous.timer.cancel()
         timer = _MEDIA_GROUP_TIMER_FACTORY(
-            EMPLOYEE_MEDIA_GROUP_DEBOUNCE_SECONDS,
+            delay_seconds,
             _send_debounced_media_group_notification,
             args=(ticket_id, normalized_group_id, generation),
         )

@@ -10,7 +10,7 @@
   let imagePreviewAttachment = null;
 
   function attachmentMeta(attachment) {
-    return [attachment.mime_type, formatFileSize(attachment.file_size)].filter(Boolean).join(" | ");
+    return formatFileSize(attachment.file_size);
   }
 
   function attachmentExt(attachment) {
@@ -169,13 +169,14 @@
 
   async function downloadAttachment(ctx, attachment) {
     try {
-      const objectUrl = await getAttachmentObjectUrl(attachment);
       const link = document.createElement("a");
-      link.href = objectUrl;
+      link.href = attachment.download_url;
       link.download = attachment.original_filename || "file";
+      link.rel = "noopener";
       document.body.appendChild(link);
       link.click();
       link.remove();
+      ctx.setStatus?.("Скачивание начато...");
     } catch (e) {
       ctx.showError(e.message);
     }

@@ -55,6 +55,7 @@ const state = {
   isSavingSendByEnterPreference: false,
   stateActionInFlight: null,
   restoreCloseCooldownUntil: 0,
+  pendingCardReloadOptions: null,
 };
 
 const el = {
@@ -349,6 +350,7 @@ function cleanupTicketCardPage() {
 function attachmentsCtx() {
   return {
     el,
+    setStatus,
     showError,
     closeOnBackdropClick,
     api,
@@ -382,7 +384,8 @@ function composerCtx() {
     messageAuthorLabel,
     isOnsitePhraseJs,
     updateSendByEnterPreference,
-    canUseAttachmentPreload: () => state.composeMode === "reply" && (state.card?.workflow_type || "ticket") === "ticket",
+    workflowType: () => state.card?.workflow_type || "ticket",
+    canUseAttachmentPreload: () => state.composeMode === "reply" && ["ticket", "task"].includes(state.card?.workflow_type || "ticket"),
   };
 }
 
@@ -952,7 +955,15 @@ function renderCard() {
 }
 
 async function loadCard(options = {}) {
-  if (destroyed || state.isLoading) return;
+  if (destroyed) return;
+  if (state.isLoading) {
+    state.pendingCardReloadOptions = {
+      silent: state.pendingCardReloadOptions
+        ? Boolean(state.pendingCardReloadOptions.silent) && Boolean(options.silent)
+        : Boolean(options.silent),
+    };
+    return;
+  }
   state.isLoading = true;
   const silent = Boolean(options.silent);
   if (!silent) setStatus("Загружаю карточку...");
@@ -987,6 +998,11 @@ async function loadCard(options = {}) {
     if (!silent) showError(e.message || "Ошибка загрузки карточки");
   } finally {
     state.isLoading = false;
+    const pendingOptions = state.pendingCardReloadOptions;
+    state.pendingCardReloadOptions = null;
+    if (!destroyed && pendingOptions) {
+      await loadCard(pendingOptions);
+    }
   }
 }
 

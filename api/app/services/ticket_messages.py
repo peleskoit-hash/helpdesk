@@ -51,6 +51,36 @@ def _message_uses_single_attachment_caption(message: TicketMessage, attachments:
     return bool(attachment_message_id) and attachment_message_id == str(message.telegram_message_id).strip()
 
 
+def _attachment_from_preload(
+    *,
+    db: Session,
+    ticket: Ticket,
+    message: TicketMessage,
+    preload: TicketAttachmentPreload,
+    delivery_status: str | None,
+) -> TicketAttachment:
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="helpdesk",
+        telegram_file_id=preload.telegram_file_id,
+        telegram_file_unique_id=preload.telegram_file_unique_id,
+        telegram_file_path=None,
+        telegram_delivery_status=delivery_status,
+        telegram_message_id=None,
+        original_filename=preload.original_filename,
+        mime_type=preload.mime_type,
+        file_size=preload.file_size,
+        local_path=preload.local_path,
+        created_at=datetime.utcnow(),
+    )
+    db.add(attachment)
+    db.flush()
+    preload.final_attachment_id = attachment.id
+    return attachment
+
+
 def add_message(
     *,
     db: Session,
@@ -143,21 +173,24 @@ async def reply_to_ticket(
     content_type = (request.headers.get("content-type") or "").lower()
     text: str | None = None
     quote_message_id: str | None = None
-    preloaded_attachment_id: str | None = None
+    preloaded_attachment_ids: list[str] = []
     single_attachment_marker = False
     uploaded_files: list[UploadFile] = []
     if "multipart/form-data" in content_type:
         form = await request.form()
         text = (form.get("text") or "").strip() or None
         quote_message_id = (form.get("quote_message_id") or "").strip() or None
-        preloaded_attachment_id = (form.get("preloaded_attachment_id") or "").strip() or None
+        for value in form.getlist("preloaded_attachment_id"):
+            normalized_preload_id = str(value or "").strip()
+            if normalized_preload_id:
+                preloaded_attachment_ids.append(normalized_preload_id)
         single_attachment_marker = str(form.get("single_attachment") or "").strip().lower() == "true"
         for value in form.getlist("files"):
             if hasattr(value, "filename") and hasattr(value, "file"):
                 uploaded_files.append(value)
-        if preloaded_attachment_id and uploaded_files:
+        if preloaded_attachment_ids and uploaded_files and (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TASK.value:
             _error(400, "reply_payload_conflict", "Нельзя одновременно передавать preload и raw-файл")
-        if not text and not uploaded_files and not preloaded_attachment_id:
+        if not text and not uploaded_files and not preloaded_attachment_ids:
             _error(400, "reply_payload_empty", "Нужно передать текст или хотя бы один файл")
     else:
         payload_raw = await request.json()
@@ -175,8 +208,10 @@ async def reply_to_ticket(
 
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     is_plain_ticket = workflow_type == TicketWorkflowType.TICKET.value
-    has_attachments = bool(uploaded_files) or bool(preloaded_attachment_id)
+    has_attachments = bool(uploaded_files) or bool(preloaded_attachment_ids)
     prefer_caption = single_attachment_marker and _is_caption_compatible_text(text)
+    if is_plain_ticket and len(preloaded_attachment_ids) > 1:
+        _error(400, "reply_payload_too_many_preloads", "Для обычной заявки preload отправляется по одному файлу")
 
     if is_plain_ticket and has_attachments:
         agent_message = add_message(
@@ -190,33 +225,21 @@ async def reply_to_ticket(
 
         attachments: list[TicketAttachment] = []
         attachments_to_schedule: list[dict[str, object]] = []
-        if preloaded_attachment_id:
+        if preloaded_attachment_ids:
             if not user.id:
                 _error(409, "user_id_required", "Для отправки preload нужен корректный пользователь")
-            preload = claim_attachment_preload(db, preloaded_attachment_id, ticket.id, user.id)
+            preload = claim_attachment_preload(db, preloaded_attachment_ids[0], ticket.id, user.id)
             if preload is None:
                 _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
             if preload.status not in {"uploading", "ready"}:
                 _error(409, "attachment_preload_unavailable", "Предзагруженный файл недоступен для отправки")
-            attachment = TicketAttachment(
-                id=str(uuid.uuid4()),
-                ticket_id=ticket.id,
-                message_id=agent_message.id,
-                source="helpdesk",
-                telegram_file_id=preload.telegram_file_id,
-                telegram_file_unique_id=preload.telegram_file_unique_id,
-                telegram_file_path=None,
-                telegram_delivery_status="sending" if preload.status == "ready" and preload.telegram_file_id else "uploading",
-                telegram_message_id=None,
-                original_filename=preload.original_filename,
-                mime_type=preload.mime_type,
-                file_size=preload.file_size,
-                local_path=preload.local_path,
-                created_at=datetime.utcnow(),
+            attachment = _attachment_from_preload(
+                db=db,
+                ticket=ticket,
+                message=agent_message,
+                preload=preload,
+                delivery_status="sending" if preload.status == "ready" and preload.telegram_file_id else "uploading",
             )
-            db.add(attachment)
-            db.flush()
-            preload.final_attachment_id = attachment.id
             preload.reply_to_message_id = quote_telegram_message_id
             preload.prefer_caption = prefer_caption
             logger.info(
@@ -301,6 +324,24 @@ async def reply_to_ticket(
     )
 
     attachments: list[TicketAttachment] = []
+    for preloaded_attachment_id in preloaded_attachment_ids:
+        if workflow_type != TicketWorkflowType.TASK.value:
+            _error(409, "attachment_preload_unsupported_workflow", "Preload is not available for this reply flow")
+        if not user.id:
+            _error(409, "user_id_required", "Для отправки preload нужен корректный пользователь")
+        preload = claim_attachment_preload(db, preloaded_attachment_id, ticket.id, user.id)
+        if preload is None:
+            _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+        if preload.status != "ready" or not (preload.telegram_file_id or "").strip():
+            _error(409, "attachment_preload_not_ready", "Файл ещё не подготовлен. Дождитесь статуса готовности и отправьте ответ снова.")
+        attachment = _attachment_from_preload(
+            db=db,
+            ticket=ticket,
+            message=agent_message,
+            preload=preload,
+            delivery_status=None,
+        )
+        attachments.append(attachment)
     for upload in uploaded_files:
         attachment = save_upload_attachment(db, ticket, agent_message, upload)
         attachments.append(attachment)

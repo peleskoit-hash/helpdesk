@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage
-from .telegram_bot import TelegramApiError, download_file, get_file, send_chat_action, send_document
+from .telegram_bot import TelegramApiError, download_file, get_file, send_chat_action, send_document, send_document_by_file_id
 from .telegram_text_format import prepare_telegram_html_message
 
 
@@ -143,7 +143,28 @@ def _send_attachment_to_telegram_client(
             _error(409, "telegram_contact_not_found", "У клиента нет Telegram-контакта")
         return None
     path = Path(attachment.local_path)
+    file_id = str(attachment.telegram_file_id or "").strip()
     if not path.exists() or not path.is_file():
+        if file_id:
+            try:
+                payload_caption = None
+                parse_mode = None
+                if caption:
+                    payload_caption, parse_mode = prepare_telegram_html_message(caption)
+                response = send_document_by_file_id(
+                    contact.external_chat_id,
+                    file_id,
+                    caption=payload_caption,
+                    parse_mode=parse_mode,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                message_id = ((response or {}).get("result") or {}).get("message_id")
+                attachment.telegram_message_id = str(message_id) if message_id is not None else None
+                return response
+            except TelegramApiError as exc:
+                if required:
+                    _error(502, "telegram_send_failed", f"Telegram не принял файл {attachment.original_filename or attachment.id}: {exc}")
+                return None
         if required:
             _error(404, "attachment_file_missing", f"Файл отсутствует: {attachment.original_filename or attachment.id}")
         return None
