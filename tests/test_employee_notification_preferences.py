@@ -658,6 +658,28 @@ def test_personal_page_uses_same_semantic_tag_registry_with_personal_labels():
         assert "[TG @username адресата]" not in by_type[notification_type]["tags"]
 
 
+def test_personal_page_exposes_same_tooltip_registry_with_personal_alias_description():
+    session = _session()
+    user = _user(session)
+
+    personal = get_my_notification_bot_preferences(db=session, user=user)
+    by_type = {item["type"]: item for item in personal["items"]}
+
+    assignment_tags = by_type["new_assignment"]["tag_items"]
+    message_tags = by_type["new_message"]["tag_items"]
+
+    assert assignment_tags[-1] == {
+        "label": "[Мой TG @username]",
+        "description": "Ваш Telegram @username, на который приходит уведомление.",
+    }
+    assert message_tags[-1] == {
+        "label": "[Мой TG @username]",
+        "description": "Ваш Telegram @username, на который приходит уведомление.",
+    }
+    assert [tag["label"] for tag in assignment_tags] == by_type["new_assignment"]["tags"]
+    assert [tag["label"] for tag in message_tags] == by_type["new_message"]["tags"]
+
+
 def test_personal_context_normalizes_admin_semantic_label_in_template_and_snapshot(monkeypatch):
     monkeypatch.setattr(settings_notification_bot_basic, "_require_admin", lambda user: None)
     session = _session()

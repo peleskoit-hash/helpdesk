@@ -21,6 +21,7 @@ function loadEditor() {
 }
 
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "telegram_html_validation_cases.json"), "utf8"));
+const stylesSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "styles.css"), "utf8");
 
 test("frontend telegram html validation follows shared contract", () => {
   const editor = loadEditor();
@@ -49,10 +50,40 @@ test("admin notification bot editor uses shared atomic tag helper with backend t
 
   assert.match(source, /tg\.bindAtomicTokens\(textarea, draft\?\.tags \|\| \[\]\)/);
   assert.match(source, /tg\.bindToolbar\(pane, textarea, \{ tags: draft\?\.tags \|\| \[\] \}\)/);
-  assert.match(source, /draft\.tags\.map/);
+  assert.match(source, /tags: tagItems\.map\(\(tag\) => tag\.label\)/);
+  assert.match(source, /draft\.tagItems\.map/);
   assert.doesNotMatch(source, /\[Номер заявки\]/);
   assert.doesNotMatch(source, /\[Тело сообщения\]/);
   assert.doesNotMatch(source, /\[TG @username адресата\]/);
+});
+
+test("admin notification bot renders tooltip metadata on the same tag buttons", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "settings_notification_bot_basic.js"), "utf8");
+
+  assert.match(source, /item\.tag_items/);
+  assert.match(source, /data-tooltip="\$\{escapeHtml\(tag\.description\)\}"/);
+  assert.doesNotMatch(source, /title="\$\{escapeHtml\(tag\.description\)\}"/);
+  assert.match(source, /aria-label="\$\{escapeHtml\(tag\.description \? `\$\{tag\.label\}: \$\{tag\.description\}` : tag\.label\)\}"/);
+  assert.match(source, /data-insert-tag="\$\{escapeHtml\(tag\.label\)\}"/);
+});
+
+test("notification tag tooltip elevates hovered and focused button above sibling tags", () => {
+  assert.match(
+    stylesSource,
+    /\.notification-tag-btn:hover,\s*\.notification-tag-btn:focus-visible\s*\{[\s\S]*z-index:\s*21;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.notification-tag-btn\[data-tooltip\]::after\s*\{[\s\S]*left:\s*auto;[\s\S]*right:\s*0;[\s\S]*z-index:\s*20;[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*min\(320px,\s*calc\(100vw - 64px\)\);/s,
+  );
+  assert.match(
+    stylesSource,
+    /\.notification-tag-btn\[data-tooltip\]::before\s*\{[\s\S]*left:\s*auto;[\s\S]*right:\s*18px;/s,
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.notification-tag-btn\[data-tooltip\]::after\s*\{[\s\S]*left:\s*0;/s,
+  );
 });
 
 test("legacy bot button editor reuses toolbar without delivery flag controls", () => {

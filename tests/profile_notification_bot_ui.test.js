@@ -78,7 +78,9 @@ test("restore button remains in the upper control bar and is disabled in base mo
 
 test("profile notification bot reuses backend tags and shared Telegram editor", () => {
   assert.match(source, /item\.tags/);
-  assert.match(source, /draft\.tags\.map/);
+  assert.match(source, /item\.tag_items/);
+  assert.match(source, /tags: tagItems\.map\(\(tag\) => tag\.label\)/);
+  assert.match(source, /draft\.tagItems\.map/);
   assert.doesNotMatch(source, /\[Номер заявки\]/);
   assert.doesNotMatch(source, /\[Тело сообщения\]/);
   assert.match(source, /window\.TelegramTextEditor/);
@@ -86,6 +88,13 @@ test("profile notification bot reuses backend tags and shared Telegram editor", 
   assert.match(source, /tg\.bindAtomicTokens\(textarea, draft\.tags\)/);
   assert.match(source, /tg\.renderTelegramPreviewHtml/);
   assert.match(source, /tg\.validateTelegramHtml/);
+});
+
+test("profile notification bot shows tooltip metadata on tag buttons without changing insert behavior", () => {
+  assert.match(source, /data-tooltip="\$\{escapeHtml\(tag\.description\)\}"/);
+  assert.doesNotMatch(source, /title="\$\{escapeHtml\(tag\.description\)\}"/);
+  assert.match(source, /aria-label="\$\{escapeHtml\(tag\.description \? `\$\{tag\.label\}: \$\{tag\.description\}` : tag\.label\)\}"/);
+  assert.match(source, /data-insert-tag="\$\{escapeHtml\(tag\.label\)\}"/);
 });
 
 test("save syncs active tab while leaving inactive drafts in state", () => {

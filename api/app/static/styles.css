@@ -5474,11 +5474,65 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 }
 
 .notification-tag-btn {
+  position: relative;
   justify-content: flex-start;
   width: 100%;
   min-height: 34px;
   white-space: normal;
   text-align: left;
+}
+
+.notification-tag-btn[data-tooltip]::before,
+.notification-tag-btn[data-tooltip]::after {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.notification-tag-btn[data-tooltip]::before {
+  content: "";
+  position: absolute;
+  top: calc(100% + 2px);
+  left: auto;
+  right: 18px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent transparent rgba(15, 23, 42, 0.94) transparent;
+  z-index: 19;
+}
+
+.notification-tag-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 64px));
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.94);
+  color: #f8fafc;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+}
+
+.notification-tag-btn[data-tooltip]:hover::before,
+.notification-tag-btn[data-tooltip]:hover::after,
+.notification-tag-btn[data-tooltip]:focus-visible::before,
+.notification-tag-btn[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+.notification-tag-btn:hover,
+.notification-tag-btn:focus-visible {
+  z-index: 21;
 }
 
 .notification-validation {

@@ -40,9 +40,14 @@ class NotificationBotBasicTag:
     semantic: str
     admin_label: str
     personal_label: str
+    admin_description: str
+    personal_description: str
 
     def label(self, context: str) -> str:
         return self.personal_label if context == "personal" else self.admin_label
+
+    def description(self, context: str) -> str:
+        return self.personal_description if context == "personal" else self.admin_description
 
 
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
@@ -465,7 +470,167 @@ NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG = NotificationBotBasicTag(
     semantic="recipient_telegram_username",
     admin_label="[TG @username адресата]",
     personal_label="[Мой TG @username]",
+    admin_description="Telegram @username сотрудника, которому отправляется уведомление.",
+    personal_description="Ваш Telegram @username, на который приходит уведомление.",
 )
+
+NOTIFICATION_BOT_BASIC_TAG_REGISTRY: tuple[NotificationBotBasicTag, ...] = (
+    NotificationBotBasicTag(
+        semantic="ticket_number",
+        admin_label="[Номер заявки]",
+        personal_label="[Номер заявки]",
+        admin_description="Номер заявки или задачи в ES DESK.",
+        personal_description="Номер заявки или задачи в ES DESK.",
+    ),
+    NotificationBotBasicTag(
+        semantic="ticket_type",
+        admin_label="[Тип заявки]",
+        personal_label="[Тип заявки]",
+        admin_description="Тип: заявка, задача, системная задача и т. п.",
+        personal_description="Тип: заявка, задача, системная задача и т. п.",
+    ),
+    NotificationBotBasicTag(
+        semantic="ticket_subject",
+        admin_label="[Заголовок заявки]",
+        personal_label="[Заголовок заявки]",
+        admin_description="Заголовок заявки или задачи.",
+        personal_description="Заголовок заявки или задачи.",
+    ),
+    NotificationBotBasicTag(
+        semantic="ticket_author",
+        admin_label="[Автор заявки/задачи]",
+        personal_label="[Автор заявки/задачи]",
+        admin_description="Сотрудник или система, создавшие заявку или задачу.",
+        personal_description="Сотрудник или система, создавшие заявку или задачу.",
+    ),
+    NotificationBotBasicTag(
+        semantic="author_department",
+        admin_label="[Подразделение автора]",
+        personal_label="[Подразделение автора]",
+        admin_description="Подразделение автора на момент создания.",
+        personal_description="Подразделение автора на момент создания.",
+    ),
+    NotificationBotBasicTag(
+        semantic="created_at",
+        admin_label="[Дата создания]",
+        personal_label="[Дата создания]",
+        admin_description="Дата и время создания заявки или задачи.",
+        personal_description="Дата и время создания заявки или задачи.",
+    ),
+    NotificationBotBasicTag(
+        semantic="ticket_link",
+        admin_label="[Ссылка на заявку]",
+        personal_label="[Ссылка на заявку]",
+        admin_description="Прямая ссылка на заявку или задачу в ES DESK.",
+        personal_description="Прямая ссылка на заявку или задачу в ES DESK.",
+    ),
+    NotificationBotBasicTag(
+        semantic="message_author",
+        admin_label="[Автор сообщения]",
+        personal_label="[Автор сообщения]",
+        admin_description="Кто отправил новое сообщение или комментарий.",
+        personal_description="Кто отправил новое сообщение или комментарий.",
+    ),
+    NotificationBotBasicTag(
+        semantic="message_kind",
+        admin_label="[Вид сообщения]",
+        personal_label="[Вид сообщения]",
+        admin_description="Тип сообщения: ответ или комментарий.",
+        personal_description="Тип сообщения: ответ или комментарий.",
+    ),
+    NotificationBotBasicTag(
+        semantic="message_body",
+        admin_label="[Тело сообщения]",
+        personal_label="[Тело сообщения]",
+        admin_description="Текст сообщения и информация о прикреплённых файлах.",
+        personal_description="Текст сообщения и информация о прикреплённых файлах.",
+    ),
+    NotificationBotBasicTag(
+        semantic="message_created_at",
+        admin_label="[Дата сообщения]",
+        personal_label="[Дата сообщения]",
+        admin_description="Дата и время отправки сообщения.",
+        personal_description="Дата и время отправки сообщения.",
+    ),
+    NotificationBotBasicTag(
+        semantic="previous_agent",
+        admin_label="[Предыдущий агент]",
+        personal_label="[Предыдущий агент]",
+        admin_description="Сотрудник, от которого передали заявку.",
+        personal_description="Сотрудник, от которого передали заявку.",
+    ),
+    NotificationBotBasicTag(
+        semantic="transfer_admin",
+        admin_label="[Администратор перевода]",
+        personal_label="[Администратор перевода]",
+        admin_description="Кто выполнил перевод заявки. Для автоматики — «Система».",
+        personal_description="Кто выполнил перевод заявки. Для автоматики — «Система».",
+    ),
+    NotificationBotBasicTag(
+        semantic="transfer_date",
+        admin_label="[Дата перевода]",
+        personal_label="[Дата перевода]",
+        admin_description="Дата и время передачи заявки.",
+        personal_description="Дата и время передачи заявки.",
+    ),
+    NotificationBotBasicTag(
+        semantic="transfer_destination",
+        admin_label="[Куда передана заявка]",
+        personal_label="[Куда передана заявка]",
+        admin_description="Новый сотрудник, «Распределение» или административный список.",
+        personal_description="Новый сотрудник, «Распределение» или административный список.",
+    ),
+    NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG,
+)
+
+_NOTIFICATION_BOT_BASIC_TAG_BY_SEMANTIC = {
+    tag.semantic: tag
+    for tag in NOTIFICATION_BOT_BASIC_TAG_REGISTRY
+}
+
+_NOTIFICATION_BOT_BASIC_TAG_SEMANTICS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "new_assignment": (
+        "ticket_number",
+        "ticket_type",
+        "ticket_subject",
+        "ticket_author",
+        "author_department",
+        "created_at",
+        "ticket_link",
+        "recipient_telegram_username",
+    ),
+    "new_message": (
+        "ticket_number",
+        "ticket_type",
+        "ticket_subject",
+        "message_author",
+        "message_kind",
+        "message_body",
+        "message_created_at",
+        "ticket_link",
+        "recipient_telegram_username",
+    ),
+    "transfer_to_agent": (
+        "ticket_number",
+        "ticket_type",
+        "ticket_subject",
+        "previous_agent",
+        "transfer_admin",
+        "transfer_date",
+        "ticket_link",
+        "recipient_telegram_username",
+    ),
+    "transfer_from_agent": (
+        "ticket_number",
+        "ticket_type",
+        "ticket_subject",
+        "transfer_destination",
+        "transfer_admin",
+        "transfer_date",
+        "ticket_link",
+        "recipient_telegram_username",
+    ),
+}
 
 NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS: tuple[NotificationBotBasicTag, ...] = (
     NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG,
@@ -516,6 +681,21 @@ def notification_bot_basic_tags(notification_type: str, *, context: str = "admin
     tags = list(NOTIFICATION_BOT_BASIC_TAGS.get(notification_type, ()))
     tags.extend(tag.label(context) for tag in NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS)
     return tags
+
+
+def notification_bot_basic_tag_items(notification_type: str, *, context: str = "admin") -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for semantic in _NOTIFICATION_BOT_BASIC_TAG_SEMANTICS_BY_TYPE.get(notification_type, ()):
+        tag = _NOTIFICATION_BOT_BASIC_TAG_BY_SEMANTIC.get(semantic)
+        if tag is None:
+            continue
+        items.append(
+            {
+                "label": tag.label(context),
+                "description": tag.description(context),
+            }
+        )
+    return items
 
 
 def notification_bot_basic_tag_labels_by_semantic(*, context: str = "admin") -> dict[str, str]:
@@ -802,6 +982,7 @@ def serialize_notification_bot_basic_template(
     enabled = bool(row.enabled) if row is not None and row.enabled is not None else True
     notification_type = definition.key.rsplit(".", 1)[-1]
     template = body if is_overridden else ("" if row is not None and not enabled and body is None else definition.default_text)
+    tag_items = notification_bot_basic_tag_items(notification_type, context=tag_context)
     return {
         "type": notification_type,
         "key": definition.key,
@@ -814,7 +995,8 @@ def serialize_notification_bot_basic_template(
         "html_enabled": bool(row.html_enabled) if row is not None and row.html_enabled is not None else definition.html_enabled,
         "disable_link_preview": bool(row.disable_link_preview) if row is not None else False,
         "send_silently": bool(row.send_silently) if row is not None else False,
-        "tags": notification_bot_basic_tags(notification_type, context=tag_context),
+        "tags": [item["label"] for item in tag_items],
+        "tag_items": tag_items,
         "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
     }
 

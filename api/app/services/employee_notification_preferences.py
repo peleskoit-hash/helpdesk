@@ -197,6 +197,7 @@ def serialize_employee_notification_preferences(
                 "disable_link_preview": bool(source["disable_link_preview"]),
                 "send_silently": bool(source["send_silently"]),
                 "tags": list(base["tags"]),
+                "tag_items": list(base.get("tag_items") or []),
                 "use_base_settings": use_base_settings,
                 "readonly": use_base_settings,
             }

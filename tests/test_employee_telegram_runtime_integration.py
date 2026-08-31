@@ -337,6 +337,9 @@ def test_effective_settings_flags_tags_escaping_and_recipient_username(monkeypat
     assert "https://desk.example.test/base/tickets/742" in delivery.text
     assert ticket.id not in delivery.text
     assert "@actual_recipient_username" in delivery.text
+    assert "[Номер заявки]" not in delivery.text
+    assert "[Заголовок заявки]" not in delivery.text
+    assert "[TG @username адресата]" not in delivery.text
 
 
 def test_scheduling_uses_existing_ticket_number_allocator_before_runtime_delivery():

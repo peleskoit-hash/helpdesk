@@ -97,6 +97,15 @@
 
     function normalizeDraft(item) {
       const config = PERSONAL_NOTIFICATION_TAB_CONFIG[item.type] || {};
+      const tagItems = Array.isArray(item.tag_items) && item.tag_items.length
+        ? item.tag_items.map((tag) => ({
+          label: String(tag?.label || ""),
+          description: String(tag?.description || ""),
+        }))
+        : (Array.isArray(item.tags) ? item.tags : []).map((tag) => ({
+          label: String(tag || ""),
+          description: "",
+        }));
       return {
         type: String(item.type || ""),
         title: String(config.title || item.title || ""),
@@ -105,7 +114,8 @@
         htmlEnabled: item.html_enabled !== false,
         disableLinkPreview: !!item.disable_link_preview,
         sendSilently: !!item.send_silently,
-        tags: Array.isArray(item.tags) ? item.tags : [],
+        tags: tagItems.map((tag) => tag.label),
+        tagItems,
         error: "",
       };
     }
@@ -230,7 +240,16 @@
             <div class="notification-tags">
               <div class="field-label">Доступные теги</div>
               <div class="notification-tag-list">
-                ${draft.tags.map((tag) => `<button type="button" class="action notification-tag-btn" data-insert-tag="${escapeHtml(tag)}" ${readonly ? "disabled" : ""}>${escapeHtml(tag)}</button>`).join("")}
+                ${draft.tagItems.map((tag) => `
+                  <button
+                    type="button"
+                    class="action notification-tag-btn"
+                    data-insert-tag="${escapeHtml(tag.label)}"
+                    data-tooltip="${escapeHtml(tag.description)}"
+                    aria-label="${escapeHtml(tag.description ? `${tag.label}: ${tag.description}` : tag.label)}"
+                    ${readonly ? "disabled" : ""}
+                  >${escapeHtml(tag.label)}</button>
+                `).join("")}
               </div>
             </div>
           </div>
