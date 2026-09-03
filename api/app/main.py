@@ -54,7 +54,7 @@ from .services.schema_evolution import (
     ensure_ticket_message_columns,
     ensure_user_columns,
 )
-from .services.seed_data import ensure_client_card_defaults, ensure_initial_seed_data
+from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
 from .services.employee_telegram_bot import set_employee_bot_commands
 from .services.employee_telegram_polling import employee_telegram_polling_loop
 from .services.telegram_bot import TelegramApiError, set_bot_commands
@@ -117,7 +117,7 @@ async def on_startup():
             ensure_client_card_field_config_columns()
             ensure_call_center_employee_resolver_state_table()
             ensure_employee_notification_preferences_table()
-            ensure_client_card_defaults()
+            ensure_system_seed_data()
             last_error = None
             break
         except OperationalError as exc:
@@ -140,7 +140,7 @@ async def on_startup():
             print(f"Employee Telegram command menu setup error: {exc}")
 
     if settings.initial_seed_enabled_effective:
-        ensure_initial_seed_data()
+        ensure_demo_seed_data()
 
     if settings.telegram_polling_enabled and settings.telegram_bot_token and telegram_polling_task is None:
         telegram_polling_task = asyncio.create_task(telegram_polling_loop())

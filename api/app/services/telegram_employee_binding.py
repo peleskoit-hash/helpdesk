@@ -260,6 +260,7 @@ def block_account(
         )
 
     account.is_blocked = True
+    account.delivery_available = False
     account.updated_at = datetime.utcnow()
     db.flush()
     return account
@@ -284,6 +285,7 @@ def unblock_account(
         )
 
     account.is_blocked = False
+    account.delivery_available = bool(account.telegram_chat_id)
     account.updated_at = datetime.utcnow()
     db.flush()
     return account

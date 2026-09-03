@@ -43,3 +43,17 @@ def test_sidebar_user_menu_static_contract() -> None:
     assert ".sidebar-user-panel.menu-open .agent-avatar" in styles_css
     assert ".sidebar-logout-btn {" in styles_css
     assert "display: none;" in styles_css
+
+
+def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
+    templates = sorted(TEMPLATES_DIR.glob("*.html"))
+    sidebar_entrypoints = []
+    for template in templates:
+        content = template.read_text(encoding="utf-8")
+        if "/static/sidebar.js" not in content:
+            continue
+        sidebar_entrypoints.append(template.name)
+        assert '/static/sidebar.js?v=20260903a' in content
+        assert '<script src="/static/sidebar.js"></script>' not in content
+
+    assert sidebar_entrypoints

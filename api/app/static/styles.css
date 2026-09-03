@@ -5356,6 +5356,30 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   display: block;
 }
 
+.main[data-shell-page="settings-notification-bot-basic"],
+.main[data-shell-page="profile-notification-bot"] {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.main[data-shell-page="settings-notification-bot-basic"] .content,
+.main[data-shell-page="profile-notification-bot"] .content {
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
+  overflow: visible;
+  min-height: max-content;
+}
+
+.main[data-shell-page="settings-notification-bot-basic"] .settings-panel,
+.main[data-shell-page="profile-notification-bot"] .settings-panel {
+  align-self: start;
+  overflow: visible;
+  min-height: max-content;
+}
+
 .notification-control-card {
   border: 1px solid var(--border);
   border-radius: 8px;

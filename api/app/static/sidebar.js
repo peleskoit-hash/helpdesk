@@ -312,10 +312,19 @@
     }
     return { panel, toggle, menu, logoutForm };
   }
+
+  function renderUserMenuVisibility(menu) {
+    const notificationItem = menu?.querySelector("[data-sidebar-user-menu-item='bot-notifications']");
+    if (notificationItem) {
+      notificationItem.hidden = state.role === "admin";
+    }
+  }
+
   function bindUserMenu() {
     const structure = ensureUserMenuStructure();
     if (!structure) return;
     const { panel, toggle, menu, logoutForm } = structure;
+    renderUserMenuVisibility(menu);
     if (toggle.dataset.sidebarUserMenuBound === "1") return;
     if (typeof userMenuCleanup === "function") {
       userMenuCleanup();

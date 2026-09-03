@@ -355,7 +355,11 @@ def ensure_client_card_defaults() -> None:
         db.commit()
 
 
-def ensure_initial_seed_data() -> None:
+def ensure_system_seed_data() -> None:
+    ensure_client_card_defaults()
+
+
+def ensure_demo_seed_data() -> None:
     with SessionLocal() as db:
         exists = db.execute(select(Company.id).limit(1)).first()
         if exists:
@@ -392,3 +396,7 @@ def ensure_initial_seed_data() -> None:
             db.commit()
         except IntegrityError:
             db.rollback()
+
+
+def ensure_initial_seed_data() -> None:
+    ensure_demo_seed_data()

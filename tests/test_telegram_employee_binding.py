@@ -368,7 +368,7 @@ def test_block_account_preserves_binding_and_status_and_marks_blocked():
 
     assert blocked.bound_user_id == user.id
     assert blocked.request_status == telegram_employee_binding.REQUEST_STATUS_APPROVED
-    assert blocked.delivery_available is True
+    assert blocked.delivery_available is False
     assert blocked.is_blocked is True
 
 
@@ -467,7 +467,7 @@ def test_touch_notification_interaction_keeps_blocked_binding_blocked_without_re
     assert updated.updated_at == original_updated_at
 
 
-def test_unblock_account_only_clears_block_flag():
+def test_unblock_account_restores_delivery_when_chat_id_exists():
     session = _session()
     account = _account(
         session,
@@ -487,4 +487,4 @@ def test_unblock_account_only_clears_block_flag():
     assert unblocked.is_blocked is False
     assert unblocked.request_status == telegram_employee_binding.REQUEST_STATUS_APPROVED
     assert unblocked.bound_user_id == "user-107"
-    assert unblocked.delivery_available is False
+    assert unblocked.delivery_available is True
