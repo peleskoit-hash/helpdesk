@@ -91,8 +91,13 @@ class ClientProfileOut(BaseModel):
     external_user_id: str | None = None
     bitrix_login: str | None = None
     bitrix_password: str | None = None
+    bitrix_password_set: bool = False
     bitrix_id: str | None = None
     custom_fields: dict = Field(default_factory=dict)
+
+
+class BitrixPasswordRevealOut(BaseModel):
+    bitrix_password: str | None = None
 
 
 class ClientProfileUpdate(BaseModel):

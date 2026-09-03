@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+import logging
 from pathlib import Path
 import re
 from urllib.parse import quote
@@ -25,7 +26,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
@@ -49,6 +50,7 @@ from ..services.ticket_attachments import (
 from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
+from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
@@ -76,6 +78,7 @@ from ..services.automatic_messages import render_automatic_message_text
 
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
+logger = logging.getLogger(__name__)
 
 TICKET_CLOSED_CLIENT_TEXT = "Ваше обращение закрыто. Если Вам снова будет необходима помощь технической поддержки, нажмите /start."
 ONSITE_CLOSE_REMINDER_TEXT = 'Не забудьте самостоятельно изменить статус на "В сети" по завершению данной заявки'
@@ -1010,6 +1013,30 @@ def get_current_client_profile(ticket_id: str, db: Session = Depends(get_db), us
     profile = _get_or_create_client_profile(db, t.client_id)
     contact = _telegram_contact_for_client(db, t.client_id)
     return _current_client_profile_out(profile, t, contact)
+
+
+@router.get("/{ticket_id}/client-profile/bitrix-password", response_model=BitrixPasswordRevealOut)
+def reveal_ticket_client_bitrix_password(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
+    if profile is None:
+        _error(404, "client_profile_not_found", "Профиль клиента не найден")
+    encrypted_password = profile.bitrix_password
+    if not encrypted_password or not str(encrypted_password).strip():
+        return {"bitrix_password": None}
+    try:
+        password = decrypt_secret(encrypted_password)
+    except SecretEncryptionConfigurationError:
+        logger.warning("Bitrix password reveal failed because encryption is not configured correctly.")
+        _error(503, "bitrix_password_decrypt_unavailable", "Пароль Bitrix временно недоступен")
+    except SecretEncryptionError:
+        logger.warning("Bitrix password reveal failed because stored value could not be decrypted.")
+        _error(409, "bitrix_password_decrypt_failed", "Пароль Bitrix не удалось расшифровать")
+    return {"bitrix_password": password}
 
 
 @router.get("/{ticket_id}/attachments/{attachment_id}/download")

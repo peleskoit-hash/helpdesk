@@ -211,6 +211,7 @@ let documentClickHandler = null;
 let resizeHandler = null;
 let beforeUnloadHandler = null;
 let destroyed = false;
+let pageHandlersBound = false;
 let restoreCloseCooldownTimer = null;
 
 function isTicketStateAction(name) {
@@ -345,6 +346,7 @@ function cleanupTicketCardPage() {
     el.imagePreviewClose = null;
     el.imagePreviewDownload = null;
   }
+  pageHandlersBound = false;
 }
 
 function attachmentsCtx() {
@@ -1196,21 +1198,13 @@ async function updateAvailabilityStatus(status) {
 }
 
 // ===== init/events =====
-function init() {
+function bindPageHandlers() {
+  if (pageHandlersBound) return;
+  pageHandlersBound = true;
+
   el.messageContextMenu = document.createElement("div");
   el.messageContextMenu.className = "message-context-menu hidden";
   document.body.appendChild(el.messageContextMenu);
-
-  if (!["active", "unassigned", "special", "frozen", "closed"].includes(state.tab)) {
-    state.tab = "active";
-  }
-  localStorage.setItem("hd_tab", state.tab);
-
-  el.roleSelect.value = state.role;
-  el.agentSelect.value = state.userId;
-  updateTabLinks();
-  applyComposeModeUi();
-  refreshSendByEnterUi();
 
   el.roleSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
@@ -1303,14 +1297,6 @@ function init() {
   window.addEventListener("resize", resizeHandler);
   el.messages.addEventListener("scroll", hideMessageContextMenu);
 
-  pollTimer = window.setInterval(() => {
-    if (document.hidden) return;
-    if (!el.clientModal.classList.contains("hidden")) return;
-    loadCard({ silent: true });
-    loadTabCounts({ silent: true });
-    loadCompletionStats({ silent: true });
-  }, 3000);
-
   if (el.completionToggleBtn) {
     el.completionToggleBtn.addEventListener("click", () => {
       state.completionOpen = !state.completionOpen;
@@ -1330,12 +1316,37 @@ function init() {
   window.addEventListener("beforeunload", beforeUnloadHandler);
 }
 
+function initPostSidebarState() {
+  if (!["active", "unassigned", "special", "frozen", "closed"].includes(state.tab)) {
+    state.tab = "active";
+  }
+  localStorage.setItem("hd_tab", state.tab);
+
+  el.roleSelect.value = state.role;
+  el.agentSelect.value = state.userId;
+  updateTabLinks();
+  applyComposeModeUi();
+  refreshSendByEnterUi();
+}
+
+function startPolling() {
+  if (pollTimer !== null) return;
+  pollTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    if (!el.clientModal.classList.contains("hidden")) return;
+    loadCard({ silent: true });
+    loadTabCounts({ silent: true });
+    loadCompletionStats({ silent: true });
+  }, 3000);
+}
+
 (async function run() {
+  bindPageHandlers();
   await window.HelpdeskSidebar.init();
   if (destroyed) return;
   syncSidebarState(window.HelpdeskSidebar.getState());
   unsubscribeSidebar = window.HelpdeskSidebar.onChange(syncSidebarState);
-  init();
+  initPostSidebarState();
   if (destroyed) return;
   if (state.isRealAdmin) {
     await loadRoleUsers();
@@ -1349,6 +1360,7 @@ function init() {
   }
   if (destroyed) return;
   await Promise.all([loadCard(), loadTabCounts(), loadCompletionStats()]);
+  startPolling();
 })();
 
 document.querySelectorAll("#appContent input, #appContent textarea").forEach((field) => {

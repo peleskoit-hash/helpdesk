@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Annotated
 import uuid
 
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import Client, ClientProfile, TelegramContact, Ticket
-from ..schemas import ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate
+from ..schemas import BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate
 from ..services.client_card import (
     _client_card_view_config,
     _custom_field_map,
@@ -19,6 +20,7 @@ from ..services.client_card import (
     _profile_out,
 )
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
+from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
 from ..services.management_user_reset import (
     ResetManagementUserDataActiveTicketError,
     reset_management_user_data,
@@ -26,6 +28,7 @@ from ..services.management_user_reset import (
 
 
 router = APIRouter(prefix="/api/v1/management/users", tags=["management-users"])
+logger = logging.getLogger(__name__)
 
 
 def _error(status_code: int, code: str, message: str):
@@ -323,6 +326,30 @@ def get_management_user_profile(
         contact.external_username if contact else None,
         contact.external_display_name if contact else None,
     )
+
+
+@router.get("/{client_id}/profile/bitrix-password", response_model=BitrixPasswordRevealOut)
+def reveal_management_user_bitrix_password(
+    client_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
+    if profile is None:
+        _error(404, "client_profile_not_found", "Профиль клиента не найден")
+    encrypted_password = profile.bitrix_password
+    if not encrypted_password or not str(encrypted_password).strip():
+        return {"bitrix_password": None}
+    try:
+        password = decrypt_secret(encrypted_password)
+    except SecretEncryptionConfigurationError:
+        logger.warning("Bitrix password reveal failed because encryption is not configured correctly.")
+        _error(503, "bitrix_password_decrypt_unavailable", "Пароль Bitrix временно недоступен")
+    except SecretEncryptionError:
+        logger.warning("Bitrix password reveal failed because stored value could not be decrypted.")
+        _error(409, "bitrix_password_decrypt_failed", "Пароль Bitrix не удалось расшифровать")
+    return {"bitrix_password": password}
 
 
 @router.post("/{client_id}/block")

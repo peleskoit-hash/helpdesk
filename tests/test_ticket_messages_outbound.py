@@ -835,6 +835,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
     app_shell_version = "20260828a"
     ticket_static_version = "20260828a"
+    ticket_page_version = "20260903a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -859,10 +860,10 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in template
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in app_shell
-    assert '/static/styles.css?v=20260824a' in template
-    assert '/static/styles.css?v=20260824a' in index_template
-    assert f"/static/ticket.js?v={ticket_static_version}" in template
-    assert f"/static/ticket.js?v={ticket_static_version}" in app_shell
+    assert '/static/styles.css?v=20260903a' in template
+    assert '/static/styles.css?v=20260903a' in index_template
+    assert f"/static/ticket.js?v={ticket_page_version}" in template
+    assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():
         assert "/static/app_shell.js?v=20260811b" not in source
         assert "/static/ticket_composer.js?v=20260811d" not in source

@@ -205,11 +205,41 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 test('client card script cache busting is updated for changed JS files', () => {
   assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260803b/);
   assert.match(appShellSource, /settings_client_card\.js\?v=20260803b/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260803a/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260803a/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20260803a/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20260803a/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20260903a/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
+});
+
+test('ticket page binds static handlers before sidebar async initialization', () => {
+  const runSource = sourceBetween(ticketPageSource, '(async function run() {', '})();');
+  const controlsCtxSource = sourceBetween(ticketPageSource, 'function controlsCtx()', 'function messageViewCtx()');
+  const bindSource = sourceBetween(ticketPageSource, 'function bindPageHandlers()', 'function initPostSidebarState()');
+  const postSidebarSource = sourceBetween(ticketPageSource, 'function initPostSidebarState()', 'function startPolling()');
+  const pollingSource = sourceBetween(ticketPageSource, 'function startPolling()', '(async function run() {');
+
+  assert.match(bindSource, /if \(pageHandlersBound\) return/);
+  assert.match(bindSource, /pageHandlersBound = true/);
+  assert.match(bindSource, /TicketComposer\.bindComposerHandlers\(composerCtx\(\)\)/);
+  assert.match(bindSource, /TicketControls\.bindTicketControlHandlers\(controlsCtx\(\)\)/);
+  assert.match(controlsCtxSource, /openClientModal/);
+  assert.doesNotMatch(bindSource, /HelpdeskSidebar\.getState/);
+  assert.doesNotMatch(bindSource, /setInterval/);
+
+  assert.match(ticketPageSource, /function cleanupTicketCardPage\(\)[\s\S]*pageHandlersBound = false/);
+  assert.ok(bindSource.indexOf('if (pageHandlersBound) return;') < bindSource.indexOf('pageHandlersBound = true;'));
+  assert.ok(ticketPageSource.indexOf('pageHandlersBound = false;') < ticketPageSource.indexOf('function bindPageHandlers()'));
+  assert.ok(ticketPageSource.lastIndexOf('pageHandlersBound = false;') > ticketPageSource.indexOf('function cleanupTicketCardPage()'));
+
+  assert.match(postSidebarSource, /el\.roleSelect\.value = state\.role/);
+  assert.match(postSidebarSource, /el\.agentSelect\.value = state\.userId/);
+  assert.match(pollingSource, /pollTimer = window\.setInterval/);
+
+  assert.ok(runSource.indexOf('bindPageHandlers();') < runSource.indexOf('await window.HelpdeskSidebar.init();'));
+  assert.ok(runSource.indexOf('syncSidebarState(window.HelpdeskSidebar.getState());') > runSource.indexOf('await window.HelpdeskSidebar.init();'));
+  assert.ok(runSource.indexOf('initPostSidebarState();') > runSource.indexOf('syncSidebarState(window.HelpdeskSidebar.getState());'));
+  assert.ok(runSource.indexOf('startPolling();') > runSource.indexOf('await Promise.all([loadCard(), loadTabCounts(), loadCompletionStats()]);'));
 });
 
 test('settings client card uses main tabs with blocks open by default', () => {
@@ -793,6 +823,284 @@ test('ticket client card modal editor keeps system blocks when their fields are 
   assert.match(clientCardServiceSource, /SYSTEM_FIELD_EDITOR_VISIBILITY_DEFAULTS = \{/);
   assert.match(clientCardServiceSource, /_field_editor_visibility_default\(field\)/);
   assert.match(settingsRouterSource, /from \.\.services\.client_card import _field_editor_visibility_default/);
+});
+
+test('ticket client card renders bitrix password by presence flag and reveals through context endpoint', () => {
+  const valueSource = sourceBetween(ticketClientCardSource, 'function getClientFieldValue', 'function renderClientDynamicCard');
+  const revealSource = sourceBetween(ticketClientCardSource, 'async function revealBitrixPassword', 'function bindBitrixPasswordField');
+
+  assert.match(ticketClientCardSource, /function generateBitrixPasswordMask\(\)/);
+  assert.match(ticketClientCardSource, /const bytes = new Uint8Array\(10\)/);
+  assert.match(ticketClientCardSource, /return Array\.from\(bytes, \(byte\) => alphabet\[byte % alphabet\.length\]\)\.join\(""\)/);
+  assert.match(valueSource, /if \(key === "bitrix_password"\) return profile\.bitrix_password_set \? "\*{8}" : null/);
+  assert.match(valueSource, /if \(key === "bitrix_password"\) return !ctx\.isBlank\(value\)/);
+  assert.match(valueSource, /function bindBitrixPasswordValueReveal/);
+  assert.match(valueSource, /valueEl\.textContent = generateBitrixPasswordMask\(\)/);
+  assert.match(valueSource, /valueEl\.addEventListener\("click", async \(\) =>/);
+  assert.match(ticketClientCardSource, /clientCardBitrixPasswordReveal/);
+  assert.match(ticketClientCardSource, /state\.revealedUntil = Date\.now\(\) \+ 5000/);
+  assert.match(ticketClientCardSource, /function activeBitrixPasswordCardReveal/);
+  assert.match(ticketClientCardSource, /function scheduleBitrixPasswordCardRevealHide/);
+  assert.match(ticketClientCardSource, /hideBitrixPasswordCardReveal\(ctx, ownerKey\)/);
+  assert.match(valueSource, /applyBitrixPasswordValueRevealState\(ctx, valueEl\)/);
+  assert.match(ticketClientCardSource, /if \(!profile\?\.bitrix_password_set\) clearBitrixPasswordCardReveal\(ctx\)/);
+  assert.doesNotMatch(valueSource, /valueEl\.addEventListener\("blur"/);
+  assert.match(valueSource, /resetBitrixPasswordValueEl\(valueEl\)/);
+  assert.match(revealSource, /\/api\/v1\/tickets\/\$\{encodeURIComponent\(ctx\.state\.ticketId\)\}\/client-profile\/bitrix-password/);
+  assert.match(revealSource, /\/api\/v1\/management\/users\/\$\{encodeURIComponent\(clientId\)\}\/profile\/bitrix-password/);
+});
+
+test('ticket client card reveal survives rerender while async reveal is pending', async () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.dataset = {};
+      this.eventListeners = {};
+      this.textContent = '';
+      this.parentElement = null;
+      this.classList = {
+        values: new Set(),
+        add: (...items) => items.forEach((item) => this.classList.values.add(item)),
+        remove: (...items) => items.forEach((item) => this.classList.values.delete(item)),
+        contains: (item) => this.classList.values.has(item),
+        toggle: (item, force) => {
+          const enabled = force === undefined ? !this.classList.values.has(item) : Boolean(force);
+          if (enabled) this.classList.values.add(item);
+          else this.classList.values.delete(item);
+        },
+      };
+      this.style = { setProperty() {} };
+    }
+    set innerHTML(value) {
+      this.children = [];
+      this.textContent = value;
+    }
+    appendChild(child) {
+      child.parentElement = this;
+      this.children.push(child);
+      return child;
+    }
+    addEventListener(type, handler) {
+      this.eventListeners[type] = this.eventListeners[type] || [];
+      this.eventListeners[type].push(handler);
+    }
+    querySelector(selector) {
+      if (selector !== "[data-client-card-bitrix-password-value='1']") return null;
+      const queue = [...this.children];
+      while (queue.length) {
+        const item = queue.shift();
+        if (item.dataset.clientCardBitrixPasswordValue === '1') return item;
+        queue.push(...item.children);
+      }
+      return null;
+    }
+  }
+
+  let now = 1000;
+  const timers = [];
+  let revealResolve;
+  const revealPromise = new Promise((resolve) => {
+    revealResolve = resolve;
+  });
+  const document = {
+    createElement: (tagName) => new FakeElement(tagName),
+  };
+  const window = {};
+  const context = vm.createContext({
+    window,
+    document,
+    console,
+    JSON,
+    Array,
+    Set,
+    Map,
+    String,
+    Object,
+    Number,
+    Math,
+    Uint8Array,
+    Date: { now: () => now },
+    setTimeout: (handler, delay) => {
+      timers.push({ handler, delay });
+      return timers.length;
+    },
+    clearTimeout() {},
+  });
+  vm.runInContext(ticketClientCardSource, context);
+
+  const ctx = {
+    state: { ticketId: 'ticket-1', card: { client_id: 'client-1' } },
+    el: { clientDynamicCard: new FakeElement('div') },
+    api: () => revealPromise,
+    isBlank: (value) => value === null || value === undefined || String(value).trim() === '',
+  };
+  const config = {
+    blocks: [{
+      key: 'work',
+      title: 'Work',
+      is_active: true,
+      show_in_card: true,
+      fields: [{ key: 'bitrix_password', label: 'Пароль Bitrix', field_type: 'password', is_visible: true }],
+    }],
+    rules: [],
+  };
+
+  window.TicketClientCard.renderClientDynamicCard(ctx, { bitrix_password_set: true }, config);
+  const oldValueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
+  assert.equal(oldValueEl.textContent.length, 10);
+  assert.equal(oldValueEl.classList.contains('client-card-password'), true);
+
+  const clickPromise = oldValueEl.eventListeners.click[0]();
+  window.TicketClientCard.renderClientDynamicCard(ctx, { bitrix_password_set: true }, config);
+  const currentValueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
+  assert.notEqual(currentValueEl, oldValueEl);
+
+  revealResolve({ bitrix_password: 'plain-secret' });
+  await clickPromise;
+
+  assert.notEqual(oldValueEl.textContent, 'plain-secret');
+  assert.equal(currentValueEl.textContent, 'plain-secret');
+  assert.equal(currentValueEl.classList.contains('client-card-password-revealed'), true);
+  assert.equal(ctx.state.clientCardBitrixPasswordReveal.plaintext, 'plain-secret');
+  assert.equal(ctx.state.clientCardBitrixPasswordReveal.revealedUntil, 6000);
+  assert.equal(timers[0].delay, 5000);
+
+  now = 6000;
+  timers[0].handler();
+  assert.equal(ctx.state.clientCardBitrixPasswordReveal.plaintext, '');
+  assert.equal(currentValueEl.textContent.length, 10);
+  assert.equal(currentValueEl.classList.contains('client-card-password'), true);
+});
+
+test('ticket client card ignores async reveal result after owner changes', async () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.dataset = {};
+      this.eventListeners = {};
+      this.textContent = '';
+      this.classList = {
+        values: new Set(),
+        add: (...items) => items.forEach((item) => this.classList.values.add(item)),
+        remove: (...items) => items.forEach((item) => this.classList.values.delete(item)),
+        contains: (item) => this.classList.values.has(item),
+      };
+      this.style = { setProperty() {} };
+    }
+    set innerHTML(value) {
+      this.children = [];
+      this.textContent = value;
+    }
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+    addEventListener(type, handler) {
+      this.eventListeners[type] = this.eventListeners[type] || [];
+      this.eventListeners[type].push(handler);
+    }
+    querySelector(selector) {
+      if (selector !== "[data-client-card-bitrix-password-value='1']") return null;
+      const queue = [...this.children];
+      while (queue.length) {
+        const item = queue.shift();
+        if (item.dataset.clientCardBitrixPasswordValue === '1') return item;
+        queue.push(...item.children);
+      }
+      return null;
+    }
+  }
+
+  const document = { createElement: (tagName) => new FakeElement(tagName) };
+  const window = {};
+  let revealResolve;
+  const revealPromise = new Promise((resolve) => {
+    revealResolve = resolve;
+  });
+  const context = vm.createContext({
+    window,
+    document,
+    console,
+    JSON,
+    Array,
+    Set,
+    Map,
+    String,
+    Object,
+    Number,
+    Math,
+    Uint8Array,
+    Date: { now: () => 1000 },
+    setTimeout: () => 1,
+    clearTimeout() {},
+  });
+  vm.runInContext(ticketClientCardSource, context);
+
+  const ctx = {
+    state: { ticketId: 'ticket-1', card: { client_id: 'client-1' } },
+    el: { clientDynamicCard: new FakeElement('div') },
+    api: () => revealPromise,
+    isBlank: (value) => value === null || value === undefined || String(value).trim() === '',
+  };
+  const config = {
+    blocks: [{
+      key: 'work',
+      title: 'Work',
+      is_active: true,
+      show_in_card: true,
+      fields: [{ key: 'bitrix_password', label: 'Пароль Bitrix', field_type: 'password', is_visible: true }],
+    }],
+    rules: [],
+  };
+
+  window.TicketClientCard.renderClientDynamicCard(ctx, { bitrix_password_set: true }, config);
+  const valueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
+  const clickPromise = valueEl.eventListeners.click[0]();
+  ctx.state.card.client_id = 'client-2';
+  window.TicketClientCard.renderClientDynamicCard(ctx, { bitrix_password_set: true }, config);
+
+  revealResolve({ bitrix_password: 'plain-secret' });
+  await clickPromise;
+
+  const currentValueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
+  assert.notEqual(currentValueEl.textContent, 'plain-secret');
+  assert.equal(currentValueEl.textContent.length, 10);
+  assert.equal(ctx.state.clientCardBitrixPasswordReveal?.plaintext || '', '');
+});
+
+test('ticket client card sends null when dirty bitrix password field is cleared', () => {
+  const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
+
+  assert.match(payloadSource, /if \(bitrixPasswordState\(ctx\)\.dirty\) \{/);
+  assert.match(payloadSource, /payload\.bitrix_password = bitrixPasswordState\(ctx\)\.draftValue\.trim\(\) \|\| null/);
+  assert.doesNotMatch(payloadSource, /payload\.bitrix_password = el\.fBitrixPassword\.value/);
+  assert.doesNotMatch(payloadSource, /bitrixPasswordState\(ctx\)\.dirty && el\.fBitrixPassword\.value\.trim\(\)/);
+});
+
+test('bitrix password editor uses visual mask without browser password autofill', () => {
+  const editorSource = sourceBetween(ticketClientCardSource, 'function bitrixPasswordState', 'function ensureRuleState');
+
+  assert.match(editorSource, /draftValue: ""/);
+  assert.match(editorSource, /state\.hasSaved = false/);
+  assert.match(editorSource, /state\.draftValue = ""/);
+  assert.match(editorSource, /el\.fBitrixPassword\.type = "text"/);
+  assert.match(editorSource, /el\.fBitrixPassword\.autocomplete = "off"/);
+  assert.match(editorSource, /el\.fBitrixPassword\.value = generateBitrixPasswordMask\(\)/);
+  assert.match(editorSource, /state\.draftValue = el\.fBitrixPassword\.value/);
+  assert.doesNotMatch(editorSource, /fBitrixPassword\.type = "password"/);
+  assert.doesNotMatch(ticketTemplate, /id="fBitrixPassword" autocomplete="new-password"/);
+  assert.doesNotMatch(managementUsersTemplate, /id="fBitrixPassword" autocomplete="new-password"/);
+  assert.match(ticketTemplate, /id="fBitrixPassword" autocomplete="off"/);
+  assert.match(managementUsersTemplate, /id="fBitrixPassword" autocomplete="off"/);
+});
+
+test('bitrix password blur is controlled by javascript reveal class without hover reveal', () => {
+  assert.match(stylesSource, /\.client-card-password\s*\{[\s\S]*filter:\s*blur\(4px\)/);
+  assert.match(stylesSource, /\.client-card-password\.client-card-password-revealed\s*\{[\s\S]*filter:\s*blur\(0\)/);
+  assert.doesNotMatch(stylesSource, /\.client-card-password:hover\s*\{/);
+  assert.doesNotMatch(stylesSource, /#clientBitrixPasswordText:hover\s*\{/);
 });
 
 test('ticket client card modal editor derives section color from block config instead of block key', () => {

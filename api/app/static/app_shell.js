@@ -55,7 +55,7 @@
     ["/management/users", {
       page: "management-users",
       scripts: [
-        "/static/ticket_client_card.js?v=20260803a",
+        "/static/ticket_client_card.js?v=20260903e",
         "/static/management_users.js?v=20260808c",
       ],
     }],
@@ -68,11 +68,11 @@
       scripts: [
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20260828a",
-        "/static/ticket_client_card.js?v=20260803a",
+        "/static/ticket_client_card.js?v=20260903e",
         "/static/ticket_composer.js?v=20260828a",
         "/static/ticket_controls.js?v=20260810a",
         "/static/ticket_message_view.js?v=20260810b",
-        "/static/ticket.js?v=20260828a",
+        "/static/ticket.js?v=20260903a",
       ],
     },
   ];

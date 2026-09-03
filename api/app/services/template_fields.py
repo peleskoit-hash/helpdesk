@@ -91,7 +91,7 @@ def template_context(
         "anydesk": _value(profile.anydesk if profile_verified and profile else None),
         "internal_number": _value(profile.internal_number if profile_verified and profile else None),
         "bitrix_login": _value(profile.bitrix_login if profile_verified and profile else None),
-        "bitrix_password": _value(profile.bitrix_password if profile_verified and profile else None),
+        "bitrix_password": _value(None),
         "bitrix_id": _value(profile.bitrix_id if profile_verified and profile else None),
         "telegram_username": _value(username),
         "telegram_display_name": _value(contact.external_display_name if contact else None),

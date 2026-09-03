@@ -202,6 +202,8 @@
       api,
       setControlValue,
       isBlank,
+      showError: (message) => showError(root, message),
+      clientId: state.selectedClientId,
       SALES_FIRST_DEPARTMENT,
       SALES_SECOND_DEPARTMENT,
     };
@@ -264,6 +266,7 @@
   }
 
   function closeClientModal(root) {
+    window.TicketClientCard?.closeClientModal?.(clientCardCtx(root));
     const modal = els(root).clientModal;
     if (modal) modal.classList.add("hidden");
     state.selectedClientId = "";

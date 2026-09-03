@@ -1885,7 +1885,7 @@ button.action:disabled {
   transition: filter 0.15s ease;
 }
 
-.client-card-password:hover {
+.client-card-password.client-card-password-revealed {
   filter: blur(0);
 }
 
@@ -2316,10 +2316,6 @@ textarea.comment-mode {
 #clientBitrixPasswordText {
   filter: blur(6px);
   transition: filter 0.15s ease-in-out;
-}
-
-#clientBitrixPasswordText:hover {
-  filter: blur(0);
 }
 
 .client-verification-row {

@@ -120,6 +120,194 @@ def test_delete_custom_field_keeps_profile_data_contract_to_config_only():
     assert session.get(ClientCardFieldConfig, custom_field.id) is None
 
 
+def test_client_profile_out_hides_bitrix_password_and_exposes_presence_flag():
+    session = _session()
+    company = Company(id=str(uuid.uuid4()), name="ACME")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        bitrix_password="encrypted-password",
+        custom_fields={},
+    )
+    session.add_all([company, client, profile])
+    session.commit()
+
+    payload = client_card._profile_out(profile, "helper", "Helper")
+
+    assert payload.bitrix_password is None
+    assert payload.bitrix_password_set is True
+
+
+def test_client_profile_out_reports_missing_bitrix_password():
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=str(uuid.uuid4()),
+        bitrix_password=" ",
+        custom_fields={},
+    )
+
+    payload = client_card._profile_out(profile, None, None)
+
+    assert payload.bitrix_password is None
+    assert payload.bitrix_password_set is False
+
+
+def test_ticket_bitrix_password_reveal_uses_ticket_access_and_decrypts(monkeypatch):
+    session = _session()
+    company = Company(id=str(uuid.uuid4()), name="ACME")
+    agent = User(
+        id="agent-1",
+        company_id=company.id,
+        email="agent@example.test",
+        login="agent",
+        password_hash="hash",
+        full_name="Agent",
+        role="agent",
+        is_active=True,
+    )
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        bitrix_password="encrypted-password",
+        custom_fields={},
+    )
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        subject="Help",
+        status=TicketStatus.NEW.value,
+    )
+    session.add_all([company, agent, client, profile, ticket])
+    session.commit()
+    monkeypatch.setattr(tickets, "decrypt_secret", lambda value: "plain-password")
+
+    payload = tickets.reveal_ticket_client_bitrix_password(ticket.id, db=session, user=SimpleNamespace(id=agent.id, role="agent"))
+
+    assert payload == {"bitrix_password": "plain-password"}
+
+
+def test_ticket_profile_patch_without_bitrix_password_keeps_existing_value():
+    session = _session()
+    company = Company(id=str(uuid.uuid4()), name="ACME")
+    agent = User(
+        id="agent-1",
+        company_id=company.id,
+        email="agent@example.test",
+        login="agent",
+        password_hash="hash",
+        full_name="Agent",
+        role="agent",
+        is_active=True,
+    )
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        contact_name="Old",
+        bitrix_password="encrypted-password",
+        custom_fields={},
+    )
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        subject="Help",
+        status=TicketStatus.NEW.value,
+    )
+    session.add_all([company, agent, client, profile, ticket])
+    session.commit()
+
+    payload = tickets.update_client_profile(
+        ticket.id,
+        ClientProfileUpdate(contact_name="New"),
+        db=session,
+        user=SimpleNamespace(id=agent.id, role="agent"),
+    )
+
+    session.refresh(profile)
+    assert payload.bitrix_password is None
+    assert payload.bitrix_password_set is True
+    assert profile.contact_name == "New"
+    assert profile.bitrix_password == "encrypted-password"
+
+
+def test_ticket_profile_patch_with_null_bitrix_password_clears_existing_value():
+    session = _session()
+    company = Company(id=str(uuid.uuid4()), name="ACME")
+    agent = User(
+        id="agent-1",
+        company_id=company.id,
+        email="agent@example.test",
+        login="agent",
+        password_hash="hash",
+        full_name="Agent",
+        role="agent",
+        is_active=True,
+    )
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        contact_name="Old",
+        bitrix_password="encrypted-password",
+        custom_fields={},
+    )
+    ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        assignee_id=agent.id,
+        subject="Help",
+        status=TicketStatus.NEW.value,
+    )
+    session.add_all([company, agent, client, profile, ticket])
+    session.commit()
+
+    payload = tickets.update_client_profile(
+        ticket.id,
+        ClientProfileUpdate(bitrix_password=None),
+        db=session,
+        user=SimpleNamespace(id=agent.id, role="agent"),
+    )
+
+    session.refresh(profile)
+    assert payload.bitrix_password is None
+    assert payload.bitrix_password_set is False
+    assert profile.bitrix_password is None
+
+
+def test_management_profile_patch_with_null_bitrix_password_clears_existing_value():
+    session = _session()
+    company = Company(id=str(uuid.uuid4()), name="ACME")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        contact_name="Old",
+        bitrix_password="encrypted-password",
+        custom_fields={},
+    )
+    session.add_all([company, client, profile])
+    session.commit()
+
+    payload = management_users.update_management_user_profile(
+        client.id,
+        ClientProfileUpdate(bitrix_password=None),
+        db=session,
+        user=_admin(),
+    )
+
+    session.refresh(profile)
+    assert payload.bitrix_password is None
+    assert payload.bitrix_password_set is False
+    assert profile.bitrix_password is None
+
+
 def test_patch_custom_field_with_same_block_key_passes():
     session = _session()
     block = _block("custom_block_123", "123", 10)

@@ -162,7 +162,8 @@ def _profile_out(
         internal_number=value("internal_number"),
         external_user_id=value("external_user_id"),
         bitrix_login=value("bitrix_login"),
-        bitrix_password=profile.bitrix_password,
+        bitrix_password=None,
+        bitrix_password_set=bool(profile.bitrix_password and str(profile.bitrix_password).strip()),
         bitrix_id=value("bitrix_id"),
         custom_fields=custom_fields,
     )

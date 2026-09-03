@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Client, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
 from .client_card import _normalize_custom_field_value
+from .encryption import encrypt_secret
 
 SYSTEM_PROFILE_FIELDS = {
     "contact_name",
@@ -277,6 +278,12 @@ def _profile_snapshot(profile: ClientProfile | None) -> dict[str, Any]:
     return data
 
 
+def _profile_field_value_for_storage(field: str, value: Any) -> Any:
+    if field == "bitrix_password":
+        return encrypt_secret(value)
+    return bool(value) if field == "is_verified" else value
+
+
 def _copy_rule(rule: ClientCardRuleConfig) -> SimpleNamespace:
     return SimpleNamespace(
         id=rule.id,
@@ -456,7 +463,7 @@ def _call_center_system_source_extra_delta(
 def _apply_profile_patch(profile: ClientProfile, data: dict[str, Any], custom_fields: dict[str, Any]) -> None:
     for field in SYSTEM_PROFILE_FIELDS:
         if field in data:
-            setattr(profile, field, bool(data[field]) if field == "is_verified" else data[field])
+            setattr(profile, field, _profile_field_value_for_storage(field, data[field]))
     if "custom_fields" in data:
         profile.custom_fields = strip_system_profile_keys_from_custom_fields(custom_fields)
 
@@ -591,7 +598,7 @@ def apply_client_card_profile_save_pipeline(
     _apply_profile_patch(profile, incoming, custom_fields)
     for target_key, value in staged.items():
         if target_key in SYSTEM_PROFILE_FIELDS:
-            setattr(profile, target_key, value)
+            setattr(profile, target_key, _profile_field_value_for_storage(target_key, value))
         elif target_key in custom_keys:
             current = dict(profile.custom_fields or {})
             if value is None:
@@ -659,7 +666,7 @@ def apply_client_card_profile_local_save_rules(
     _apply_profile_patch(profile, incoming, custom_fields)
     for target_key, value in staged.items():
         if target_key in SYSTEM_PROFILE_FIELDS:
-            setattr(profile, target_key, value)
+            setattr(profile, target_key, _profile_field_value_for_storage(target_key, value))
         elif target_key in custom_keys:
             current = dict(profile.custom_fields or {})
             if value is None:
@@ -782,7 +789,7 @@ def apply_client_card_source_manual_run(
     )
     for target_key, value in staged.items():
         if target_key in SYSTEM_PROFILE_FIELDS:
-            setattr(profile, target_key, value)
+            setattr(profile, target_key, _profile_field_value_for_storage(target_key, value))
         elif target_key in custom_keys:
             profile.custom_fields = dict(custom_fields)
     profile.custom_fields = strip_system_profile_keys_from_custom_fields(custom_fields)

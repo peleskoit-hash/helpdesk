@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     bitrix_kc_final_wait_seconds: int = 5
     bitrix_kc_request_timeout_seconds: int = 10
     bitrix_kc_retry_count: int = 1
+    bitrix_password_encryption_key: str | None = None
     client_card_source_allowed_hosts: str | None = None
     session_secret_key: str = DEFAULT_SESSION_SECRET
     session_cookie_name: str = "esdesk_session"
