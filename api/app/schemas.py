@@ -236,6 +236,54 @@ class IntegrationTaskCreateResponse(BaseModel):
     task_id: str | None = None
 
 
+class IntegrationTelegramPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str
+    call_time: datetime
+    message: str
+
+    @field_validator("call_time", mode="before")
+    @classmethod
+    def require_iso_call_time(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("call_time must be an ISO datetime string")
+        return value
+
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def normalize_user_id(cls, value):
+        if isinstance(value, bool) or isinstance(value, float):
+            raise ValueError("user_id must be a string or integer")
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str):
+            return value.strip()
+        raise ValueError("user_id must be a string or integer")
+
+    @field_validator("user_id")
+    @classmethod
+    def require_user_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("user_id is required")
+        return value
+
+    @field_validator("message")
+    @classmethod
+    def require_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message is required")
+        return value
+
+
+class IntegrationTelegramResponse(BaseModel):
+    result: str
+    code: str
+    user_id: str
+    call_time: str
+    telegram_message_id: str | None = None
+
+
 class WrongProblemPayload(BaseModel):
     button_key: str = Field(min_length=1)
 
