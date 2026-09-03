@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     disable_admin_idle_timeout: bool = False
     use_db_buttons: bool = False
+    integration_api_key: str | None = None
 
     @property
     def is_prod(self) -> bool:

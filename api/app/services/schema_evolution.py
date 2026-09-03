@@ -332,6 +332,35 @@ def ensure_call_center_employee_resolver_state_table() -> None:
         )
 
 
+def ensure_integration_logs_table() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS integration_logs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    created_at {timestamp_type} NOT NULL,
+                    source VARCHAR(100) NOT NULL,
+                    event_type VARCHAR(100) NOT NULL,
+                    result VARCHAR(30) NOT NULL,
+                    code VARCHAR(100) NOT NULL,
+                    description TEXT NOT NULL,
+                    deal_id VARCHAR(255),
+                    task_id VARCHAR(36),
+                    bitrix_id VARCHAR(100),
+                    call_time {timestamp_type},
+                    message_text TEXT,
+                    telegram_message_id VARCHAR(100)
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_created_at ON integration_logs(created_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_task_dedup ON integration_logs(source, event_type, result, deal_id, created_at)"))
+
+
 def ensure_telegram_contact_columns() -> None:
     required_columns = {
         "external_username": "VARCHAR(100)",

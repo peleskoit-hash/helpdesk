@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -224,6 +224,28 @@ class TicketAttachmentPreload(Base):
     telegram_staging_info_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     telegram_staging_file_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class IntegrationLog(Base):
+    __tablename__ = "integration_logs"
+    __table_args__ = (
+        Index("ix_integration_logs_created_at", "created_at"),
+        Index("ix_integration_logs_task_dedup", "source", "event_type", "result", "deal_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    source: Mapped[str] = mapped_column(String(100))
+    event_type: Mapped[str] = mapped_column(String(100))
+    result: Mapped[str] = mapped_column(String(30))
+    code: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text)
+    deal_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    bitrix_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    call_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    telegram_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class TicketView(Base):

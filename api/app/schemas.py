@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TicketListItem(BaseModel):
@@ -198,6 +198,42 @@ class AdminDeleteResult(BaseModel):
     deleted: int = 0
     not_found: list[str] = Field(default_factory=list)
     file_delete_warnings: list[str] = Field(default_factory=list)
+
+
+class IntegrationTaskCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deal_id: str
+    deal_url: str | None = None
+    client_phone: str | None = None
+
+    @field_validator("deal_id", mode="before")
+    @classmethod
+    def normalize_deal_id(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @field_validator("deal_id")
+    @classmethod
+    def require_deal_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("deal_id is required")
+        return value
+
+    @field_validator("deal_url", "client_phone", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value):
+        if value is None:
+            return None
+        return str(value).strip() or None
+
+
+class IntegrationTaskCreateResponse(BaseModel):
+    result: str
+    code: str
+    deal_id: str
+    task_id: str | None = None
 
 
 class WrongProblemPayload(BaseModel):

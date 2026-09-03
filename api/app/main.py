@@ -21,6 +21,7 @@ from .config import settings
 from .db import Base, engine, get_db
 from .models import User
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
+from .routers.integrations import router as integrations_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
 from .routers.settings import router as settings_router
@@ -45,6 +46,7 @@ from .services.schema_evolution import (
     ensure_call_center_employee_resolver_state_table,
     ensure_client_profile_columns,
     ensure_employee_notification_preferences_table,
+    ensure_integration_logs_table,
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
     ensure_telegram_notification_accounts_table,
@@ -55,6 +57,7 @@ from .services.schema_evolution import (
     ensure_user_columns,
 )
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
+from .services.integration_tasks import cleanup_old_integration_logs_on_startup
 from .services.employee_telegram_bot import set_employee_bot_commands
 from .services.employee_telegram_polling import employee_telegram_polling_loop
 from .services.telegram_bot import TelegramApiError, set_bot_commands
@@ -85,6 +88,7 @@ app.include_router(settings_notification_bot_basic_router)
 app.include_router(employee_notification_preferences_router)
 app.include_router(mass_notifications_router)
 app.include_router(management_users_router)
+app.include_router(integrations_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 telegram_polling_task: asyncio.Task | None = None
 employee_telegram_polling_task: asyncio.Task | None = None
@@ -117,7 +121,9 @@ async def on_startup():
             ensure_client_card_field_config_columns()
             ensure_call_center_employee_resolver_state_table()
             ensure_employee_notification_preferences_table()
+            ensure_integration_logs_table()
             ensure_system_seed_data()
+            cleanup_old_integration_logs_on_startup()
             last_error = None
             break
         except OperationalError as exc:
