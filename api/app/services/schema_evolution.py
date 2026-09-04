@@ -6,6 +6,10 @@ from ..db import engine
 
 TELEGRAM_CONTACT_COMPANY_USER_UNIQUE_NAME = "uq_telegram_contacts_company_external_user"
 TELEGRAM_NOTIFICATION_ACCOUNT_USER_ID_UNIQUE_NAME = "uq_telegram_notification_accounts_bound_user_id"
+TICKET_REVIEWS_CURRENT_PAIR_UNIQUE_NAME = "uq_ticket_reviews_current_pair"
+TICKET_REVIEWS_PAIR_VERSION_UNIQUE_NAME = "uq_ticket_reviews_pair_version"
+TICKET_REVIEWS_CYCLE_UNIQUE_NAME = "uq_ticket_reviews_cycle_id"
+TICKET_REVIEW_CYCLES_REVIEW_FK_NAME = "fk_ticket_review_cycles_review_id"
 
 
 def _telegram_contact_duplicate_group_count(conn) -> int:
@@ -359,6 +363,135 @@ def ensure_integration_logs_table() -> None:
         )
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_created_at ON integration_logs(created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_task_dedup ON integration_logs(source, event_type, result, deal_id, created_at)"))
+
+
+def ensure_ticket_reviews_tables() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        bool_default_true = "1" if dialect == "sqlite" else "TRUE"
+        bool_default_false = "0" if dialect == "sqlite" else "FALSE"
+        cycle_review_fk = (
+            ",\n                    FOREIGN KEY(review_id) REFERENCES ticket_reviews(id)"
+            if dialect == "sqlite"
+            else ""
+        )
+
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS ticket_review_cycles (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    agent_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    client_id VARCHAR(36) NOT NULL REFERENCES clients(id),
+                    state VARCHAR(40) NOT NULL,
+                    review_current_message_id VARCHAR(100),
+                    review_id VARCHAR(36),
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    completed_at {timestamp_type},
+                    cancelled_at {timestamp_type}{cycle_review_fk}
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS ticket_reviews (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    agent_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    client_id VARCHAR(36) NOT NULL REFERENCES clients(id),
+                    cycle_id VARCHAR(36) NOT NULL REFERENCES ticket_review_cycles(id),
+                    previous_version_id VARCHAR(36) REFERENCES ticket_reviews(id),
+                    version_number INTEGER NOT NULL,
+                    agent_name_snapshot TEXT NOT NULL,
+                    client_name_snapshot TEXT NOT NULL,
+                    ticket_subject_snapshot TEXT NOT NULL,
+                    rating INTEGER NOT NULL,
+                    review_text TEXT,
+                    rated_at {timestamp_type} NOT NULL,
+                    text_updated_at {timestamp_type},
+                    is_current BOOLEAN NOT NULL,
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    CONSTRAINT ck_ticket_reviews_rating_1_5 CHECK (rating >= 1 AND rating <= 5),
+                    CONSTRAINT {TICKET_REVIEWS_PAIR_VERSION_UNIQUE_NAME} UNIQUE (ticket_id, agent_id, version_number)
+                )
+                """
+            )
+        )
+
+        conn.execute(text("DROP INDEX IF EXISTS ix_ticket_reviews_ticket_agent_version"))
+
+        duplicate_cycle_group_count = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT cycle_id
+                    FROM ticket_reviews
+                    GROUP BY cycle_id
+                    HAVING COUNT(*) > 1
+                ) duplicate_groups
+                """
+            )
+        ).scalar_one()
+        if int(duplicate_cycle_group_count or 0):
+            raise RuntimeError(
+                "Cannot add ticket review cycle uniqueness invariant: "
+                f"found {int(duplicate_cycle_group_count)} duplicate cycle_id groups in ticket_reviews."
+            )
+
+        if dialect != "sqlite":
+            fk_exists = conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = :constraint_name
+                      AND conrelid = 'ticket_review_cycles'::regclass
+                    """
+                ),
+                {"constraint_name": TICKET_REVIEW_CYCLES_REVIEW_FK_NAME},
+            ).first()
+            if fk_exists is None:
+                conn.execute(
+                    text(
+                        "ALTER TABLE ticket_review_cycles "
+                        f"ADD CONSTRAINT {TICKET_REVIEW_CYCLES_REVIEW_FK_NAME} "
+                        "FOREIGN KEY (review_id) REFERENCES ticket_reviews(id)"
+                    )
+                )
+
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_review_cycles_ticket_id ON ticket_review_cycles(ticket_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_review_cycles_agent_id ON ticket_review_cycles(agent_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_reviews_ticket_id ON ticket_reviews(ticket_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_reviews_agent_id ON ticket_reviews(agent_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_reviews_rated_at ON ticket_reviews(rated_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_reviews_agent_current_rated ON ticket_reviews(agent_id, is_current, rated_at)"))
+        conn.execute(
+            text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {TICKET_REVIEWS_CYCLE_UNIQUE_NAME} "
+                "ON ticket_reviews(cycle_id)"
+            )
+        )
+        conn.execute(
+            text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {TICKET_REVIEWS_CURRENT_PAIR_UNIQUE_NAME} "
+                "ON ticket_reviews(ticket_id, agent_id) "
+                f"WHERE is_current = {bool_default_true}"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE ticket_reviews "
+                f"SET is_current = {bool_default_false} "
+                "WHERE is_current IS NULL"
+            )
+        )
 
 
 def ensure_telegram_contact_columns() -> None:

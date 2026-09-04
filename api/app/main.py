@@ -55,6 +55,7 @@ from .services.schema_evolution import (
     ensure_ticket_attachment_preload_table,
     ensure_ticket_columns,
     ensure_ticket_message_columns,
+    ensure_ticket_reviews_tables,
     ensure_user_columns,
 )
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
@@ -116,6 +117,7 @@ async def on_startup():
             ensure_ticket_message_columns()
             ensure_ticket_attachment_table()
             ensure_ticket_attachment_preload_table()
+            ensure_ticket_reviews_tables()
             ensure_bot_button_settings_table()
             ensure_automatic_message_templates_table()
             ensure_bot_menu_level_layouts_table()

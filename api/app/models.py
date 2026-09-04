@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -37,6 +37,15 @@ class MessageType(str, Enum):
     AGENT = "agent"
     INTERNAL = "internal"
     SYSTEM = "system"
+
+
+class TicketReviewCycleState(str, Enum):
+    OFFERED = "offered"
+    AWAITING_RATING = "awaiting_rating"
+    AWAITING_TEXT = "awaiting_text"
+    AWAITING_TEXT_AFTER_CAPTION = "awaiting_text_after_caption"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class Company(Base):
@@ -157,6 +166,68 @@ class Ticket(Base):
 
     client: Mapped[Client] = relationship()
     messages: Mapped[list["TicketMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
+
+
+class TicketReviewCycle(Base):
+    __tablename__ = "ticket_review_cycles"
+    __table_args__ = (
+        Index("ix_ticket_review_cycles_ticket_id", "ticket_id"),
+        Index("ix_ticket_review_cycles_agent_id", "agent_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    review_current_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    review_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ticket_reviews.id", use_alter=True, name="fk_ticket_review_cycles_review_id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TicketReview(Base):
+    __tablename__ = "ticket_reviews"
+    __table_args__ = (
+        CheckConstraint("rating >= 1 AND rating <= 5", name="ck_ticket_reviews_rating_1_5"),
+        UniqueConstraint("ticket_id", "agent_id", "version_number", name="uq_ticket_reviews_pair_version"),
+        Index("uq_ticket_reviews_cycle_id", "cycle_id", unique=True),
+        Index(
+            "uq_ticket_reviews_current_pair",
+            "ticket_id",
+            "agent_id",
+            unique=True,
+            sqlite_where=text("is_current = 1"),
+            postgresql_where=text("is_current IS TRUE"),
+        ),
+        Index("ix_ticket_reviews_ticket_id", "ticket_id"),
+        Index("ix_ticket_reviews_agent_id", "agent_id"),
+        Index("ix_ticket_reviews_rated_at", "rated_at"),
+        Index("ix_ticket_reviews_agent_current_rated", "agent_id", "is_current", "rated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"), nullable=False)
+    cycle_id: Mapped[str] = mapped_column(ForeignKey("ticket_review_cycles.id"), nullable=False)
+    previous_version_id: Mapped[str | None] = mapped_column(ForeignKey("ticket_reviews.id"), nullable=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_name_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    client_name_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    ticket_subject_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    text_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 class TicketMessage(Base):
