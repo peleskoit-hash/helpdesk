@@ -866,10 +866,7 @@
         return valueEl;
       }
       const username = usernameRaw.replace(/^@/, "");
-      const link = document.createElement("a");
-      link.href = `tg://resolve?domain=${encodeURIComponent(username)}`;
-      link.textContent = `@${username}`;
-      valueEl.appendChild(link);
+      valueEl.textContent = `@${username}`;
       return valueEl;
     }
 
@@ -907,6 +904,76 @@
       valueEl.classList.add("client-card-password");
     }
     return valueEl;
+  }
+
+  function clientFieldExternalLinkConfig(fieldKey) {
+    if (fieldKey === "internal_number") {
+      return {
+        baseUrl: "http://192.168.1.2/admin/config.php?display=extensions&extdisplay=",
+        label: "Открыть внутренний номер",
+      };
+    }
+    if (fieldKey === "bitrix_id") {
+      return {
+        baseUrl: "https://crm.elitesochi.com/bitrix/admin/user_edit.php?lang=ru&ID=",
+        label: "Открыть пользователя в Bitrix",
+      };
+    }
+    if (fieldKey === "telegram_username") {
+      return {
+        label: "Открыть профиль в Telegram",
+      };
+    }
+    return null;
+  }
+
+  function normalizedTelegramUsername(value) {
+    const usernameRaw = String(value || "").trim();
+    return usernameRaw ? usernameRaw.replace(/^@/, "") : "";
+  }
+
+  function renderClientFieldValueWithExternalLink(field, value, ctx) {
+    const linkConfig = clientFieldExternalLinkConfig(field?.key);
+    if (!linkConfig) return renderClientFieldValue(field, value, ctx);
+
+    const valueRowEl = document.createElement("div");
+    valueRowEl.className = "client-card-field-value-row";
+    valueRowEl.appendChild(renderClientFieldValue(field, value, ctx));
+
+    if (field?.key === "telegram_username") {
+      const username = normalizedTelegramUsername(value);
+      if (!username) {
+        const disabledEl = document.createElement("span");
+        disabledEl.className = "client-card-field-external-link client-card-field-external-link-disabled";
+        disabledEl.setAttribute("aria-hidden", "true");
+        disabledEl.textContent = "↗";
+        valueRowEl.appendChild(disabledEl);
+        return valueRowEl;
+      }
+
+      const telegramLinkEl = document.createElement("a");
+      telegramLinkEl.className = "client-card-field-external-link";
+      telegramLinkEl.href = `https://t.me/${encodeURIComponent(username)}?profile`;
+      telegramLinkEl.target = "_blank";
+      telegramLinkEl.rel = "noopener noreferrer";
+      telegramLinkEl.title = linkConfig.label;
+      telegramLinkEl.setAttribute("aria-label", linkConfig.label);
+      telegramLinkEl.textContent = "↗";
+      valueRowEl.appendChild(telegramLinkEl);
+      return valueRowEl;
+    }
+
+    const linkEl = document.createElement("a");
+    linkEl.className = "client-card-field-external-link";
+    linkEl.href = `${linkConfig.baseUrl}${encodeURIComponent(String(value).trim())}`;
+    linkEl.target = "_blank";
+    linkEl.rel = "noopener noreferrer";
+    linkEl.title = linkConfig.label;
+    linkEl.setAttribute("aria-label", linkConfig.label);
+    linkEl.textContent = "↗";
+    valueRowEl.appendChild(linkEl);
+
+    return valueRowEl;
   }
 
   function renderClientDynamicCard(ctx, profile, config) {
@@ -950,7 +1017,7 @@
           rowEl.appendChild(labelEl);
         }
 
-        rowEl.appendChild(renderClientFieldValue(field, value, ctx));
+        rowEl.appendChild(renderClientFieldValueWithExternalLink(field, value, ctx));
         blockEl.appendChild(rowEl);
         renderedFields += 1;
       }

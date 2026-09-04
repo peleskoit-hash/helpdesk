@@ -2001,6 +2001,46 @@ button.action:disabled {
   text-decoration: underline;
 }
 
+.ticket-client-info .client-card-field-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.ticket-client-info .client-card-field-value-row .client-card-field-value {
+  min-width: 0;
+}
+
+.ticket-client-info .client-card-field-external-link {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #1667c8;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.ticket-client-info .client-card-field-external-link:hover {
+  background: #0f56aa;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.ticket-client-info .client-card-field-external-link-disabled,
+.ticket-client-info .client-card-field-external-link-disabled:hover {
+  background: #cbd5e1;
+  color: #64748b;
+  cursor: default;
+  text-decoration: none;
+}
+
 .ticket-client-info .client-card-field-verification {
   border-bottom: 0;
   text-align: center;
