@@ -29,7 +29,8 @@ from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile,
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
-from ..services.telegram_bot import TelegramApiError, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
+from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
+from ..services.telegram_post_close import cleanup_review_flow_for_ticket_reopen
 from ..services.telegram_outbound_delivery import (
     _discard_preload,
     _best_effort_delete_preload_archive,
@@ -372,6 +373,7 @@ def _send_to_telegram_client(
     *,
     required: bool = True,
     remove_keyboard: bool = False,
+    reply_markup: dict | None = None,
     reply_to_message_id: str | None = None,
 ) -> dict | None:
     contact = _telegram_contact_for_client(db, ticket.client_id)
@@ -386,6 +388,7 @@ def _send_to_telegram_client(
             payload_text,
             parse_mode=parse_mode,
             remove_keyboard=remove_keyboard,
+            reply_markup=reply_markup,
             reply_to_message_id=reply_to_message_id,
         )
     except TelegramApiError as exc:
@@ -397,6 +400,7 @@ def _send_to_telegram_client(
                     contact.external_chat_id,
                     plain_text,
                     remove_keyboard=remove_keyboard,
+                    reply_markup=reply_markup,
                     reply_to_message_id=reply_to_message_id,
                 )
             except TelegramApiError:
@@ -1699,6 +1703,12 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
     except Exception:
         restore_client_text = restore_fallback_text
     _add_message(db, ticket, MessageType.SYSTEM, f"{restore_client_text} Инициатор: {actor_name}", None, agent_visible=True)
+    cleanup_review_flow_for_ticket_reopen(
+        db,
+        ticket=ticket,
+        contact=contact,
+        delete_message_fn=delete_message,
+    )
     if contact is not None:
         try:
             response = _send_to_telegram_client(db, ticket, restore_client_text, required=False, remove_keyboard=True)

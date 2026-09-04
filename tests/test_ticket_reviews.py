@@ -16,9 +16,12 @@ from api.app.services.ticket_reviews import (
     clear_review_current_message_id,
     complete_review_cycle,
     create_review_cycle,
+    return_review_cycle_to_offered,
+    save_review_caption,
     save_review_rating,
     save_review_text,
     set_review_current_message_id,
+    start_review_rating_cycle,
 )
 
 
@@ -230,6 +233,40 @@ def test_cycle_message_helpers_complete_and_cancel_preserve_review_data(session,
     assert complete_review.rating == 4
 
 
+def test_complete_review_cycle_can_preserve_current_message_id(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    _save_rating(session, cycle, 5)
+    set_review_current_message_id(session, cycle=cycle, message_id="thank-you-message")
+
+    complete_review_cycle(session, cycle=cycle, preserve_current_message_id=True)
+
+    assert cycle.state == TicketReviewCycleState.COMPLETED.value
+    assert cycle.review_current_message_id == "thank-you-message"
+
+
+def test_save_review_caption_replaces_text_and_moves_to_caption_state(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    review = _save_rating(session, cycle, 4)
+    first_at = datetime(2026, 1, 1, 12, 5, 0)
+    second_at = datetime(2026, 1, 1, 12, 10, 0)
+
+    save_review_caption(session, cycle=cycle, caption="first caption", text_updated_at=first_at)
+    save_review_caption(session, cycle=cycle, caption="second caption", text_updated_at=second_at)
+    session.refresh(review)
+
+    assert cycle.state == TicketReviewCycleState.AWAITING_TEXT_AFTER_CAPTION.value
+    assert review.review_text == "second caption"
+    assert review.text_updated_at == second_at
+
+
+def test_save_review_caption_requires_existing_review(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    cycle.state = TicketReviewCycleState.AWAITING_TEXT.value
+
+    with pytest.raises(ValueError, match="has no rating review"):
+        save_review_caption(session, cycle=cycle, caption="caption")
+
+
 def test_new_cycle_without_rating_does_not_change_previous_current_review(session, review_context):
     first_cycle = _create_cycle(session, review_context)
     first_review = _save_rating(session, first_cycle, 5)
@@ -387,6 +424,56 @@ def test_repeated_cancel_keeps_original_cancelled_at(session, review_context):
     cancel_review_cycle(session, cycle=cycle, cancelled_at=second_cancelled_at)
 
     assert cycle.cancelled_at == first_cancelled_at
+
+
+def test_return_review_cycle_to_offered_from_awaiting_rating(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    start_review_rating_cycle(session, cycle=cycle)
+    set_review_current_message_id(session, cycle=cycle, message_id="rating-message")
+
+    return_review_cycle_to_offered(session, cycle=cycle)
+
+    assert cycle.state == TicketReviewCycleState.OFFERED.value
+    assert cycle.review_current_message_id is None
+    assert cycle.review_id is None
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        TicketReviewCycleState.OFFERED.value,
+        TicketReviewCycleState.AWAITING_TEXT.value,
+        TicketReviewCycleState.COMPLETED.value,
+        TicketReviewCycleState.CANCELLED.value,
+    ],
+)
+def test_return_review_cycle_to_offered_rejects_invalid_states(session, review_context, state):
+    cycle = _create_cycle(session, review_context)
+    cycle.state = state
+
+    with pytest.raises(ValueError):
+        return_review_cycle_to_offered(session, cycle=cycle)
+
+
+def test_return_review_cycle_to_offered_rejects_cycle_with_review(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    _save_rating(session, cycle, 5)
+    cycle.state = TicketReviewCycleState.AWAITING_RATING.value
+
+    with pytest.raises(ValueError, match="already has a review"):
+        return_review_cycle_to_offered(session, cycle=cycle)
+
+
+def test_return_review_cycle_to_offered_does_not_commit(session, review_context):
+    cycle = _create_cycle(session, review_context)
+    start_review_rating_cycle(session, cycle=cycle)
+    session.commit()
+
+    return_review_cycle_to_offered(session, cycle=cycle)
+    session.rollback()
+    session.refresh(cycle)
+
+    assert cycle.state == TicketReviewCycleState.AWAITING_RATING.value
 
 
 def test_unique_cycle_and_pair_version_invariants_are_enforced_by_database(session, review_context):

@@ -17,6 +17,12 @@ from ..models import (
     TicketStatus,
     TicketWorkflowType,
 )
+from .telegram_post_close import (
+    attributable_review_agent_id_for_client_close,
+    finalize_review_offer_close_message,
+    post_close_actions_markup,
+    prepare_review_offer_cycle,
+)
 
 
 def store_client_close_button(ticket: Ticket, response: dict, *, response_message_id_fn) -> None:
@@ -181,7 +187,16 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Обращение закрыто")
         if isinstance(message_id, int):
             safe_remove_inline_keyboard_fn(external_chat_id, message_id)
-        send_message_fn(external_chat_id, ticket_closed_client_text)
+        review_agent_id = attributable_review_agent_id_for_client_close(db, ticket)
+        review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+        close_response = send_message_fn(
+            external_chat_id,
+            ticket_closed_client_text,
+            remove_keyboard=review_cycle is None,
+            reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
+        )
+        if review_cycle is not None:
+            finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
+            db.commit()
 
     return {"ok": True, "closed": True, "ticket_id": ticket.id}
-

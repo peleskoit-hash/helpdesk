@@ -144,6 +144,25 @@ def save_review_text(
     return review
 
 
+def save_review_caption(
+    db: Session,
+    *,
+    cycle: TicketReviewCycle,
+    caption: str,
+    text_updated_at: datetime | None = None,
+) -> TicketReview:
+    if cycle.state not in TEXT_ALLOWED_STATES:
+        raise ValueError("review cycle is not awaiting text")
+    if not cycle.review_id:
+        raise ValueError("review cycle has no rating review")
+
+    review = save_review_text(db, cycle=cycle, review_text=caption, text_updated_at=text_updated_at)
+    cycle.state = TicketReviewCycleState.AWAITING_TEXT_AFTER_CAPTION.value
+    cycle.updated_at = review.text_updated_at or _now()
+    db.flush()
+    return review
+
+
 def set_review_current_message_id(
     db: Session,
     *,
@@ -153,6 +172,33 @@ def set_review_current_message_id(
     _ensure_not_terminal(cycle, action="set current message")
 
     cycle.review_current_message_id = message_id
+    cycle.updated_at = _now()
+    db.flush()
+    return cycle
+
+
+def start_review_rating_cycle(db: Session, *, cycle: TicketReviewCycle) -> TicketReviewCycle:
+    _ensure_not_terminal(cycle, action="start rating")
+    if cycle.state != TicketReviewCycleState.OFFERED.value:
+        raise ValueError("review cycle is not offered")
+    if cycle.review_id:
+        raise ValueError("review cycle already has a review")
+
+    cycle.state = TicketReviewCycleState.AWAITING_RATING.value
+    cycle.updated_at = _now()
+    db.flush()
+    return cycle
+
+
+def return_review_cycle_to_offered(db: Session, *, cycle: TicketReviewCycle) -> TicketReviewCycle:
+    _ensure_not_terminal(cycle, action="return to offered")
+    if cycle.state != TicketReviewCycleState.AWAITING_RATING.value:
+        raise ValueError("review cycle is not awaiting rating")
+    if cycle.review_id:
+        raise ValueError("review cycle already has a review")
+
+    cycle.state = TicketReviewCycleState.OFFERED.value
+    cycle.review_current_message_id = None
     cycle.updated_at = _now()
     db.flush()
     return cycle
@@ -170,6 +216,7 @@ def complete_review_cycle(
     *,
     cycle: TicketReviewCycle,
     completed_at: datetime | None = None,
+    preserve_current_message_id: bool = False,
 ) -> TicketReviewCycle:
     if cycle.state == TicketReviewCycleState.COMPLETED.value:
         return cycle
@@ -179,7 +226,8 @@ def complete_review_cycle(
     finished_at = completed_at or _now()
     cycle.state = TicketReviewCycleState.COMPLETED.value
     cycle.completed_at = finished_at
-    cycle.review_current_message_id = None
+    if not preserve_current_message_id:
+        cycle.review_current_message_id = None
     cycle.updated_at = finished_at
     db.flush()
     return cycle

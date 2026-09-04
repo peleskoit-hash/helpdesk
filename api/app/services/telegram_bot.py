@@ -188,21 +188,25 @@ def client_close_markup() -> dict:
 
 
 def remove_inline_keyboard(chat_id: str, message_id: int) -> dict:
+    return edit_message_reply_markup(chat_id, message_id, {"inline_keyboard": []})
+
+
+def edit_message_reply_markup(chat_id: str, message_id: str | int, reply_markup: dict) -> dict:
     if is_test_chat_id(chat_id):
         return fake_telegram_response(
             "editMessageReplyMarkup",
             {
                 "chat_id": chat_id,
-                "message_id": message_id,
-                "reply_markup": {"inline_keyboard": []},
+                "message_id": int(message_id),
+                "reply_markup": reply_markup,
             },
         )
     return telegram_request(
         "editMessageReplyMarkup",
         payload={
             "chat_id": chat_id,
-            "message_id": message_id,
-            "reply_markup": {"inline_keyboard": []},
+            "message_id": int(message_id),
+            "reply_markup": reply_markup,
         },
     )
 

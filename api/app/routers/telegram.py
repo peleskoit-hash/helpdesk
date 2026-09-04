@@ -32,6 +32,8 @@ from ..config import settings
 from ..services.telegram_bot import (
     answer_callback_query,
     client_close_markup,
+    delete_message,
+    edit_message_reply_markup,
     remove_inline_keyboard,
     send_document,
     send_message,
@@ -99,6 +101,12 @@ from ..services.telegram_onboarding import (
     telegram_contact_by_chat_id,
 )
 from ..services.telegram_client_access import evaluate_incoming_telegram_access
+from ..services.telegram_post_close import (
+    cleanup_review_flow_for_contact,
+    is_review_callback_data,
+    process_review_incoming_message,
+    process_review_callback,
+)
 from ..services.system_tickets import FirstConnectionDefaults, first_connection_values
 from ..services.ticket_call_center_snapshot import (
     apply_call_center_employee_snapshot_on_ticket_create,
@@ -2590,6 +2598,20 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 send_message_fn=send_message,
                 ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
             )
+        if is_review_callback_data(data):
+            return process_review_callback(
+                db,
+                payload,
+                callback,
+                notify_client,
+                first_company_fn=_first_company,
+                get_or_create_contact_from_user_fn=get_or_create_contact_from_user,
+                answer_callback_query_fn=answer_callback_query,
+                safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
+                delete_message_fn=delete_message,
+                send_message_fn=send_message,
+                edit_message_reply_markup_fn=edit_message_reply_markup,
+            )
         confirm = _parse_confirm_callback_data(data)
         if confirm is not None:
             button_ref, decision = confirm
@@ -2780,7 +2802,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     chat = message.get("chat") or {}
     from_user = message.get("from") or {}
-    text = (message.get("text") or message.get("caption") or "").strip()
+    raw_text = message.get("text") if message.get("text") is not None else (message.get("caption") or "")
+    text = raw_text.strip()
     telegram_message_id = str(message.get("message_id")) if message.get("message_id") is not None else None
     attachment_data = None if is_edited_message else _extract_attachment(message)
     attachment_too_large = attachment_is_too_large(attachment_data)
@@ -2830,6 +2853,28 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         if edited_ticket is not None:
             return {"ok": True, "edited": True, "ticket_id": edited_ticket.id}
         return {"ok": True, "edited": True, "ignored": "original_message_not_found"}
+
+    if text.startswith("/start"):
+        cleanup_review_flow_for_contact(
+            db,
+            contact=contact,
+            external_chat_id=external_chat_id,
+            delete_message_fn=delete_message,
+            reason="start",
+        )
+    else:
+        review_result = process_review_incoming_message(
+            db,
+            contact=contact,
+            external_chat_id=external_chat_id,
+            text=raw_text,
+            has_attachment=attachment_data is not None or forbidden_attachment_type is not None,
+            notify_client=notify_client,
+            delete_message_fn=delete_message,
+            send_message_fn=send_message,
+        )
+        if review_result is not None:
+            return review_result
 
     if forbidden_attachment_type is not None:
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id) or _collecting_ticket_for_client(

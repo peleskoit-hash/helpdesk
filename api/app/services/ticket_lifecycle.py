@@ -13,6 +13,12 @@ from ..config import settings
 from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
 from .automatic_messages import render_automatic_message_text
+from .telegram_post_close import (
+    attributable_review_agent_id_for_actor,
+    finalize_review_offer_close_message,
+    post_close_actions_markup,
+    prepare_review_offer_cycle,
+)
 from .ticket_messages import persist_client_delivery_failure, record_client_delivery_failure
 from .ticket_subject import resolve_ticket_subject
 
@@ -40,6 +46,7 @@ def _send_optional_client_message(
     failure_note: str,
     send_to_telegram_client_fn,
     remove_keyboard: bool = False,
+    reply_markup: dict | None = None,
 ) -> dict | None:
     response = send_to_telegram_client_fn(
         db,
@@ -47,6 +54,7 @@ def _send_optional_client_message(
         text,
         required=False,
         remove_keyboard=remove_keyboard,
+        reply_markup=reply_markup,
     )
     if response is None and _ticket_has_telegram_contact(db, ticket):
         record_client_delivery_failure(
@@ -700,6 +708,8 @@ def close_ticket_by_actor(
             )
             return "closed"
         if workflow_type == TicketWorkflowType.TICKET.value:
+            review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
+            review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
             ticket.status = TicketStatus.CLOSED.value
             ticket.closed_by_user_id = actor.id
             ticket.closed_at = datetime.utcnow()
@@ -707,14 +717,17 @@ def close_ticket_by_actor(
             ticket.freeze_until = None
             clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
-            _send_optional_client_message(
+            close_response = _send_optional_client_message(
                 db,
                 ticket,
                 ticket_closed_client_text,
                 failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
-                remove_keyboard=True,
+                remove_keyboard=review_cycle is None,
+                reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
             )
+            if review_cycle is not None:
+                finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
             _mark_ticket_completed_once(db, ticket, actor)
             return "closed"
         ticket.status = TicketStatus.CLOSED.value
@@ -824,18 +837,23 @@ def close_ticket_by_actor(
             close_text = "Задача завершена сотрудником" if not is_admin_action else f"Задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
     elif workflow_type == TicketWorkflowType.TICKET.value:
+        review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
+        review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
         close_text = "Заявка закрыта сотрудником" if not is_admin_action else f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         if bool(ticket.onsite_triggered):
             add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
-        _send_optional_client_message(
+        close_response = _send_optional_client_message(
             db,
             ticket,
             ticket_closed_client_text,
             failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
-            remove_keyboard=True,
+            remove_keyboard=review_cycle is None,
+            reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
         )
+        if review_cycle is not None:
+            finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
     else:
         close_text = "Автообращение завершено системой" if not is_admin_action else f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}"
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
