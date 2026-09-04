@@ -342,16 +342,17 @@ def test_outbound_to_blocked_client_is_not_blocked(monkeypatch):
 
     monkeypatch.setattr(
         tickets_router,
-        "send_message",
-        lambda chat_id, text, parse_mode=None, remove_keyboard=False, reply_to_message_id=None: sent.update(
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-                "remove_keyboard": remove_keyboard,
-                "reply_to_message_id": reply_to_message_id,
-            }
-        )
+            "send_message",
+        lambda chat_id, text, parse_mode=None, remove_keyboard=False, reply_markup=None, reply_to_message_id=None: sent.update(
+                {
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": parse_mode,
+                    "remove_keyboard": remove_keyboard,
+                    "reply_markup": reply_markup,
+                    "reply_to_message_id": reply_to_message_id,
+                }
+            )
         or {"ok": True},
     )
 
