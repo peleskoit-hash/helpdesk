@@ -334,6 +334,140 @@ body[data-sidebar-ready="0"] .admin-select-col {
   min-height: 0;
 }
 
+.main[data-shell-page="management-integrations"] {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.management-integrations-page {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 16px;
+  min-width: 0;
+}
+
+.management-integrations-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.management-integrations-head h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.integration-log-panel {
+  min-height: 0;
+}
+
+.integration-log-title {
+  padding: 12px 14px 0;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.integration-log-filters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.integration-log-filters label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.integration-log-filters select,
+.integration-log-filters input {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.integration-log-table {
+  min-width: 1120px;
+}
+
+.integration-log-table th:nth-child(1) { width: 150px; }
+.integration-log-table th:nth-child(2) { width: 140px; }
+.integration-log-table th:nth-child(3) { width: 120px; }
+.integration-log-table th:nth-child(4) { width: 170px; }
+.integration-log-table th:nth-child(5) { width: 260px; }
+
+.table-wrap .integration-log-table td.integration-log-event-data {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.table-wrap .integration-log-table td.integration-log-code {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.integration-log-task-link {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.integration-log-task-link:hover,
+.integration-log-task-link:focus-visible {
+  text-decoration: underline;
+}
+
+.integration-log-badge {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.integration-log-result-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.integration-log-result-duplicate {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.integration-log-result-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.integration-log-empty {
+  padding: 12px;
+}
+
+.integration-log-pagination {
+  flex: 0 0 auto;
+}
+
 .settings-table th,
 .settings-table td {
   white-space: nowrap;

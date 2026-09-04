@@ -22,6 +22,7 @@ from .db import Base, engine, get_db
 from .models import User
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.integrations import router as integrations_router
+from .routers.management_integrations import router as management_integrations_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
 from .routers.settings import router as settings_router
@@ -87,6 +88,7 @@ app.include_router(settings_client_card_router)
 app.include_router(settings_notification_bot_basic_router)
 app.include_router(employee_notification_preferences_router)
 app.include_router(mass_notifications_router)
+app.include_router(management_integrations_router)
 app.include_router(management_users_router)
 app.include_router(integrations_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -381,6 +383,16 @@ def management_page(request: Request, db: Session = Depends(get_db)):
     if not user.is_real_admin:
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "management.html"))
+
+
+@app.get("/management/integrations")
+def management_integrations_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/management/integrations")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "management_integrations.html"))
 
 
 @app.get("/management/users")

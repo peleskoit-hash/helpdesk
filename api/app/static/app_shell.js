@@ -59,6 +59,10 @@
         "/static/management_users.js?v=20260808c",
       ],
     }],
+    ["/management/integrations", {
+      page: "management-integrations",
+      scripts: ["/static/management_integrations.js?v=20260904a"],
+    }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20260604c"] }],
   ]);
   const dynamicShellRoutes = [

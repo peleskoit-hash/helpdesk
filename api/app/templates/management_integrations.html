@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Управление - Интеграции</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260904a" />
+</head>
+<body data-sidebar-ready="0">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=unassigned" data-tab="unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active" data-tab="active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen" data-tab="frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed" data-tab="closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div class="sidebar-user-name-row">
+          <div id="sidebarUserDisplayName" class="sidebar-user-name">&mdash;</div>
+        </div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Текущий пользователь">A</div>
+          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appContent" class="main" data-shell-page="management-integrations">
+      <div class="management-integrations-page">
+        <div class="management-integrations-head">
+          <div>
+            <div class="management-eyebrow">Управление</div>
+            <h1>Интеграции</h1>
+          </div>
+          <span class="status" id="integrationLogStatus">Готово</span>
+        </div>
+
+        <div class="panel table-wrap integration-log-panel">
+          <div class="integration-log-title">Integration Log</div>
+          <div class="integration-log-filters">
+            <label>Тип события:
+              <select id="integrationLogEventType">
+                <option value="">Все события</option>
+                <option value="task_create">Создание задачи</option>
+                <option value="telegram_send">Telegram</option>
+              </select>
+            </label>
+            <label>Результат:
+              <select id="integrationLogResult">
+                <option value="">Все результаты</option>
+                <option value="success">Успех</option>
+                <option value="duplicate">Дубликат</option>
+                <option value="error">Ошибка</option>
+              </select>
+            </label>
+            <label>Дата от:
+              <input id="integrationLogCreatedFrom" type="date" />
+            </label>
+            <label>Время от:
+              <input id="integrationLogTimeFrom" type="time" />
+            </label>
+            <label>Дата до:
+              <input id="integrationLogCreatedTo" type="date" />
+            </label>
+            <label>Время до:
+              <input id="integrationLogTimeTo" type="time" />
+            </label>
+            <button id="integrationLogResetBtn" class="action" type="button">Сбросить</button>
+          </div>
+
+          <div class="table-scroll">
+            <table class="integration-log-table">
+              <thead>
+                <tr>
+                  <th>Время</th>
+                  <th>Тип события</th>
+                  <th>Результат</th>
+                  <th>Код</th>
+                  <th>Данные события</th>
+                  <th>Описание</th>
+                </tr>
+              </thead>
+              <tbody id="integrationLogTableBody"></tbody>
+            </table>
+            <div id="integrationLogEmpty" class="status integration-log-empty">Загрузка...</div>
+          </div>
+
+          <div class="table-pagination-footer integration-log-pagination">
+            <div id="integrationLogPageSummary" class="table-pagination-total">Показано 0–0 из 0</div>
+            <div class="table-pagination-nav">
+              <button id="integrationLogPrevBtn" class="action table-page-btn" type="button">Назад</button>
+              <button id="integrationLogNextBtn" class="action table-page-btn" type="button">Далее</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js?v=20260903a"></script>
+  <script src="/static/app_shell.js?v=20260904a"></script>
+  <script src="/static/management_integrations.js?v=20260904a"></script>
+</body>
+</html>
