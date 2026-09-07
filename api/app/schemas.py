@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -380,6 +380,48 @@ class CompletionStatsOut(BaseModel):
     total: CompletionPeriodStats | None = None
     calendar: dict[str, CompletionPeriodStats] | None = None
     legacy: int | None = None
+
+
+class ReviewEmployeeOut(BaseModel):
+    employee_id: str
+    display_name: str
+    role: str
+    is_active: bool
+
+
+class ReviewCurrentRowOut(BaseModel):
+    review_id: str
+    ticket_id: str
+    agent_id: str
+    rated_at: datetime
+    client_name_snapshot: str
+    ticket_subject_snapshot: str
+    rating: int
+    review_text: str | None = None
+    version_number: int
+    has_history: bool
+
+
+class ReviewHistoryRowOut(BaseModel):
+    review_id: str
+    rated_at: datetime
+    rating: int
+    review_text: str | None = None
+    version_number: int
+
+
+class ReviewListResponse(BaseModel):
+    items: list[ReviewCurrentRowOut] = Field(default_factory=list)
+    total_count: int
+    average_rating: float | None = None
+    min_review_date: date | None = None
+    page: int
+    pages: int
+    page_size: int
+
+
+class ReviewHistoryResponse(BaseModel):
+    items: list[ReviewHistoryRowOut] = Field(default_factory=list)
 
 
 ClientCardColorScheme = str
