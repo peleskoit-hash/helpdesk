@@ -266,15 +266,18 @@ def auth_session(request: Request, db: Session = Depends(get_db), current_user: 
             "role": current_user.real_role,
             "full_name": real.full_name if real else None,
             "login": real.login if real else None,
+            "availability_status": real.availability_status if real else None,
         },
         "effective_user": {
             "id": current_user.id,
             "role": current_user.role,
             "full_name": effective.full_name if effective else None,
             "login": effective.login if effective else None,
+            "availability_status": effective.availability_status if effective else None,
         },
         "is_real_admin": bool(current_user.is_real_admin),
         "session_login_ts": int(request.session.get("login_ts") or 0),
+        "app_timezone": settings.app_timezone,
     }
 
 
@@ -357,6 +360,26 @@ def profile_notification_bot_page(request: Request, db: Session = Depends(get_db
     if _require_page_auth(request, db) is None:
         return _redirect_login("/profile/notification-bot")
     return FileResponse(str(BASE_DIR / "templates" / "profile_notification_bot.html"))
+
+
+@app.get("/reviews")
+def reviews_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/reviews")
+    if user.is_real_admin or user.real_role not in {"agent", "trainee"}:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "reviews.html"))
+
+
+@app.get("/management/reviews")
+def management_reviews_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/management/reviews")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "reviews.html"))
 
 
 @app.get("/statuses")

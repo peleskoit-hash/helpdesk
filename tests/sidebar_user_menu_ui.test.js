@@ -26,7 +26,8 @@ class EventTargetLike {
       event.defaultPrevented = true;
     };
     const list = this.listeners.get(event.type) || [];
-    list.forEach((handler) => handler(event));
+    const results = list.map((handler) => handler(event));
+    this.lastDispatchPromises = results.filter((result) => result && typeof result.then === "function");
     return !event.defaultPrevented;
   }
 }
@@ -108,13 +109,26 @@ class ElementLike extends EventTargetLike {
     this.attributes.id = String(value);
   }
 
+  get nextSibling() {
+    if (!this.parentNode) return null;
+    const siblings = this.parentNode.children;
+    const index = siblings.indexOf(this);
+    return index === -1 ? null : siblings[index + 1] || null;
+  }
+
   appendChild(child) {
+    if (child.parentNode) {
+      child.parentNode.children = child.parentNode.children.filter((item) => item !== child);
+    }
     child.parentNode = this;
     this.children.push(child);
     return child;
   }
 
   insertBefore(child, referenceNode) {
+    if (child.parentNode) {
+      child.parentNode.children = child.parentNode.children.filter((item) => item !== child);
+    }
     child.parentNode = this;
     if (!referenceNode) {
       this.children.push(child);
@@ -278,7 +292,29 @@ function createElement(document, tagName, options = {}) {
   return node;
 }
 
-function buildSidebarDom() {
+const STATUS_DEFINITIONS = [
+  ["offline", "status-offline", "Не в сети"],
+  ["online", "status-online", "В сети"],
+  ["on_ticket", "status-on-ticket", "На заявке"],
+  ["waiting", "status-waiting", "В ожидании"],
+  ["lunch", "status-lunch", "Обед"],
+];
+
+function createStatusPanel(document, withButtons = true) {
+  const statusPanel = createElement(document, "div", { className: "status-panel hidden" });
+  if (!withButtons) return statusPanel;
+  statusPanel.appendChild(createElement(document, "div", { className: "status-panel-title", textContent: "Статус" }));
+  for (const [status, className, label] of STATUS_DEFINITIONS) {
+    statusPanel.appendChild(createElement(document, "button", {
+      className: `agent-status-btn ${className}`,
+      textContent: label,
+      attributes: { "data-availability-status": status },
+    }));
+  }
+  return statusPanel;
+}
+
+function buildSidebarDom({ statusPanel = "empty" } = {}) {
   const document = new DocumentLike();
   const aside = createElement(document, "aside", { className: "sidebar" });
   const massLink = createElement(document, "a", {
@@ -306,7 +342,6 @@ function buildSidebarDom() {
   stats.appendChild(completionDetails);
 
   const sidebarBottom = createElement(document, "div", { className: "sidebar-bottom" });
-  const statusPanel = createElement(document, "div", { className: "status-panel hidden" });
   const userActions = createElement(document, "div", { className: "sidebar-user-actions" });
   const avatar = createElement(document, "div", {
     className: "agent-avatar",
@@ -318,7 +353,11 @@ function buildSidebarDom() {
   });
   userActions.appendChild(avatar);
   userActions.appendChild(logoutForm);
-  sidebarBottom.appendChild(statusPanel);
+  if (statusPanel === "empty") {
+    sidebarBottom.appendChild(createStatusPanel(document, false));
+  } else if (statusPanel === "standard") {
+    sidebarBottom.appendChild(createStatusPanel(document, true));
+  }
   sidebarBottom.appendChild(userActions);
 
   const outside = createElement(document, "div", { id: "outside" });
@@ -330,28 +369,36 @@ function buildSidebarDom() {
   return { document, aside, stats, logoutForm, outside };
 }
 
-function createFetchMock() {
-  return async (path) => {
+function createFetchMock(role = "agent") {
+  const calls = [];
+  const fetchMock = async (path, options = {}) => {
+    calls.push({ path: String(path), method: options.method || "GET", body: options.body || "" });
     let payload = {};
     if (path === "/api/v1/auth/session") {
       payload = {
-        real_user: { id: "u1", role: "agent", login: "ivan", full_name: "Ivan Petrov" },
-        is_real_admin: false,
+        real_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
+        effective_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
+        is_real_admin: role === "admin",
         session_login_ts: 1,
+        app_timezone: "Asia/Tokyo",
       };
     } else if (path === "/api/v1/users/agents") {
       payload = [{ id: "u1", full_name: "Ivan Petrov" }];
     } else if (String(path).startsWith("/api/v1/tickets/counts")) {
       payload = { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0 };
+    } else if (path === "/api/v1/users/me/status") {
+      payload = { availability_status: JSON.parse(options.body || "{}").availability_status || "offline" };
     }
     return {
       ok: true,
       text: async () => JSON.stringify(payload),
     };
   };
+  fetchMock.calls = calls;
+  return fetchMock;
 }
 
-async function loadSidebar(document) {
+async function loadSidebar(document, role = "agent") {
   const source = fs.readFileSync("api/app/static/sidebar.js", "utf8");
   const window = {
     location: { pathname: "/tickets", href: "/tickets" },
@@ -368,12 +415,14 @@ async function loadSidebar(document) {
       localStorage.delete(key);
     },
   };
+  const fetchMock = createFetchMock(role);
+  window.__fetchCalls = fetchMock.calls;
   const context = vm.createContext({
     window,
     document,
     console: { info() {}, error() {}, log() {} },
     localStorage: storageApi,
-    fetch: createFetchMock(),
+    fetch: fetchMock,
     URLSearchParams,
     JSON,
     Array,
@@ -395,6 +444,8 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
   const window = await loadSidebar(document);
 
   assert.ok(window.HelpdeskSidebar);
+  assert.equal((await window.HelpdeskSidebar.init()).appTimezone, "Asia/Tokyo");
+  assert.equal(window.HelpdeskSidebar.getState().appTimezone, "Asia/Tokyo");
   const panel = document.querySelector("[data-sidebar-user-panel]");
   assert.ok(panel);
   assert.equal(panel.parentNode.classList.contains("sidebar-bottom"), true);
@@ -449,3 +500,72 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
   await window.HelpdeskSidebar.init();
   assert.equal(document.querySelectorAll("[data-sidebar-user-menu]").length, 1);
 });
+
+test("sidebar rehydrates missing status panel on repeated init without extra session fetch", async () => {
+  const { document } = buildSidebarDom({ statusPanel: "none" });
+  const window = await loadSidebar(document, "agent");
+  const panel = document.querySelector(".status-panel");
+
+  assert.ok(panel);
+  assert.equal(panel.parentNode.classList.contains("sidebar-bottom"), true);
+  assert.equal(panel.classList.contains("hidden"), false);
+  assert.deepEqual(
+    panel.querySelectorAll("[data-availability-status]").map((button) => button.dataset.availabilityStatus),
+    ["offline", "online", "on_ticket", "waiting", "lunch"],
+  );
+  assert.equal(panel.querySelector("[data-availability-status='waiting']").classList.contains("active"), true);
+  const callsAfterFirstInit = window.__fetchCalls.length;
+
+  await window.HelpdeskSidebar.init();
+
+  assert.equal(window.__fetchCalls.length, callsAfterFirstInit);
+  assert.equal(window.__fetchCalls.filter((call) => call.path === "/api/v1/auth/session").length, 1);
+  assert.equal(document.querySelectorAll(".status-panel").length, 1);
+  assert.equal(document.querySelectorAll("[data-availability-status]").length, 5);
+});
+
+test("sidebar reuses existing status panel and repeated init keeps one click handler", async () => {
+  const { document } = buildSidebarDom({ statusPanel: "standard" });
+  const window = await loadSidebar(document, "agent");
+  const callsAfterFirstInit = window.__fetchCalls.length;
+
+  await window.HelpdeskSidebar.init();
+  await window.HelpdeskSidebar.init();
+
+  assert.equal(window.__fetchCalls.length, callsAfterFirstInit);
+  assert.equal(document.querySelectorAll(".status-panel").length, 1);
+  assert.equal(document.querySelectorAll("[data-availability-status]").length, 5);
+
+  const onlineButton = document.querySelector("[data-availability-status='online']");
+  onlineButton.dispatchEvent({ type: "click", target: onlineButton });
+  await Promise.all(onlineButton.lastDispatchPromises || []);
+
+  assert.equal(window.__fetchCalls.filter((call) => call.path === "/api/v1/users/me/status").length, 1);
+  assert.equal(onlineButton.classList.contains("active"), true);
+});
+
+test("sidebar status panel stays hidden for admin", async () => {
+  const { document } = buildSidebarDom({ statusPanel: "none" });
+  await loadSidebar(document, "admin");
+
+  const panel = document.querySelector(".status-panel");
+  assert.ok(panel);
+  assert.equal(panel.classList.contains("hidden"), true);
+  assert.equal(document.querySelectorAll("[data-availability-status]").length, 5);
+});
+
+for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
+  test("review profile entry follows role: " + role, async () => {
+    const { document } = buildSidebarDom();
+    const window = await loadSidebar(document, role);
+    const item = document.querySelector('[data-sidebar-user-menu-item="feedback"]');
+    const allowed = role === "agent" || role === "trainee";
+    assert.equal(item.hidden, !allowed);
+    item.dispatchEvent({ type: "click", target: item });
+    assert.equal(window.location.href, allowed ? "/reviews" : "/tickets");
+    const navigations = [];
+    window.HelpdeskAppShell = { navigate: (url) => navigations.push(url) };
+    item.dispatchEvent({ type: "click", target: item });
+    assert.deepEqual(navigations, allowed ? ["/reviews"] : []);
+  });
+}

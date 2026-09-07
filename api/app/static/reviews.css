@@ -1,0 +1,117 @@
+.main[data-shell-page="reviews"] {
+  min-width: 0;
+}
+
+.main[data-shell-page="reviews"] .settings-title {
+  margin: 0;
+}
+
+.reviews-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.reviews-page [hidden] {
+  display: none !important;
+}
+
+.reviews-filters {
+  flex: 0 0 auto;
+}
+
+.reviews-filters label,
+.reviews-filters select,
+.reviews-filters input {
+  max-width: 100%;
+  min-width: 0;
+}
+
+#reviewEmployeeField {
+  width: 300px;
+  max-width: 100%;
+}
+
+.reviews-stats,
+.reviews-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 14px;
+  flex: 0 0 auto;
+}
+
+.reviews-status {
+  padding: 14px;
+  margin: 0;
+}
+
+.reviews-table-wrap {
+  min-height: 160px;
+}
+
+.reviews-table {
+  min-width: 800px;
+  border-spacing: 0;
+}
+
+.reviews-table th:nth-child(1) { width: 155px; }
+.reviews-table th:nth-child(2) { width: 11%; }
+.reviews-table th:nth-child(3) { width: 16%; }
+.reviews-table th:nth-child(4) { width: 80px; }
+
+.reviews-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.reviews-table a,
+.reviews-text-action {
+  color: var(--accent);
+}
+
+.reviews-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.reviews-text-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  max-height: 7.5em;
+  overflow: hidden;
+}
+
+.reviews-text-action {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reviews-history-cell {
+  background: var(--surface);
+}
+
+.reviews-history-version + .reviews-history-version {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.reviews-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 6px;
+  color: var(--muted);
+}

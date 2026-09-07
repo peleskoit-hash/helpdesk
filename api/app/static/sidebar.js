@@ -45,6 +45,8 @@
     userId: "",
     isRealAdmin: false,
     sessionLoginTs: 0,
+    appTimezone: "",
+    availabilityStatus: "",
     login: "",
     counts: readStoredCounts(),
     agents: readStoredAgents(),
@@ -71,6 +73,8 @@
       fullName: state.fullName || "",
       login: state.login || "",
       sessionLoginTs: Number(state.sessionLoginTs || 0),
+      appTimezone: state.appTimezone,
+      availabilityStatus: state.availabilityStatus || "",
       counts: { ...state.counts },
       agents: [...state.agents],
       adminAssigneeIds: [...state.adminAssigneeIds],
@@ -314,10 +318,64 @@
   }
 
   function renderUserMenuVisibility(menu) {
+    const reviewItem = menu?.querySelector("[data-sidebar-user-menu-item='feedback']");
+    if (reviewItem) {
+      reviewItem.hidden = state.role !== "agent" && state.role !== "trainee";
+    }
     const notificationItem = menu?.querySelector("[data-sidebar-user-menu-item='bot-notifications']");
     if (notificationItem) {
       notificationItem.hidden = state.role === "admin";
     }
+  }
+
+  function ensureAvailabilityStatusPanel() {
+    const sidebarBottom = qs(".sidebar-bottom");
+    if (!sidebarBottom) return null;
+    let panel = sidebarBottom.querySelector(".status-panel") || qs(".status-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.className = "status-panel hidden";
+    }
+    panel.classList.add("status-panel");
+    panel.classList.add("hidden");
+
+    if (!panel.querySelector(".status-panel-title")) {
+      const title = document.createElement("div");
+      title.className = "status-panel-title";
+      title.textContent = "\u0421\u0442\u0430\u0442\u0443\u0441";
+      panel.insertBefore(title, panel.firstChild);
+    }
+
+    [
+      ["offline", "status-offline", "\u041d\u0435 \u0432 \u0441\u0435\u0442\u0438"],
+      ["online", "status-online", "\u0412 \u0441\u0435\u0442\u0438"],
+      ["on_ticket", "status-on-ticket", "\u041d\u0430 \u0437\u0430\u044f\u0432\u043a\u0435"],
+      ["waiting", "status-waiting", "\u0412 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0438"],
+      ["lunch", "status-lunch", "\u041e\u0431\u0435\u0434"],
+    ].forEach(([status, className, label]) => {
+      if (panel.querySelector(`[data-availability-status='${status}']`)) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `agent-status-btn ${className}`;
+      button.dataset.availabilityStatus = status;
+      button.setAttribute("data-availability-status", status);
+      button.textContent = label;
+      panel.appendChild(button);
+    });
+
+    const userPanel = sidebarBottom.querySelector("[data-sidebar-user-panel]") || sidebarBottom.querySelector(".sidebar-user-actions");
+    if (panel.parentNode !== sidebarBottom) {
+      sidebarBottom.insertBefore(panel, userPanel || sidebarBottom.firstChild);
+    } else if (userPanel && panel.nextSibling !== userPanel) {
+      sidebarBottom.insertBefore(panel, userPanel);
+    }
+    return panel;
+  }
+
+  function renderAvailabilityVisibility() {
+    const panel = ensureAvailabilityStatusPanel();
+    if (!panel) return;
+    panel.classList.toggle("hidden", state.role !== "agent" && state.role !== "trainee");
   }
 
   function bindUserMenu() {
@@ -375,6 +433,15 @@
           }
           return;
         }
+        if (action === "feedback") {
+          if (state.role !== "agent" && state.role !== "trainee") return;
+          if (window.HelpdeskAppShell?.navigate) {
+            window.HelpdeskAppShell.navigate("/reviews");
+          } else {
+            window.location.href = "/reviews";
+          }
+          return;
+        }
         if (action === "bot-notifications") {
           if (window.HelpdeskAppShell?.navigate) {
             window.HelpdeskAppShell.navigate("/profile/notification-bot");
@@ -409,6 +476,9 @@
   }
 
   function renderAvailabilityStatus(status) {
+    if (status) {
+      state.availabilityStatus = status;
+    }
     qsa("[data-availability-status]").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.availabilityStatus === status);
     });
@@ -420,7 +490,8 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ availability_status: status }),
     });
-    renderAvailabilityStatus(me?.availability_status || status);
+    state.availabilityStatus = me?.availability_status || status;
+    renderAvailabilityStatus(state.availabilityStatus);
     // Refresh counts after potential auto-assignment trigger on backend.
     await loadCounts();
     notify();
@@ -508,6 +579,8 @@
     state.login = String(realUser.login || "");
     state.isRealAdmin = Boolean(payload?.is_real_admin);
     state.sessionLoginTs = Number(payload?.session_login_ts || 0);
+    state.appTimezone = payload.app_timezone;
+    state.availabilityStatus = payload?.real_user?.availability_status || payload?.effective_user?.availability_status || state.availabilityStatus || "";
     state.fullName = (realUser.full_name || "").trim() || "Пользователь";
     try {
       localStorage.setItem("hd_user_id", state.userId);
@@ -579,8 +652,10 @@
 
   function renderFromCurrentState() {
     ensureManagementSection();
+    ensureAvailabilityStatusPanel();
     positionUserStatsByRole();
     renderAdminVisibility();
+    renderAvailabilityVisibility();
     renderCounts();
     renderUserDisplay();
     renderAvatar();
@@ -588,10 +663,15 @@
     renderAgentFilter();
     bindToggleAll();
     bindSettingsStatusButtons();
+    renderAvailabilityStatus(state.availabilityStatus);
   }
 
   async function init(options = {}) {
-    if (initialized) return { ...state };
+    if (initialized) {
+      renderFromCurrentState();
+      setSidebarReady(true);
+      return { ...state };
+    }
     if (initPromise) return initPromise;
     setSidebarReady(false);
     renderFromCurrentState();
@@ -604,6 +684,7 @@
         setSidebarReady(true);
         initialized = true;
         notify();
+        initPromise = null;
         return { ...state };
       } catch (error) {
         initPromise = null;

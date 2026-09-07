@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
-from ..models import Client, TelegramContact, TelegramUpdate, Ticket, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from ..models import Client, ClientProfile, TelegramContact, TelegramUpdate, Ticket, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .automatic_messages import render_automatic_message_for_telegram
 from .ticket_reviews import (
     cancel_review_cycle,
@@ -270,6 +270,15 @@ def _safe_remove_exact_inline_keyboard(safe_remove_inline_keyboard_fn, external_
 
 
 def _client_name_snapshot(db: Session, contact: TelegramContact) -> str:
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == contact.client_id)).scalar_one_or_none()
+    if profile is not None:
+        profile_name = " ".join(
+            part.strip()
+            for part in (profile.last_name or "", profile.contact_name or "")
+            if part and part.strip()
+        )
+        if profile_name:
+            return profile_name
     client = db.get(Client, contact.client_id)
     client_name = (client.display_name if client is not None else None) or ""
     telegram_name = contact.external_display_name or ""

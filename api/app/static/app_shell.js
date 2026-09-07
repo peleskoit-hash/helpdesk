@@ -9,6 +9,8 @@
     initialized: false,
   };
   const shellRoutes = new Map([
+    ["/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
+    ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20260824a"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260803b"] }],

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.routers import telegram as telegram_router
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, review_back_callback_data, review_finish_callback_data, review_rate_callback_data, review_start_callback_data
@@ -1034,12 +1034,20 @@ def test_review_telegram_now_is_utc_aware():
     assert value.utcoffset().total_seconds() == 0
 
 
-def test_client_name_snapshot_prefers_es_desk_client_display_name(monkeypatch):
+def test_client_name_snapshot_prefers_client_profile_full_name(monkeypatch):
     session = _session()
     contact, _ticket, cycle = _awaiting_rating_cycle(session)
     client = session.get(Client, contact.client_id)
     client.display_name = "Иван Петров"
     contact.external_display_name = "ivan777"
+    session.add(
+        ClientProfile(
+            id=str(uuid.uuid4()),
+            client_id=contact.client_id,
+            last_name="Турчинский",
+            contact_name="Дмитрий",
+        )
+    )
     session.commit()
     monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
@@ -1048,6 +1056,26 @@ def test_client_name_snapshot_prefers_es_desk_client_display_name(monkeypatch):
     telegram_router.process_telegram_update(
         session,
         _callback_payload(update_id=7001, contact=contact, data=review_rate_callback_data(cycle.id, 5), message_id=88),
+        notify_client=True,
+    )
+
+    assert _reviews(session)[0].client_name_snapshot == "Турчинский Дмитрий"
+
+
+def test_client_name_snapshot_falls_back_to_es_desk_client_display_name_without_profile(monkeypatch):
+    session = _session()
+    contact, _ticket, cycle = _awaiting_rating_cycle(session)
+    client = session.get(Client, contact.client_id)
+    client.display_name = "Иван Петров"
+    contact.external_display_name = "ivan777"
+    session.commit()
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 182}})
+
+    telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=7003, contact=contact, data=review_rate_callback_data(cycle.id, 5), message_id=88),
         notify_client=True,
     )
 
