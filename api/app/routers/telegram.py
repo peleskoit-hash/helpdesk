@@ -102,8 +102,12 @@ from ..services.telegram_onboarding import (
 )
 from ..services.telegram_client_access import evaluate_incoming_telegram_access
 from ..services.telegram_post_close import (
+    cleanup_feedback_flow_for_contact,
     cleanup_review_flow_for_contact,
+    is_feedback_callback_data,
     is_review_callback_data,
+    process_feedback_callback,
+    process_feedback_incoming_message,
     process_review_incoming_message,
     process_review_callback,
 )
@@ -2611,6 +2615,21 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 delete_message_fn=delete_message,
                 send_message_fn=send_message,
                 edit_message_reply_markup_fn=edit_message_reply_markup,
+                ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
+            )
+        if is_feedback_callback_data(data):
+            return process_feedback_callback(
+                db,
+                payload,
+                callback,
+                notify_client,
+                first_company_fn=_first_company,
+                get_or_create_contact_from_user_fn=get_or_create_contact_from_user,
+                answer_callback_query_fn=answer_callback_query,
+                safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
+                delete_message_fn=delete_message,
+                send_message_fn=send_message,
+                ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
             )
         confirm = _parse_confirm_callback_data(data)
         if confirm is not None:
@@ -2855,6 +2874,12 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         return {"ok": True, "edited": True, "ignored": "original_message_not_found"}
 
     if text.startswith("/start"):
+        cleanup_feedback_flow_for_contact(
+            db,
+            contact=contact,
+            external_chat_id=external_chat_id,
+            delete_message_fn=delete_message,
+        )
         cleanup_review_flow_for_contact(
             db,
             contact=contact,
@@ -2875,6 +2900,18 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         )
         if review_result is not None:
             return review_result
+        feedback_result = process_feedback_incoming_message(
+            db,
+            contact=contact,
+            external_chat_id=external_chat_id,
+            text=raw_text,
+            has_attachment=attachment_data is not None or forbidden_attachment_type is not None,
+            notify_client=notify_client,
+            delete_message_fn=delete_message,
+            send_message_fn=send_message,
+        )
+        if feedback_result is not None:
+            return feedback_result
 
     if forbidden_attachment_type is not None:
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id) or _collecting_ticket_for_client(

@@ -189,11 +189,12 @@ def process_client_close_callback(
             safe_remove_inline_keyboard_fn(external_chat_id, message_id)
         review_agent_id = attributable_review_agent_id_for_client_close(db, ticket)
         review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+        reply_markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=review_cycle)
         close_response = send_message_fn(
             external_chat_id,
             ticket_closed_client_text,
-            remove_keyboard=review_cycle is None,
-            reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
+            remove_keyboard=reply_markup is None,
+            reply_markup=reply_markup,
         )
         if review_cycle is not None:
             finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)

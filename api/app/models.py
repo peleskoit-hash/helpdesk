@@ -48,6 +48,12 @@ class TicketReviewCycleState(str, Enum):
     CANCELLED = "cancelled"
 
 
+class TicketFeedbackState(str, Enum):
+    AWAITING_TEXT = "awaiting_text"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class Company(Base):
     __tablename__ = "companies"
 
@@ -228,6 +234,44 @@ class TicketReview(Base):
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class TicketFeedback(Base):
+    __tablename__ = "ticket_feedback"
+    __table_args__ = (
+        UniqueConstraint("ticket_id", name="uq_ticket_feedback_ticket_id"),
+        Index("ix_ticket_feedback_ticket_id", "ticket_id"),
+        Index("ix_ticket_feedback_client_id", "client_id"),
+        Index("ix_ticket_feedback_submitted_at", "submitted_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"), nullable=False)
+    client_name_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    ticket_title_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class TicketFeedbackInput(Base):
+    __tablename__ = "ticket_feedback_inputs"
+    __table_args__ = (
+        Index("ix_ticket_feedback_inputs_ticket_id", "ticket_id"),
+        Index("ix_ticket_feedback_inputs_client_id", "client_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), nullable=False)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"), nullable=False)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    current_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TicketMessage(Base):

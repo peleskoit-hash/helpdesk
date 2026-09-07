@@ -10,8 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
-from api.app.models import AutomaticMessageTemplate, MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
-from api.app.services.ticket_lifecycle import close_ticket_by_actor
+from api.app.models import AutomaticMessageTemplate, Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
+from api.app.services.ticket_lifecycle import close_ticket_by_actor, finalize_group_parent_if_ready, notify_group_parent_completion_before_delete
 from api.app.services.telegram_outbound_delivery import claim_attachment_preload
 from api.app.services.telegram_text_format import prepare_telegram_html_message
 from api.app.services.ticket_messages import reply_to_ticket
@@ -62,6 +62,27 @@ def _seed_ticket(session, **overrides) -> Ticket:
     session.add(ticket)
     session.commit()
     return ticket
+
+
+def _seed_contact_for_ticket(session, ticket: Ticket) -> TelegramContact:
+    company = Company(id=ticket.company_id, name="ACME", created_at=datetime.utcnow())
+    client = Client(id=ticket.client_id, company_id=ticket.company_id, display_name="Client")
+    contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=ticket.company_id,
+        client_id=ticket.client_id,
+        external_user_id=str(len(session.query(TelegramContact).all()) + 1000),
+        external_chat_id=str(len(session.query(TelegramContact).all()) + 1000),
+    )
+    session.merge(company)
+    session.merge(client)
+    session.add(contact)
+    session.commit()
+    return contact
+
+
+def _markup_labels(markup):
+    return [button["text"] for row in (markup or {}).get("inline_keyboard") or [] for button in row]
 
 
 class _PreloadForm(dict):
@@ -619,3 +640,94 @@ def test_task_files_only_completion_keeps_files_only_branch(tmp_path):
     assert "Получены файлы от сотрудника:" in sent_texts[0]
     assert "{{agent_answer}}" not in sent_texts[0]
     assert "Файлы:\ncontract.pdf" not in sent_texts[0]
+
+
+def test_all_task_close_paths_send_feedback_action_to_client():
+    session = _session()
+
+    normal = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.NORMAL.value)
+    _seed_contact_for_ticket(session, normal)
+    normal_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=normal.id, message_type=MessageType.CLIENT.value, body="Вопрос", created_at=datetime.utcnow())
+    normal_agent_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=normal.id, message_type=MessageType.AGENT.value, body="Ответ", author_user_id="agent-1", created_at=datetime.utcnow())
+    session.add_all([normal_client_message, normal_agent_message])
+    session.commit()
+
+    without_answer = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.NORMAL.value)
+    _seed_contact_for_ticket(session, without_answer)
+    without_answer_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=without_answer.id, message_type=MessageType.CLIENT.value, body="Нет данных", created_at=datetime.utcnow())
+    session.add(without_answer_client_message)
+    session.commit()
+
+    parent_direct = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    _seed_contact_for_ticket(session, parent_direct)
+    parent_direct_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent_direct.id, message_type=MessageType.CLIENT.value, body="Группа", created_at=datetime.utcnow())
+    parent_direct_agent_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent_direct.id, message_type=MessageType.AGENT.value, body="Итог", author_user_id="agent-1", created_at=datetime.utcnow())
+    session.add_all([parent_direct_client_message, parent_direct_agent_message])
+    session.commit()
+
+    parent_auto = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    _seed_contact_for_ticket(session, parent_auto)
+    parent_auto_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent_auto.id, message_type=MessageType.CLIENT.value, body="Автогруппа", created_at=datetime.utcnow())
+    session.add(parent_auto_client_message)
+    session.commit()
+
+    parent_delete = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value, status=TicketStatus.CLOSED.value)
+    _seed_contact_for_ticket(session, parent_delete)
+    parent_delete_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent_delete.id, message_type=MessageType.CLIENT.value, body="Перед удалением", created_at=datetime.utcnow())
+    session.add(parent_delete_client_message)
+    session.commit()
+
+    sent = {}
+
+    def _send(_db, ticket, text, **kwargs):
+        sent.setdefault(ticket.id, []).append(kwargs.get("reply_markup"))
+        return {"ok": True, "result": {"message_id": len(sent) + 300}}
+
+    close_kwargs = dict(
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: False,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda db, ticket: normal_agent_message if ticket.id == normal.id else parent_direct_agent_message,
+        first_client_message_fn=lambda db, ticket: {
+            normal.id: normal_client_message,
+            without_answer.id: without_answer_client_message,
+            parent_direct.id: parent_direct_client_message,
+            parent_auto.id: parent_auto_client_message,
+            parent_delete.id: parent_delete_client_message,
+        }.get(ticket.id),
+        send_to_telegram_client_fn=_send,
+        actor_display_name_fn=lambda *_: "Agent",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    close_ticket_by_actor(session, normal, SimpleNamespace(id="agent-1", role="agent"), **close_kwargs)
+    close_ticket_by_actor(
+        session,
+        without_answer,
+        SimpleNamespace(id="admin-1", role="admin"),
+        **{**close_kwargs, "force_without_agent_reply_for_task": True, "is_admin_fn": lambda actor: True, "last_agent_message_fn": lambda *_: None},
+    )
+    close_ticket_by_actor(session, parent_direct, SimpleNamespace(id="agent-1", role="agent"), **close_kwargs)
+    finalize_group_parent_if_ready(
+        session,
+        parent_auto,
+        closed_by_user_id="agent-1",
+        first_client_message_fn=close_kwargs["first_client_message_fn"],
+        send_to_telegram_client_fn=_send,
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        add_message_fn=_add_message,
+    )
+    notify_group_parent_completion_before_delete(
+        session,
+        parent_delete,
+        first_client_message_fn=close_kwargs["first_client_message_fn"],
+        send_to_telegram_client_fn=_send,
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+    )
+
+    for ticket in [normal, without_answer, parent_direct, parent_auto, parent_delete]:
+        assert sent[ticket.id]
+        assert _markup_labels(sent[ticket.id][0]) == ["Предложения и замечания"]

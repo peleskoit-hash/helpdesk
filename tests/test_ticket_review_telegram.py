@@ -8,10 +8,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.routers import telegram as telegram_router
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
-from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, review_back_callback_data, review_finish_callback_data, review_rate_callback_data, review_start_callback_data
+from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, feedback_back_callback_data, feedback_start_callback_data, review_back_callback_data, review_finish_callback_data, review_rate_callback_data, review_start_callback_data
 from api.app.services.ticket_reviews import create_review_cycle, save_review_caption, save_review_rating, set_review_current_message_id, start_review_rating_cycle
 
 
@@ -142,6 +142,14 @@ def _cycles(session):
     return session.execute(select(TicketReviewCycle)).scalars().all()
 
 
+def _feedbacks(session):
+    return session.execute(select(TicketFeedback).order_by(TicketFeedback.created_at)).scalars().all()
+
+
+def _markup_labels(markup):
+    return [button["text"] for row in (markup or {}).get("inline_keyboard") or [] for button in row]
+
+
 def test_employee_close_offers_review_on_employee_and_same_close_message():
     session = _session()
     company, client, _contact, agent, _admin = _seed_base(session)
@@ -158,16 +166,12 @@ def test_employee_close_offers_review_on_employee_and_same_close_message():
     assert cycle.agent_id == agent.id
     assert cycle.state == TicketReviewCycleState.OFFERED.value
     assert cycle.review_current_message_id == "77"
-    assert sent == [
-        (
-            "closed",
-            {
-                "required": False,
-                "remove_keyboard": False,
-                "reply_markup": {"inline_keyboard": [[{"text": "Оставить отзыв", "callback_data": review_start_callback_data(cycle.id)}]]},
-            },
-        )
-    ]
+    assert sent[0][0] == "closed"
+    assert sent[0][1]["required"] is False
+    assert sent[0][1]["remove_keyboard"] is False
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
+    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == review_start_callback_data(cycle.id)
+    assert sent[0][1]["reply_markup"]["inline_keyboard"][1][0]["callback_data"] == feedback_start_callback_data(ticket.id)
 
 
 def test_admin_close_offers_review_on_current_assignee_not_admin():
@@ -203,8 +207,8 @@ def test_admin_close_without_attributable_employee_has_no_review_offer():
 
     assert _cycles(session) == []
     assert len(sent) == 1
-    assert sent[0][1]["remove_keyboard"] is True
-    assert "reply_markup" not in sent[0][1] or sent[0][1]["reply_markup"] is None
+    assert sent[0][1]["remove_keyboard"] is False
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Предложения и замечания"]
 
 
 def test_non_ordinary_workflows_do_not_offer_review():
@@ -223,7 +227,12 @@ def test_non_ordinary_workflows_do_not_offer_review():
 
         assert _cycles(session) == []
         for _text, kwargs in sent:
-            assert not (kwargs.get("reply_markup") or {}).get("inline_keyboard")
+            labels = _markup_labels(kwargs.get("reply_markup"))
+            assert "Оставить отзыв" not in labels
+            if workflow_type == TicketWorkflowType.TASK.value:
+                assert labels == ["Предложения и замечания"]
+            else:
+                assert labels == []
 
 
 def test_close_delivery_failures_do_not_leave_active_review_offer():
@@ -308,7 +317,7 @@ def test_client_self_close_offers_review_on_current_assignee(monkeypatch):
     assert cycle.review_current_message_id == "90"
     assert len(sent) == 1
     assert sent[0][1]["remove_keyboard"] is False
-    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Оставить отзыв"
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
 
 
 def test_client_self_close_without_assignee_has_no_review(monkeypatch):
@@ -330,8 +339,8 @@ def test_client_self_close_without_assignee_has_no_review(monkeypatch):
 
     assert _cycles(session) == []
     assert len(sent) == 1
-    assert sent[0][1]["remove_keyboard"] is True
-    assert sent[0][1]["reply_markup"] is None
+    assert sent[0][1]["remove_keyboard"] is False
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Предложения и замечания"]
 
 
 def _closed_review_cycle(session):
@@ -448,8 +457,9 @@ def test_valid_review_back_returns_to_offered_and_sends_new_post_close_screen(mo
     assert cycle.state == TicketReviewCycleState.OFFERED.value
     assert cycle.review_current_message_id == "99"
     assert deleted == [(contact.external_chat_id, 88)]
+    assert sent[0][0][1] == telegram_router.TICKET_CLOSED_CLIENT_TEXT
     assert sent[0][1]["remove_keyboard"] is False
-    assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Оставить отзыв"
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
     assert session.execute(select(TicketReview)).scalars().all() == []
 
 
@@ -1167,3 +1177,365 @@ def test_repeated_caption_prompt_failure_uses_same_completion_failsafe(monkeypat
     assert cycle.state == TicketReviewCycleState.COMPLETED.value
     assert cycle.review_current_message_id is None
     assert deleted == [(contact.external_chat_id, 99)]
+
+
+def test_feedback_saves_once_and_repeated_start_is_stale(monkeypatch):
+    session = _session()
+    contact, ticket, _cycle = _closed_review_cycle(session)
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 190 + len(sent)}})
+
+    started = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8001, contact=contact, data=feedback_start_callback_data(ticket.id), message_id=77),
+        notify_client=True,
+    )
+    completed = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=8002, contact=contact, text="Сделайте удобнее"),
+        notify_client=True,
+    )
+    repeated = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8003, contact=contact, data=feedback_start_callback_data(ticket.id), message_id=77),
+        notify_client=True,
+    )
+
+    assert started["feedback"] == "awaiting_text"
+    assert completed["feedback"] == "completed"
+    assert repeated["feedback"] == "stale"
+    assert len(_feedbacks(session)) == 1
+    assert _feedbacks(session)[0].text == "Сделайте удобнее"
+
+
+def test_duplicate_feedback_conflict_does_not_rollback_outer_transaction(monkeypatch):
+    from api.app.services import telegram_post_close
+
+    session = _session()
+    contact, ticket, _cycle = _closed_review_cycle(session)
+    first = telegram_post_close.save_ticket_feedback(session, ticket=ticket, contact=contact, text="Первый")
+    session.commit()
+
+    ticket.subject = "Changed before duplicate"
+    monkeypatch.setattr(telegram_post_close, "_feedback_exists", lambda *_args, **_kwargs: False)
+    duplicate = telegram_post_close.save_ticket_feedback(session, ticket=ticket, contact=contact, text="Второй")
+    session.flush()
+
+    assert duplicate.id == first.id
+    assert ticket.subject == "Changed before duplicate"
+    assert len(_feedbacks(session)) == 1
+
+
+def test_reopen_and_second_close_does_not_offer_second_feedback(monkeypatch):
+    session = _session()
+    contact, ticket, _cycle = _closed_review_cycle(session)
+    session.add(
+        TicketFeedback(
+            id=str(uuid.uuid4()),
+            ticket_id=ticket.id,
+            client_id=contact.client_id,
+            client_name_snapshot="Client",
+            ticket_title_snapshot="Need help",
+            text="Уже отправлено",
+            submitted_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    ticket.status = TicketStatus.PENDING.value
+    agent = session.get(User, ticket.assignee_id)
+    agent_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Повторный ответ",
+        author_user_id=agent.id,
+        created_at=datetime.utcnow(),
+    )
+    session.add(agent_message)
+    session.commit()
+
+    sent = _close_ticket(
+        session,
+        ticket,
+        SimpleNamespace(id=agent.id, role="agent"),
+        agent_message,
+        send_result={"ok": True, "result": {"message_id": 195}},
+    )
+
+    labels = _markup_labels(sent[0][1]["reply_markup"])
+    assert "Предложения и замечания" not in labels
+    assert len(_feedbacks(session)) == 1
+
+
+def test_feedback_back_cancels_only_feedback_input_and_returns_actions(monkeypatch):
+    session = _session()
+    contact, ticket, cycle = _closed_review_cycle(session)
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 200 + len(sent)}})
+
+    telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8011, contact=contact, data=feedback_start_callback_data(ticket.id), message_id=77),
+        notify_client=True,
+    )
+    input_state = session.execute(select(TicketFeedbackInput)).scalar_one()
+    result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8012, contact=contact, data=feedback_back_callback_data(input_state.id), message_id=int(input_state.current_message_id)),
+        notify_client=True,
+    )
+    session.refresh(input_state)
+    session.refresh(cycle)
+
+    assert result["feedback"] == "cancelled"
+    assert input_state.state == TicketFeedbackState.CANCELLED.value
+    assert _feedbacks(session) == []
+    assert cycle.state == TicketReviewCycleState.OFFERED.value
+    assert sent[-1][0][1] == telegram_router.TICKET_CLOSED_CLIENT_TEXT
+    assert _markup_labels(sent[-1][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
+
+
+def test_start_command_cleans_feedback_input_without_saving(monkeypatch):
+    session = _session()
+    contact, ticket, _cycle = _closed_review_cycle(session)
+    input_state = TicketFeedbackInput(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        client_id=contact.client_id,
+        state=TicketFeedbackState.AWAITING_TEXT.value,
+        current_message_id="222",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(input_state)
+    session.commit()
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_problem_menu", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 223}})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 224}})
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=8021, contact=contact, text="/start"),
+        notify_client=True,
+    )
+    session.refresh(input_state)
+
+    assert result["command"] == "start"
+    assert input_state.state == TicketFeedbackState.CANCELLED.value
+    assert input_state.current_message_id is None
+    assert _feedbacks(session) == []
+
+
+def test_review_completion_offers_feedback_and_feedback_completion_can_offer_review(monkeypatch):
+    session = _session()
+    contact, ticket, cycle, review = _awaiting_text_cycle(session)
+    sent = []
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 230 + len(sent)}})
+
+    telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=8031, contact=contact, text="Отзыв"),
+        notify_client=True,
+    )
+    assert _markup_labels(sent[-1][1]["reply_markup"]) == ["Предложения и замечания"]
+    session.refresh(review)
+    assert review.review_text == "Отзыв"
+
+    session2 = _session()
+    contact2, ticket2, _cycle2 = _closed_review_cycle(session2)
+    sent2 = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent2.append((args, kwargs)) or {"ok": True, "result": {"message_id": 240 + len(sent2)}})
+    telegram_router.process_telegram_update(
+        session2,
+        _callback_payload(update_id=8032, contact=contact2, data=feedback_start_callback_data(ticket2.id), message_id=77),
+        notify_client=True,
+    )
+    telegram_router.process_telegram_update(
+        session2,
+        _message_payload(update_id=8033, contact=contact2, text="Предложение"),
+        notify_client=True,
+    )
+    assert _markup_labels(sent2[-1][1]["reply_markup"]) == ["Оставить отзыв"]
+
+
+def test_feedback_thank_you_review_action_becomes_current_and_starts_review(monkeypatch):
+    session = _session()
+    contact, ticket, cycle = _closed_review_cycle(session)
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 240 + len(sent)}})
+
+    telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8034, contact=contact, data=feedback_start_callback_data(ticket.id), message_id=77),
+        notify_client=True,
+    )
+    input_state = session.execute(select(TicketFeedbackInput)).scalar_one()
+    assert input_state.current_message_id == "241"
+
+    feedback_result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=8035, contact=contact, text="Предложение"),
+        notify_client=True,
+    )
+    session.refresh(cycle)
+
+    assert feedback_result["feedback"] == "completed"
+    assert _markup_labels(sent[-1][1]["reply_markup"]) == ["Оставить отзыв"]
+    assert cycle.state == TicketReviewCycleState.OFFERED.value
+    assert cycle.review_current_message_id == "242"
+
+    review_result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(
+            update_id=8036,
+            contact=contact,
+            data=review_start_callback_data(cycle.id),
+            message_id=int(cycle.review_current_message_id),
+        ),
+        notify_client=True,
+    )
+    session.refresh(cycle)
+
+    assert review_result["review"] == "awaiting_rating"
+    assert cycle.state == TicketReviewCycleState.AWAITING_RATING.value
+    assert cycle.review_current_message_id == "243"
+
+
+def test_back_keeps_completed_other_action_and_shows_remaining_buttons(monkeypatch):
+    session = _session()
+    contact, ticket, cycle = _closed_review_cycle(session)
+    session.add(
+        TicketFeedback(
+            id=str(uuid.uuid4()),
+            ticket_id=ticket.id,
+            client_id=contact.client_id,
+            client_name_snapshot="Client",
+            ticket_title_snapshot="Need help",
+            text="Already sent",
+            submitted_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+    )
+    start_review_rating_cycle(session, cycle=cycle)
+    set_review_current_message_id(session, cycle=cycle, message_id="88")
+    session.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 290}})
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8037, contact=contact, data=review_back_callback_data(cycle.id), message_id=88),
+        notify_client=True,
+    )
+    session.refresh(cycle)
+
+    assert result["review"] == "offered"
+    assert sent[0][0][1] == telegram_router.TICKET_CLOSED_CLIENT_TEXT
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв"]
+    assert cycle.state == TicketReviewCycleState.OFFERED.value
+    assert cycle.review_current_message_id == "290"
+    assert len(_feedbacks(session)) == 1
+
+
+def test_task_feedback_back_returns_task_completion_message_without_review(monkeypatch):
+    session = _session()
+    company, client, contact, agent, _admin = _seed_base(session)
+    task, _message = _seed_ticket(session, company, client, agent, workflow_type=TicketWorkflowType.TASK.value)
+    task.status = TicketStatus.CLOSED.value
+    session.commit()
+
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 300 + len(sent)}})
+
+    started = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8038, contact=contact, data=feedback_start_callback_data(task.id), message_id=300),
+        notify_client=True,
+    )
+    input_state = session.execute(select(TicketFeedbackInput)).scalar_one()
+    result = telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=8039, contact=contact, data=feedback_back_callback_data(input_state.id), message_id=int(input_state.current_message_id)),
+        notify_client=True,
+    )
+    session.refresh(input_state)
+
+    assert started["feedback"] == "awaiting_text"
+    assert result["feedback"] == "cancelled"
+    assert input_state.state == TicketFeedbackState.CANCELLED.value
+    assert 'По Вашей задаче "Need help"' in sent[-1][0][1]
+    assert "Получен ответ:" in sent[-1][0][1]
+    assert "Done" in sent[-1][0][1]
+    assert _markup_labels(sent[-1][1]["reply_markup"]) == ["Предложения и замечания"]
+    assert _cycles(session) == []
+    assert _feedbacks(session) == []
+
+
+def test_no_post_close_buttons_after_both_actions_and_task_feedback_has_no_review(monkeypatch):
+    session = _session()
+    contact, ticket, cycle, _review = _awaiting_text_cycle(session)
+    sent = []
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 250 + len(sent)}})
+    telegram_router.process_telegram_update(session, _message_payload(update_id=8041, contact=contact, text="Отзыв"), notify_client=True)
+    telegram_router.process_telegram_update(session, _callback_payload(update_id=8042, contact=contact, data=feedback_start_callback_data(ticket.id), message_id=251), notify_client=True)
+    telegram_router.process_telegram_update(session, _message_payload(update_id=8043, contact=contact, text="Предложение"), notify_client=True)
+    session.refresh(cycle)
+    assert cycle.state == TicketReviewCycleState.COMPLETED.value
+    assert sent[-1][1]["reply_markup"] is None
+
+    session2 = _session()
+    company, client, contact2, agent, _admin = _seed_base(session2)
+    task, _message = _seed_ticket(session2, company, client, agent, workflow_type=TicketWorkflowType.TASK.value)
+    task.status = TicketStatus.CLOSED.value
+    session2.commit()
+    sent2 = []
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent2.append((args, kwargs)) or {"ok": True, "result": {"message_id": 260 + len(sent2)}})
+    telegram_router.process_telegram_update(session2, _callback_payload(update_id=8044, contact=contact2, data=feedback_start_callback_data(task.id), message_id=260), notify_client=True)
+    telegram_router.process_telegram_update(session2, _message_payload(update_id=8045, contact=contact2, text="Task feedback"), notify_client=True)
+    assert sent2[-1][1]["reply_markup"] is None
+
+
+def test_feedback_media_during_input_is_not_saved(monkeypatch):
+    session = _session()
+    contact, ticket, _cycle = _closed_review_cycle(session)
+    input_state = TicketFeedbackInput(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        client_id=contact.client_id,
+        state=TicketFeedbackState.AWAITING_TEXT.value,
+        current_message_id="270",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(input_state)
+    session.commit()
+    monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 271}})
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=8051, contact=contact, attachment_kind="document"),
+        notify_client=True,
+    )
+    session.refresh(input_state)
+
+    assert result["feedback"] == "text_required"
+    assert input_state.state == TicketFeedbackState.AWAITING_TEXT.value
+    assert _feedbacks(session) == []

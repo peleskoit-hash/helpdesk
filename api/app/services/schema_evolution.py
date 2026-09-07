@@ -10,6 +10,7 @@ TICKET_REVIEWS_CURRENT_PAIR_UNIQUE_NAME = "uq_ticket_reviews_current_pair"
 TICKET_REVIEWS_PAIR_VERSION_UNIQUE_NAME = "uq_ticket_reviews_pair_version"
 TICKET_REVIEWS_CYCLE_UNIQUE_NAME = "uq_ticket_reviews_cycle_id"
 TICKET_REVIEW_CYCLES_REVIEW_FK_NAME = "fk_ticket_review_cycles_review_id"
+TICKET_FEEDBACK_TICKET_UNIQUE_NAME = "uq_ticket_feedback_ticket_id"
 
 
 def _telegram_contact_duplicate_group_count(conn) -> int:
@@ -492,6 +493,53 @@ def ensure_ticket_reviews_tables() -> None:
                 "WHERE is_current IS NULL"
             )
         )
+
+
+def ensure_ticket_feedback_tables() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS ticket_feedback (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    client_id VARCHAR(36) NOT NULL REFERENCES clients(id),
+                    client_name_snapshot TEXT NOT NULL,
+                    ticket_title_snapshot TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    submitted_at {timestamp_type} NOT NULL,
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    CONSTRAINT {TICKET_FEEDBACK_TICKET_UNIQUE_NAME} UNIQUE (ticket_id)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS ticket_feedback_inputs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    ticket_id VARCHAR(36) NOT NULL REFERENCES tickets(id),
+                    client_id VARCHAR(36) NOT NULL REFERENCES clients(id),
+                    state VARCHAR(40) NOT NULL,
+                    current_message_id VARCHAR(100),
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    completed_at {timestamp_type},
+                    cancelled_at {timestamp_type}
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_feedback_ticket_id ON ticket_feedback(ticket_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_feedback_ticket_id ON ticket_feedback(ticket_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_feedback_client_id ON ticket_feedback(client_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_feedback_submitted_at ON ticket_feedback(submitted_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_feedback_inputs_ticket_id ON ticket_feedback_inputs(ticket_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_feedback_inputs_client_id ON ticket_feedback_inputs(client_id)"))
 
 
 def ensure_telegram_contact_columns() -> None:

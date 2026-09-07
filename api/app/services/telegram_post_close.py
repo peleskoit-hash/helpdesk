@@ -5,10 +5,12 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Client, ClientProfile, TelegramContact, TelegramUpdate, Ticket, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from ..models import Client, ClientProfile, TelegramContact, TelegramUpdate, Ticket, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .automatic_messages import render_automatic_message_for_telegram
+from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 from .ticket_reviews import (
     cancel_review_cycle,
     clear_review_current_message_id,
@@ -35,6 +37,12 @@ REVIEW_TEXT_PROMPT_FALLBACK_TEXT = "Если хотите, напишите ко
 REVIEW_ATTACHMENT_NO_TEXT_FALLBACK_TEXT = "Вложение не будет добавлено к отзыву. Отправьте текст сообщения или добавьте подпись к вложению."
 REVIEW_ATTACHMENT_CAPTION_FALLBACK_TEXT = "Подпись к вложению сохранена как текст отзыва. Вы можете отправить другой текст или завершить отзыв."
 REVIEW_THANK_YOU_FALLBACK_TEXT = "Спасибо за ваш отзыв!"
+FEEDBACK_START_PREFIX = "feedback:start:"
+FEEDBACK_BACK_PREFIX = "feedback:back:"
+FEEDBACK_STALE_TEXT = "Это действие больше неактуально"
+FEEDBACK_PROMPT_FALLBACK_TEXT = "Напишите предложение или замечание одним текстовым сообщением."
+FEEDBACK_THANK_YOU_FALLBACK_TEXT = "Спасибо! Ваше предложение или замечание сохранено."
+FEEDBACK_TEXT_REQUIRED_FALLBACK_TEXT = "Пожалуйста, отправьте предложение или замечание текстом."
 
 
 def review_start_callback_data(cycle_id: str) -> str:
@@ -53,6 +61,14 @@ def review_finish_callback_data(cycle_id: str) -> str:
     return f"{REVIEW_FINISH_PREFIX}{cycle_id}"
 
 
+def feedback_start_callback_data(ticket_id: str) -> str:
+    return f"{FEEDBACK_START_PREFIX}{ticket_id}"
+
+
+def feedback_back_callback_data(input_id: str) -> str:
+    return f"{FEEDBACK_BACK_PREFIX}{input_id}"
+
+
 def is_review_callback_data(data: str) -> bool:
     return (
         data.startswith(REVIEW_START_PREFIX)
@@ -62,12 +78,89 @@ def is_review_callback_data(data: str) -> bool:
     )
 
 
-def post_close_actions_markup(cycle: TicketReviewCycle) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "Оставить отзыв", "callback_data": review_start_callback_data(cycle.id)}],
-        ],
-    }
+def is_feedback_callback_data(data: str) -> bool:
+    return data.startswith(FEEDBACK_START_PREFIX) or data.startswith(FEEDBACK_BACK_PREFIX)
+
+
+def feedback_input_markup(input_state: TicketFeedbackInput) -> dict:
+    return {"inline_keyboard": [[{"text": "Назад", "callback_data": feedback_back_callback_data(input_state.id)}]]}
+
+
+def _feedback_exists(db: Session, ticket_id: str | None) -> bool:
+    if not ticket_id:
+        return False
+    return db.execute(select(TicketFeedback.id).where(TicketFeedback.ticket_id == ticket_id).limit(1)).first() is not None
+
+
+def _review_completed_for_cycle(db: Session, cycle: TicketReviewCycle | None) -> bool:
+    if cycle is None:
+        return False
+    if cycle.state == TicketReviewCycleState.COMPLETED.value:
+        return True
+    return db.execute(select(TicketReview.id).where(TicketReview.cycle_id == cycle.id).limit(1)).first() is not None
+
+
+def _feedback_supported_ticket(ticket: Ticket | None, *, assume_closed: bool = False) -> bool:
+    if ticket is None:
+        return False
+    if not assume_closed and ticket.status != TicketStatus.CLOSED.value:
+        return False
+    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    return workflow_type in {TicketWorkflowType.TICKET.value, TicketWorkflowType.TASK.value}
+
+
+def available_post_close_actions(
+    db: Session,
+    *,
+    ticket: Ticket | None,
+    contact: TelegramContact | None,
+    review_cycle: TicketReviewCycle | None = None,
+    assume_closed: bool = False,
+) -> dict[str, bool]:
+    if ticket is None or contact is None or ticket.client_id != contact.client_id:
+        return {"review": False, "feedback": False}
+    review_available = (
+        review_cycle is not None
+        and is_ordinary_review_ticket(ticket)
+        and (assume_closed or ticket.status == TicketStatus.CLOSED.value)
+        and review_cycle.client_id == contact.client_id
+        and review_cycle.ticket_id == ticket.id
+        and review_cycle.state == TicketReviewCycleState.OFFERED.value
+        and not _review_completed_for_cycle(db, review_cycle)
+    )
+    feedback_available = _feedback_supported_ticket(ticket, assume_closed=assume_closed) and not _feedback_exists(db, ticket.id)
+    return {"review": review_available, "feedback": feedback_available}
+
+
+def post_close_actions_markup(
+    db: Session,
+    *,
+    ticket: Ticket | None,
+    contact: TelegramContact | None,
+    review_cycle: TicketReviewCycle | None = None,
+    assume_closed: bool = False,
+) -> dict | None:
+    actions = available_post_close_actions(
+        db,
+        ticket=ticket,
+        contact=contact,
+        review_cycle=review_cycle,
+        assume_closed=assume_closed,
+    )
+    rows = []
+    if actions["review"] and review_cycle is not None:
+        rows.append([{"text": "Оставить отзыв", "callback_data": review_start_callback_data(review_cycle.id)}])
+    if actions["feedback"] and ticket is not None:
+        rows.append([{"text": "Предложения и замечания", "callback_data": feedback_start_callback_data(ticket.id)}])
+    return {"inline_keyboard": rows} if rows else None
+
+
+def _markup_has_review_action(markup: dict | None) -> bool:
+    for row in (markup or {}).get("inline_keyboard") or []:
+        for button in row:
+            if str(button.get("callback_data") or "").startswith(REVIEW_START_PREFIX):
+                return True
+    return False
 
 
 def review_rating_markup(cycle: TicketReviewCycle) -> dict:
@@ -251,6 +344,31 @@ def _active_cycle_context_for_contact(
     return None, None, None
 
 
+def _active_feedback_input_context_for_contact(
+    db: Session,
+    *,
+    contact: TelegramContact,
+) -> tuple[TicketFeedbackInput | None, Ticket | None]:
+    inputs = db.execute(
+        select(TicketFeedbackInput)
+        .where(
+            and_(
+                TicketFeedbackInput.client_id == contact.client_id,
+                TicketFeedbackInput.state == TicketFeedbackState.AWAITING_TEXT.value,
+            )
+        )
+        .order_by(desc(TicketFeedbackInput.created_at), desc(TicketFeedbackInput.id))
+    ).scalars().all()
+    for input_state in inputs:
+        ticket = db.get(Ticket, input_state.ticket_id)
+        if not _feedback_supported_ticket(ticket):
+            continue
+        if _feedback_exists(db, input_state.ticket_id):
+            continue
+        return input_state, ticket
+    return None, None
+
+
 def _safe_delete_exact_message(delete_message_fn, external_chat_id: str, message_id: str | int | None) -> None:
     if message_id is None:
         return
@@ -285,6 +403,60 @@ def _client_name_snapshot(db: Session, contact: TelegramContact) -> str:
     return client_name.strip() or telegram_name.strip() or "Клиент"
 
 
+def create_feedback_input(db: Session, *, ticket: Ticket, contact: TelegramContact) -> TicketFeedbackInput:
+    existing, existing_ticket = _active_feedback_input_context_for_contact(db, contact=contact)
+    if existing is not None and existing_ticket is not None and existing.ticket_id == ticket.id:
+        return existing
+    if existing is not None:
+        existing.state = TicketFeedbackState.CANCELLED.value
+        existing.cancelled_at = _now_utc()
+        existing.current_message_id = None
+        existing.updated_at = _now_utc()
+    now = _now_utc()
+    input_state = TicketFeedbackInput(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        client_id=contact.client_id,
+        state=TicketFeedbackState.AWAITING_TEXT.value,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(input_state)
+    db.flush()
+    return input_state
+
+
+def save_ticket_feedback(
+    db: Session,
+    *,
+    ticket: Ticket,
+    contact: TelegramContact,
+    text: str,
+    submitted_at: datetime | None = None,
+) -> TicketFeedback | None:
+    if _feedback_exists(db, ticket.id):
+        return db.execute(select(TicketFeedback).where(TicketFeedback.ticket_id == ticket.id)).scalar_one_or_none()
+    now = submitted_at or _now_utc()
+    try:
+        with db.begin_nested():
+            feedback = TicketFeedback(
+                id=str(uuid.uuid4()),
+                ticket_id=ticket.id,
+                client_id=contact.client_id,
+                client_name_snapshot=_client_name_snapshot(db, contact),
+                ticket_title_snapshot=resolve_ticket_subject(db, ticket),
+                text=text,
+                submitted_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(feedback)
+            db.flush()
+    except IntegrityError:
+        return db.execute(select(TicketFeedback).where(TicketFeedback.ticket_id == ticket.id)).scalar_one_or_none()
+    return feedback
+
+
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -296,6 +468,24 @@ def _agent_name_snapshot(agent: User | None) -> str:
 def _send_review_message(send_message_fn, external_chat_id: str, text: str, parse_mode: str | None, **kwargs) -> str | None:
     response = send_message_fn(external_chat_id, text, parse_mode=parse_mode, **kwargs)
     return _telegram_message_id(response)
+
+
+def _render_post_close_message_for_back(
+    db: Session,
+    *,
+    ticket: Ticket,
+    ticket_closed_client_text: str,
+) -> tuple[str, str | None]:
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TASK.value:
+        from .ticket_lifecycle import format_task_post_close_text
+
+        text = format_task_post_close_text(db, ticket)
+    else:
+        text = ticket_closed_client_text
+    try:
+        return prepare_telegram_html_message(text)
+    except Exception:
+        return strip_telegram_html(text), None
 
 
 def _render_review_message(
@@ -345,8 +535,16 @@ def _complete_review_with_thank_you(
         contact=contact,
         agent=agent,
     )
+    thank_you_markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=None)
     try:
-        thank_you_message_id = _send_review_message(send_message_fn, external_chat_id, thank_you_text, thank_you_parse_mode)
+        thank_you_message_id = _send_review_message(
+            send_message_fn,
+            external_chat_id,
+            thank_you_text,
+            thank_you_parse_mode,
+            reply_markup=thank_you_markup,
+            remove_keyboard=thank_you_markup is None,
+        )
     except Exception:
         thank_you_message_id = None
     if thank_you_message_id is None:
@@ -395,6 +593,25 @@ def cleanup_review_flow_for_contact(
     return cycle
 
 
+def cleanup_feedback_flow_for_contact(
+    db: Session,
+    *,
+    contact: TelegramContact,
+    external_chat_id: str,
+    delete_message_fn,
+) -> TicketFeedbackInput | None:
+    input_state, _ticket = _active_feedback_input_context_for_contact(db, contact=contact)
+    if input_state is None:
+        return None
+    _safe_delete_exact_message(delete_message_fn, external_chat_id, input_state.current_message_id)
+    input_state.state = TicketFeedbackState.CANCELLED.value
+    input_state.cancelled_at = _now_utc()
+    input_state.current_message_id = None
+    input_state.updated_at = _now_utc()
+    db.flush()
+    return input_state
+
+
 def cleanup_review_flow_for_ticket_reopen(
     db: Session,
     *,
@@ -434,6 +651,125 @@ def cleanup_review_flow_for_ticket_reopen(
     else:
         cancel_review_cycle(db, cycle=cycle)
     return cycle
+
+
+def cleanup_feedback_flow_for_ticket_reopen(
+    db: Session,
+    *,
+    ticket: Ticket,
+    contact: TelegramContact | None,
+    delete_message_fn,
+) -> TicketFeedbackInput | None:
+    input_state = db.execute(
+        select(TicketFeedbackInput)
+        .where(
+            and_(
+                TicketFeedbackInput.ticket_id == ticket.id,
+                TicketFeedbackInput.client_id == ticket.client_id,
+                TicketFeedbackInput.state == TicketFeedbackState.AWAITING_TEXT.value,
+            )
+        )
+        .order_by(desc(TicketFeedbackInput.created_at), desc(TicketFeedbackInput.id))
+        .limit(1)
+    ).scalar_one_or_none()
+    if input_state is None:
+        return None
+    if contact is not None:
+        _safe_delete_exact_message(delete_message_fn, contact.external_chat_id, input_state.current_message_id)
+    input_state.state = TicketFeedbackState.CANCELLED.value
+    input_state.cancelled_at = _now_utc()
+    input_state.current_message_id = None
+    input_state.updated_at = _now_utc()
+    db.flush()
+    return input_state
+
+
+def process_feedback_incoming_message(
+    db: Session,
+    *,
+    contact: TelegramContact,
+    external_chat_id: str,
+    text: str,
+    has_attachment: bool,
+    notify_client: bool,
+    delete_message_fn,
+    send_message_fn,
+) -> dict | None:
+    input_state, ticket = _active_feedback_input_context_for_contact(db, contact=contact)
+    if input_state is None or ticket is None:
+        return None
+
+    old_message_id = input_state.current_message_id
+    if has_attachment or not text.strip():
+        hint_text, hint_parse_mode = _render_review_message(
+            db,
+            "telegram.feedback.text_required",
+            FEEDBACK_TEXT_REQUIRED_FALLBACK_TEXT,
+            ticket=ticket,
+            contact=contact,
+        )
+        if notify_client:
+            try:
+                new_message_id = _send_review_message(
+                    send_message_fn,
+                    external_chat_id,
+                    hint_text,
+                    hint_parse_mode,
+                    reply_markup=feedback_input_markup(input_state),
+                )
+            except Exception:
+                new_message_id = None
+            if new_message_id is not None:
+                input_state.current_message_id = new_message_id
+                input_state.updated_at = _now_utc()
+                _safe_delete_exact_message(delete_message_fn, external_chat_id, old_message_id)
+        db.commit()
+        return {"ok": True, "feedback": "text_required", "input_id": input_state.id}
+
+    feedback = save_ticket_feedback(db, ticket=ticket, contact=contact, text=text.strip())
+    input_state.state = TicketFeedbackState.COMPLETED.value
+    input_state.completed_at = _now_utc()
+    input_state.current_message_id = None
+    input_state.updated_at = _now_utc()
+
+    if notify_client:
+        thank_you_text, thank_you_parse_mode = _render_review_message(
+            db,
+            "telegram.feedback.thank_you",
+            FEEDBACK_THANK_YOU_FALLBACK_TEXT,
+            ticket=ticket,
+            contact=contact,
+        )
+        review_cycle = db.execute(
+            select(TicketReviewCycle)
+            .where(
+                and_(
+                    TicketReviewCycle.ticket_id == ticket.id,
+                    TicketReviewCycle.client_id == contact.client_id,
+                    TicketReviewCycle.state == TicketReviewCycleState.OFFERED.value,
+                )
+            )
+            .order_by(desc(TicketReviewCycle.created_at), desc(TicketReviewCycle.id))
+            .limit(1)
+        ).scalar_one_or_none()
+        thank_you_markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=review_cycle)
+        thank_you_message_id = None
+        try:
+            thank_you_message_id = _send_review_message(
+                send_message_fn,
+                external_chat_id,
+                thank_you_text,
+                thank_you_parse_mode,
+                reply_markup=thank_you_markup,
+                remove_keyboard=thank_you_markup is None,
+            )
+        except Exception:
+            pass
+        if review_cycle is not None and thank_you_message_id is not None and _markup_has_review_action(thank_you_markup):
+            set_review_current_message_id(db, cycle=review_cycle, message_id=thank_you_message_id)
+        _safe_delete_exact_message(delete_message_fn, external_chat_id, old_message_id)
+    db.commit()
+    return {"ok": True, "feedback": "completed", "feedback_id": feedback.id if feedback is not None else None}
 
 
 def process_review_incoming_message(
@@ -523,6 +859,198 @@ def process_review_incoming_message(
     return {"ok": True, "review": "completed", "cycle_id": cycle.id, "thank_you_sent": sent_thank_you}
 
 
+def _feedback_ticket_id_from_callback_data(data: str) -> str | None:
+    if data.startswith(FEEDBACK_START_PREFIX):
+        return data[len(FEEDBACK_START_PREFIX) :]
+    return None
+
+
+def _feedback_input_id_from_callback_data(data: str) -> str | None:
+    if data.startswith(FEEDBACK_BACK_PREFIX):
+        return data[len(FEEDBACK_BACK_PREFIX) :]
+    return None
+
+
+def _latest_review_offer_for_ticket(db: Session, *, ticket: Ticket, contact: TelegramContact) -> TicketReviewCycle | None:
+    return db.execute(
+        select(TicketReviewCycle)
+        .where(
+            and_(
+                TicketReviewCycle.ticket_id == ticket.id,
+                TicketReviewCycle.client_id == contact.client_id,
+                TicketReviewCycle.state == TicketReviewCycleState.OFFERED.value,
+            )
+        )
+        .order_by(desc(TicketReviewCycle.created_at), desc(TicketReviewCycle.id))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def process_feedback_callback(
+    db: Session,
+    payload: dict,
+    callback: dict,
+    notify_client: bool,
+    *,
+    first_company_fn,
+    get_or_create_contact_from_user_fn,
+    answer_callback_query_fn,
+    safe_remove_inline_keyboard_fn,
+    delete_message_fn,
+    send_message_fn,
+    ticket_closed_client_text: str,
+) -> dict:
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    from_user = callback.get("from") or {}
+    external_chat_id = str(chat.get("id", ""))
+    callback_id = str(callback.get("id", ""))
+    callback_message_id = message.get("message_id") if isinstance(message.get("message_id"), int) else None
+    data = str(callback.get("data") or "")
+
+    db.add(
+        TelegramUpdate(
+            id=str(uuid.uuid4()),
+            update_id=str(payload.get("update_id")),
+            external_chat_id=external_chat_id or None,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+    )
+
+    company = first_company_fn(db)
+    if company is None or not external_chat_id:
+        db.commit()
+        return {"ok": True, "ignored": "invalid_feedback_callback"}
+
+    contact = get_or_create_contact_from_user_fn(db, company.id, external_chat_id, from_user)
+
+    if data.startswith(FEEDBACK_START_PREFIX):
+        ticket_id = _feedback_ticket_id_from_callback_data(data)
+        ticket = db.get(Ticket, ticket_id) if ticket_id else None
+        active_review, _active_review_ticket, _active_review_agent = _active_cycle_context_for_contact(
+            db,
+            contact=contact,
+            states={
+                TicketReviewCycleState.AWAITING_RATING.value,
+                TicketReviewCycleState.AWAITING_TEXT.value,
+                TicketReviewCycleState.AWAITING_TEXT_AFTER_CAPTION.value,
+            },
+        )
+        if ticket is None or not _feedback_supported_ticket(ticket) or ticket.client_id != contact.client_id or _feedback_exists(db, ticket.id):
+            db.commit()
+            _handle_stale_callback(
+                external_chat_id=external_chat_id,
+                callback_id=callback_id,
+                callback_message_id=callback_message_id,
+                notify_client=notify_client,
+                answer_callback_query_fn=answer_callback_query_fn,
+                safe_remove_inline_keyboard_fn=safe_remove_inline_keyboard_fn,
+            )
+            return {"ok": True, "feedback": "stale"}
+        if active_review is not None:
+            db.commit()
+            _handle_stale_callback(
+                external_chat_id=external_chat_id,
+                callback_id=callback_id,
+                callback_message_id=callback_message_id,
+                notify_client=notify_client,
+                answer_callback_query_fn=answer_callback_query_fn,
+                safe_remove_inline_keyboard_fn=safe_remove_inline_keyboard_fn,
+            )
+            return {"ok": True, "feedback": "stale"}
+        if notify_client and callback_id:
+            answer_callback_query_fn(callback_id)
+        input_state = create_feedback_input(db, ticket=ticket, contact=contact)
+        prompt_text, prompt_parse_mode = _render_review_message(
+            db,
+            "telegram.feedback.prompt",
+            FEEDBACK_PROMPT_FALLBACK_TEXT,
+            ticket=ticket,
+            contact=contact,
+        )
+        old_message_id = callback_message_id
+        try:
+            new_message_id = _send_review_message(
+                send_message_fn,
+                external_chat_id,
+                prompt_text,
+                prompt_parse_mode,
+                reply_markup=feedback_input_markup(input_state),
+            )
+        except Exception:
+            new_message_id = None
+        if new_message_id is None:
+            input_state.state = TicketFeedbackState.CANCELLED.value
+            input_state.cancelled_at = _now_utc()
+            input_state.current_message_id = None
+            input_state.updated_at = _now_utc()
+            db.commit()
+            return {"ok": True, "feedback": "prompt_failed"}
+        input_state.current_message_id = new_message_id
+        input_state.updated_at = _now_utc()
+        if old_message_id is not None:
+            _safe_delete_exact_message(delete_message_fn, external_chat_id, old_message_id)
+        db.commit()
+        return {"ok": True, "feedback": "awaiting_text", "input_id": input_state.id}
+
+    input_id = _feedback_input_id_from_callback_data(data)
+    input_state = db.get(TicketFeedbackInput, input_id) if input_id else None
+    ticket = db.get(Ticket, input_state.ticket_id) if input_state is not None else None
+    if (
+        input_state is None
+        or ticket is None
+        or input_state.client_id != contact.client_id
+        or input_state.state != TicketFeedbackState.AWAITING_TEXT.value
+        or callback_message_id is None
+        or input_state.current_message_id != str(callback_message_id)
+    ):
+        db.commit()
+        _handle_stale_callback(
+            external_chat_id=external_chat_id,
+            callback_id=callback_id,
+            callback_message_id=callback_message_id,
+            notify_client=notify_client,
+            answer_callback_query_fn=answer_callback_query_fn,
+            safe_remove_inline_keyboard_fn=safe_remove_inline_keyboard_fn,
+        )
+        return {"ok": True, "feedback": "stale"}
+
+    old_message_id = input_state.current_message_id
+    review_cycle = _latest_review_offer_for_ticket(db, ticket=ticket, contact=contact)
+    markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=review_cycle)
+    post_close_text, post_close_parse_mode = _render_post_close_message_for_back(
+        db,
+        ticket=ticket,
+        ticket_closed_client_text=ticket_closed_client_text,
+    )
+    try:
+        new_message_id = _send_review_message(
+            send_message_fn,
+            external_chat_id,
+            post_close_text,
+            post_close_parse_mode,
+            reply_markup=markup,
+            remove_keyboard=markup is None,
+        )
+    except Exception:
+        new_message_id = None
+    if new_message_id is None:
+        db.commit()
+        return {"ok": True, "feedback": "post_close_failed", "input_id": input_state.id}
+    if notify_client and callback_id:
+        answer_callback_query_fn(callback_id)
+    input_state.state = TicketFeedbackState.CANCELLED.value
+    input_state.cancelled_at = _now_utc()
+    input_state.current_message_id = None
+    input_state.updated_at = _now_utc()
+    if review_cycle is not None and _markup_has_review_action(markup):
+        set_review_current_message_id(db, cycle=review_cycle, message_id=new_message_id)
+    _safe_delete_exact_message(delete_message_fn, external_chat_id, old_message_id)
+    db.commit()
+    return {"ok": True, "feedback": "cancelled", "input_id": input_state.id}
+
+
 def process_review_callback(
     db: Session,
     payload: dict,
@@ -536,6 +1064,7 @@ def process_review_callback(
     delete_message_fn,
     send_message_fn,
     edit_message_reply_markup_fn,
+    ticket_closed_client_text: str,
 ) -> dict:
     message = callback.get("message") or {}
     chat = message.get("chat") or {}
@@ -590,6 +1119,18 @@ def process_review_callback(
         return {"ok": True, "review": "stale"}
 
     if action == "start":
+        active_feedback, _active_feedback_ticket = _active_feedback_input_context_for_contact(db, contact=contact)
+        if active_feedback is not None:
+            db.commit()
+            _handle_stale_callback(
+                external_chat_id=external_chat_id,
+                callback_id=callback_id,
+                callback_message_id=callback_message_id,
+                notify_client=notify_client,
+                answer_callback_query_fn=answer_callback_query_fn,
+                safe_remove_inline_keyboard_fn=safe_remove_inline_keyboard_fn,
+            )
+            return {"ok": True, "review": "stale"}
         if notify_client and callback_id:
             answer_callback_query_fn(callback_id)
         old_message_id = cycle.review_current_message_id
@@ -635,29 +1176,32 @@ def process_review_callback(
         if notify_client and callback_id:
             answer_callback_query_fn(callback_id)
         old_message_id = cycle.review_current_message_id
-        close_text, close_parse_mode = render_automatic_message_for_telegram(
+        return_review_cycle_to_offered(db, cycle=cycle)
+        markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=cycle)
+        post_close_text, post_close_parse_mode = _render_post_close_message_for_back(
             db,
-            "telegram.ticket.close.client",
-            REVIEW_CLOSE_FALLBACK_TEXT,
             ticket=ticket,
-            contact=contact,
+            ticket_closed_client_text=ticket_closed_client_text,
         )
         try:
             new_message_id = _send_review_message(
                 send_message_fn,
                 external_chat_id,
-                close_text,
-                close_parse_mode,
-                remove_keyboard=False,
-                reply_markup=post_close_actions_markup(cycle),
+                post_close_text,
+                post_close_parse_mode,
+                remove_keyboard=markup is None,
+                reply_markup=markup,
             )
         except Exception:
             new_message_id = None
         if new_message_id is None:
+            cycle.state = TicketReviewCycleState.AWAITING_RATING.value
+            cycle.review_current_message_id = old_message_id
+            cycle.updated_at = _now_utc()
             db.commit()
             return {"ok": True, "review": "post_close_failed"}
-        return_review_cycle_to_offered(db, cycle=cycle)
-        set_review_current_message_id(db, cycle=cycle, message_id=new_message_id)
+        if _markup_has_review_action(markup):
+            set_review_current_message_id(db, cycle=cycle, message_id=new_message_id)
         _safe_delete_exact_message(delete_message_fn, external_chat_id, old_message_id)
         db.commit()
         return {"ok": True, "review": "offered", "cycle_id": cycle.id}

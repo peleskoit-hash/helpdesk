@@ -17,6 +17,11 @@ REVIEW_KEYS = {
     "telegram.review.attachment_caption": "Подпись к вложению сохранена",
     "telegram.review.thank_you": "Благодарность за отзыв",
 }
+FEEDBACK_KEYS = {
+    "telegram.feedback.prompt": "Запрос предложения",
+    "telegram.feedback.thank_you": "Благодарность за предложение",
+    "telegram.feedback.text_required": "Нужен текст",
+}
 
 
 def _session():
@@ -41,3 +46,20 @@ def test_review_automatic_message_definitions_are_registered_and_listed():
     assert set(listed) == set(REVIEW_KEYS)
     assert reviews_category["category_title"] == "Отзывы"
     assert {item["key"] for item in reviews_category["items"]} == set(REVIEW_KEYS)
+
+
+def test_feedback_automatic_message_definitions_are_registered_and_listed():
+    for key, title in FEEDBACK_KEYS.items():
+        definition = get_automatic_message_definition(key)
+        assert definition is not None
+        assert definition.title == title
+        assert definition.category == "feedback"
+        assert definition.category_title == "Предложения и замечания"
+
+    response = list_automatic_messages(db=_session(), user=SimpleNamespace(role="admin"))
+    listed = {item["key"]: item for item in response["items"] if item["key"].startswith("telegram.feedback.")}
+    feedback_category = next(item for item in response["categories"] if item["category"] == "feedback")
+
+    assert set(listed) == set(FEEDBACK_KEYS)
+    assert feedback_category["category_title"] == "Предложения и замечания"
+    assert {item["key"] for item in feedback_category["items"]} == set(FEEDBACK_KEYS)

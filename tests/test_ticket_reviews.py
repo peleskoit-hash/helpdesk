@@ -860,3 +860,50 @@ def test_schema_evolution_is_idempotent_and_creates_review_invariants(monkeypatc
     assert "WHERE is_current = 1" in current_index["sql"]
     assert indexes["ix_ticket_reviews_agent_current_rated"] == ("agent_id", "is_current", "rated_at")
     assert "ix_ticket_reviews_ticket_agent_version" not in indexes
+
+
+def test_schema_evolution_is_idempotent_and_creates_feedback_invariants(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_ticket_feedback_tables()
+    schema_evolution.ensure_ticket_feedback_tables()
+
+    with engine.connect() as conn:
+        feedback_columns = {row["name"] for row in conn.execute(text("PRAGMA table_info(ticket_feedback)")).mappings().all()}
+        input_columns = {row["name"] for row in conn.execute(text("PRAGMA table_info(ticket_feedback_inputs)")).mappings().all()}
+        indexes = {}
+        index_meta = {}
+        for row in conn.execute(text("PRAGMA index_list(ticket_feedback)")).mappings().all():
+            if str(row["name"]).startswith("sqlite_autoindex_"):
+                continue
+            indexes[row["name"]] = tuple(
+                column["name"]
+                for column in conn.execute(text(f"PRAGMA index_info({row['name']})")).mappings().all()
+            )
+            index_meta[row["name"]] = {"unique": bool(row["unique"])}
+
+    assert feedback_columns == {
+        "id",
+        "ticket_id",
+        "client_id",
+        "client_name_snapshot",
+        "ticket_title_snapshot",
+        "text",
+        "submitted_at",
+        "created_at",
+        "updated_at",
+    }
+    assert input_columns == {
+        "id",
+        "ticket_id",
+        "client_id",
+        "state",
+        "current_message_id",
+        "created_at",
+        "updated_at",
+        "completed_at",
+        "cancelled_at",
+    }
+    assert indexes[schema_evolution.TICKET_FEEDBACK_TICKET_UNIQUE_NAME] == ("ticket_id",)
+    assert index_meta[schema_evolution.TICKET_FEEDBACK_TICKET_UNIQUE_NAME]["unique"] is True

@@ -38,6 +38,20 @@ def _ticket_has_telegram_contact(db: Session, ticket: Ticket) -> bool:
     return db.execute(select(TelegramContact.id).where(TelegramContact.client_id == ticket.client_id).limit(1)).first() is not None
 
 
+def _ticket_telegram_contact(db: Session, ticket: Ticket) -> TelegramContact | None:
+    return db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id).limit(1)).scalar_one_or_none()
+
+
+def _post_close_markup_for_ticket(db: Session, ticket: Ticket, review_cycle=None, *, assume_closed: bool = False) -> dict | None:
+    return post_close_actions_markup(
+        db,
+        ticket=ticket,
+        contact=_ticket_telegram_contact(db, ticket),
+        review_cycle=review_cycle,
+        assume_closed=assume_closed,
+    )
+
+
 def _send_optional_client_message(
     db: Session,
     ticket: Ticket,
@@ -173,6 +187,30 @@ def _active_message_status_filter():
     return or_(TicketMessage.message_status.is_(None), TicketMessage.message_status != "deleted")
 
 
+def first_client_message_for_ticket(db: Session, ticket: Ticket) -> TicketMessage | None:
+    return db.execute(
+        select(TicketMessage)
+        .where(and_(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.CLIENT.value))
+        .order_by(asc(TicketMessage.created_at))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def last_active_agent_message_for_ticket(db: Session, ticket: Ticket) -> TicketMessage | None:
+    return db.execute(
+        select(TicketMessage)
+        .where(
+            and_(
+                TicketMessage.ticket_id == ticket.id,
+                TicketMessage.message_type == MessageType.AGENT.value,
+                _active_message_status_filter(),
+            )
+        )
+        .order_by(desc(TicketMessage.created_at))
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _attachment_completion_label(attachment: TicketAttachment) -> str:
     source = (attachment.source or "").strip().lower()
     if source == "photo":
@@ -192,7 +230,7 @@ def _agent_answer_with_attachment_list(db: Session, agent_message: TicketMessage
     attachments = db.execute(
         select(TicketAttachment)
         .where(TicketAttachment.message_id == agent_message.id)
-        .order_by(asc(TicketAttachment.created_at), asc(TicketAttachment.id))
+        .order_by(asc(TicketAttachment.created_at))
     ).scalars().all()
     if not attachments:
         return agent_text
@@ -313,6 +351,20 @@ def _format_task_closed_without_answer_text(
 
 def format_task_closed_without_answer_text(db: Session, ticket: Ticket, client_message: TicketMessage | None) -> str:
     return _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=resolve_ticket_subject(db, ticket))
+
+
+def format_task_post_close_text(db: Session, ticket: Ticket) -> str:
+    client_message = first_client_message_for_ticket(db, ticket)
+    subject_text = resolve_ticket_subject(db, ticket)
+    task_kind = ticket.task_kind or TicketTaskKind.NORMAL.value
+    if task_kind == TicketTaskKind.GROUP_PARENT.value and client_message is not None:
+        answers, _attachments = _group_parent_children_payload(db, ticket)
+        return _format_group_task_completion_text(db, ticket, client_message, answers, subject_text=subject_text)
+
+    last_agent_message = last_active_agent_message_for_ticket(db, ticket)
+    if client_message is None or last_agent_message is None:
+        return _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=subject_text)
+    return _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text)
 
 
 def _format_group_task_completion_text(
@@ -497,6 +549,7 @@ def finalize_group_parent_if_ready(
             ),
             failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
+            reply_markup=_post_close_markup_for_ticket(db, parent, assume_closed=True),
         )
         for attachment in attachments:
             filename = attachment.original_filename or "файл"
@@ -546,6 +599,7 @@ def notify_group_parent_completion_before_delete(
             subject_text=subject_text,
         ),
         required=False,
+        reply_markup=_post_close_markup_for_ticket(db, parent, assume_closed=True),
     )
     for attachment in attachments:
         send_attachment_to_telegram_client_fn(db, parent, attachment, required=True)
@@ -644,6 +698,7 @@ def _close_task_without_reply(
             _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=subject_text),
             failure_note="Задача закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
+            reply_markup=_post_close_markup_for_ticket(db, ticket),
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
         parent = db.get(Ticket, ticket.parent_ticket_id)
@@ -717,14 +772,15 @@ def close_ticket_by_actor(
             ticket.freeze_until = None
             clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
+            reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
             close_response = _send_optional_client_message(
                 db,
                 ticket,
                 ticket_closed_client_text,
                 failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
-                remove_keyboard=review_cycle is None,
-                reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
+                remove_keyboard=reply_markup is None,
+                reply_markup=reply_markup,
             )
             if review_cycle is not None:
                 finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
@@ -781,6 +837,7 @@ def close_ticket_by_actor(
                 ),
                 failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
+                reply_markup=_post_close_markup_for_ticket(db, ticket),
             )
             for attachment in attachments:
                 filename = attachment.original_filename or "файл"
@@ -818,6 +875,7 @@ def close_ticket_by_actor(
                 _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
                 failure_note="Задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
+                reply_markup=_post_close_markup_for_ticket(db, ticket),
             )
             for attachment in message_attachments_fn(db, last_agent_message.id):
                 filename = attachment.original_filename or "файл"
@@ -843,14 +901,15 @@ def close_ticket_by_actor(
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         if bool(ticket.onsite_triggered):
             add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
+        reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
         close_response = _send_optional_client_message(
             db,
             ticket,
             ticket_closed_client_text,
             failure_note="Заявка закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
-            remove_keyboard=review_cycle is None,
-            reply_markup=post_close_actions_markup(review_cycle) if review_cycle is not None else None,
+            remove_keyboard=reply_markup is None,
+            reply_markup=reply_markup,
         )
         if review_cycle is not None:
             finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
