@@ -885,25 +885,6 @@ def ensure_ticket_columns() -> None:
         conn.execute(text("UPDATE tickets SET is_special = FALSE WHERE is_special IS NULL"))
         conn.execute(text("UPDATE tickets SET onsite_triggered = FALSE WHERE onsite_triggered IS NULL"))
         conn.execute(text("UPDATE tickets SET auto_close_disabled = FALSE WHERE auto_close_disabled IS NULL"))
-        conn.execute(
-            text(
-                """
-                UPDATE tickets
-                SET completed_by_user_id = closed_by_user_id,
-                    completed_counted_at = COALESCE(closed_at, updated_at, created_at)
-                WHERE completed_by_user_id IS NULL
-                  AND completed_counted_at IS NULL
-                  AND status = 'closed'
-                  AND closed_by_user_id IS NOT NULL
-                  AND EXISTS (
-                      SELECT 1
-                      FROM users
-                      WHERE users.id = tickets.closed_by_user_id
-                        AND users.role IN ('agent', 'trainee')
-                  )
-                """
-            )
-        )
         if "ticket_number" not in existing:
             if dialect == "sqlite":
                 conn.execute(

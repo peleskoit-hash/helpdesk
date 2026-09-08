@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
-from api.app.models import AutomaticMessageTemplate, Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
+from api.app.models import AutomaticMessageTemplate, Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.services.ticket_lifecycle import close_ticket_by_actor, finalize_group_parent_if_ready, notify_group_parent_completion_before_delete
 from api.app.services.telegram_outbound_delivery import claim_attachment_preload
 from api.app.services.telegram_text_format import prepare_telegram_html_message
@@ -62,6 +62,55 @@ def _seed_ticket(session, **overrides) -> Ticket:
     session.add(ticket)
     session.commit()
     return ticket
+
+
+def _seed_user(session, user_id: str, *, role: str = "agent") -> User:
+    user = User(
+        id=user_id,
+        company_id=str(uuid.uuid4()),
+        email=f"{user_id}@example.test",
+        login=user_id,
+        full_name=user_id,
+        role=role,
+        is_active=True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(user)
+    session.commit()
+    return user
+
+
+def _seed_agent_message(session, ticket: Ticket, user_id: str, *, body: str = "Done") -> TicketMessage:
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body=body,
+        author_user_id=user_id,
+        agent_visible=True,
+        message_status="normal",
+        created_at=datetime.utcnow(),
+    )
+    session.add(message)
+    session.commit()
+    return message
+
+
+def _seed_attachment(session, ticket: Ticket, message: TicketMessage) -> TicketAttachment:
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=message.id,
+        source="helpdesk",
+        original_filename="result.pdf",
+        mime_type="application/pdf",
+        local_path="/tmp/result.pdf",
+        created_at=datetime.utcnow(),
+    )
+    session.add(attachment)
+    session.commit()
+    return attachment
 
 
 def _seed_contact_for_ticket(session, ticket: Ticket) -> TelegramContact:
@@ -184,6 +233,440 @@ def test_admin_ticket_force_close_without_agent_reply_clears_auto_close_timer():
     assert ticket.auto_close_started_at is None
     assert ticket.auto_close_due_at is None
     assert ticket.auto_closed_at is None
+
+
+def test_admin_forced_ticket_without_assignee_response_does_not_count_completion():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(session, assignee_id="agent-a")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_admin_forced_ticket_after_assignee_text_is_attributed_to_assignee():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(session, assignee_id="agent-a")
+    _seed_agent_message(session, ticket, "agent-a", body="Ticket answer")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
+
+
+def test_admin_forced_normal_task_without_assignee_response_does_not_count_completion():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_admin_forced_normal_task_after_assignee_text_is_attributed_to_assignee():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+    _seed_agent_message(session, ticket, "agent-a", body="Task answer")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
+
+
+def test_admin_forced_normal_task_after_assignee_file_only_is_attributed_to_assignee():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+    message = _seed_agent_message(session, ticket, "agent-a", body="")
+    _seed_attachment(session, ticket, message)
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
+
+
+def test_admin_forced_group_child_after_assignee_text_is_attributed_to_assignee():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id="parent-1",
+    )
+    _seed_agent_message(session, ticket, "agent-a", body="Child answer")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
+
+
+def test_admin_forced_group_child_without_assignee_response_does_not_count_completion():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id="parent-1",
+    )
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_admin_forced_group_child_after_assignee_file_only_is_attributed_to_assignee():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id="parent-1",
+    )
+    message = _seed_agent_message(session, ticket, "agent-a", body="")
+    _seed_attachment(session, ticket, message)
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
+
+
+def test_admin_forced_group_child_with_other_agent_message_does_not_count_assignee_completion():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    _seed_user(session, "agent-other", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id="parent-1",
+    )
+    _seed_agent_message(session, ticket, "agent-other", body="Other answer")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_admin_forced_close_with_admin_assignee_does_not_count_completion():
+    session = _session()
+    _seed_user(session, "admin-c", role="admin")
+    ticket = _seed_ticket(session, assignee_id="admin-c")
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_admin_forced_close_without_assignee_does_not_count_completion():
+    session = _session()
+    ticket = _seed_ticket(
+        session,
+        assignee_id=None,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=True,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: None,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id is None
+    assert ticket.completed_counted_at is None
+
+
+def test_agent_normal_close_keeps_completion_attributed_to_actor():
+    session = _session()
+    ticket = _seed_ticket(session, assignee_id="agent-a")
+    agent_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Done",
+        author_user_id="agent-a",
+        agent_visible=True,
+        created_at=datetime.utcnow(),
+    )
+    session.add(agent_message)
+    session.commit()
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="agent-a", role="agent"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: False,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Agent",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.closed_by_user_id == "agent-a"
+    assert ticket.completed_by_user_id == "agent-a"
+    assert ticket.completed_counted_at is not None
 
 
 def _last_active_agent_message(db, ticket):

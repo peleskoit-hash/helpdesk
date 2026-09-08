@@ -154,6 +154,12 @@ def _has_client_visible_support_message_by_user(db: Session, ticket: Ticket, use
                 _active_message_status_filter(),
                 TicketMessage.author_user_id == user_id,
                 User.role.in_(["agent", "trainee"]),
+                or_(
+                    TicketMessage.body != "",
+                    TicketMessage.id.in_(
+                        select(TicketAttachment.message_id).where(TicketAttachment.ticket_id == ticket.id)
+                    ),
+                ),
             )
         )
         .limit(1)
@@ -167,10 +173,13 @@ def _resolve_completed_by_user_id(db: Session, ticket: Ticket, actor: CurrentUse
         return None
 
     assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
-    if assignee and assignee.role in {"agent", "trainee"} and _has_client_visible_support_message_by_user(db, ticket, assignee.id):
+    if (
+        assignee
+        and assignee.role in {"agent", "trainee"}
+        and _has_client_visible_support_message_by_user(db, ticket, assignee.id)
+    ):
         return assignee.id
-
-    return _last_client_visible_support_message_author_id(db, ticket)
+    return None
 
 
 def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser) -> None:

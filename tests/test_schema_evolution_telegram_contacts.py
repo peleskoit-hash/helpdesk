@@ -422,6 +422,57 @@ def test_user_model_metadata_contains_send_by_enter_column():
     assert "send_by_enter" in User.__table__.columns.keys()
 
 
+def test_ticket_columns_schema_evolution_does_not_backfill_completion_from_closed_by(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE tickets (
+                    id VARCHAR(36) PRIMARY KEY,
+                    assignee_id VARCHAR(36),
+                    closed_by_user_id VARCHAR(36),
+                    status VARCHAR(20),
+                    subject VARCHAR(255),
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    closed_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO tickets (
+                    id, assignee_id, closed_by_user_id, status, subject, created_at, updated_at, closed_at
+                ) VALUES (
+                    'ticket-1', 'agent-a', 'former-admin', 'closed', 'Closed ticket',
+                    '2026-01-01 10:00:00', '2026-01-02 10:00:00', '2026-01-02 10:00:00'
+                )
+                """
+            )
+        )
+
+    schema_evolution.ensure_ticket_columns()
+    schema_evolution.ensure_ticket_columns()
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT completed_by_user_id, completed_counted_at
+                FROM tickets
+                WHERE id = 'ticket-1'
+                """
+            )
+        ).mappings().one()
+
+    assert row["completed_by_user_id"] is None
+    assert row["completed_counted_at"] is None
+
+
 def test_telegram_notification_accounts_table_creation_is_idempotent(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     _create_minimal_users_table(engine)
