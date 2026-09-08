@@ -829,6 +829,7 @@ def ensure_ticket_columns() -> None:
         "auto_close_started_at": "TIMESTAMP",
         "auto_close_due_at": "TIMESTAMP",
         "auto_closed_at": "TIMESTAMP",
+        "distribution_notice_sent_at": "TIMESTAMP",
         "task_kind": "VARCHAR(30)",
         "parent_ticket_id": "VARCHAR(36)",
         "agent_visible": "BOOLEAN",

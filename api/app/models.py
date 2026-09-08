@@ -163,6 +163,7 @@ class Ticket(Base):
     auto_close_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     auto_close_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     auto_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    distribution_notice_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=TicketStatus.NEW.value)
     is_frozen: Mapped[bool] = mapped_column(Boolean, default=False)
     freeze_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

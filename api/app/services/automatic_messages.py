@@ -107,6 +107,20 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
+        key="telegram.ticket.distribution_wait.client",
+        title="Заявка на распределении",
+        description="Клиентский текст, если обычная заявка не назначилась сотруднику спустя 3 секунды",
+        category="ticket_creation",
+        category_title="Создание заявки",
+        sort_order=30,
+        default_text=(
+            "Ваша заявка находится на распределении. "
+            "Как только сотрудники освободятся, Ваша заявка будет назначена."
+        ),
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.task.request_text",
         title="Запрос описания задачи",
         description="Просьба написать текст после выбора task/group_task кнопки",
