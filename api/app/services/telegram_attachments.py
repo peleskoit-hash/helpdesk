@@ -17,7 +17,8 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import Client, ClientProfile, TelegramContact, Ticket, TicketAttachment, TicketMessage
 from .telegram_bot import TelegramApiError, copy_message, download_file, edit_message_text, get_file, send_message
-from .telegram_outbound_delivery import _archive_ticket_header, _format_project_dt, _lock_stmt, _staging_chat_id, _telegram_message_id
+from .telegram_outbound_delivery import _archive_ticket_header, _format_project_dt, _lock_stmt, _prepare_archive_html_text, _staging_chat_id, _telegram_message_id
+from .telegram_text_format import telegram_html_code, telegram_html_text
 
 
 logger = logging.getLogger(__name__)
@@ -204,10 +205,10 @@ def _inbound_attachment_archive_caption(db: Session, ticket: Ticket, attachment:
     return "\n".join(
         [
             _archive_ticket_header(ticket),
-            f"Клиент: {_client_name_for_archive(db, ticket)}",
+            f"Клиент: {telegram_html_text(_client_name_for_archive(db, ticket))}",
             f"Получено: {_format_project_dt(event_at)}",
             "Файл:",
-            f"• {filename}",
+            f"• {telegram_html_code(filename)}",
             "Статус: получено от клиента",
         ]
     )
@@ -222,11 +223,11 @@ def _inbound_group_archive_info_text(ticket: Ticket, attachments: list[TicketAtt
     event_at = sorted_rows[0].created_at
     lines = [
         _archive_ticket_header(ticket),
-        f"Клиент: {client_name}",
+        f"Клиент: {telegram_html_text(client_name)}",
         f"Получено: {_format_project_dt(event_at)}",
         file_label,
     ]
-    lines.extend(f"• {filename}" for filename in filenames)
+    lines.extend(f"• {telegram_html_code(filename)}" for filename in filenames)
     lines.append("Статус: получено от клиента")
     return "\n".join(lines)
 
@@ -409,10 +410,14 @@ def _best_effort_edit_inbound_group_archive_info_message(
     if not message_id:
         return
     try:
+        payload_text, parse_mode = _prepare_archive_html_text(
+            _inbound_group_archive_info_text(ticket, attachments, _client_name_for_archive(db, ticket))
+        )
         edit_message_text(
             _staging_chat_id(),
             message_id,
-            _inbound_group_archive_info_text(ticket, attachments, _client_name_for_archive(db, ticket)),
+            payload_text,
+            parse_mode=parse_mode,
         )
     except TelegramApiError as exc:
         description = str(exc).lower()
@@ -538,9 +543,11 @@ def _ensure_inbound_group_info_message_for_group(
     try:
         refreshed_rows = _load_media_group_attachments(db, ticket_id=ticket.id, media_group_id=media_group_id, for_update=False)
         summary_text = _inbound_group_archive_info_text(ticket, refreshed_rows, _client_name_for_archive(db, ticket))
+        payload_text, parse_mode = _prepare_archive_html_text(summary_text)
         response = _send_message_with_retry(
             _staging_chat_id(),
-            summary_text,
+            payload_text,
+            parse_mode=parse_mode,
         )
         message_id = _telegram_message_id(response)
         if not message_id:
@@ -601,11 +608,13 @@ def _best_effort_archive_inbound_attachment(db: Session, ticket: Ticket, attachm
                 caption="",
             )
         else:
+            caption_text, parse_mode = _prepare_archive_html_text(_inbound_attachment_archive_caption(db, ticket, attachment))
             response = _copy_message_with_retry(
                 _staging_chat_id(),
                 source_chat_id,
                 source_message_id,
-                caption=_inbound_attachment_archive_caption(db, ticket, attachment),
+                caption=caption_text,
+                parse_mode=parse_mode,
             )
         message_id = _telegram_message_id(response)
         if not message_id:

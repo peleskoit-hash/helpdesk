@@ -50,6 +50,14 @@ class NotificationBotBasicTag:
         return self.personal_description if context == "personal" else self.admin_description
 
 
+@dataclass(frozen=True)
+class SafeTelegramHtml:
+    value: str
+
+    def __str__(self) -> str:
+        return self.value
+
+
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
     AutomaticMessageDefinition(
         key="telegram.onboarding.first_connection.client",
@@ -995,7 +1003,9 @@ def get_effective_automatic_message_text(db: Session, key: str, fallback: str | 
 
 def _render_fields(text: str, context: dict[str, object], *, escape_values_for_html: bool = False) -> str:
     values = {
-        key: html.escape(str(value), quote=False) if escape_values_for_html else str(value)
+        key: str(value) if escape_values_for_html and isinstance(value, SafeTelegramHtml)
+        else html.escape(str(value), quote=False) if escape_values_for_html
+        else str(value)
         for key, value in context.items()
         if value is not None
     }

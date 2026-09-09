@@ -582,6 +582,8 @@ def test_single_document_inbound_file_archives_via_copy_message(monkeypatch, tmp
     assert len(calls["copy_message"]) == 1
     assert calls["copy_message"][0][0] == ("staging-chat", contact.external_chat_id, "2004")
     assert "caption" in calls["copy_message"][0][1]
+    assert calls["copy_message"][0][1]["parse_mode"] == "HTML"
+    assert "• <code>single.csv</code>" in calls["copy_message"][0][1]["caption"]
 
 
 def test_single_photo_inbound_file_archives_via_copy_message_without_local_binary(monkeypatch, tmp_path):
@@ -728,7 +730,7 @@ def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch, tm
     assert len(state["copy_message"]) == 8
     assert all(kwargs.get("caption") == "" for _args, kwargs in state["copy_message"])
     final_info_text = state["edit_message_text"][-1][0][2]
-    assert all(f"• file-{index}.pdf" in final_info_text for index in range(8))
+    assert all(f"• <code>file-{index}.pdf</code>" in final_info_text for index in range(8))
 
 
 def test_media_group_archives_ten_files_under_one_info_card(monkeypatch, tmp_path):
@@ -796,7 +798,7 @@ def test_media_group_archives_ten_files_under_one_info_card(monkeypatch, tmp_pat
     assert len(state["send_message"]) == 1
     assert len(state["copy_message"]) == 10
     final_info_text = state["edit_message_text"][-1][0][2]
-    assert all(f"• file-{index}.pdf" in final_info_text for index in range(10))
+    assert all(f"• <code>file-{index}.pdf</code>" in final_info_text for index in range(10))
 
 
 def test_repeated_media_group_finalizer_is_idempotent_for_summary_and_files(monkeypatch, tmp_path):
@@ -1179,9 +1181,9 @@ def test_mixed_media_group_skips_too_large_file_but_keeps_single_archive_group(m
     assert all(args[2] != "2203" for args, _kwargs in state["copy_message"])
     final_info_text = state["edit_message_text"][-1][0][2]
     assert "BIG.7z" not in final_info_text
-    assert "• A.csv" in final_info_text
-    assert "• B.csv" in final_info_text
-    assert "• D.xlsx" in final_info_text
+    assert "• <code>A.csv</code>" in final_info_text
+    assert "• <code>B.csv</code>" in final_info_text
+    assert "• <code>D.xlsx</code>" in final_info_text
     assert warnings["too_large"] == 1
 
 

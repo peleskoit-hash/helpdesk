@@ -260,13 +260,15 @@ def send_message(
         raise
 
 
-def edit_message_text(chat_id: str, message_id: str | int, text: str) -> dict:
+def edit_message_text(chat_id: str, message_id: str | int, text: str, parse_mode: str | None = None) -> dict:
     payload = {
         "chat_id": chat_id,
         "message_id": int(message_id),
         "text": text,
         "disable_web_page_preview": True,
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if is_test_chat_id(chat_id):
         return fake_telegram_response("editMessageText", payload)
     return telegram_request("editMessageText", payload=payload)

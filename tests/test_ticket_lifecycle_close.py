@@ -756,7 +756,9 @@ def test_task_close_sends_last_active_text_with_file_list_and_attachment(tmp_pat
     assert result == "closed"
     assert sent_attachments == ["contract.pdf"]
     assert "Проверьте, пожалуйста, договор." in sent_texts[0]
-    assert "Файлы:\ncontract.pdf" in sent_texts[0]
+    payload_text, parse_mode = prepare_telegram_html_message(sent_texts[0])
+    assert parse_mode == "HTML"
+    assert "Файлы:\n<code>contract.pdf</code>" in payload_text
     assert "Неактуальный ответ" not in sent_texts[0]
 
 
@@ -888,7 +890,9 @@ def test_task_preload_claim_real_flow_labels_image_video_and_document_by_persist
     )
 
     assert sent_attachments == ["image.jpg", "clip.mp4", "contract.pdf"]
-    assert "Файлы:\nФото\nВидео\ncontract.pdf" in sent_texts[0]
+    payload_text, parse_mode = prepare_telegram_html_message(sent_texts[0])
+    assert parse_mode == "HTML"
+    assert "Файлы:\n<code>Фото</code>\n<code>Видео</code>\n<code>contract.pdf</code>" in payload_text
 
 
 def test_task_close_sends_text_and_all_four_file_names_from_single_agent_message(tmp_path):
@@ -949,8 +953,14 @@ def test_task_close_sends_text_and_all_four_file_names_from_single_agent_message
         ticket_closed_client_text="closed",
     )
 
-    assert sent_texts[0].endswith(
-        "выввыв\n\nФайлы:\nMISSION_CHECKLIST_DRAFT_v21.txt\nrun_e2e_trace.log\nrun_v6_integrated.py\ntask_job.json"
+    payload_text, parse_mode = prepare_telegram_html_message(sent_texts[0])
+    assert parse_mode == "HTML"
+    assert payload_text.endswith(
+        "выввыв\n\nФайлы:\n"
+        "<code>MISSION_CHECKLIST_DRAFT_v21.txt</code>\n"
+        "<code>run_e2e_trace.log</code>\n"
+        "<code>run_v6_integrated.py</code>\n"
+        "<code>task_job.json</code>"
     )
     assert sent_attachments == filenames
 
@@ -1013,7 +1023,60 @@ def test_task_completion_agent_answer_escapes_dynamic_text_and_filenames_for_tel
     assert parse_mode == "HTML"
     assert payload_text.startswith("<b>")
     assert "&lt;b&gt;это&lt;/b&gt; &amp; \"то\"" in payload_text
-    assert '&lt;contract&gt;&amp;".pdf' in payload_text
+    assert '<code>&lt;contract&gt;&amp;".pdf</code>' in payload_text
+
+
+def test_task_completion_formats_handover_filename_as_telegram_code_entity(tmp_path):
+    session = _session()
+    ticket = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.NORMAL.value)
+    client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=ticket.id, message_type=MessageType.CLIENT.value, body="Вопрос", created_at=datetime.utcnow())
+    agent_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Ответ",
+        author_user_id="agent-1",
+        created_at=datetime.utcnow(),
+    )
+    file_path = tmp_path / "HANDOVER.md"
+    file_path.write_bytes(b"# handover")
+    attachment = TicketAttachment(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_id=agent_message.id,
+        source="helpdesk",
+        original_filename="HANDOVER.md",
+        mime_type="text/markdown",
+        local_path=str(file_path),
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([client_message, agent_message, attachment])
+    session.commit()
+
+    sent_texts = []
+    sent_attachments = []
+    close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="agent-1", role="agent"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: False,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: client_message,
+        send_to_telegram_client_fn=lambda _db, _ticket, text, **_kwargs: sent_texts.append(text) or {"ok": True},
+        actor_display_name_fn=lambda *_: "Agent",
+        add_message_fn=_add_message,
+        message_attachments_fn=_message_attachments,
+        send_attachment_to_telegram_client_fn=lambda _db, _ticket, item, **_kwargs: sent_attachments.append(item.original_filename),
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+
+    payload_text, parse_mode = prepare_telegram_html_message(sent_texts[0])
+    assert parse_mode == "HTML"
+    assert "Файлы:\n<code>HANDOVER.md</code>" in payload_text
+    assert sent_attachments == ["HANDOVER.md"]
 
 
 def test_task_text_only_completion_keeps_agent_answer_text_only():
@@ -1084,7 +1147,9 @@ def test_task_text_with_photo_and_video_lists_human_labels(tmp_path):
         ticket_closed_client_text="closed",
     )
 
-    assert "Файлы:\nФото\nВидео" in sent_texts[0]
+    payload_text, parse_mode = prepare_telegram_html_message(sent_texts[0])
+    assert parse_mode == "HTML"
+    assert "Файлы:\n<code>Фото</code>\n<code>Видео</code>" in payload_text
 
 
 def test_task_files_only_completion_keeps_files_only_branch(tmp_path):

@@ -35,6 +35,7 @@ from .automatic_messages import (
 from .telegram_bot import send_message
 from .telegram_employee_binding import REQUEST_STATUS_APPROVED
 from .telegram_text_format import prepare_telegram_html_message
+from .ticket_links import public_ticket_url
 from .ticket_numbering import ensure_ticket_number
 
 logger = logging.getLogger(__name__)
@@ -252,10 +253,9 @@ def _is_group_child_ticket(ticket: Ticket | None) -> bool:
 
 
 def _ticket_link(ticket: Ticket, *, html_enabled: bool) -> str:
-    base_url = str(settings.app_public_base_url or "").strip()
-    if not base_url or ticket.ticket_number is None:
+    value = public_ticket_url(ticket)
+    if not value:
         return _EMPTY
-    value = f"{base_url.rstrip('/')}/tickets/{ticket.ticket_number}"
     return html.escape(value, quote=False) if html_enabled else value
 
 

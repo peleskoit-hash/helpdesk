@@ -14,7 +14,8 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, User
 from .telegram_bot import TelegramApiError, delete_message, edit_message_text, send_document, send_document_by_file_id, send_message
-from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html
+from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html, telegram_html_code, telegram_html_link, telegram_html_text
+from .ticket_links import public_ticket_url
 from .ticket_messages import TELEGRAM_CAPTION_LIMIT, record_client_delivery_failure
 
 
@@ -84,7 +85,10 @@ def _format_project_dt(value: datetime | None) -> str:
 def _archive_ticket_header(ticket: Ticket) -> str:
     ticket_number = ticket.ticket_number if ticket.ticket_number is not None else "?"
     subject = (ticket.subject or "").strip() or "Без названия"
-    return f"Заявка №{ticket_number} — {subject}"
+    label = f"Заявка №{ticket_number}"
+    href = public_ticket_url(ticket)
+    prefix = telegram_html_link(label, href) if href else telegram_html_text(label)
+    return f"{prefix} — {telegram_html_text(subject)}"
 
 
 def _archive_actor_name(user: User | None) -> str:
@@ -200,15 +204,19 @@ def _archive_info_text(
     prepared_at = sorted_rows[0].created_at
     lines = [
         _archive_ticket_header(ticket),
-        f"Сотрудник: {_archive_actor_name(user)}",
+        f"Сотрудник: {telegram_html_text(_archive_actor_name(user))}",
         f"Подготовлено: {_format_project_dt(prepared_at)}",
         file_label,
     ]
-    lines.extend(f"• {filename}" for filename in filenames)
+    lines.extend(f"• {telegram_html_code(filename)}" for filename in filenames)
     if event_label and event_at is not None:
         lines.append(f"{event_label}: {_format_project_dt(event_at)}")
     lines.append(f"Статус: {status_text}")
     return "\n".join(lines)
+
+
+def _prepare_archive_html_text(text: str) -> tuple[str, str | None]:
+    return prepare_telegram_html_message(text)
 
 
 def _group_key_from_preload(preload: TicketAttachmentPreload) -> tuple[str, str, str]:
@@ -315,7 +323,8 @@ def _best_effort_edit_group_archive_message(
         event_at=event_at,
     )
     try:
-        edit_message_text(chat_id, message_id, archive_text)
+        payload_text, parse_mode = _prepare_archive_html_text(archive_text)
+        edit_message_text(chat_id, message_id, payload_text, parse_mode=parse_mode)
     except TelegramApiError as exc:
         leader = group_rows[0].id if group_rows else "unknown"
         description = str(exc)
@@ -339,14 +348,18 @@ def _send_preload_archive_info(
     group_rows: list[TicketAttachmentPreload],
     status_text: str,
 ) -> str:
-    response = send_message(
-        _staging_chat_id(),
+    payload_text, parse_mode = _prepare_archive_html_text(
         _archive_info_text(
             ticket=ticket,
             user=user,
             group_rows=group_rows,
             status_text=status_text,
-        ),
+        )
+    )
+    response = send_message(
+        _staging_chat_id(),
+        payload_text,
+        parse_mode=parse_mode,
     )
     message_id = _telegram_message_id(response)
     if not message_id:

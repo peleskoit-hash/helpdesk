@@ -3227,6 +3227,7 @@ def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monke
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
     ticket.ticket_number = 480
+    ticket.subject = "Need <help> & review"
     user = ticket_messages_service.User(
         id="agent-1",
         company_id=ticket.company_id,
@@ -3251,6 +3252,7 @@ def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monke
 
     monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
     monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(outbound_service.settings, "app_public_base_url", "https://desk.example.test/base/")
     calls = []
     monkeypatch.setattr(
         outbound_service,
@@ -3265,7 +3267,7 @@ def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monke
         },
     )
     edits = []
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, message_id, text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, message_id, text, kwargs)) or {"ok": True})
 
     outbound_service.deliver_attachment_preload(preload_id=preload.id)
 
@@ -3282,8 +3284,10 @@ def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monke
 
     assert calls[0][0] == "info"
     assert calls[1][0] == "file"
-    assert "Заявка №480" in calls[0][2]
+    assert '<a href="https://desk.example.test/base/tickets/480">Заявка №480</a> — Need &lt;help&gt; &amp; review' in calls[0][2]
     assert "Иван Петров" in calls[0][2]
+    assert "• <code>report.pdf</code>" in calls[0][2]
+    assert calls[0][3]["parse_mode"] == "HTML"
     assert "Статус: подготовка файла" in calls[0][2]
     assert "caption" not in calls[1][3]
     assert edits and "Статус: готов к отправке" in edits[-1][2]
@@ -3292,14 +3296,15 @@ def test_preload_worker_sends_info_before_staging_file_and_keeps_exact_ids(monke
 def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_list(monkeypatch, tmp_path):
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
-    ticket.ticket_number = 481
+    ticket.ticket_number = 557
+    ticket.subject = "Временно <заблокировать> & сотрудника"
     user = ticket_messages_service.User(
         id="agent-1",
         company_id=ticket.company_id,
         full_name="Иван Петров",
         role="agent",
     )
-    first_path = tmp_path / "a.pdf"
+    first_path = tmp_path / "HANDOVER.md"
     second_path = tmp_path / "b.pdf"
     first_path.write_bytes(b"a")
     second_path.write_bytes(b"b")
@@ -3308,8 +3313,8 @@ def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_l
         ticket_id=ticket.id,
         user_id=user.id,
         archive_group_id="group-1",
-        original_filename="a.pdf",
-        mime_type="application/pdf",
+        original_filename="HANDOVER.md",
+        mime_type="text/markdown",
         file_size=1,
         local_path=str(first_path),
         status="uploading",
@@ -3332,6 +3337,7 @@ def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_l
 
     monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
     monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(outbound_service.settings, "app_public_base_url", "https://desk.example.test")
     info_calls = []
     monkeypatch.setattr(
         outbound_service,
@@ -3339,10 +3345,11 @@ def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_l
         lambda chat_id, text, **kwargs: info_calls.append((chat_id, text, kwargs)) or {"result": {"message_id": 301}},
     )
     file_message_ids = iter([302, 303])
+    sent_documents = []
     monkeypatch.setattr(
         outbound_service,
         "send_document",
-        lambda chat_id, path_value, **kwargs: {
+        lambda chat_id, path_value, **kwargs: sent_documents.append((chat_id, Path(path_value).name, kwargs)) or {
             "result": {
                 "message_id": next(file_message_ids),
                 "document": {
@@ -3353,7 +3360,7 @@ def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_l
         },
     )
     edits = []
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, str(message_id), text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, str(message_id), text, kwargs)) or {"ok": True})
 
     outbound_service.deliver_attachment_preload(preload_id=first.id)
     outbound_service.deliver_attachment_preload(preload_id=second.id)
@@ -3372,8 +3379,14 @@ def test_multiple_preloads_same_archive_group_share_one_info_card_and_filename_l
         check.close()
 
     assert len(info_calls) == 1
-    assert any("• a.pdf" in text and "• b.pdf" in text for _, _, text in edits)
-    assert any("Статус: готово к отправке" in text for _, _, text in edits)
+    info_text = info_calls[0][1]
+    assert info_calls[0][2]["parse_mode"] == "HTML"
+    assert '<a href="https://desk.example.test/tickets/557">Заявка №557</a> — Временно &lt;заблокировать&gt; &amp; сотрудника' in info_text
+    assert "• <code>HANDOVER.md</code>" in info_text
+    assert "• <code>b.pdf</code>" in info_text
+    assert any("• <code>HANDOVER.md</code>" in text and "• <code>b.pdf</code>" in text for _, _, text, _ in edits)
+    assert any("Статус: готово к отправке" in text for _, _, text, _ in edits)
+    assert [item[1] for item in sent_documents] == ["HANDOVER.md", "b.pdf"]
 
 
 def test_remove_one_preload_from_group_keeps_common_card_and_updates_filename_list(monkeypatch, tmp_path):
@@ -3418,7 +3431,7 @@ def test_remove_one_preload_from_group_keeps_common_card_and_updates_filename_li
     deleted = []
     edits = []
     monkeypatch.setattr(outbound_service, "delete_message", lambda chat_id, message_id: deleted.append((chat_id, str(message_id))) or {"ok": True})
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, str(message_id), text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, str(message_id), text, kwargs)) or {"ok": True})
 
     result = delete_attachment_preload(
         ticket_id=ticket.id,
@@ -3433,8 +3446,8 @@ def test_remove_one_preload_from_group_keeps_common_card_and_updates_filename_li
     assert session.get(outbound_service.TicketAttachmentPreload, second.id) is not None
     assert session.get(outbound_service.TicketAttachmentPreload, second.id).telegram_staging_info_message_id == "401"
     assert edits
-    assert "• b.pdf" in edits[-1][2]
-    assert "• a.pdf" not in edits[-1][2]
+    assert "• <code>b.pdf</code>" in edits[-1][2]
+    assert "• <code>a.pdf</code>" not in edits[-1][2]
 
 
 def test_group_ready_and_uploading_status_is_preparing_files(monkeypatch, tmp_path):
@@ -3478,7 +3491,7 @@ def test_group_ready_and_uploading_status_is_preparing_files(monkeypatch, tmp_pa
     monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
     monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
     edits = []
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, str(message_id), text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, str(message_id), text, kwargs)) or {"ok": True})
 
     outbound_service.deliver_attachment_preload(preload_id=ready_preload.id)
 
@@ -3719,7 +3732,7 @@ def test_group_final_failure_marks_common_archive_error(monkeypatch, tmp_path):
     monkeypatch.setattr(outbound_service, "send_document_by_file_id", _deliver_by_file_id)
     monkeypatch.setattr(outbound_service, "send_message", lambda chat_id, *_args, **_kwargs: {"result": {"message_id": 601}} if chat_id == "staging-chat" else (_ for _ in ()).throw(AssertionError("client text path should not run")))
     edits = []
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, str(message_id), text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, str(message_id), text, kwargs)) or {"ok": True})
 
     outbound_service.deliver_attachment_preload(preload_id=preload_one.id)
     outbound_service.deliver_attachment_preload(preload_id=preload_two.id)
@@ -3733,7 +3746,7 @@ def test_group_final_failure_marks_common_archive_error(monkeypatch, tmp_path):
     finally:
         check.close()
 
-    assert any("Статус: ошибка доставки" in text for _, _, text in edits)
+    assert any("Статус: ошибка доставки" in text for _, _, text, _ in edits)
 
 
 def test_remove_ready_preload_deletes_exact_archive_messages(monkeypatch, tmp_path):
@@ -3860,7 +3873,7 @@ def test_claimed_preload_archive_is_kept_and_marked_sent(monkeypatch, tmp_path):
     monkeypatch.setattr(outbound_service, "send_message", lambda chat_id, *_args, **_kwargs: {"result": {"message_id": 501}} if chat_id == "staging-chat" else (_ for _ in ()).throw(AssertionError("text path should not be used")))
     monkeypatch.setattr(outbound_service, "send_document_by_file_id", lambda *_args, **_kwargs: {"result": {"message_id": 888}})
     edits = []
-    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text: edits.append((chat_id, str(message_id), text)) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda chat_id, message_id, text, **kwargs: edits.append((chat_id, str(message_id), text, kwargs)) or {"ok": True})
 
     outbound_service.deliver_attachment_preload(preload_id=preload.id)
 
@@ -3872,8 +3885,8 @@ def test_claimed_preload_archive_is_kept_and_marked_sent(monkeypatch, tmp_path):
     finally:
         check.close()
 
-    assert any("Статус: отправляется клиенту" in text for _, _, text in edits)
-    assert any("Статус: отправлено" in text for _, _, text in edits)
+    assert any("Статус: отправляется клиенту" in text for _, _, text, _ in edits)
+    assert any("Статус: отправлено" in text for _, _, text, _ in edits)
 
 
 def test_preparation_failure_before_claim_deletes_temporary_archive_messages(monkeypatch, tmp_path):

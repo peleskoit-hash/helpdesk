@@ -67,6 +67,19 @@ def strip_telegram_html(text: str) -> str:
     return html.unescape(no_tags)
 
 
+def telegram_html_text(value: object) -> str:
+    return html.escape("" if value is None else str(value), quote=False)
+
+
+def telegram_html_code(value: object) -> str:
+    return f"<code>{telegram_html_text(value)}</code>"
+
+
+def telegram_html_link(label: object, href: str) -> str:
+    safe_href = html.escape("" if href is None else str(href), quote=True)
+    return f'<a href="{safe_href}">{telegram_html_text(label)}</a>'
+
+
 class _TelegramHtmlSanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)

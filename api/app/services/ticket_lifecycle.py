@@ -12,7 +12,7 @@ from ..auth import CurrentUser
 from ..config import settings
 from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
-from .automatic_messages import render_automatic_message_text
+from .automatic_messages import SafeTelegramHtml, render_automatic_message_text
 from .telegram_post_close import (
     attributable_review_agent_id_for_actor,
     finalize_review_offer_close_message,
@@ -21,6 +21,7 @@ from .telegram_post_close import (
 )
 from .ticket_messages import persist_client_delivery_failure, record_client_delivery_failure
 from .ticket_subject import resolve_ticket_subject
+from .telegram_text_format import telegram_html_code, telegram_html_text
 
 
 def _error(status_code: int, code: str, message: str):
@@ -243,8 +244,8 @@ def _agent_answer_with_attachment_list(db: Session, agent_message: TicketMessage
     ).scalars().all()
     if not attachments:
         return agent_text
-    file_lines = [_attachment_completion_label(attachment) for attachment in attachments]
-    return f"{agent_text}\n\nФайлы:\n" + "\n".join(file_lines)
+    file_lines = [telegram_html_code(_attachment_completion_label(attachment)) for attachment in attachments]
+    return f"{telegram_html_text(agent_text)}\n\nФайлы:\n" + "\n".join(file_lines)
 
 
 def _format_task_completion_text(
@@ -266,8 +267,8 @@ def _format_task_completion_text(
     if agent_text:
         agent_answer = _agent_answer_with_attachment_list(db, agent_message, agent_text)
         fallback_text = (
-            f"По Вашей задаче \"{subject}\" от {created_text}\n"
-            f"\"{client_text}\"\n"
+            f"По Вашей задаче \"{telegram_html_text(subject)}\" от {telegram_html_text(created_text)}\n"
+            f"\"{telegram_html_text(client_text)}\"\n"
             "\nПолучен ответ:\n"
             f"{agent_answer}"
         )
@@ -280,7 +281,7 @@ def _format_task_completion_text(
                     ticket=ticket,
                     client_message=client_text,
                     extra={
-                        "agent_answer": agent_answer,
+                        "agent_answer": SafeTelegramHtml(agent_answer),
                         "ticket_created_at": created_text,
                         "ticket_subject": subject,
                         "subject": subject,
