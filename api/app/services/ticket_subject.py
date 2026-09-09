@@ -30,7 +30,7 @@ def _normalize_path(path: str) -> str:
     value = (path or "").strip()
     if not value:
         return ""
-    value = value.replace("\\", " → ").replace("/", " → ")
+    value = value.replace("/", " → ")
     value = re.sub(r"\s*→\s*", " → ", value)
     value = re.sub(r"\s{2,}", " ", value).strip()
     return value
