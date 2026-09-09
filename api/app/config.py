@@ -59,6 +59,19 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "SESSION_SECRET_KEY must be set to a non-default value when APP_ENV=prod."
             )
+        key = (self.bitrix_password_encryption_key or "").strip()
+        if not key:
+            raise RuntimeError(
+                "BITRIX_PASSWORD_ENCRYPTION_KEY must be set to a valid Fernet key when APP_ENV=prod."
+            )
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(key.encode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "BITRIX_PASSWORD_ENCRYPTION_KEY must be a valid Fernet key when APP_ENV=prod."
+            ) from exc
 
 
 settings = Settings()

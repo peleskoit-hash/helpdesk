@@ -332,7 +332,10 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="reviews",
         category_title="Отзывы",
         sort_order=10,
-        default_text="Оцените, пожалуйста, качество работы сотрудника.",
+        default_text=(
+            "Оцените, пожалуйста, качество работы сотрудника. Выбрав от 1-5 ⭐.\n"
+            "Или нажмите /start для создания новой задачи"
+        ),
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
@@ -342,7 +345,10 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="reviews",
         category_title="Отзывы",
         sort_order=20,
-        default_text="Если хотите, напишите комментарий к вашей оценке.",
+        default_text=(
+            "Если хотите, напишите комментарий к вашей оценке. \n"
+            "Или нажмите /start для создания новой задачи"
+        ),
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
@@ -352,7 +358,10 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="reviews",
         category_title="Отзывы",
         sort_order=30,
-        default_text="Вложение не будет добавлено к отзыву. Отправьте текст сообщения или добавьте подпись к вложению.",
+        default_text=(
+            "Вложение не будет добавлено к отзыву. Отправьте текст сообщения или добавьте подпись к вложению.\n"
+            "Или нажмите /start для создания новой задачи"
+        ),
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
@@ -362,7 +371,9 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="reviews",
         category_title="Отзывы",
         sort_order=40,
-        default_text="Подпись к вложению сохранена как текст отзыва. Вы можете отправить другой текст или завершить отзыв.",
+        default_text=(
+            "Подпись к вложению сохранена как текст отзыва. Вы можете отправить другой текст или завершить отзыв нажав /start."
+        ),
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
@@ -372,7 +383,7 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="reviews",
         category_title="Отзывы",
         sort_order=50,
-        default_text="Спасибо за ваш отзыв!",
+        default_text="Спасибо за ваш отзыв!\n\nНажмите /start для создания новой задачи",
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
@@ -382,7 +393,9 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="feedback",
         category_title="Предложения и замечания",
         sort_order=10,
-        default_text="Напишите предложение или замечание одним текстовым сообщением.",
+        default_text=(
+            "Напишите предложение или замечание одним текстовым сообщением, или нажмите /start для создания нового обращения"
+        ),
         variable_scopes=("client", "ticket"),
         runtime_enabled=True,
     ),
@@ -393,7 +406,7 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="feedback",
         category_title="Предложения и замечания",
         sort_order=20,
-        default_text="Спасибо! Ваше предложение или замечание сохранено.",
+        default_text="Спасибо! Ваше предложение или замечание сохранено. Нажмите /start для создания нового обращения",
         variable_scopes=("client", "ticket"),
         runtime_enabled=True,
     ),
@@ -404,7 +417,9 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category="feedback",
         category_title="Предложения и замечания",
         sort_order=30,
-        default_text="Пожалуйста, отправьте предложение или замечание текстом.",
+        default_text=(
+            "Пожалуйста, отправьте предложение или замечание текстом, или нажмите /start для создания нового обращения"
+        ),
         variable_scopes=("client", "ticket"),
         runtime_enabled=True,
     ),

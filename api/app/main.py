@@ -18,7 +18,7 @@ from .auth import (
     logout_user,
 )
 from .config import settings
-from .db import Base, engine, get_db
+from .db import Base, engine, get_db, SessionLocal
 from .models import User
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.integrations import router as integrations_router
@@ -39,6 +39,7 @@ from .routers.telegram import router as telegram_router
 from .routers.tickets import router as tickets_router
 from .routers.users import router as users_router
 from .services.button_config import clear_button_config_cache, load_button_config
+from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (
     ensure_bot_menu_level_layouts_table,
@@ -132,6 +133,9 @@ async def on_startup():
             ensure_call_center_employee_resolver_state_table()
             ensure_employee_notification_preferences_table()
             ensure_integration_logs_table()
+            with SessionLocal() as db:
+                migrate_legacy_bitrix_passwords(db)
+                db.commit()
             ensure_system_seed_data()
             cleanup_old_integration_logs_on_startup()
             last_error = None
