@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Предложения и замечания</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260821b" />
+</head>
+<body data-sidebar-ready="0">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">&#1047;&#1072;&#1103;&#1074;&#1082;&#1080;</h2>
+      <div class="tab-list">
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=unassigned" data-tab="unassigned"><span class="tab-btn-label">&#1053;&#1077;&#1088;&#1072;&#1089;&#1087;&#1088;&#1077;&#1076;&#1077;&#1083;&#1105;&#1085;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active" data-tab="active"><span class="tab-btn-label">&#1040;&#1082;&#1090;&#1080;&#1074;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen" data-tab="frozen"><span class="tab-btn-label">&#1047;&#1072;&#1084;&#1086;&#1088;&#1086;&#1078;&#1077;&#1085;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed" data-tab="closed"><span class="tab-btn-label">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special" data-tab="special"><span class="tab-btn-label">&#1054;&#1089;&#1086;&#1073;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>&#1042;&#1089;&#1077; &#1079;&#1072;&#1103;&#1074;&#1082;&#1080;</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings">
+        <span>&#1053;&#1072;&#1089;&#1090;&#1088;&#1086;&#1081;&#1082;&#1080;</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>&#1057;&#1090;&#1072;&#1090;&#1091;&#1089;&#1099;</span>
+      </a>
+      <a class="settings-link active admin-only hidden" href="/mass-notifications">
+        <span>&#1052;&#1072;&#1089;&#1089;&#1086;&#1074;&#1099;&#1077; &#1086;&#1087;&#1086;&#1074;&#1077;&#1097;&#1077;&#1085;&#1080;&#1103;</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div class="sidebar-user-name-row">
+          <div id="sidebarUserDisplayName" class="sidebar-user-name">&mdash;</div>
+        </div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="&#1058;&#1077;&#1082;&#1091;&#1097;&#1080;&#1081; &#1087;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1100;">A</div>
+          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appContent" class="main" data-shell-page="management-feedback">
+      <link rel="stylesheet" href="/static/management_feedback.css?v=20260909b" />
+      <div class="management-feedback-page">
+        <div class="management-feedback-head">
+          <div>
+            <div class="management-eyebrow">Управление</div>
+            <h1>Предложения и замечания</h1>
+            <p>Сообщения клиентов, отправленные после завершения заявок и задач.</p>
+          </div>
+          <span class="status" id="managementFeedbackStatus">Загрузка...</span>
+        </div>
+
+        <div class="panel table-wrap management-feedback-panel">
+          <div class="integration-log-filters management-feedback-filters">
+            <label class="management-feedback-search">Поиск:
+              <input id="managementFeedbackSearch" placeholder="№, клиент, объект или текст" autocomplete="off" />
+            </label>
+            <label>Дата от:
+              <input id="managementFeedbackDateFrom" type="date" />
+            </label>
+            <label>Дата до:
+              <input id="managementFeedbackDateTo" type="date" />
+            </label>
+            <button id="managementFeedbackSearchBtn" class="action primary" type="button">Найти</button>
+            <button id="managementFeedbackResetBtn" class="action" type="button">Сбросить</button>
+          </div>
+
+          <div class="management-feedback-summary" id="managementFeedbackSummary" hidden></div>
+          <div class="table-scroll management-feedback-table-wrap">
+            <table class="management-feedback-table">
+              <thead>
+                <tr>
+                  <th scope="col">Дата</th>
+                  <th scope="col">Объект</th>
+                  <th scope="col">Клиент</th>
+                  <th scope="col">Предложение / замечание</th>
+                </tr>
+              </thead>
+              <tbody id="managementFeedbackTableBody"></tbody>
+            </table>
+            <div id="managementFeedbackEmpty" class="status management-feedback-empty">Загрузка...</div>
+          </div>
+          <nav id="managementFeedbackPagination" class="table-pagination-footer management-feedback-pagination" aria-label="Страницы предложений и замечаний" hidden>
+            <button id="managementFeedbackPrev" class="action table-page-btn" type="button">Назад</button>
+            <span id="managementFeedbackPageSummary"></span>
+            <button id="managementFeedbackNext" class="action table-page-btn" type="button">Вперёд</button>
+          </nav>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js?v=20260907b"></script>
+  <script src="/static/app_shell.js?v=20260909b"></script>
+  <script src="/static/management_feedback.js?v=20260909b"></script>
+</body>
+</html>

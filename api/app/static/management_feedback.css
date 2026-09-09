@@ -1,0 +1,101 @@
+.management-feedback-page {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 16px;
+  min-width: 0;
+}
+
+.management-feedback-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.management-feedback-head h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.management-feedback-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.management-feedback-filters {
+  padding: 14px;
+}
+
+.management-feedback-filters label,
+.management-feedback-filters input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.management-feedback-search {
+  flex: 1 1 280px;
+}
+
+.management-feedback-summary {
+  padding: 0 14px 12px;
+  color: var(--muted);
+}
+
+.management-feedback-table {
+  min-width: 860px;
+  border-spacing: 0;
+}
+
+.management-feedback-table th:nth-child(1) { width: 155px; }
+.management-feedback-table th:nth-child(2) { width: 24%; }
+.management-feedback-table th:nth-child(3) { width: 18%; }
+
+.management-feedback-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.management-feedback-object-type,
+.management-feedback-object-title {
+  color: var(--muted);
+}
+
+.management-feedback-object-title {
+  margin-top: 4px;
+}
+
+.management-feedback-table a,
+.management-feedback-text-action {
+  color: var(--accent);
+}
+
+.management-feedback-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.management-feedback-text-action {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.management-feedback-empty {
+  padding: 14px;
+}
+
+.management-feedback-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}

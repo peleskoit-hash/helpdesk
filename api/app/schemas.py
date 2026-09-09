@@ -424,6 +424,27 @@ class ReviewHistoryResponse(BaseModel):
     items: list[ReviewHistoryRowOut] = Field(default_factory=list)
 
 
+class ManagementFeedbackRowOut(BaseModel):
+    feedback_id: str
+    submitted_at: datetime
+    client_name_snapshot: str
+    ticket_title_snapshot: str
+    text: str
+    ticket_available: bool
+    ticket_id: str
+    ticket_number: int | None = None
+    workflow_type: str | None = None
+
+
+class ManagementFeedbackListResponse(BaseModel):
+    items: list[ManagementFeedbackRowOut] = Field(default_factory=list)
+    total_count: int
+    min_feedback_date: date | None = None
+    page: int
+    pages: int
+    page_size: int
+
+
 ClientCardColorScheme = str
 
 
