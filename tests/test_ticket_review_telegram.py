@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from api.app.models import AutomaticMessageTemplate, Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.routers import telegram as telegram_router
 from api.app.services.automatic_messages import get_automatic_message_definition
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
@@ -340,8 +340,121 @@ def test_client_self_close_without_assignee_has_no_review(monkeypatch):
 
     assert _cycles(session) == []
     assert len(sent) == 1
+    assert sent[0][0][1] == "Ваше обращение закрыто. Если Вам снова потребуется помощь технической поддержки, нажмите /start."
+    assert sent[0][1]["remove_keyboard"] is True
+    assert sent[0][1]["reply_markup"] is None
+
+
+def test_client_self_close_without_assignee_uses_unassigned_override(monkeypatch):
+    session = _session()
+    company, client, contact, _agent, _admin = _seed_base(session, assignee=False)
+    _seed_ticket(session, company, client, None, with_agent_message=False)
+    session.add(
+        AutomaticMessageTemplate(
+            id="unassigned-close-override",
+            key="telegram.ticket.close.unassigned.client",
+            body="Закрыто до назначения: {{start_command}}",
+            is_overridden=True,
+            html_enabled=True,
+        )
+    )
+    session.commit()
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 92}})
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "_safe_remove_inline_keyboard", lambda *args, **kwargs: None)
+
+    telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=2003, contact=contact, data="client_close", message_id=12),
+        notify_client=True,
+    )
+
+    assert _cycles(session) == []
+    assert sent[0][0][1] == "Закрыто до назначения: /start"
+    assert sent[0][1]["reply_markup"] is None
+
+
+def test_client_self_close_with_assignee_renders_html_and_keeps_post_close_actions(monkeypatch):
+    session = _session()
+    company, client, contact, agent, _admin = _seed_base(session)
+    _seed_ticket(session, company, client, agent, with_agent_message=False)
+    session.add(
+        AutomaticMessageTemplate(
+            id="assigned-close-html",
+            key="telegram.ticket.close.client",
+            body="<code>текст</code>",
+            is_overridden=True,
+            html_enabled=True,
+        )
+    )
+    session.commit()
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 93}})
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(telegram_router, "_safe_remove_inline_keyboard", lambda *args, **kwargs: None)
+
+    telegram_router.process_telegram_update(
+        session,
+        _callback_payload(update_id=2004, contact=contact, data="client_close", message_id=12),
+        notify_client=True,
+    )
+
+    assert sent[0][0][1] == "<code>текст</code>"
+    assert sent[0][1]["parse_mode"] == "HTML"
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
+
+
+def test_close_command_without_assignee_uses_unassigned_message_and_no_actions(monkeypatch):
+    session = _session()
+    company, client, contact, _agent, _admin = _seed_base(session, assignee=False)
+    ticket, _message = _seed_ticket(session, company, client, None, with_agent_message=False)
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 94}})
+    monkeypatch.setattr(telegram_router, "remove_inline_keyboard", lambda *args, **kwargs: None)
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=2005, contact=contact, text="/close"),
+        notify_client=True,
+    )
+
+    session.refresh(ticket)
+    assert result["closed"] is True
+    assert ticket.status == TicketStatus.CLOSED.value
+    assert _cycles(session) == []
+    assert sent[0][0][1] == "Ваше обращение закрыто. Если Вам снова потребуется помощь технической поддержки, нажмите /start."
+    assert sent[0][1]["remove_keyboard"] is True
+    assert sent[0][1]["reply_markup"] is None
+
+
+def test_close_command_with_assignee_keeps_regular_post_close_actions(monkeypatch):
+    session = _session()
+    company, client, contact, agent, _admin = _seed_base(session)
+    ticket, _message = _seed_ticket(session, company, client, agent, with_agent_message=False)
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append((args, kwargs)) or {"ok": True, "result": {"message_id": 95}})
+    monkeypatch.setattr(telegram_router, "remove_inline_keyboard", lambda *args, **kwargs: None)
+
+    result = telegram_router.process_telegram_update(
+        session,
+        _message_payload(update_id=2006, contact=contact, text="/close"),
+        notify_client=True,
+    )
+
+    session.refresh(ticket)
+    cycle = _cycles(session)[0]
+    assert result["closed"] is True
+    assert ticket.status == TicketStatus.CLOSED.value
+    assert cycle.agent_id == agent.id
+    assert cycle.review_current_message_id == "95"
+    assert sent[0][0][1] == telegram_router.TICKET_CLOSED_CLIENT_TEXT
     assert sent[0][1]["remove_keyboard"] is False
-    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Предложения и замечания"]
+    assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
 
 
 def _closed_review_cycle(session):

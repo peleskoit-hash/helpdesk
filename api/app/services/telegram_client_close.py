@@ -17,11 +17,20 @@ from ..models import (
     TicketStatus,
     TicketWorkflowType,
 )
+from .automatic_messages import render_automatic_message_for_telegram
 from .telegram_post_close import (
     attributable_review_agent_id_for_client_close,
     finalize_review_offer_close_message,
     post_close_actions_markup,
     prepare_review_offer_cycle,
+)
+from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html
+
+
+CLIENT_CLOSE_MESSAGE_KEY = "telegram.ticket.close.client"
+UNASSIGNED_CLIENT_CLOSE_MESSAGE_KEY = "telegram.ticket.close.unassigned.client"
+UNASSIGNED_CLIENT_CLOSE_FALLBACK_TEXT = (
+    "Ваше обращение закрыто. Если Вам снова потребуется помощь технической поддержки, нажмите /start."
 )
 
 
@@ -68,6 +77,85 @@ def client_can_close_ticket(db: Session, ticket: Ticket) -> bool:
     return not has_agent_message(db, ticket)
 
 
+def is_unassigned_client_close_ticket(ticket: Ticket) -> bool:
+    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    return workflow_type == TicketWorkflowType.TICKET.value and ticket.assignee_id is None
+
+
+def _prepare_close_text_for_telegram(text: str) -> tuple[str, str | None]:
+    try:
+        return prepare_telegram_html_message(text)
+    except Exception:
+        return strip_telegram_html(text), None
+
+
+def _render_client_close_message_for_telegram(
+    db: Session,
+    *,
+    ticket: Ticket,
+    contact: TelegramContact,
+    fallback: str,
+    key: str | None,
+) -> tuple[str, str | None]:
+    if key is not None:
+        try:
+            return render_automatic_message_for_telegram(db, key, fallback, ticket=ticket, contact=contact)
+        except Exception:
+            return _prepare_close_text_for_telegram(fallback)
+    return _prepare_close_text_for_telegram(fallback)
+
+
+def send_client_close_notification(
+    db: Session,
+    *,
+    ticket: Ticket,
+    contact: TelegramContact,
+    external_chat_id: str,
+    send_message_fn,
+    ticket_closed_client_text: str,
+    ticket_closed_client_message_key: str | None = None,
+) -> tuple[dict | None, object | None]:
+    if is_unassigned_client_close_ticket(ticket):
+        text, parse_mode = _render_client_close_message_for_telegram(
+            db,
+            ticket=ticket,
+            contact=contact,
+            fallback=UNASSIGNED_CLIENT_CLOSE_FALLBACK_TEXT,
+            key=UNASSIGNED_CLIENT_CLOSE_MESSAGE_KEY,
+        )
+        return (
+            send_message_fn(
+                external_chat_id,
+                text,
+                parse_mode=parse_mode,
+                remove_keyboard=True,
+                reply_markup=None,
+            ),
+            None,
+        )
+
+    review_agent_id = attributable_review_agent_id_for_client_close(db, ticket)
+    review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+    reply_markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=review_cycle)
+    text, parse_mode = _render_client_close_message_for_telegram(
+        db,
+        ticket=ticket,
+        contact=contact,
+        fallback=ticket_closed_client_text,
+        key=ticket_closed_client_message_key,
+    )
+    close_response = send_message_fn(
+        external_chat_id,
+        text,
+        parse_mode=parse_mode,
+        remove_keyboard=reply_markup is None,
+        reply_markup=reply_markup,
+    )
+    if review_cycle is not None:
+        finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
+    return close_response, review_cycle
+
+
 def close_active_ticket_for_contact(
     db: Session,
     contact,
@@ -78,14 +166,14 @@ def close_active_ticket_for_contact(
     remove_client_close_button_fn,
     append_system_message_fn,
     fallback_message_id: int | None = None,
-) -> bool:
+) -> Ticket | None:
     ticket = active_ticket_for_client_fn(db, contact.company_id, contact.client_id) or collecting_ticket_for_client_fn(
         db,
         contact.company_id,
         contact.client_id,
     )
     if ticket is None:
-        return False
+        return None
 
     ticket.status = TicketStatus.CLOSED.value
     ticket.closed_at = datetime.utcnow()
@@ -102,7 +190,7 @@ def close_active_ticket_for_contact(
     )
     remove_client_close_button_fn(db, ticket)
     append_system_message_fn(db, ticket, "Обращение закрыто клиентом через /close")
-    return True
+    return ticket
 
 
 def process_client_close_callback(
@@ -122,6 +210,7 @@ def process_client_close_callback(
     safe_remove_inline_keyboard_fn,
     send_message_fn,
     ticket_closed_client_text: str,
+    ticket_closed_client_message_key: str | None = None,
 ) -> dict:
     callback_id = str(callback.get("id", ""))
     message = callback.get("message") or {}
@@ -187,17 +276,16 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Обращение закрыто")
         if isinstance(message_id, int):
             safe_remove_inline_keyboard_fn(external_chat_id, message_id)
-        review_agent_id = attributable_review_agent_id_for_client_close(db, ticket)
-        review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
-        reply_markup = post_close_actions_markup(db, ticket=ticket, contact=contact, review_cycle=review_cycle)
-        close_response = send_message_fn(
-            external_chat_id,
-            ticket_closed_client_text,
-            remove_keyboard=reply_markup is None,
-            reply_markup=reply_markup,
+        _close_response, review_cycle = send_client_close_notification(
+            db,
+            ticket=ticket,
+            contact=contact,
+            external_chat_id=external_chat_id,
+            send_message_fn=send_message_fn,
+            ticket_closed_client_text=ticket_closed_client_text,
+            ticket_closed_client_message_key=ticket_closed_client_message_key,
         )
         if review_cycle is not None:
-            finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
             db.commit()
 
     return {"ok": True, "closed": True, "ticket_id": ticket.id}

@@ -53,10 +53,12 @@ from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
 from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
 from ..services.telegram_client_close import (
+    CLIENT_CLOSE_MESSAGE_KEY,
     client_can_close_ticket,
     close_active_ticket_for_contact,
     process_client_close_callback,
     remove_client_close_button,
+    send_client_close_notification,
     store_client_close_button,
 )
 from ..services.auto_close import refresh_ticket_auto_close_timer
@@ -2601,6 +2603,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 safe_remove_inline_keyboard_fn=_safe_remove_inline_keyboard,
                 send_message_fn=send_message,
                 ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
+                ticket_closed_client_message_key=CLIENT_CLOSE_MESSAGE_KEY,
             )
         if is_review_callback_data(data):
             return process_review_callback(
@@ -2933,7 +2936,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     if text.startswith("/close"):
         close_fallback_message_id = message.get("message_id") if isinstance(message.get("message_id"), int) else None
-        closed = close_active_ticket_for_contact(
+        closed_ticket = close_active_ticket_for_contact(
             db,
             contact,
             active_ticket_for_client_fn=_active_ticket_for_client,
@@ -2947,13 +2950,18 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         )
         db.commit()
         if notify_client:
-            if closed:
-                close_text, close_parse_mode = _automatic_telegram_text(
+            if closed_ticket is not None:
+                _close_response, review_cycle = send_client_close_notification(
                     db,
-                    "telegram.ticket.close.client",
-                    TICKET_CLOSED_CLIENT_TEXT,
+                    ticket=closed_ticket,
                     contact=contact,
+                    external_chat_id=external_chat_id,
+                    send_message_fn=send_message,
+                    ticket_closed_client_text=TICKET_CLOSED_CLIENT_TEXT,
+                    ticket_closed_client_message_key=CLIENT_CLOSE_MESSAGE_KEY,
                 )
+                if review_cycle is not None:
+                    db.commit()
             else:
                 close_text, close_parse_mode = _automatic_telegram_text(
                     db,
@@ -2961,8 +2969,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     NO_ACTIVE_TICKET_TEXT,
                     contact=contact,
                 )
-            send_message(external_chat_id, close_text, parse_mode=close_parse_mode, remove_keyboard=True)
-        return {"ok": True, "command": "close", "closed": closed}
+                send_message(external_chat_id, close_text, parse_mode=close_parse_mode, remove_keyboard=True)
+        return {"ok": True, "command": "close", "closed": closed_ticket is not None}
 
     if text.startswith("/start"):
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id)

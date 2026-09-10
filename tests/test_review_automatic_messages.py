@@ -31,6 +31,7 @@ FEEDBACK_KEYS = {
     "telegram.feedback.thank_you": "Благодарность за предложение",
     "telegram.feedback.text_required": "Нужен текст",
 }
+UNASSIGNED_CLOSE_DEFAULT = "Ваше обращение закрыто. Если Вам снова потребуется помощь технической поддержки, нажмите /start."
 EXPECTED_DEFAULTS = {
     "telegram.review.rating_prompt": (
         "Оцените, пожалуйста, качество работы сотрудника. Выбрав от 1-5 ⭐.\n"
@@ -99,6 +100,49 @@ def test_feedback_automatic_message_definitions_are_registered_and_listed():
     assert set(listed) == set(FEEDBACK_KEYS)
     assert feedback_category["category_title"] == "Предложения и замечания"
     assert {item["key"] for item in feedback_category["items"]} == set(FEEDBACK_KEYS)
+
+
+def test_unassigned_client_close_message_is_registered_and_listed():
+    key = "telegram.ticket.close.unassigned.client"
+    definition = get_automatic_message_definition(key)
+    assert definition is not None
+    assert definition.title == "Обращение закрыто до назначения"
+    assert definition.category == "close_restore"
+    assert definition.category_title == "Закрытие и возврат"
+    assert definition.runtime_enabled is True
+    assert definition.default_text == UNASSIGNED_CLOSE_DEFAULT
+
+    response = list_automatic_messages(db=_session(), user=SimpleNamespace(role="admin"))
+    listed = {item["key"]: item for item in response["items"]}
+    close_restore_category = next(item for item in response["categories"] if item["category"] == "close_restore")
+
+    assert key in listed
+    assert key in {item["key"] for item in close_restore_category["items"]}
+    assert listed[key]["effective_text"] == UNASSIGNED_CLOSE_DEFAULT
+
+
+def test_unassigned_client_close_override_has_priority_over_registry_default():
+    session = _session()
+    key = "telegram.ticket.close.unassigned.client"
+    override_text = "Override для закрытия до назначения"
+    session.add(
+        AutomaticMessageTemplate(
+            id="unassigned-close-override",
+            key=key,
+            body=override_text,
+            is_overridden=True,
+            html_enabled=True,
+        )
+    )
+    session.commit()
+
+    definition = get_automatic_message_definition(key)
+    assert definition is not None
+    assert get_effective_automatic_message_text(session, key, "Runtime fallback") == override_text
+    payload = serialize_automatic_message(session, definition)
+    assert payload["default_text"] == UNASSIGNED_CLOSE_DEFAULT
+    assert payload["effective_text"] == override_text
+    assert payload["override_text"] == override_text
 
 
 def test_review_and_feedback_automatic_message_defaults_are_exact():

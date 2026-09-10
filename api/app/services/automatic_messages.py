@@ -290,6 +290,20 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(
+        key="telegram.ticket.close.unassigned.client",
+        title="Обращение закрыто до назначения",
+        description=(
+            "Клиентский текст при самостоятельном закрытии обычной заявки до назначения сотрудника. "
+            "Post-close кнопки для отзыва и предложений в этом сценарии не показываются."
+        ),
+        category="close_restore",
+        category_title="Закрытие и возврат",
+        sort_order=15,
+        default_text="Ваше обращение закрыто. Если Вам снова потребуется помощь технической поддержки, нажмите /start.",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.auto_close.client",
         title="Автоматическое закрытие",
         description="Сообщение при автоматическом закрытии из-за отсутствия активности",
