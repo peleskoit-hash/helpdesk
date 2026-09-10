@@ -30,9 +30,14 @@ const el = {
   closeErrorModalBtn: document.getElementById("closeErrorModalBtn"),
   copyErrorBtn: document.getElementById("copyErrorBtn"),
   okErrorBtn: document.getElementById("okErrorBtn"),
+  backToManagementBtn: document.getElementById("backToManagementBtn"),
 };
 
-function setStatus(text) { el.statusText.textContent = text; }
+function setStatus(text) {
+  const value = String(text || "");
+  el.statusText.textContent = value;
+  el.statusText.classList.toggle("hidden", !value || value === "Готово");
+}
 function showError(message) { el.errorText.value = message || "Неизвестная ошибка"; el.errorModal.classList.remove("hidden"); }
 function closeError() { el.errorModal.classList.add("hidden"); }
 function escapeHtml(value) {
@@ -183,6 +188,13 @@ async function sendBroadcast() {
     renderFiles();
   });
   el.sendBroadcastBtn.addEventListener("click", sendBroadcast);
+  el.backToManagementBtn?.addEventListener("click", () => {
+    if (window.HelpdeskAppShell?.navigate) {
+      window.HelpdeskAppShell.navigate("/management");
+      return;
+    }
+    window.location.href = "/management";
+  });
 
   el.closeErrorModalBtn.addEventListener("click", closeError);
   el.okErrorBtn.addEventListener("click", closeError);

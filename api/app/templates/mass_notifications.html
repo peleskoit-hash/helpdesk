@@ -48,19 +48,10 @@
 
     <main id="appContent" class="main" data-shell-page="mass-notifications">
       <div class="toolbar">
-        <label id="roleControl">Роль
-          <select id="roleSelect">
-            <option value="agent">Сотрудник</option>
-            <option value="admin" selected>Администратор</option>
-            <option value="trainee">Стажёр</option>
-            <option value="chiki_piki">Чики-пики</option>
-          </select>
-        </label>
-        <label id="agentControl">Пользователь
-          <select id="agentSelect"></select>
-        </label>
+        <button id="backToManagementBtn" class="action" type="button">Назад</button>
+        <div class="settings-title">Массовые оповещения</div>
         <button id="themeToggleBtn" class="action theme-toggle" type="button">Тёмная тема</button>
-        <span id="statusText" class="status">Готово</span>
+        <span id="statusText" class="status"></span>
       </div>
 
       <section class="content" style="grid-template-columns: 1fr;">
