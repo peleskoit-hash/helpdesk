@@ -13,6 +13,10 @@ from api.app.services.automatic_messages import (
     get_effective_automatic_message_text,
     serialize_automatic_message,
 )
+from api.app.services.telegram_post_close import (
+    FEEDBACK_THANK_YOU_FALLBACK_TEXT,
+    REVIEW_RATING_PROMPT_FALLBACK_TEXT,
+)
 
 
 REVIEW_KEYS = {
@@ -141,3 +145,62 @@ def test_review_and_feedback_override_has_priority_over_default():
     assert payload["effective_text"] == override_text
     assert payload["override_text"] == override_text
     assert payload["is_overridden"] is True
+
+
+def test_registered_automatic_message_uses_registry_default_before_explicit_fallback():
+    session = _session()
+    key = "telegram.feedback.prompt"
+    definition = get_automatic_message_definition(key)
+    assert definition is not None
+
+    assert get_effective_automatic_message_text(session, key, "Старый runtime fallback") == definition.default_text
+
+
+def test_registered_automatic_message_override_has_priority_over_explicit_fallback():
+    session = _session()
+    key = "telegram.feedback.prompt"
+    override_text = "Пользовательский override"
+    session.add(
+        AutomaticMessageTemplate(
+            id="override-with-fallback",
+            key=key,
+            body=override_text,
+            is_overridden=True,
+            html_enabled=True,
+        )
+    )
+    session.commit()
+
+    assert get_effective_automatic_message_text(session, key, "Старый runtime fallback") == override_text
+
+
+def test_unregistered_automatic_message_uses_explicit_fallback():
+    session = _session()
+
+    assert get_effective_automatic_message_text(session, "telegram.unknown.key", "Legacy fallback") == "Legacy fallback"
+
+
+def test_unregistered_automatic_message_without_fallback_returns_empty_string():
+    session = _session()
+
+    assert get_effective_automatic_message_text(session, "telegram.unknown.key", None) == ""
+
+
+def test_review_rating_prompt_runtime_fallback_does_not_override_registry_default():
+    session = _session()
+    key = "telegram.review.rating_prompt"
+    definition = get_automatic_message_definition(key)
+    assert definition is not None
+    assert REVIEW_RATING_PROMPT_FALLBACK_TEXT != definition.default_text
+
+    assert get_effective_automatic_message_text(session, key, REVIEW_RATING_PROMPT_FALLBACK_TEXT) == definition.default_text
+
+
+def test_feedback_thank_you_runtime_fallback_does_not_override_registry_default():
+    session = _session()
+    key = "telegram.feedback.thank_you"
+    definition = get_automatic_message_definition(key)
+    assert definition is not None
+    assert FEEDBACK_THANK_YOU_FALLBACK_TEXT != definition.default_text
+
+    assert get_effective_automatic_message_text(session, key, FEEDBACK_THANK_YOU_FALLBACK_TEXT) == definition.default_text

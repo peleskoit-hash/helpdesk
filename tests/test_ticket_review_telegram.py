@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from api.app.db import Base
 from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.routers import telegram as telegram_router
+from api.app.services.automatic_messages import get_automatic_message_definition
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, feedback_back_callback_data, feedback_start_callback_data, review_back_callback_data, review_finish_callback_data, review_rate_callback_data, review_start_callback_data
 from api.app.services.ticket_reviews import create_review_cycle, save_review_caption, save_review_rating, set_review_current_message_id, start_review_rating_cycle
@@ -553,7 +554,9 @@ def test_valid_rating_saves_review_snapshots_deletes_stars_and_sends_text_prompt
     assert cycle.state == TicketReviewCycleState.AWAITING_TEXT.value
     assert cycle.review_current_message_id == "101"
     assert deleted == [(contact.external_chat_id, 88)]
-    assert sent[0][0][1] == "Если хотите, напишите комментарий к вашей оценке."
+    definition = get_automatic_message_definition("telegram.review.text_prompt")
+    assert definition is not None
+    assert sent[0][0][1] == definition.default_text
 
 
 def test_rating_boundaries_and_stale_callbacks_do_not_save(monkeypatch):

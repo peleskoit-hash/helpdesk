@@ -1007,13 +1007,16 @@ def get_automatic_message_row(db: Session, key: str) -> AutomaticMessageTemplate
 
 def get_effective_automatic_message_text(db: Session, key: str, fallback: str | None = None) -> str:
     definition = get_automatic_message_definition(key)
-    default_text = fallback if fallback is not None else (definition.default_text if definition is not None else "")
     row = get_automatic_message_row(db, key)
     if row is not None and bool(row.is_overridden):
         body = _normalize_body(row.body)
         if body is not None:
             return body
-    return default_text or ""
+    if definition is not None:
+        return definition.default_text or ""
+    if fallback is not None:
+        return fallback or ""
+    return ""
 
 
 def _render_fields(text: str, context: dict[str, object], *, escape_values_for_html: bool = False) -> str:
