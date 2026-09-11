@@ -333,7 +333,14 @@ class SelfProfileOut(BaseModel):
     legacy_ticket_count: int = 0
     avatar_path: str | None = None
     avatar_present: bool = False
+    avatar_url: str | None = None
     telegram_notification: TelegramNotificationSummaryOut
+
+
+class UserAvatarOut(BaseModel):
+    ok: bool = True
+    avatar_present: bool
+    avatar_url: str | None = None
 
 
 class SelfLoginUpdate(BaseModel):

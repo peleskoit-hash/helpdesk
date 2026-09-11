@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -18,12 +19,24 @@ from ..schemas import (
     SelfPasswordUpdate,
     SelfProfileOut,
     TelegramNotificationSummaryOut,
+    UserAvatarOut,
     UserPreferencesOut,
     UserPreferencesUpdate,
     UserStatusOut,
     UserStatusUpdate,
 )
 from ..services.assignment import assign_unassigned_fairly
+from ..services.user_avatars import (
+    MAX_AVATAR_BYTES,
+    AvatarValidationError,
+    avatar_url,
+    delete_avatar_file,
+    detect_avatar_type,
+    media_type_for_kind,
+    resolve_avatar_path,
+    save_avatar_file,
+    validate_avatar_upload,
+)
 
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
@@ -72,6 +85,7 @@ def _self_profile_out(user: User, notification_account: TelegramNotificationAcco
         legacy_ticket_count=int(user.legacy_ticket_count or 0),
         avatar_path=avatar_path,
         avatar_present=avatar_path is not None,
+        avatar_url=avatar_url(user.id, avatar_path),
         telegram_notification=TelegramNotificationSummaryOut(
             bound=notification_account is not None,
             display=_telegram_notification_display(notification_account) if notification_account else None,
@@ -156,6 +170,71 @@ def update_my_password(
     user.updated_at = datetime.utcnow()
     db.commit()
     return SelfAccountChangeOut(message="Данные изменены. Войдите снова.")
+
+
+@router.put("/me/avatar", response_model=UserAvatarOut)
+async def update_my_avatar(
+    avatar: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    content = await avatar.read(MAX_AVATAR_BYTES + 1)
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    try:
+        kind, _media_type = validate_avatar_upload(content, avatar.content_type)
+        new_avatar_path = save_avatar_file(content, kind)
+    except AvatarValidationError as exc:
+        _error(exc.status_code, exc.code, exc.message)
+
+    old_avatar_path = user.avatar_path
+    user.avatar_path = new_avatar_path
+    user.updated_at = datetime.utcnow()
+    try:
+        db.commit()
+    except Exception:
+        delete_avatar_file(new_avatar_path)
+        raise
+    if old_avatar_path != new_avatar_path:
+        delete_avatar_file(old_avatar_path)
+    return UserAvatarOut(avatar_present=True, avatar_url=avatar_url(user.id, new_avatar_path))
+
+
+@router.delete("/me/avatar", response_model=UserAvatarOut)
+def delete_my_avatar(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    old_avatar_path = user.avatar_path
+    if old_avatar_path:
+        user.avatar_path = None
+        user.updated_at = datetime.utcnow()
+        db.commit()
+        delete_avatar_file(old_avatar_path)
+    return UserAvatarOut(avatar_present=False, avatar_url=None)
+
+
+@router.get("/{user_id}/avatar")
+def get_user_avatar(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if user is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+    if user.id != current_user.real_user_id and not current_user.is_real_admin:
+        _error(403, "forbidden", "Недостаточно прав для просмотра аватара")
+
+    path = resolve_avatar_path(user.avatar_path)
+    if path is None or not path.is_file():
+        _error(404, "avatar_not_found", "Аватар не найден")
+    kind = detect_avatar_type(path.read_bytes()[:16])
+    if kind is None:
+        _error(404, "avatar_not_found", "Аватар не найден")
+    return FileResponse(str(path), media_type=media_type_for_kind(kind))
 
 
 @router.get("/me/preferences", response_model=UserPreferencesOut)
