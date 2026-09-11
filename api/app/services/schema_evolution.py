@@ -11,6 +11,7 @@ TICKET_REVIEWS_PAIR_VERSION_UNIQUE_NAME = "uq_ticket_reviews_pair_version"
 TICKET_REVIEWS_CYCLE_UNIQUE_NAME = "uq_ticket_reviews_cycle_id"
 TICKET_REVIEW_CYCLES_REVIEW_FK_NAME = "fk_ticket_review_cycles_review_id"
 TICKET_FEEDBACK_TICKET_UNIQUE_NAME = "uq_ticket_feedback_ticket_id"
+STATS_COMPLETIONS_COMPANY_OBJECT_UNIQUE_NAME = "uq_stats_completions_company_object"
 
 
 def _telegram_contact_duplicate_group_count(conn) -> int:
@@ -364,6 +365,73 @@ def ensure_integration_logs_table() -> None:
         )
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_created_at ON integration_logs(created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_integration_logs_task_dedup ON integration_logs(source, event_type, result, deal_id, created_at)"))
+
+
+def ensure_stats_foundation_tables() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        bool_default_false = "0" if dialect == "sqlite" else "FALSE"
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS stats_completions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    company_id VARCHAR(36) NOT NULL,
+                    object_id VARCHAR(36) NOT NULL,
+                    object_type VARCHAR(20) NOT NULL,
+                    task_kind VARCHAR(30),
+                    completed_by_user_id VARCHAR(36),
+                    completed_at {timestamp_type},
+                    is_completed BOOLEAN NOT NULL DEFAULT {bool_default_false},
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    CONSTRAINT {STATS_COMPLETIONS_COMPANY_OBJECT_UNIQUE_NAME}
+                        UNIQUE (company_id, object_type, object_id)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS stats_work_intervals (
+                    id VARCHAR(36) PRIMARY KEY,
+                    company_id VARCHAR(36) NOT NULL,
+                    object_id VARCHAR(36) NOT NULL,
+                    object_type VARCHAR(20) NOT NULL,
+                    task_kind VARCHAR(30),
+                    user_id VARCHAR(36) NOT NULL,
+                    started_at {timestamp_type} NOT NULL,
+                    ended_at {timestamp_type},
+                    end_reason VARCHAR(40),
+                    created_at {timestamp_type} NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS stats_user_status_intervals (
+                    id VARCHAR(36) PRIMARY KEY,
+                    company_id VARCHAR(36) NOT NULL,
+                    user_id VARCHAR(36) NOT NULL,
+                    status VARCHAR(40) NOT NULL,
+                    started_at {timestamp_type} NOT NULL,
+                    ended_at {timestamp_type},
+                    created_at {timestamp_type} NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_completions_company_completed_at ON stats_completions(company_id, completed_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_completions_company_user_completed_at ON stats_completions(company_id, completed_by_user_id, completed_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_user_started ON stats_work_intervals(company_id, user_id, started_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_object ON stats_work_intervals(company_id, object_type, object_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_ended ON stats_work_intervals(company_id, ended_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_user_status_intervals_company_user_started ON stats_user_status_intervals(company_id, user_id, started_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_user_status_intervals_company_ended ON stats_user_status_intervals(company_id, ended_at)"))
 
 
 def ensure_ticket_reviews_tables() -> None:

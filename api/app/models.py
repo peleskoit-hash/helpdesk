@@ -375,6 +375,62 @@ class TicketView(Base):
     last_opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class StatsCompletion(Base):
+    __tablename__ = "stats_completions"
+    __table_args__ = (
+        UniqueConstraint("company_id", "object_type", "object_id", name="uq_stats_completions_company_object"),
+        Index("ix_stats_completions_company_completed_at", "company_id", "completed_at"),
+        Index("ix_stats_completions_company_user_completed_at", "company_id", "completed_by_user_id", "completed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    task_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    completed_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class StatsWorkInterval(Base):
+    __tablename__ = "stats_work_intervals"
+    __table_args__ = (
+        Index("ix_stats_work_intervals_company_user_started", "company_id", "user_id", "started_at"),
+        Index("ix_stats_work_intervals_company_object", "company_id", "object_type", "object_id"),
+        Index("ix_stats_work_intervals_company_ended", "company_id", "ended_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    task_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class StatsUserStatusInterval(Base):
+    __tablename__ = "stats_user_status_intervals"
+    __table_args__ = (
+        Index("ix_stats_user_status_intervals_company_user_started", "company_id", "user_id", "started_at"),
+        Index("ix_stats_user_status_intervals_company_ended", "company_id", "ended_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
 class TelegramContact(Base):
     __tablename__ = "telegram_contacts"
     __table_args__ = (
