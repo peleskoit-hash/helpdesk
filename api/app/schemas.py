@@ -320,6 +320,41 @@ class UserPreferencesUpdate(BaseModel):
     send_by_enter: bool
 
 
+class TelegramNotificationSummaryOut(BaseModel):
+    bound: bool = False
+    display: str | None = None
+
+
+class SelfProfileOut(BaseModel):
+    id: str
+    full_name: str
+    login: str | None = None
+    role: str
+    legacy_ticket_count: int = 0
+    avatar_path: str | None = None
+    avatar_present: bool = False
+    telegram_notification: TelegramNotificationSummaryOut
+
+
+class SelfLoginUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    login: str
+
+
+class SelfAccountChangeOut(BaseModel):
+    ok: bool = True
+    message: str
+
+
+class SelfPasswordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str
+    new_password: str
+    new_password_confirmation: str
+
+
 class AgentOut(BaseModel):
     id: str
     full_name: str

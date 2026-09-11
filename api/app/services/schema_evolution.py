@@ -777,6 +777,7 @@ def ensure_user_columns() -> None:
         "last_assigned_at": "TIMESTAMP",
         "login": "VARCHAR(100)",
         "password_hash": "VARCHAR(255)",
+        "avatar_path": "VARCHAR(500)",
         "created_at": "TIMESTAMP",
         "updated_at": "TIMESTAMP",
     }

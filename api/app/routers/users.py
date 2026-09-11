@@ -5,13 +5,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from ..auth import CurrentUser, get_current_user, is_admin, is_readonly_chiki_piki
+from ..auth import CurrentUser, get_current_user, hash_password, is_admin, is_readonly_chiki_piki, verify_password
 from ..db import get_db
-from ..models import Ticket, TicketTaskKind, TicketWorkflowType, User
+from ..models import TelegramNotificationAccount, Ticket, TicketTaskKind, TicketWorkflowType, User
+from ..routers.settings_users import _ensure_unique_login, _telegram_notification_display
 from ..schemas import (
     AgentOut,
     CompletionPeriodStats,
     CompletionStatsOut,
+    SelfAccountChangeOut,
+    SelfLoginUpdate,
+    SelfPasswordUpdate,
+    SelfProfileOut,
+    TelegramNotificationSummaryOut,
     UserPreferencesOut,
     UserPreferencesUpdate,
     UserStatusOut,
@@ -56,6 +62,23 @@ def _status_out(user: User) -> UserStatusOut:
     )
 
 
+def _self_profile_out(user: User, notification_account: TelegramNotificationAccount | None) -> SelfProfileOut:
+    avatar_path = (user.avatar_path or "").strip() or None
+    return SelfProfileOut(
+        id=user.id,
+        full_name=user.full_name,
+        login=user.login,
+        role=user.role,
+        legacy_ticket_count=int(user.legacy_ticket_count or 0),
+        avatar_path=avatar_path,
+        avatar_present=avatar_path is not None,
+        telegram_notification=TelegramNotificationSummaryOut(
+            bound=notification_account is not None,
+            display=_telegram_notification_display(notification_account) if notification_account else None,
+        ),
+    )
+
+
 def _completion_period_bounds() -> dict[str, datetime]:
     now = datetime.now(MSK_TZ)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -82,6 +105,57 @@ def _is_task_ticket(ticket: Ticket) -> bool:
 @router.get("/me", response_model=UserStatusOut)
 def get_me(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     return _status_out(_current_user_model(db, current_user))
+
+
+@router.get("/me/profile", response_model=SelfProfileOut)
+def get_my_profile(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    notification_account = db.execute(
+        select(TelegramNotificationAccount).where(TelegramNotificationAccount.bound_user_id == user.id)
+    ).scalar_one_or_none()
+    return _self_profile_out(user, notification_account)
+
+
+@router.patch("/me/login", response_model=SelfAccountChangeOut)
+def update_my_login(
+    payload: SelfLoginUpdate,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    login = payload.login.strip()
+    if not login:
+        _error(422, "login_required", "Login обязателен")
+    try:
+        _ensure_unique_login(db, login, exclude_user_id=user.id)
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            _error(409, "login_already_used", "Этот логин уже используется")
+        raise
+    user.login = login
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return SelfAccountChangeOut(message="Данные изменены. Войдите снова.")
+
+
+@router.patch("/me/password", response_model=SelfAccountChangeOut)
+def update_my_password(
+    payload: SelfPasswordUpdate,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = _real_user_model(db, current_user)
+    if not verify_password(payload.current_password, user.password_hash):
+        _error(400, "current_password_invalid", "Текущий пароль указан неверно")
+    if payload.new_password != payload.new_password_confirmation:
+        _error(400, "password_confirmation_mismatch", "Новый пароль и подтверждение не совпадают")
+    user.password_hash = hash_password(payload.new_password)
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return SelfAccountChangeOut(message="Данные изменены. Войдите снова.")
 
 
 @router.get("/me/preferences", response_model=UserPreferencesOut)

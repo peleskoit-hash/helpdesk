@@ -141,6 +141,11 @@ def test_settings_user_update_schema_forbids_telegram_fields():
         )
 
 
+def test_settings_user_update_schema_forbids_avatar_path():
+    with pytest.raises(ValidationError):
+        SettingsUserUpdate(avatar_path="avatars/other.webp")
+
+
 def test_create_user_still_works_without_telegram_fields():
     session = _session()
     _company(session)

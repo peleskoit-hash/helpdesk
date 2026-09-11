@@ -418,8 +418,34 @@ def test_user_send_by_enter_column_is_added_idempotently_for_existing_schema(mon
     assert send_by_enter in (0, False)
 
 
+def test_user_avatar_path_column_is_added_idempotently_and_keeps_rows(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]: row
+            for row in conn.execute(text("PRAGMA table_info(users)")).mappings().all()
+        }
+        row = conn.execute(text("SELECT id, full_name, avatar_path FROM users WHERE id = 'user-1'")).mappings().one()
+
+    assert "avatar_path" in columns
+    assert columns["avatar_path"]["notnull"] == 0
+    assert row["id"] == "user-1"
+    assert row["full_name"] == "User One"
+    assert row["avatar_path"] is None
+
+
 def test_user_model_metadata_contains_send_by_enter_column():
     assert "send_by_enter" in User.__table__.columns.keys()
+
+
+def test_user_model_metadata_contains_avatar_path_column():
+    assert "avatar_path" in User.__table__.columns.keys()
 
 
 def test_ticket_columns_schema_evolution_does_not_backfill_completion_from_closed_by(monkeypatch):

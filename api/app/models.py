@@ -71,6 +71,7 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     login: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     full_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
