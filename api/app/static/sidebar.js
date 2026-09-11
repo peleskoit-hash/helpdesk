@@ -48,6 +48,12 @@
     appTimezone: "",
     availabilityStatus: "",
     login: "",
+    avatarPresent: false,
+    avatarUrl: null,
+    avatarDisplayUrl: null,
+    avatarResolvedUrl: null,
+    avatarFailedUrl: null,
+    avatarPendingUrl: null,
     counts: readStoredCounts(),
     agents: readStoredAgents(),
     adminAssigneeIds: safeParse(STORED_ASSIGNEES_RAW || "[]", []),
@@ -59,6 +65,7 @@
   let initialized = false;
   let initPromise = null;
   let userMenuCleanup = null;
+  let avatarLoadToken = 0;
 
   function setSidebarReady(value) {
     if (!rootBody) return;
@@ -72,6 +79,8 @@
       isRealAdmin: state.isRealAdmin,
       fullName: state.fullName || "",
       login: state.login || "",
+      avatarPresent: Boolean(state.avatarPresent),
+      avatarUrl: state.avatarUrl || null,
       sessionLoginTs: Number(state.sessionLoginTs || 0),
       appTimezone: state.appTimezone,
       availabilityStatus: state.availabilityStatus || "",
@@ -218,8 +227,51 @@
       .map((chunk) => chunk[0])
       .join("")
       .toUpperCase();
-    avatar.textContent = initials || "A";
+    const avatarUrl = state.avatarDisplayUrl || state.avatarUrl || "";
+    if (avatarUrl && state.avatarPresent && state.avatarResolvedUrl === avatarUrl) {
+      avatar.textContent = "";
+      avatar.dataset.sidebarAvatarImage = "1";
+      if (avatar.style) {
+        avatar.style.backgroundImage = `url("${avatarUrl}")`;
+        avatar.style.backgroundSize = "cover";
+        avatar.style.backgroundPosition = "center";
+      }
+    } else {
+      avatar.textContent = initials || "A";
+      delete avatar.dataset.sidebarAvatarImage;
+      if (avatar.style) {
+        avatar.style.backgroundImage = "";
+        avatar.style.backgroundSize = "";
+        avatar.style.backgroundPosition = "";
+      }
+      if (avatarUrl && state.avatarPresent && state.avatarFailedUrl !== avatarUrl && state.avatarPendingUrl !== avatarUrl) {
+        verifySidebarAvatarUrl(avatarUrl);
+      }
+    }
     avatar.title = sourceName || "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c";
+  }
+
+  function verifySidebarAvatarUrl(avatarUrl) {
+    const token = ++avatarLoadToken;
+    state.avatarPendingUrl = avatarUrl;
+    const image = new Image();
+    image.onload = () => {
+      if (token !== avatarLoadToken) return;
+      state.avatarPendingUrl = null;
+      state.avatarResolvedUrl = avatarUrl;
+      state.avatarFailedUrl = null;
+      renderAvatar();
+    };
+    image.onerror = () => {
+      if (token !== avatarLoadToken) return;
+      state.avatarPendingUrl = null;
+      state.avatarPresent = false;
+      state.avatarResolvedUrl = null;
+      state.avatarFailedUrl = avatarUrl;
+      renderAvatar();
+      notify();
+    };
+    image.src = avatarUrl;
   }
 
   function ensureUserMenuStructure() {
@@ -598,6 +650,27 @@
     }
   }
 
+  async function loadCurrentUserProfileAvatar() {
+    try {
+      const profile = await api("/api/v1/users/me/profile");
+      state.avatarPresent = Boolean(profile?.avatar_present && profile?.avatar_url);
+      state.avatarUrl = profile?.avatar_url || null;
+      state.avatarDisplayUrl = null;
+      state.avatarResolvedUrl = null;
+      state.avatarFailedUrl = null;
+      state.avatarPendingUrl = null;
+      state.fullName = (profile?.full_name || state.fullName || "").trim() || state.fullName;
+      state.login = (profile?.login || state.login || "").trim() || state.login;
+    } catch {
+      state.avatarPresent = false;
+      state.avatarUrl = null;
+      state.avatarDisplayUrl = null;
+      state.avatarResolvedUrl = null;
+      state.avatarFailedUrl = null;
+      state.avatarPendingUrl = null;
+    }
+  }
+
   async function loadAgents() {
     const agents = await api("/api/v1/users/agents");
     state.agents = Array.isArray(agents)
@@ -686,6 +759,7 @@
     initPromise = (async () => {
       try {
         await loadSession();
+        await loadCurrentUserProfileAvatar();
         await loadAgents();
         await loadCounts();
         renderFromCurrentState();
@@ -713,6 +787,17 @@
     onChange,
     getState: () => ({ ...state, counts: { ...state.counts }, agents: [...state.agents], adminAssigneeIds: [...state.adminAssigneeIds] }),
     refreshCounts: () => loadCounts().then(() => { renderFromCurrentState(); notify(); }),
+    setCurrentUserAvatar: (avatarState = {}) => {
+      const nextUrl = avatarState.avatar_display_url || avatarState.avatar_url || null;
+      state.avatarPresent = Boolean(avatarState.avatar_present && avatarState.avatar_url);
+      state.avatarUrl = avatarState.avatar_url || null;
+      state.avatarDisplayUrl = avatarState.avatar_display_url || null;
+      state.avatarResolvedUrl = state.avatarResolvedUrl === nextUrl ? state.avatarResolvedUrl : null;
+      state.avatarFailedUrl = state.avatarFailedUrl === nextUrl ? state.avatarFailedUrl : null;
+      state.avatarPendingUrl = state.avatarPendingUrl === nextUrl ? state.avatarPendingUrl : null;
+      renderAvatar();
+      notify();
+    },
   };
   function bootstrapUserPanel() {
     ensureUserMenuStructure();

@@ -90,6 +90,7 @@ class ElementLike extends EventTargetLike {
     this.parentNode = null;
     this.hidden = false;
     this.textContent = "";
+    this.style = {};
     this.classList = new ClassListLike(this);
   }
 
@@ -369,7 +370,7 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
   return { document, aside, stats, logoutForm, outside };
 }
 
-function createFetchMock(role = "agent") {
+function createFetchMock(role = "agent", profileOverrides = {}) {
   const calls = [];
   const fetchMock = async (path, options = {}) => {
     calls.push({ path: String(path), method: options.method || "GET", body: options.body || "" });
@@ -384,6 +385,15 @@ function createFetchMock(role = "agent") {
       };
     } else if (path === "/api/v1/users/agents") {
       payload = [{ id: "u1", full_name: "Ivan Petrov" }];
+    } else if (path === "/api/v1/users/me/profile") {
+      payload = {
+        id: "u1",
+        full_name: "Ivan Petrov",
+        login: "ivan",
+        avatar_present: false,
+        avatar_url: null,
+        ...profileOverrides,
+      };
     } else if (String(path).startsWith("/api/v1/tickets/counts")) {
       payload = { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0 };
     } else if (path === "/api/v1/users/me/status") {
@@ -398,11 +408,25 @@ function createFetchMock(role = "agent") {
   return fetchMock;
 }
 
-async function loadSidebar(document, role = "agent") {
+async function loadSidebar(document, role = "agent", profileOverrides = {}) {
   const source = fs.readFileSync("api/app/static/sidebar.js", "utf8");
   const window = {
     location: { pathname: "/tickets", href: "/tickets" },
   };
+  class ImageMock {
+    set src(value) {
+      this._src = String(value || "");
+      if (this._src.includes("missing")) {
+        this.onerror?.();
+      } else {
+        this.onload?.();
+      }
+    }
+
+    get src() {
+      return this._src || "";
+    }
+  }
   const localStorage = new Map();
   const storageApi = {
     getItem(key) {
@@ -415,7 +439,7 @@ async function loadSidebar(document, role = "agent") {
       localStorage.delete(key);
     },
   };
-  const fetchMock = createFetchMock(role);
+  const fetchMock = createFetchMock(role, profileOverrides);
   window.__fetchCalls = fetchMock.calls;
   const context = vm.createContext({
     window,
@@ -433,6 +457,7 @@ async function loadSidebar(document, role = "agent") {
     Number,
     Boolean,
     Error,
+    Image: ImageMock,
   });
   vm.runInContext(source, context);
   await window.HelpdeskSidebar.init();
@@ -499,6 +524,65 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
 
   await window.HelpdeskSidebar.init();
   assert.equal(document.querySelectorAll("[data-sidebar-user-menu]").length, 1);
+});
+
+test("sidebar avatar uses profile avatar_url and keeps user menu clickable", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "agent", {
+    avatar_present: true,
+    avatar_url: "/api/v1/users/u1/avatar",
+  });
+
+  const avatarButton = document.querySelector("[data-sidebar-user-menu-toggle]");
+  const menu = document.querySelector("[data-sidebar-user-menu]");
+
+  assert.equal(window.__fetchCalls.some((call) => call.path === "/api/v1/users/me/profile"), true);
+  assert.equal(avatarButton.dataset.sidebarAvatarImage, "1");
+  assert.match(avatarButton.style.backgroundImage, /\/api\/v1\/users\/u1\/avatar/);
+  avatarButton.dispatchEvent({ type: "click", target: avatarButton });
+  assert.equal(menu.hidden, false);
+});
+
+test("sidebar avatar falls back to initials when avatar image fails to load", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "agent", {
+    avatar_present: true,
+    avatar_url: "/api/v1/users/u1/missing-avatar",
+  });
+
+  const avatarButton = document.querySelector("[data-sidebar-user-menu-toggle]");
+  const menu = document.querySelector("[data-sidebar-user-menu]");
+
+  assert.equal(avatarButton.textContent, "IP");
+  assert.equal(avatarButton.dataset.sidebarAvatarImage, undefined);
+  assert.equal(avatarButton.style.backgroundImage, "");
+  assert.equal(window.HelpdeskSidebar.getState().avatarPresent, false);
+
+  avatarButton.dispatchEvent({ type: "click", target: avatarButton });
+  assert.equal(menu.hidden, false);
+});
+
+test("sidebar avatar falls back to initials and profile page can update avatar state", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document);
+  const avatarButton = document.querySelector("[data-sidebar-user-menu-toggle]");
+
+  assert.equal(avatarButton.textContent, "IP");
+  assert.equal(avatarButton.dataset.sidebarAvatarImage, undefined);
+
+  window.HelpdeskSidebar.setCurrentUserAvatar({
+    avatar_present: true,
+    avatar_url: "/api/v1/users/u1/avatar",
+    avatar_display_url: "/api/v1/users/u1/avatar?v=123",
+  });
+  assert.equal(avatarButton.textContent, "");
+  assert.equal(avatarButton.dataset.sidebarAvatarImage, "1");
+  assert.match(avatarButton.style.backgroundImage, /v=123/);
+
+  window.HelpdeskSidebar.setCurrentUserAvatar({ avatar_present: false, avatar_url: null });
+  assert.equal(avatarButton.textContent, "IP");
+  assert.equal(avatarButton.dataset.sidebarAvatarImage, undefined);
+  assert.equal(avatarButton.style.backgroundImage, "");
 });
 
 test("profile user menu entry navigates to profile page", async () => {

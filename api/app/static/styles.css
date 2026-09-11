@@ -2596,7 +2596,7 @@ textarea.comment-mode {
 
 .profile-root {
   display: grid;
-  gap: 24px;
+  gap: 20px;
   padding: 24px;
 }
 
@@ -2626,23 +2626,65 @@ textarea.comment-mode {
 .profile-hero {
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 8px 4px 12px;
+  gap: 22px;
+  padding: 4px 4px 8px;
   min-width: 0;
 }
 
+.profile-avatar-block {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  flex: 0 0 auto;
+}
+
 .profile-avatar {
-  width: 116px;
-  height: 116px;
+  width: 164px;
+  height: 164px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
   background: #e7f1ff;
   border: 1px solid #bfd9f4;
   color: #0f6cbf;
-  font-size: 38px;
+  font-size: 52px;
   font-weight: 900;
+  overflow: hidden;
+  position: relative;
+}
+
+.profile-avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-avatar-file-input {
+  display: none;
+}
+
+.profile-avatar-action {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.profile-avatar-message {
+  max-width: 220px;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .profile-hero-text {
@@ -2684,10 +2726,8 @@ textarea.comment-mode {
 }
 
 .profile-editable-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
+  position: relative;
+  width: 100%;
 }
 
 .profile-label {
@@ -2713,6 +2753,10 @@ textarea.comment-mode {
 }
 
 .profile-edit-btn {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
   width: 48px;
   height: 48px;
   border: 1px solid var(--border);
@@ -2726,8 +2770,64 @@ textarea.comment-mode {
 }
 
 .profile-edit-btn:hover {
+  transform: translateY(-50%);
   border-color: var(--accent);
   background: rgba(231, 241, 255, 0.78);
+}
+
+.profile-avatar-modal-dialog {
+  width: min(94vw, 560px);
+}
+
+.profile-avatar-crop-body {
+  display: grid;
+  gap: 16px;
+}
+
+.profile-crop-frame {
+  width: min(100%, 420px);
+  aspect-ratio: 1;
+  justify-self: center;
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #0f172a;
+  touch-action: none;
+  cursor: grab;
+}
+
+.profile-crop-frame.dragging {
+  cursor: grabbing;
+}
+
+.profile-crop-frame canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.profile-crop-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(15, 23, 42, 0.48), inset 0 0 0 2px rgba(255, 255, 255, 0.88);
+}
+
+.profile-zoom-control {
+  display: grid;
+  gap: 8px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.profile-zoom-control input {
+  width: 100%;
+}
+
+.profile-confirm-text {
+  margin: 0;
+  color: var(--muted);
 }
 
 .profile-modal-title {
@@ -2746,12 +2846,13 @@ textarea.comment-mode {
 @media (max-width: 760px) {
   .profile-hero {
     align-items: flex-start;
+    gap: 16px;
   }
 
   .profile-avatar {
-    width: 80px;
-    height: 80px;
-    font-size: 26px;
+    width: 112px;
+    height: 112px;
+    font-size: 34px;
   }
 
   .profile-hero-text h1 {
@@ -2769,9 +2870,15 @@ textarea.comment-mode {
   }
 
   .profile-edit-btn {
+    left: auto;
+    right: 10px;
     width: 44px;
     height: 44px;
     font-size: 26px;
+  }
+
+  .profile-row-editable .profile-value-wrap {
+    padding-right: 48px;
   }
 
   .profile-label {

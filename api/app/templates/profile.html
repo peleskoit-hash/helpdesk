@@ -61,7 +61,18 @@
           <div id="profileSuccessMessage" class="profile-success-message hidden" role="status" aria-live="polite"></div>
           <div id="profileRoot" class="profile-root hidden">
             <section class="profile-hero">
-              <div id="profileAvatar" class="profile-avatar" aria-hidden="true">A</div>
+              <div class="profile-avatar-block">
+                <div id="profileAvatar" class="profile-avatar" aria-hidden="true">
+                  <img id="profileAvatarImage" class="profile-avatar-image hidden" alt="" />
+                  <span id="profileAvatarInitials">A</span>
+                </div>
+                <div class="profile-avatar-actions">
+                  <input id="avatarFileInput" class="profile-avatar-file-input" type="file" accept="image/jpeg,image/png,image/webp" />
+                  <button id="changeAvatarBtn" class="action profile-avatar-action" type="button">Изменить аватар</button>
+                  <button id="deleteAvatarBtn" class="action danger profile-avatar-action hidden" type="button">Удалить аватар</button>
+                </div>
+                <div id="avatarActionMessage" class="profile-avatar-message hidden" role="status" aria-live="polite"></div>
+              </div>
               <div class="profile-hero-text">
                 <h1 id="profileFullNameHero">—</h1>
                 <div id="profileLoginHero" class="profile-login-hero">—</div>
@@ -156,6 +167,46 @@
           <div class="modal-foot">
             <button id="cancelPasswordBtn" type="button" class="action">Отмена</button>
             <button id="savePasswordBtn" type="button" class="action primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="avatarCropModal" class="modal hidden">
+        <div class="modal-dialog profile-modal-dialog profile-avatar-modal-dialog">
+          <div class="modal-head">
+            <div class="profile-modal-title">Настройте аватар</div>
+            <button id="closeAvatarCropBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body profile-avatar-crop-body">
+            <div id="avatarCropFrame" class="profile-crop-frame">
+              <canvas id="avatarCropCanvas" width="512" height="512"></canvas>
+              <div class="profile-crop-ring" aria-hidden="true"></div>
+            </div>
+            <label class="profile-zoom-control">Масштаб
+              <input id="avatarZoomInput" type="range" min="1" max="3" step="0.01" value="1" />
+            </label>
+            <div id="avatarCropError" class="profile-modal-error hidden"></div>
+          </div>
+          <div class="modal-foot">
+            <button id="cancelAvatarCropBtn" type="button" class="action">Отмена</button>
+            <button id="saveAvatarCropBtn" type="button" class="action primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="deleteAvatarModal" class="modal hidden">
+        <div class="modal-dialog profile-modal-dialog">
+          <div class="modal-head">
+            <div class="profile-modal-title">Удалить аватар?</div>
+            <button id="closeDeleteAvatarBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body">
+            <p class="profile-confirm-text">Аватар будет удалён из профиля.</p>
+            <div id="deleteAvatarError" class="profile-modal-error hidden"></div>
+          </div>
+          <div class="modal-foot">
+            <button id="cancelDeleteAvatarBtn" type="button" class="action">Отмена</button>
+            <button id="confirmDeleteAvatarBtn" type="button" class="action danger">Удалить</button>
           </div>
         </div>
       </div>
