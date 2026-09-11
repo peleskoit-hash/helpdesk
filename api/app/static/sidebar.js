@@ -450,6 +450,14 @@
           }
           return;
         }
+        if (action === "profile") {
+          if (window.HelpdeskAppShell?.navigate) {
+            window.HelpdeskAppShell.navigate("/profile");
+          } else {
+            window.location.href = "/profile";
+          }
+          return;
+        }
         console.info(`[sidebar-user-menu] Placeholder action: ${action || "unknown"}`);
       });
     });

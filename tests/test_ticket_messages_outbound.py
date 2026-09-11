@@ -833,7 +833,7 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20260907a"
+    app_shell_version = "20260911a"
     ticket_static_version = "20260828a"
     ticket_page_version = "20260903a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
@@ -860,8 +860,8 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in template
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in app_shell
-    assert '/static/styles.css?v=20260903b' in template
-    assert '/static/styles.css?v=20260903b' in index_template
+    assert '/static/styles.css?v=20260911a' in template
+    assert '/static/styles.css?v=20260911a' in index_template
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():

@@ -501,6 +501,20 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
   assert.equal(document.querySelectorAll("[data-sidebar-user-menu]").length, 1);
 });
 
+test("profile user menu entry navigates to profile page", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document);
+  const menu = document.querySelector("[data-sidebar-user-menu]");
+  const item = menu.querySelector('[data-sidebar-user-menu-item="profile"]');
+  const navigations = [];
+  window.HelpdeskAppShell = { navigate: (url) => navigations.push(url) };
+
+  item.dispatchEvent({ type: "click", target: item });
+
+  assert.deepEqual(navigations, ["/profile"]);
+  assert.equal(menu.hidden, true);
+});
+
 test("sidebar rehydrates missing status panel on repeated init without extra session fetch", async () => {
   const { document } = buildSidebarDom({ statusPanel: "none" });
   const window = await loadSidebar(document, "agent");

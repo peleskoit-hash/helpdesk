@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Личные данные</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260911a" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings">
+        <span>Настройки</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>Статусы</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>Массовые оповещения</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Пользователь">A</div>
+          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appContent" class="main" data-shell-page="profile">
+      <div class="toolbar">
+        <button id="backToTicketsBtn" class="action" type="button">Назад</button>
+        <div class="settings-title">Личные данные</div>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span id="statusText" class="status">Загрузка...</span>
+      </div>
+
+      <section class="content profile-content">
+        <div class="panel profile-panel">
+          <div id="profileLoading" class="profile-state">Загрузка данных...</div>
+          <div id="profileError" class="profile-state profile-error hidden"></div>
+          <div id="profileSuccessMessage" class="profile-success-message hidden" role="status" aria-live="polite"></div>
+          <div id="profileRoot" class="profile-root hidden">
+            <section class="profile-hero">
+              <div id="profileAvatar" class="profile-avatar" aria-hidden="true">A</div>
+              <div class="profile-hero-text">
+                <h1 id="profileFullNameHero">—</h1>
+                <div id="profileLoginHero" class="profile-login-hero">—</div>
+              </div>
+            </section>
+
+            <section class="profile-details" aria-label="Основные данные">
+              <div class="profile-row">
+                <div class="profile-label">ФИО</div>
+                <div class="profile-value-wrap">
+                  <div id="profileFullName" class="profile-value">—</div>
+                </div>
+              </div>
+              <div class="profile-editable-row">
+                <div class="profile-row profile-row-editable">
+                  <div class="profile-label">Login</div>
+                  <div class="profile-value-wrap">
+                    <div id="profileLogin" class="profile-value">—</div>
+                  </div>
+                </div>
+                <button id="editLoginBtn" class="profile-edit-btn" type="button" aria-label="Изменить login" title="Изменить login">✎</button>
+              </div>
+              <div class="profile-editable-row">
+                <div class="profile-row profile-row-editable">
+                  <div class="profile-label">Password</div>
+                  <div class="profile-value-wrap">
+                    <div id="profilePasswordMask" class="profile-value">••••••••</div>
+                  </div>
+                </div>
+                <button id="editPasswordBtn" class="profile-edit-btn" type="button" aria-label="Изменить пароль" title="Изменить пароль">✎</button>
+              </div>
+              <div class="profile-row">
+                <div class="profile-label">Роль</div>
+                <div class="profile-value-wrap">
+                  <div id="profileRole" class="profile-value">—</div>
+                </div>
+              </div>
+              <div class="profile-row">
+                <div class="profile-label">Количество заявок из старого Helpdesk</div>
+                <div class="profile-value-wrap">
+                  <div id="profileLegacyCount" class="profile-value">0</div>
+                </div>
+              </div>
+              <div class="profile-row">
+                <div class="profile-label">Бот уведомлений</div>
+                <div class="profile-value-wrap">
+                  <div id="profileTelegram" class="profile-value">—</div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <div id="loginModal" class="modal hidden">
+        <div class="modal-dialog profile-modal-dialog">
+          <div class="modal-head">
+            <div class="profile-modal-title">Введите новый логин</div>
+            <button id="closeLoginModalBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body">
+            <label>Новый login
+              <input id="loginInput" type="text" autocomplete="username" />
+            </label>
+            <div id="loginModalError" class="profile-modal-error hidden"></div>
+          </div>
+          <div class="modal-foot">
+            <button id="cancelLoginBtn" type="button" class="action">Отмена</button>
+            <button id="saveLoginBtn" type="button" class="action primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="passwordModal" class="modal hidden">
+        <div class="modal-dialog profile-modal-dialog">
+          <div class="modal-head">
+            <div class="profile-modal-title">Изменение пароля</div>
+            <button id="closePasswordModalBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body">
+            <label>Введите старый пароль
+              <input id="currentPasswordInput" type="password" autocomplete="current-password" />
+            </label>
+            <label>Введите новый пароль
+              <input id="newPasswordInput" type="password" autocomplete="new-password" />
+            </label>
+            <label>Повторите новый пароль
+              <input id="newPasswordConfirmationInput" type="password" autocomplete="new-password" />
+            </label>
+            <div id="passwordModalError" class="profile-modal-error hidden"></div>
+          </div>
+          <div class="modal-foot">
+            <button id="cancelPasswordBtn" type="button" class="action">Отмена</button>
+            <button id="savePasswordBtn" type="button" class="action primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js?v=20260911a"></script>
+  <script src="/static/app_shell.js?v=20260911a"></script>
+  <script src="/static/profile.js?v=20260911a"></script>
+</body>
+</html>

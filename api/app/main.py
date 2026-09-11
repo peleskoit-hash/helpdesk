@@ -370,6 +370,13 @@ def profile_notification_bot_page(request: Request, db: Session = Depends(get_db
     return FileResponse(str(BASE_DIR / "templates" / "profile_notification_bot.html"))
 
 
+@app.get("/profile")
+def profile_page(request: Request, db: Session = Depends(get_db)):
+    if _require_page_auth(request, db) is None:
+        return _redirect_login("/profile")
+    return FileResponse(str(BASE_DIR / "templates" / "profile.html"))
+
+
 @app.get("/reviews")
 def reviews_page(request: Request, db: Session = Depends(get_db)):
     user = _require_page_auth(request, db)
