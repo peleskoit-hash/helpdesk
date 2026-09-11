@@ -371,6 +371,11 @@ class AgentOut(BaseModel):
     updated_at: datetime | None = None
 
 
+class StatusBoardAgentOut(AgentOut):
+    avatar_present: bool = False
+    avatar_url: str | None = None
+
+
 class SettingsUserOut(BaseModel):
     id: str
     full_name: str

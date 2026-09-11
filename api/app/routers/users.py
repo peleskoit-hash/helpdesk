@@ -18,6 +18,7 @@ from ..schemas import (
     SelfLoginUpdate,
     SelfPasswordUpdate,
     SelfProfileOut,
+    StatusBoardAgentOut,
     TelegramNotificationSummaryOut,
     UserAvatarOut,
     UserPreferencesOut,
@@ -371,7 +372,7 @@ def list_users_by_role(
     ]
 
 
-@router.get("/status-board", response_model=list[AgentOut])
+@router.get("/status-board", response_model=list[StatusBoardAgentOut])
 def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     if not is_admin(current_user):
         _error(403, "forbidden", "Только администратор может просматривать доску статусов")
@@ -382,13 +383,15 @@ def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depe
     ).scalars().all()
     users.sort(key=lambda u: (0 if u.role == "agent" else 1, (u.full_name or "").lower()))
     return [
-        AgentOut(
+        StatusBoardAgentOut(
             id=user.id,
             full_name=user.full_name,
             role=user.role,
             role_label={"agent": "Сотрудник", "trainee": "Стажёр"}.get(user.role, user.role),
             availability_status=user.availability_status or "offline",
             updated_at=user.updated_at,
+            avatar_present=bool((user.avatar_path or "").strip()),
+            avatar_url=avatar_url(user.id, user.avatar_path),
         )
         for user in users
     ]

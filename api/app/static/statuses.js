@@ -38,6 +38,16 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function initials(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  const value = parts.map((part) => part[0]).join("").toUpperCase();
+  return value || "A";
+}
+
 function closeOnBackdropClick(modal, closeHandler) {
   let startedOnBackdrop = false;
   modal.addEventListener("pointerdown", (event) => {
@@ -97,10 +107,17 @@ function renderStatusBoard() {
   users.forEach((user) => {
     const active = user.availability_status || "offline";
     const updating = state.inFlight.has(user.id);
+    const avatarUrl = user.avatar_present && user.avatar_url ? String(user.avatar_url) : "";
     const card = document.createElement("div");
     card.className = "status-user-column";
     card.innerHTML = `
-      <div class="status-user-name">${escapeHtml(user.full_name)}</div>
+      <div class="status-user-head">
+        <div class="status-user-avatar" aria-hidden="true">
+          <span class="status-user-avatar-initials">${escapeHtml(initials(user.full_name))}</span>
+          ${avatarUrl ? `<img class="status-user-avatar-image hidden" src="${escapeHtml(avatarUrl)}" alt="" />` : ""}
+        </div>
+        <div class="status-user-name">${escapeHtml(user.full_name)}</div>
+      </div>
       ${statusOrder.map((status) => {
         const isActive = status === active;
         const duration = isActive ? `<span class="status-board-btn-time">${escapeHtml(formatStatusDuration(user.updated_at))}</span>` : "";
@@ -117,6 +134,24 @@ function renderStatusBoard() {
       if (!userId || !nextStatus) return;
       await updateUserStatus(userId, nextStatus);
     });
+  });
+
+  el.statusBoardGrid.querySelectorAll(".status-user-avatar-image").forEach((image) => {
+    const avatar = image.closest(".status-user-avatar");
+    const fallback = avatar?.querySelector(".status-user-avatar-initials");
+    image.addEventListener("load", () => {
+      image.classList.remove("hidden");
+      fallback?.classList.add("hidden");
+    });
+    image.addEventListener("error", () => {
+      image.removeAttribute("src");
+      image.classList.add("hidden");
+      fallback?.classList.remove("hidden");
+    });
+    if (image.complete && image.naturalWidth > 0) {
+      image.classList.remove("hidden");
+      fallback?.classList.add("hidden");
+    }
   });
 }
 
