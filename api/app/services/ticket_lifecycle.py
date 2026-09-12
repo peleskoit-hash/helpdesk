@@ -12,6 +12,11 @@ from ..auth import CurrentUser
 from ..config import settings
 from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
+from .statistics_lifecycle import (
+    sync_work_interval_after_close,
+    sync_work_interval_after_freeze,
+    sync_work_interval_after_unfreeze,
+)
 from .automatic_messages import SafeTelegramHtml, render_automatic_message_text
 from .telegram_post_close import (
     attributable_review_agent_id_for_actor,
@@ -571,11 +576,13 @@ def finalize_group_parent_if_ready(
                 send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
             )
 
+    closed_at = datetime.utcnow()
     parent.status = TicketStatus.CLOSED.value
     parent.closed_by_user_id = closed_by_user_id
-    parent.closed_at = datetime.utcnow()
+    parent.closed_at = closed_at
     parent.is_frozen = False
     parent.freeze_until = None
+    sync_work_interval_after_close(db, parent, now=closed_at)
     add_message_fn(db, parent, MessageType.SYSTEM, system_note, None, agent_visible=True)
     return True
 
@@ -693,11 +700,13 @@ def _close_task_without_reply(
     send_to_telegram_client_fn,
     finalize_group_parent_if_ready_fn,
 ) -> None:
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
     ticket.closed_by_user_id = actor.id
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.is_frozen = False
     ticket.freeze_until = None
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     add_message_fn(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
     if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
         client_message = first_client_message_fn(db, ticket)
@@ -775,11 +784,13 @@ def close_ticket_by_actor(
         if workflow_type == TicketWorkflowType.TICKET.value:
             review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
             review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+            closed_at = datetime.utcnow()
             ticket.status = TicketStatus.CLOSED.value
             ticket.closed_by_user_id = actor.id
-            ticket.closed_at = datetime.utcnow()
+            ticket.closed_at = closed_at
             ticket.is_frozen = False
             ticket.freeze_until = None
+            sync_work_interval_after_close(db, ticket, now=closed_at)
             clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
             reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
@@ -796,11 +807,13 @@ def close_ticket_by_actor(
                 finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
             _mark_ticket_completed_once(db, ticket, actor)
             return "closed"
+        closed_at = datetime.utcnow()
         ticket.status = TicketStatus.CLOSED.value
         ticket.closed_by_user_id = actor.id
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = closed_at
         ticket.is_frozen = False
         ticket.freeze_until = None
+        sync_work_interval_after_close(db, ticket, now=closed_at)
         add_message_fn(db, ticket, MessageType.SYSTEM, f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
         _mark_ticket_completed_once(db, ticket, actor)
         return "closed"
@@ -809,11 +822,13 @@ def close_ticket_by_actor(
         action_name = "задачу" if workflow_type == TicketWorkflowType.TASK.value else "заявку"
         _error(409, "close_not_allowed", f"Нельзя завершить {action_name} без ответа сотрудника")
 
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
     ticket.closed_by_user_id = actor.id
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.is_frozen = False
     ticket.freeze_until = None
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     if workflow_type == TicketWorkflowType.TICKET.value:
         clear_ticket_auto_close_timer(ticket)
 
@@ -937,8 +952,12 @@ def freeze_ticket(
     freeze_until,
     add_message_fn,
 ) -> None:
+    was_frozen = bool(ticket.is_frozen)
+    frozen_at = datetime.utcnow()
     ticket.is_frozen = True
     ticket.freeze_until = freeze_until
+    if not was_frozen:
+        sync_work_interval_after_freeze(db, ticket, now=frozen_at)
     clear_ticket_auto_close_timer(ticket)
     add_message_fn(db, ticket, MessageType.SYSTEM, "Заявка заморожена", None)
 
@@ -950,8 +969,12 @@ def unfreeze_ticket(
     add_message_fn,
     refresh_ticket_auto_close_timer_fn,
 ) -> None:
+    was_frozen = bool(ticket.is_frozen)
+    unfrozen_at = datetime.utcnow()
     ticket.is_frozen = False
     ticket.freeze_until = None
+    if was_frozen:
+        sync_work_interval_after_unfreeze(db, ticket, now=unfrozen_at)
     add_message_fn(db, ticket, MessageType.SYSTEM, "Заявка разморожена", None)
     refresh_ticket_auto_close(db, ticket, restart_from_now=True, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer_fn)
 

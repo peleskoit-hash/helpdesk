@@ -49,6 +49,12 @@ from ..services.assignment import choose_online_agent
 from ..services.assignment import schedule_employee_assignment_notification
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.employee_telegram_notifications import schedule_new_message_notification
+from ..services.statistics_lifecycle import (
+    sync_work_interval_after_assignment_change,
+    sync_work_interval_after_close,
+    sync_work_interval_after_freeze,
+    sync_work_interval_after_unfreeze,
+)
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
 from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
@@ -387,12 +393,14 @@ def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSp
 
 def _complete_auto_ticket(db: Session, ticket: Ticket, external_chat_id: str | None, notify_client: bool):
     append_system_message(db, ticket, "Автоматическая заявка обработана системой")
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.intake_state = TicketIntakeState.READY.value
     ticket.client_close_message_id = None
     ticket.menu_message_id = None
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = closed_at
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     if notify_client and external_chat_id:
         send_message(external_chat_id, AUTO_DONE_TEXT)
 
@@ -1379,6 +1387,8 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
     db.add(new_ticket)
     db.flush()
     apply_call_center_employee_snapshot_on_ticket_create(db, new_ticket)
+    if assignee_id:
+        sync_work_interval_after_assignment_change(db, new_ticket, old_assignee_id=None, new_assignee_id=assignee_id, now=new_ticket.created_at)
 
     append_system_message(db, new_ticket, f"Заявка создана: {subject}")
     if assignee_id:
@@ -1409,6 +1419,8 @@ def _create_task_from_intent(db: Session, intent: PendingTaskIntent, body: str) 
     )
     db.add(task)
     db.flush()
+    if assignee_id:
+        sync_work_interval_after_assignment_change(db, task, old_assignee_id=None, new_assignee_id=assignee_id, now=task.created_at)
     append_system_message(db, task, f"Задача создана: {intent.subject}")
     if assignee_id:
         assignee.last_assigned_at = datetime.utcnow()
@@ -1463,8 +1475,10 @@ def _append_client_message(
     )
     db.add(msg)
     if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value and ticket.is_frozen and ticket.status != TicketStatus.CLOSED.value:
+        unfrozen_at = datetime.utcnow()
         ticket.is_frozen = False
         ticket.freeze_until = None
+        sync_work_interval_after_unfreeze(db, ticket, now=unfrozen_at)
     ticket.updated_at = datetime.utcnow()
     db.flush()
     if schedule_notification:
@@ -1915,7 +1929,10 @@ def _apply_button_creation_flags(db: Session, ticket: Ticket):
     if setting is None:
         return
     if bool(setting.freeze_on_create):
+        was_frozen = bool(ticket.is_frozen)
         ticket.is_frozen = True
+        if not was_frozen:
+            sync_work_interval_after_freeze(db, ticket, now=datetime.utcnow())
 
 
 def _apply_fixed_assignee_from_setting(db: Session, ticket: Ticket) -> User | None:
@@ -1934,11 +1951,14 @@ def _apply_fixed_assignee_from_setting(db: Session, ticket: Ticket) -> User | No
         append_system_message(db, ticket, "Фиксированный ответственный не может быть chiki_piki, заявка в общем распределении", agent_visible=True)
         return None
 
+    old_assignee_id = ticket.assignee_id
+    assigned_at = datetime.utcnow()
     ticket.assignee_id = target.id
     ticket.intake_state = TicketIntakeState.READY.value
     if ticket.status != TicketStatus.CLOSED.value:
         ticket.status = TicketStatus.NEW.value
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = assigned_at
+    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee_id, new_assignee_id=target.id, now=assigned_at)
 
     if target.role == "admin":
         ticket.is_special = True
@@ -2036,7 +2056,9 @@ def _store_button_system_text(db: Session, ticket: Ticket, button: ButtonSpec, c
     append_system_message(db, ticket, rendered)
 
 
-def _reset_collecting_ticket(ticket: Ticket):
+def _reset_collecting_ticket(db: Session, ticket: Ticket):
+    old_assignee_id = ticket.assignee_id
+    reset_at = datetime.utcnow()
     ticket.subject = "Выбор типа проблемы"
     ticket.button_config_key = None
     ticket.instruction_button_key = None
@@ -2050,7 +2072,14 @@ def _reset_collecting_ticket(ticket: Ticket):
     ticket.client_close_message_id = None
     ticket.agent_visible = True
     ticket.load_counted = True
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = reset_at
+    sync_work_interval_after_assignment_change(
+        db,
+        ticket,
+        old_assignee_id=old_assignee_id,
+        new_assignee_id=None,
+        now=reset_at,
+    )
 
 
 def _prepare_collecting_ticket_for_button(db: Session, ticket: Ticket, button: ButtonSpec, menu_name: str):
@@ -2140,6 +2169,8 @@ def _create_group_children_from_collecting(
         )
         db.add(child_ticket)
         db.flush()
+        if child_ticket.assignee_id:
+            sync_work_interval_after_assignment_change(db, child_ticket, old_assignee_id=None, new_assignee_id=child_ticket.assignee_id, now=child_ticket.created_at)
         _append_client_message(db, child_ticket, client_body or "(пустое сообщение)")
         _store_button_system_text(db, child_ticket, child, client_message=client_body)
 
@@ -2680,7 +2711,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 return {"ok": True, "ignored": "stale_confirmation"}
 
             if decision == "no":
-                _reset_collecting_ticket(collecting_ticket)
+                _reset_collecting_ticket(db, collecting_ticket)
                 _remove_menu_keyboard(
                     db,
                     collecting_ticket,
@@ -3035,8 +3066,10 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     if collecting_ticket is not None and collecting_ticket.workflow_type == TicketWorkflowType.TASK.value:
         if collecting_ticket.updated_at + timedelta(minutes=TASK_DESCRIPTION_TIMEOUT_MINUTES) <= _now_for(collecting_ticket.updated_at):
             collecting_ticket.intake_state = TicketIntakeState.CANCELLED.value
+            closed_at = datetime.utcnow()
             collecting_ticket.status = TicketStatus.CLOSED.value
-            collecting_ticket.closed_at = datetime.utcnow()
+            collecting_ticket.closed_at = closed_at
+            sync_work_interval_after_close(db, collecting_ticket, now=closed_at)
             append_system_message(db, collecting_ticket, "\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: \u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0442\u0435\u043a\u0441\u0442 \u0432\u043e\u0432\u0440\u0435\u043c\u044f")
             _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id)
             remove_client_close_button(db, collecting_ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
@@ -3242,8 +3275,10 @@ def cleanup_expired_task_intents(db: Session) -> int:
     for ticket in expired:
         contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
         ticket.intake_state = TicketIntakeState.CANCELLED.value
+        closed_at = datetime.utcnow()
         ticket.status = TicketStatus.CLOSED.value
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = closed_at
+        sync_work_interval_after_close(db, ticket, now=closed_at)
         if ticket.workflow_type == TicketWorkflowType.TASK.value:
             append_system_message(db, ticket, "Создание задачи отменено: клиент не отправил текст вовремя")
         else:

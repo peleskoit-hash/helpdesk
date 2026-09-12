@@ -18,6 +18,7 @@ from ..models import (
     TicketWorkflowType,
 )
 from .automatic_messages import render_automatic_message_for_telegram
+from .statistics_lifecycle import sync_work_interval_after_close
 from .telegram_post_close import (
     attributable_review_agent_id_for_client_close,
     finalize_review_offer_close_message,
@@ -175,10 +176,12 @@ def close_active_ticket_for_contact(
     if ticket is None:
         return None
 
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.is_frozen = False
     ticket.freeze_until = None
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     if ticket.intake_state == TicketIntakeState.COLLECTING.value:
         ticket.intake_state = TicketIntakeState.CANCELLED.value
     ticket.updated_at = datetime.utcnow()
@@ -252,10 +255,12 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Это обращение уже нельзя закрыть этой кнопкой")
         return {"ok": True, "closed": False, "ticket_id": ticket.id}
 
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.is_frozen = False
     ticket.freeze_until = None
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     ticket.intake_state = (
         TicketIntakeState.CANCELLED.value
         if ticket.intake_state == TicketIntakeState.COLLECTING.value

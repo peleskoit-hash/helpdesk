@@ -53,6 +53,12 @@ from ..services.client_card import _client_card_view_config, _custom_field_map, 
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
+from ..services.statistics_lifecycle import (
+    sync_work_interval_after_assignment_change,
+    sync_work_interval_after_close,
+    sync_work_interval_after_reopen,
+    sync_work_interval_after_unfreeze,
+)
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
@@ -262,10 +268,12 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         _error(409, "special_requires_admin_assignee", "У особой заявки должен быть ответственный администратор")
 
     if assignee is None:
+        now = datetime.utcnow()
         ticket.assignee_id = None
         if ticket.status != TicketStatus.CLOSED.value:
             ticket.status = TicketStatus.UNASSIGNED.value
-        ticket.updated_at = datetime.utcnow()
+        ticket.updated_at = now
+        sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee.id if old_assignee else None, new_assignee_id=None, now=now)
         append_system_message(db, ticket, assignee_change_message(old_assignee, None))
         schedule_employee_assignment_notification(
             db,
@@ -290,6 +298,7 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         notify_client_about_assignee_fn=notify_client_about_assignee,
         error_fn=_error,
     ):
+        sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee.id if old_assignee else None, new_assignee_id=ticket.assignee_id, now=ticket.updated_at)
         schedule_employee_assignment_notification(
             db,
             ticket,
@@ -301,11 +310,13 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         )
         return
 
+    now = datetime.utcnow()
     ticket.assignee_id = assignee.id
     ticket.intake_state = TicketIntakeState.READY.value
     if ticket.status == TicketStatus.UNASSIGNED.value:
         ticket.status = TicketStatus.NEW.value
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = now
+    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee.id if old_assignee else None, new_assignee_id=assignee.id, now=now)
     append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
     run_group_parent_assigned_hook(db, ticket, assignee)
     schedule_employee_assignment_notification(
@@ -1399,7 +1410,10 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
             )
         raise
     _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
+    was_frozen = bool(ticket.is_frozen)
     unfreeze_ticket_on_message(ticket)
+    if was_frozen and not ticket.is_frozen:
+        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     _remove_client_close_button(db, ticket)
     if ticket.status == TicketStatus.NEW.value:
         ticket.status = TicketStatus.PENDING.value
@@ -1522,6 +1536,7 @@ def move_to_special(ticket_id: str, db: Session = Depends(get_db), user: Current
         append_system_message_fn=append_system_message,
         clear_auto_close_timer_fn=clear_ticket_auto_close_timer,
     )
+    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee.id if old_assignee else None, new_assignee_id=admin_user.id, now=ticket.updated_at)
     schedule_employee_assignment_notification(
         db,
         ticket,
@@ -1661,9 +1676,11 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
         collecting.menu_message_id = None
         collecting.client_close_message_id = None
         collecting.intake_state = TicketIntakeState.CANCELLED.value
+        collecting_closed_at = datetime.utcnow()
         collecting.status = TicketStatus.CLOSED.value
-        collecting.closed_at = datetime.utcnow()
-        collecting.updated_at = datetime.utcnow()
+        collecting.closed_at = collecting_closed_at
+        collecting.updated_at = collecting_closed_at
+        sync_work_interval_after_close(db, collecting, now=collecting_closed_at)
 
     if ticket.is_special:
         ticket.status = TicketStatus.NEW.value if ticket.assignee_id else TicketStatus.UNASSIGNED.value
@@ -1671,11 +1688,13 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
             ticket.assignee_id = ticket.special_assignee_id
     else:
         ticket.status = TicketStatus.NEW.value if ticket.assignee_id else TicketStatus.UNASSIGNED.value
+    reopened_at = datetime.utcnow()
     ticket.closed_by_user_id = None
     ticket.closed_at = None
     ticket.is_frozen = False
     ticket.freeze_until = None
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = reopened_at
+    sync_work_interval_after_reopen(db, ticket, now=reopened_at)
     assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
     if ticket.is_special:
         _add_message(db, ticket, MessageType.SYSTEM, "Особая заявка возвращена в работу администратором", None)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType, User
 from .automatic_messages import render_automatic_message_for_telegram
 from .employee_telegram_notifications import schedule_assignment_notification
+from .statistics_lifecycle import sync_work_interval_after_assignment_change
 from .telegram_bot import TelegramApiError, send_message
 
 GroupParentAssignedHook = Callable[[Session, Ticket, User], None]
@@ -144,11 +145,14 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     if agent.role != "agent" or not agent.is_active or agent.availability_status != "online":
         return False
 
+    old_assignee_id = ticket.assignee_id
     old_assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
+    now = datetime.utcnow()
     ticket.assignee_id = agent.id
     ticket.status = TicketStatus.NEW.value
-    ticket.updated_at = datetime.utcnow()
-    agent.last_assigned_at = datetime.utcnow()
+    ticket.updated_at = now
+    agent.last_assigned_at = now
+    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee_id, new_assignee_id=agent.id, now=now)
     append_system_message(db, ticket, assignee_change_message(old_assignee, agent))
     run_group_parent_assigned_hook(db, ticket, agent)
     if notify_client and (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value:
@@ -192,12 +196,15 @@ def assign_ticket_to_forced_user(
     if assignee is None:
         return None, error or "not_found", candidate
 
+    old_assignee_id = ticket.assignee_id
+    now = datetime.utcnow()
     ticket.assignee_id = assignee.id
     ticket.intake_state = TicketIntakeState.READY.value
     if ticket.status != TicketStatus.CLOSED.value:
         ticket.status = TicketStatus.NEW.value
-    ticket.updated_at = datetime.utcnow()
-    assignee.last_assigned_at = datetime.utcnow()
+    ticket.updated_at = now
+    assignee.last_assigned_at = now
+    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee_id, new_assignee_id=assignee.id, now=now)
     append_system_message(
         db,
         ticket,

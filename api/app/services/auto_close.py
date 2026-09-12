@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models import MessageType, TelegramContact, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram
+from .statistics_lifecycle import sync_work_interval_after_close
 from .telegram_bot import send_message
 
 AUTO_CLOSE_MINUTES = 20
@@ -140,6 +141,7 @@ def cleanup_auto_close_tickets(db: Session) -> int:
         ticket.auto_closed_at = now
         ticket.is_frozen = False
         ticket.freeze_until = None
+        sync_work_interval_after_close(db, ticket, now=now)
         ticket.closed_by_user_id = None
         clear_ticket_auto_close_timer(ticket)
         ticket.updated_at = now

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram
+from .statistics_lifecycle import sync_work_interval_after_close
 from .button_automation_types import (
     AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
     AUTOMATION_TYPE_SEND_FILES,
@@ -174,10 +175,12 @@ def _process_bitrix_deal_phone_lookup_task(
         agent_visible=True,
     )
     ticket.intake_state = TicketIntakeState.READY.value
+    closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = datetime.utcnow()
+    ticket.closed_at = closed_at
     ticket.is_frozen = False
     ticket.freeze_until = None
+    sync_work_interval_after_close(db, ticket, now=closed_at)
     if ticket.intake_state == TicketIntakeState.COLLECTING.value:
         ticket.intake_state = TicketIntakeState.CANCELLED.value
     ticket.updated_at = datetime.utcnow()

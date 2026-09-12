@@ -12,7 +12,7 @@ from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
 from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketWorkflowType, User
 from ..schemas import TextPayload
 from ..services.employee_telegram_notifications import schedule_new_message_notification
-from ..services.statistics_lifecycle import set_user_availability_status
+from ..services.statistics_lifecycle import set_user_availability_status, sync_work_interval_after_unfreeze
 from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_caption, edit_message_text
 from ..services.telegram_text_format import strip_telegram_html
 
@@ -278,7 +278,10 @@ async def reply_to_ticket(
                     }
                 )
 
+        was_frozen = bool(ticket.is_frozen)
         unfreeze_ticket_on_message(ticket)
+        if was_frozen and not ticket.is_frozen:
+            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
         if user.role == "agent" and _is_onsite_phrase(text):
             ticket.onsite_triggered = True
             actor_user = db.get(User, user.id)
@@ -371,7 +374,10 @@ async def reply_to_ticket(
                     )
                 raise
 
+    was_frozen = bool(ticket.is_frozen)
     unfreeze_ticket_on_message(ticket)
+    if was_frozen and not ticket.is_frozen:
+        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     if is_plain_ticket and user.role == "agent" and _is_onsite_phrase(text):
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
@@ -406,7 +412,10 @@ def comment_on_ticket(
         body=payload.text,
         author_user_id=user.id,
     )
+    was_frozen = bool(ticket.is_frozen)
     unfreeze_ticket_on_message(ticket)
+    if was_frozen and not ticket.is_frozen:
+        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     db.commit()
     return {"ok": True}
 

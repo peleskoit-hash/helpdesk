@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
 from .automatic_messages import render_automatic_message_text
 from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
+from .statistics_lifecycle import sync_work_interval_after_unfreeze
 from .ticket_messages import persist_client_delivery_failure
 from .telegram_text_format import strip_telegram_html
 
@@ -252,7 +253,10 @@ def apply_wrong_problem(
                     body="Подсказку по неверной проблеме не удалось отправить клиенту в Telegram.",
                 )
             raise
+        was_frozen = bool(ticket.is_frozen)
         unfreeze_ticket_on_message_fn(ticket)
+        if was_frozen and not ticket.is_frozen:
+            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
         system_body = (
             f"Администратор {actor_display_name} подсказал клиенту правильный пункт меню: {target_label}"
             if actor_role == "admin"
