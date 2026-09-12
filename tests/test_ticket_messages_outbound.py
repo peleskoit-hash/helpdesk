@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
-from api.app.models import Client, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import Client, Company, MessageType, StatsUserStatusInterval, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType, User
 from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status, get_ticket
 from api.app.services import telegram_bot as telegram_bot_service
 from api.app.services import telegram_outbound_delivery as outbound_service
@@ -2524,6 +2524,66 @@ def test_task_reply_claims_multiple_ready_preloads_into_one_agent_message(tmp_pa
     assert sent_to_client == []
     assert scheduled == []
     assert all(attachment.telegram_delivery_status is None for attachment in attachments)
+
+
+def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    agent = User(
+        id="agent-1",
+        company_id=ticket.company_id,
+        email="agent-1@example.test",
+        login="agent-1",
+        full_name="Agent One",
+        role="agent",
+        is_active=True,
+        availability_status="waiting",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    old_started_at = datetime(2026, 9, 11, 9, 0, 0)
+    session.add_all([
+        agent,
+        StatsUserStatusInterval(
+            id=str(uuid.uuid4()),
+            company_id=ticket.company_id,
+            user_id=agent.id,
+            status="waiting",
+            started_at=old_started_at,
+            ended_at=None,
+            created_at=old_started_at,
+        ),
+    ])
+    session.commit()
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_JsonRequest({"text": "иду к вам"}),
+            db=session,
+            user=SimpleNamespace(id=agent.id, role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: {"ok": True, "result": {"message_id": 42}},
+            telegram_message_id_from_response=lambda response: "42",
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+            claim_attachment_preload=lambda *_args, **_kwargs: None,
+            schedule_attachment_delivery=lambda **_kwargs: None,
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    rows = session.query(StatsUserStatusInterval).filter_by(user_id=agent.id).order_by(StatsUserStatusInterval.started_at).all()
+    session.refresh(agent)
+    assert agent.availability_status == "on_ticket"
+    assert rows[0].status == "waiting"
+    assert rows[0].ended_at is not None
+    assert rows[1].status == "on_ticket"
+    assert rows[1].started_at == rows[0].ended_at
+    assert rows[1].ended_at is None
 
 
 def test_plain_ticket_text_reply_persists_card_message_and_starts_auto_close_timer():

@@ -11,6 +11,7 @@ from ..db import get_db
 from ..models import Company, TelegramNotificationAccount, User
 from ..schemas import SettingsUserCreate, SettingsUserOut, SettingsUserUpdate
 from ..services import telegram_employee_binding
+from ..services.statistics_lifecycle import initialize_user_status_history, sync_user_status_history_after_profile_update
 from ..services.telegram_employee_binding import TelegramBindingOperationError
 
 
@@ -267,6 +268,7 @@ def create_user(payload: SettingsUserCreate, db: Session = Depends(get_db), user
         updated_at=now,
     )
     db.add(new_user)
+    initialize_user_status_history(db, new_user, now=now)
     db.commit()
     db.refresh(new_user)
     return _user_out(new_user)
@@ -284,6 +286,10 @@ def update_user(
     if target is None:
         _error(404, "user_not_found", "Пользователь не найден")
 
+    previous_role = target.role
+    previous_is_active = target.is_active
+    previous_availability_status = target.availability_status
+    now = datetime.utcnow()
     if payload.full_name is not None:
         full_name = payload.full_name.strip()
         if not full_name:
@@ -306,7 +312,15 @@ def update_user(
         target.availability_status = payload.availability_status
     if payload.legacy_ticket_count is not None:
         target.legacy_ticket_count = max(0, int(payload.legacy_ticket_count))
-    target.updated_at = datetime.utcnow()
+    sync_user_status_history_after_profile_update(
+        db,
+        target,
+        previous_role=previous_role,
+        previous_is_active=previous_is_active,
+        previous_availability_status=previous_availability_status,
+        now=now,
+    )
+    target.updated_at = now
 
     db.commit()
     db.refresh(target)

@@ -12,6 +12,7 @@ from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
 from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketWorkflowType, User
 from ..schemas import TextPayload
 from ..services.employee_telegram_notifications import schedule_new_message_notification
+from ..services.statistics_lifecycle import set_user_availability_status
 from ..services.telegram_bot import TelegramApiError, delete_message, edit_message_caption, edit_message_text
 from ..services.telegram_text_format import strip_telegram_html
 
@@ -282,8 +283,7 @@ async def reply_to_ticket(
             ticket.onsite_triggered = True
             actor_user = db.get(User, user.id)
             if actor_user is not None and actor_user.availability_status != "on_ticket":
-                actor_user.availability_status = "on_ticket"
-                actor_user.updated_at = datetime.utcnow()
+                set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
         remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
@@ -376,8 +376,7 @@ async def reply_to_ticket(
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
         if actor_user is not None and actor_user.availability_status != "on_ticket":
-            actor_user.availability_status = "on_ticket"
-            actor_user.updated_at = datetime.utcnow()
+            set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
     remove_client_close_button(db, ticket)
     if ticket.status == TicketStatus.NEW.value:

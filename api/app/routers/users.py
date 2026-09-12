@@ -27,6 +27,7 @@ from ..schemas import (
     UserStatusUpdate,
 )
 from ..services.assignment import assign_unassigned_fairly
+from ..services.statistics_lifecycle import set_user_availability_status
 from ..services.user_avatars import (
     MAX_AVATAR_BYTES,
     AvatarValidationError,
@@ -406,8 +407,7 @@ def update_my_status(
     user = _current_user_model(db, current_user)
     if is_readonly_chiki_piki(current_user):
         _error(403, "readonly_role", "Роль Чики-пики не может менять статус")
-    user.availability_status = payload.availability_status
-    user.updated_at = datetime.utcnow()
+    set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow())
     if user.role == "agent" and payload.availability_status == "online":
         db.flush()
         assign_unassigned_fairly(db, user.company_id, notify_client=True)
@@ -432,8 +432,7 @@ def update_user_status(
         _error(400, "user_inactive", "Нельзя изменить статус неактивного пользователя")
     if user.role not in {"agent", "trainee"}:
         _error(400, "invalid_role", "Статус можно менять только сотрудникам поддержки")
-    user.availability_status = payload.availability_status
-    user.updated_at = datetime.utcnow()
+    set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow())
     if user.role == "agent" and payload.availability_status == "online":
         db.flush()
         assign_unassigned_fairly(db, user.company_id, notify_client=True)

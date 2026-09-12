@@ -13,9 +13,9 @@ from sqlalchemy.orm import sessionmaker
 
 from api.app.auth import hash_password, verify_password
 from api.app.db import Base
-from api.app.models import Company, TelegramNotificationAccount, User
+from api.app.models import Company, StatsUserStatusInterval, TelegramNotificationAccount, User
 from api.app.routers import users as users_router
-from api.app.schemas import SelfLoginUpdate, SelfPasswordUpdate
+from api.app.schemas import SelfLoginUpdate, SelfPasswordUpdate, UserStatusUpdate
 
 
 def _session():
@@ -107,6 +107,10 @@ def _client(session, current_user) -> TestClient:
     return TestClient(app)
 
 
+def _status_intervals(session, user: User) -> list[StatsUserStatusInterval]:
+    return session.query(StatsUserStatusInterval).filter_by(user_id=user.id).order_by(StatsUserStatusInterval.started_at).all()
+
+
 def test_get_self_profile_returns_current_user_without_sensitive_fields():
     session = _session()
     company = _company(session)
@@ -133,6 +137,74 @@ def test_get_self_profile_returns_current_user_without_sensitive_fields():
     assert payload["avatar_present"] is True
     assert "password_hash" not in payload
     assert "is_active" not in payload
+
+
+def test_update_my_status_records_status_history_interval():
+    session = _session()
+    company = _company(session)
+    current = _user(session, company_id=company.id, full_name="Ivan Petrov", login="ivan")
+    old_started_at = datetime(2026, 9, 11, 9, 0, 0)
+    session.add(
+        StatsUserStatusInterval(
+            id=str(uuid.uuid4()),
+            company_id=company.id,
+            user_id=current.id,
+            status="online",
+            started_at=old_started_at,
+            ended_at=None,
+            created_at=old_started_at,
+        )
+    )
+    session.commit()
+
+    result = users_router.update_my_status(
+        UserStatusUpdate(availability_status="waiting"),
+        db=session,
+        current_user=_current_user(current),
+    )
+
+    rows = _status_intervals(session, current)
+    assert result.availability_status == "waiting"
+    assert rows[0].status == "online"
+    assert rows[0].ended_at is not None
+    assert rows[1].status == "waiting"
+    assert rows[1].started_at == rows[0].ended_at
+    assert rows[1].ended_at is None
+
+
+def test_admin_update_user_status_records_status_history_interval():
+    session = _session()
+    company = _company(session)
+    admin = _user(session, company_id=company.id, full_name="Admin User", login="admin", role="admin")
+    target = _user(session, company_id=company.id, full_name="Agent User", login="agent")
+    old_started_at = datetime(2026, 9, 11, 9, 0, 0)
+    session.add(
+        StatsUserStatusInterval(
+            id=str(uuid.uuid4()),
+            company_id=company.id,
+            user_id=target.id,
+            status="online",
+            started_at=old_started_at,
+            ended_at=None,
+            created_at=old_started_at,
+        )
+    )
+    session.commit()
+
+    result = users_router.update_user_status(
+        target.id,
+        UserStatusUpdate(availability_status="lunch"),
+        db=session,
+        current_user=_current_user(admin),
+    )
+
+    rows = _status_intervals(session, target)
+    assert result.availability_status == "lunch"
+    assert rows[0].status == "online"
+    assert rows[0].ended_at is not None
+    assert rows[1].status == "lunch"
+    assert rows[1].started_at == rows[0].ended_at
+    assert rows[1].ended_at is None
 
 
 def test_get_self_profile_returns_unbound_notification_summary():
