@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from ..models import StatsUserStatusInterval, StatsWorkInterval, Ticket, TicketStatus, User
+from ..models import StatsCompletion, StatsUserStatusInterval, StatsWorkInterval, Ticket, TicketStatus, User
 from .statistics_foundation import _object_identity
 
 
@@ -116,6 +116,93 @@ def sync_user_status_history_after_profile_update(
 
 def _work_identity(ticket: Ticket) -> tuple[str, str | None] | None:
     return _object_identity(ticket)
+
+
+def _completion_identity(ticket: Ticket) -> tuple[str, str | None] | None:
+    return _object_identity(ticket)
+
+
+def _completion_row(db: Session, ticket: Ticket) -> StatsCompletion | None:
+    identity = _completion_identity(ticket)
+    if identity is None:
+        return None
+    object_type, _task_kind = identity
+    return db.execute(
+        select(StatsCompletion).where(
+            and_(
+                StatsCompletion.company_id == ticket.company_id,
+                StatsCompletion.object_type == object_type,
+                StatsCompletion.object_id == ticket.id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def sync_completion_after_close(
+    db: Session,
+    ticket: Ticket,
+    *,
+    completed_by_user_id: str | None,
+    completed_at: datetime,
+) -> bool:
+    identity = _completion_identity(ticket)
+    if identity is None:
+        return False
+    object_type, task_kind = identity
+    row = _completion_row(db, ticket)
+    now = _now(None)
+    if row is None:
+        row = StatsCompletion(
+            id=str(uuid.uuid4()),
+            company_id=ticket.company_id,
+            object_id=ticket.id,
+            object_type=object_type,
+            task_kind=task_kind,
+            completed_by_user_id=completed_by_user_id,
+            completed_at=completed_at,
+            is_completed=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.task_kind = task_kind
+        row.completed_by_user_id = completed_by_user_id
+        row.completed_at = completed_at
+        row.is_completed = True
+        row.updated_at = now
+    db.flush()
+    return True
+
+
+def sync_completion_after_reopen(db: Session, ticket: Ticket) -> None:
+    identity = _completion_identity(ticket)
+    if identity is None:
+        return
+    object_type, task_kind = identity
+    row = _completion_row(db, ticket)
+    now = _now(None)
+    if row is None:
+        row = StatsCompletion(
+            id=str(uuid.uuid4()),
+            company_id=ticket.company_id,
+            object_id=ticket.id,
+            object_type=object_type,
+            task_kind=task_kind,
+            completed_by_user_id=None,
+            completed_at=None,
+            is_completed=False,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.task_kind = task_kind
+        row.completed_by_user_id = None
+        row.completed_at = None
+        row.is_completed = False
+        row.updated_at = now
+    db.flush()
 
 
 def _work_assignee(db: Session, ticket: Ticket) -> User | None:

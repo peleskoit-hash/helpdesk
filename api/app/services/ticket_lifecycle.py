@@ -13,6 +13,7 @@ from ..config import settings
 from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
 from .statistics_lifecycle import (
+    sync_completion_after_close,
     sync_work_interval_after_close,
     sync_work_interval_after_freeze,
     sync_work_interval_after_unfreeze,
@@ -188,14 +189,18 @@ def _resolve_completed_by_user_id(db: Session, ticket: Ticket, actor: CurrentUse
     return None
 
 
-def _mark_ticket_completed_once(db: Session, ticket: Ticket, actor: CurrentUser) -> None:
-    if ticket.completed_by_user_id or ticket.completed_counted_at:
-        return
+def _mark_ticket_completed(db: Session, ticket: Ticket, actor: CurrentUser, completed_at: datetime) -> None:
     completed_by_user_id = _resolve_completed_by_user_id(db, ticket, actor)
-    if not completed_by_user_id:
+    synced = sync_completion_after_close(
+        db,
+        ticket,
+        completed_by_user_id=completed_by_user_id,
+        completed_at=completed_at,
+    )
+    if not synced:
         return
     ticket.completed_by_user_id = completed_by_user_id
-    ticket.completed_counted_at = datetime.utcnow()
+    ticket.completed_counted_at = completed_at
 
 
 def _active_message_status_filter():
@@ -728,7 +733,7 @@ def _close_task_without_reply(
                 closed_by_user_id=actor.id,
                 system_note="Групповая задача завершена системой (возможен неполный ответ)",
             )
-    _mark_ticket_completed_once(db, ticket, actor)
+    _mark_ticket_completed(db, ticket, actor, closed_at)
 
 
 def close_ticket_by_actor(
@@ -805,7 +810,7 @@ def close_ticket_by_actor(
             )
             if review_cycle is not None:
                 finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
-            _mark_ticket_completed_once(db, ticket, actor)
+            _mark_ticket_completed(db, ticket, actor, closed_at)
             return "closed"
         closed_at = datetime.utcnow()
         ticket.status = TicketStatus.CLOSED.value
@@ -815,7 +820,7 @@ def close_ticket_by_actor(
         ticket.freeze_until = None
         sync_work_interval_after_close(db, ticket, now=closed_at)
         add_message_fn(db, ticket, MessageType.SYSTEM, f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
-        _mark_ticket_completed_once(db, ticket, actor)
+        _mark_ticket_completed(db, ticket, actor, closed_at)
         return "closed"
 
     if last_agent_message is None:
@@ -941,7 +946,7 @@ def close_ticket_by_actor(
     else:
         close_text = "Автообращение завершено системой" if not is_admin_action else f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}"
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-    _mark_ticket_completed_once(db, ticket, actor)
+    _mark_ticket_completed(db, ticket, actor, closed_at)
     return "closed"
 
 

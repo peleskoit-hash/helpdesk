@@ -263,7 +263,7 @@ def test_admin_forced_ticket_without_assignee_response_does_not_count_completion
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_admin_forced_ticket_after_assignee_text_is_attributed_to_assignee():
@@ -331,7 +331,7 @@ def test_admin_forced_normal_task_without_assignee_response_does_not_count_compl
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_admin_forced_normal_task_after_assignee_text_is_attributed_to_assignee():
@@ -481,7 +481,7 @@ def test_admin_forced_group_child_without_assignee_response_does_not_count_compl
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_admin_forced_group_child_after_assignee_file_only_is_attributed_to_assignee():
@@ -559,7 +559,7 @@ def test_admin_forced_group_child_with_other_agent_message_does_not_count_assign
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_admin_forced_close_with_admin_assignee_does_not_count_completion():
@@ -590,7 +590,7 @@ def test_admin_forced_close_with_admin_assignee_does_not_count_completion():
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_admin_forced_close_without_assignee_does_not_count_completion():
@@ -625,7 +625,7 @@ def test_admin_forced_close_without_assignee_does_not_count_completion():
     assert result == "closed"
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
-    assert ticket.completed_counted_at is None
+    assert ticket.completed_counted_at == ticket.closed_at
 
 
 def test_agent_normal_close_keeps_completion_attributed_to_actor():

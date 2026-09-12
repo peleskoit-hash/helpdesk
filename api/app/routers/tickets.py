@@ -54,6 +54,7 @@ from ..services.client_card_derivation import apply_client_card_profile_save_pip
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.statistics_lifecycle import (
+    sync_completion_after_reopen,
     sync_work_interval_after_assignment_change,
     sync_work_interval_after_close,
     sync_work_interval_after_reopen,
@@ -1691,9 +1692,12 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
     reopened_at = datetime.utcnow()
     ticket.closed_by_user_id = None
     ticket.closed_at = None
+    ticket.completed_by_user_id = None
+    ticket.completed_counted_at = None
     ticket.is_frozen = False
     ticket.freeze_until = None
     ticket.updated_at = reopened_at
+    sync_completion_after_reopen(db, ticket)
     sync_work_interval_after_reopen(db, ticket, now=reopened_at)
     assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
     if ticket.is_special:
