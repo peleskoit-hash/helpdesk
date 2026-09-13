@@ -323,6 +323,98 @@ body[data-sidebar-ready="0"] .admin-select-col {
   padding: 12px;
 }
 
+.main[data-shell-page="management-statistics"] {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.management-statistics-page {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  min-width: 0;
+}
+
+.management-statistics-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.management-statistics-head h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.management-statistics-panel {
+  display: grid;
+  gap: 0;
+  min-height: 0;
+}
+
+.management-statistics-tabs {
+  padding: 12px 14px 0;
+}
+
+.management-statistics-tabs .action.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(231, 241, 255, 0.9);
+}
+
+.management-statistics-filters select {
+  min-width: 190px;
+}
+
+.management-statistics-filters input[type="date"] {
+  min-width: 150px;
+}
+
+.management-statistics-validation {
+  padding: 0 14px 12px;
+  color: #b45309;
+}
+
+.management-statistics-summary {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.management-statistics-table {
+  min-width: 680px;
+}
+
+.management-statistics-table th:nth-child(n+2),
+.management-statistics-table td:nth-child(n+2) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.management-statistics-user-name {
+  font-weight: 800;
+}
+
+.management-statistics-user-muted {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.management-statistics-empty {
+  padding: 14px;
+}
+
 .management-user-block-state {
   border: 1px solid rgba(15, 108, 191, 0.2);
   border-radius: 8px;

@@ -411,6 +411,16 @@ def management_feedback_page(request: Request, db: Session = Depends(get_db)):
     return FileResponse(str(BASE_DIR / "templates" / "management_feedback.html"))
 
 
+@app.get("/management/statistics")
+def management_statistics_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/management/statistics")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "management_statistics.html"))
+
+
 @app.get("/statuses")
 def statuses_page(request: Request, db: Session = Depends(get_db)):
     user = _require_page_auth(request, db)
