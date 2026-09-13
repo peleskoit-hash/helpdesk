@@ -24,6 +24,7 @@ from .routers.employee_notification_preferences import router as employee_notifi
 from .routers.integrations import router as integrations_router
 from .routers.management_integrations import router as management_integrations_router
 from .routers.management_feedback import router as management_feedback_router
+from .routers.management_statistics import router as management_statistics_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
 from .routers.reviews import router as reviews_router
@@ -96,6 +97,7 @@ app.include_router(employee_notification_preferences_router)
 app.include_router(mass_notifications_router)
 app.include_router(management_integrations_router)
 app.include_router(management_feedback_router)
+app.include_router(management_statistics_router)
 app.include_router(management_users_router)
 app.include_router(reviews_router)
 app.include_router(integrations_router)

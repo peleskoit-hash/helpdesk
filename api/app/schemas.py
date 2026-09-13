@@ -429,6 +429,20 @@ class CompletionStatsOut(BaseModel):
     legacy: int | None = None
 
 
+class ManagementCompletedStatsItem(BaseModel):
+    user_id: str
+    full_name: str | None = None
+    is_active: bool | None = None
+    tickets: int = 0
+    tasks: int = 0
+    total: int = 0
+
+
+class ManagementCompletedStatsOut(BaseModel):
+    items: list[ManagementCompletedStatsItem]
+    total: CompletionPeriodStats
+
+
 class ReviewEmployeeOut(BaseModel):
     employee_id: str
     display_name: str

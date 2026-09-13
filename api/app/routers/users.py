@@ -3,12 +3,12 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, hash_password, is_admin, is_readonly_chiki_piki, verify_password
 from ..db import get_db
-from ..models import TelegramNotificationAccount, Ticket, TicketTaskKind, TicketWorkflowType, User
+from ..models import StatsCompletion, TelegramNotificationAccount, User
 from ..routers.settings_users import _ensure_unique_login, _telegram_notification_display
 from ..schemas import (
     AgentOut,
@@ -107,15 +107,6 @@ def _completion_period_bounds() -> dict[str, datetime]:
         "month": month_start,
         "year": year_start,
     }
-
-
-def _is_task_ticket(ticket: Ticket) -> bool:
-    workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
-    if workflow_type in {TicketWorkflowType.TASK.value, TicketWorkflowType.AUTO.value}:
-        if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.GROUP_PARENT.value:
-            return False
-        return True
-    return False
 
 
 @router.get("/me", response_model=UserStatusOut)
@@ -283,21 +274,22 @@ def get_my_completion_stats(
     period_starts = _completion_period_bounds()
     start_min = period_starts["year"]
 
-    tickets = db.execute(
-        select(Ticket).where(
-            and_(
-                Ticket.completed_by_user_id == user.id,
-                Ticket.completed_counted_at.is_not(None),
-                Ticket.completed_counted_at >= start_min,
-            )
+    completions = db.execute(
+        select(StatsCompletion).where(
+            StatsCompletion.company_id == user.company_id,
+            StatsCompletion.completed_by_user_id == user.id,
+            StatsCompletion.completed_at.is_not(None),
+            StatsCompletion.completed_at >= start_min,
+            StatsCompletion.is_completed.is_(True),
+            StatsCompletion.object_type.in_(["ticket", "task"]),
         )
     ).scalars().all()
 
     def build_period_stats(period_start: datetime | None = None) -> CompletionPeriodStats:
         tasks = 0
         tickets_count = 0
-        for item in tickets:
-            counted_at = item.completed_counted_at
+        for item in completions:
+            counted_at = item.completed_at
             if counted_at is None:
                 continue
             if counted_at.tzinfo is None:
@@ -305,9 +297,9 @@ def get_my_completion_stats(
             counted_msk = counted_at.astimezone(MSK_TZ)
             if period_start and counted_msk < period_start:
                 continue
-            if _is_task_ticket(item):
+            if item.object_type == "task":
                 tasks += 1
-            elif (item.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value:
+            elif item.object_type == "ticket":
                 tickets_count += 1
         return CompletionPeriodStats(total=tasks + tickets_count, tasks=tasks, tickets=tickets_count)
 
