@@ -463,6 +463,26 @@ class ManagementWorkTimeStatsOut(BaseModel):
     total: ManagementWorkTimeStatsTotal
 
 
+class ManagementStatusStatsTotal(BaseModel):
+    offline_seconds: int = 0
+    online_seconds: int = 0
+    on_ticket_seconds: int = 0
+    waiting_seconds: int = 0
+    lunch_seconds: int = 0
+    total_seconds: int = 0
+
+
+class ManagementStatusStatsItem(ManagementStatusStatsTotal):
+    user_id: str
+    full_name: str | None = None
+    is_active: bool | None = None
+
+
+class ManagementStatusStatsOut(BaseModel):
+    items: list[ManagementStatusStatsItem]
+    total: ManagementStatusStatsTotal
+
+
 class ReviewEmployeeOut(BaseModel):
     employee_id: str
     display_name: str

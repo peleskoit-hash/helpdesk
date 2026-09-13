@@ -10,11 +10,14 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import StatsCompletion, StatsWorkInterval, User
+from ..models import StatsCompletion, StatsUserStatusInterval, StatsWorkInterval, User
 from ..schemas import (
     CompletionPeriodStats,
     ManagementCompletedStatsItem,
     ManagementCompletedStatsOut,
+    ManagementStatusStatsItem,
+    ManagementStatusStatsOut,
+    ManagementStatusStatsTotal,
     ManagementWorkTimeStatsItem,
     ManagementWorkTimeStatsOut,
     ManagementWorkTimeStatsTotal,
@@ -22,6 +25,13 @@ from ..schemas import (
 
 
 router = APIRouter(prefix="/api/v1/management/statistics", tags=["management-statistics"])
+STATUS_STATS_FIELDS = {
+    "offline": "offline_seconds",
+    "online": "online_seconds",
+    "on_ticket": "on_ticket_seconds",
+    "waiting": "waiting_seconds",
+    "lunch": "lunch_seconds",
+}
 
 
 def _error(status_code: int, code: str, message: str):
@@ -62,6 +72,12 @@ def _stats_total(observations: list[tuple[str, int]]) -> ManagementWorkTimeStats
         average_seconds=average_seconds,
         median_seconds=median_seconds,
     )
+
+
+def _status_stats_total(status_seconds: dict[str, int]) -> ManagementStatusStatsTotal:
+    values = {field: int(status_seconds.get(status, 0)) for status, field in STATUS_STATS_FIELDS.items()}
+    values["total_seconds"] = sum(values.values())
+    return ManagementStatusStatsTotal(**values)
 
 
 @router.get("/completed", response_model=ManagementCompletedStatsOut)
@@ -220,3 +236,86 @@ def get_work_time_statistics(
         for object_type, seconds in observations
     ]
     return ManagementWorkTimeStatsOut(items=items, total=_stats_total(all_observations))
+
+
+@router.get("/statuses", response_model=ManagementStatusStatsOut)
+def get_status_statistics(
+    user_id: Annotated[str | None, Query()] = None,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    if date_from is not None:
+        date_from = _naive_utc(date_from)
+    if date_to is not None:
+        date_to = _naive_utc(date_to)
+    if date_from is not None and date_to is not None and date_to <= date_from:
+        _error(400, "invalid_date_range", "date_to должен быть позже date_from")
+
+    admin = db.get(User, user.id)
+    if admin is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+    company_id = admin.company_id
+    now = _naive_utc(_utcnow())
+
+    filters = [
+        StatsUserStatusInterval.company_id == company_id,
+    ]
+    if user_id is not None:
+        filters.append(StatsUserStatusInterval.user_id == user_id)
+    if date_from is not None:
+        filters.append(or_(StatsUserStatusInterval.ended_at.is_(None), StatsUserStatusInterval.ended_at > date_from))
+    if date_to is not None:
+        filters.append(StatsUserStatusInterval.started_at < date_to)
+
+    intervals = db.execute(select(StatsUserStatusInterval).where(*filters)).scalars().all()
+    seconds_by_user_status: dict[tuple[str, str], float] = {}
+    for interval in intervals:
+        if interval.status not in STATUS_STATS_FIELDS:
+            continue
+        started_at = _naive_utc(interval.started_at)
+        interval_end = _naive_utc(interval.ended_at) if interval.ended_at is not None else now
+        effective_start = max(started_at, date_from) if date_from is not None else started_at
+        effective_end = min(interval_end, date_to) if date_to is not None else interval_end
+        if effective_end <= effective_start:
+            continue
+        key = (interval.user_id, interval.status)
+        seconds_by_user_status[key] = seconds_by_user_status.get(key, 0.0) + (effective_end - effective_start).total_seconds()
+
+    status_seconds_by_user: dict[str, dict[str, int]] = {}
+    for (observed_user_id, status), seconds in seconds_by_user_status.items():
+        whole_seconds = int(seconds)
+        if whole_seconds <= 0:
+            continue
+        status_seconds_by_user.setdefault(observed_user_id, {})[status] = whole_seconds
+
+    users_by_id: dict[str, User] = {}
+    if status_seconds_by_user:
+        users_by_id = {
+            item.id: item
+            for item in db.execute(
+                select(User).where(User.id.in_(status_seconds_by_user.keys()), User.company_id == company_id)
+            ).scalars().all()
+        }
+
+    items = []
+    for observed_user_id, status_seconds in status_seconds_by_user.items():
+        found_user = users_by_id.get(observed_user_id)
+        total = _status_stats_total(status_seconds)
+        items.append(
+            ManagementStatusStatsItem(
+                user_id=observed_user_id,
+                full_name=found_user.full_name if found_user is not None else None,
+                is_active=found_user.is_active if found_user is not None else None,
+                **total.model_dump(),
+            )
+        )
+
+    items.sort(key=lambda item: (-item.total_seconds, item.full_name or item.user_id, item.user_id))
+    total_status_seconds = {
+        status: sum(getattr(item, field) for item in items)
+        for status, field in STATUS_STATS_FIELDS.items()
+    }
+    return ManagementStatusStatsOut(items=items, total=_status_stats_total(total_status_seconds))
