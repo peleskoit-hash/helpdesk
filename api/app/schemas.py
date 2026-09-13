@@ -443,6 +443,26 @@ class ManagementCompletedStatsOut(BaseModel):
     total: CompletionPeriodStats
 
 
+class ManagementWorkTimeStatsTotal(BaseModel):
+    tickets: int = 0
+    tasks: int = 0
+    objects: int = 0
+    total_seconds: int = 0
+    average_seconds: int | float = 0
+    median_seconds: int | float = 0
+
+
+class ManagementWorkTimeStatsItem(ManagementWorkTimeStatsTotal):
+    user_id: str
+    full_name: str | None = None
+    is_active: bool | None = None
+
+
+class ManagementWorkTimeStatsOut(BaseModel):
+    items: list[ManagementWorkTimeStatsItem]
+    total: ManagementWorkTimeStatsTotal
+
+
 class ReviewEmployeeOut(BaseModel):
     employee_id: str
     display_name: str
