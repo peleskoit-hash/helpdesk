@@ -1,6 +1,7 @@
 (function () {
   const EMPTY = "\u2014";
   const DEFAULT_PERIOD = "30days";
+  const EMPLOYEE_FILTER_ROLES = new Set(["agent", "trainee"]);
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -163,22 +164,20 @@
       dateFrom: root.querySelector("#managementStatisticsDateFrom"),
       dateTo: root.querySelector("#managementStatisticsDateTo"),
       validation: root.querySelector("#managementStatisticsValidation"),
-      completedSummary: root.querySelector("#managementStatisticsSummary"),
-      completedTableBody: root.querySelector("#managementStatisticsTableBody"),
-      completedEmpty: root.querySelector("#managementStatisticsEmpty"),
       workTimeSummary: root.querySelector("#managementStatisticsWorkTimeSummary"),
       workTimeTableBody: root.querySelector("#managementStatisticsWorkTimeTableBody"),
       workTimeEmpty: root.querySelector("#managementStatisticsWorkTimeEmpty"),
       statusesSummary: root.querySelector("#managementStatisticsStatusesSummary"),
       statusesTableBody: root.querySelector("#managementStatisticsStatusesTableBody"),
       statusesEmpty: root.querySelector("#managementStatisticsStatusesEmpty"),
+      medianHelp: root.querySelector(".management-statistics-median-help"),
       tabs: [...root.querySelectorAll("[data-statistics-tab]")],
       panels: [...root.querySelectorAll("[data-statistics-panel]")],
       customFields: [...root.querySelectorAll(".management-statistics-custom")],
     };
     const state = {
       appTimezone: "UTC",
-      tab: "completed",
+      tab: "work-time",
       generation: 0,
       controller: new AbortController(),
       destroyed: false,
@@ -207,7 +206,7 @@
       if (tab === "statuses") {
         return { tableBody: el.statusesTableBody, empty: el.statusesEmpty };
       }
-      return { tableBody: el.completedTableBody, empty: el.completedEmpty };
+      return { tableBody: el.workTimeTableBody, empty: el.workTimeEmpty };
     }
 
     function clearActiveResults(message) {
@@ -259,12 +258,13 @@
     function renderUsers(users) {
       const current = el.employee.value || "";
       const options = ['<option value="">Все сотрудники</option>'];
-      for (const user of users) {
+      const employees = users.filter((user) => EMPLOYEE_FILTER_ROLES.has(user.role));
+      for (const user of employees) {
         const inactive = user.is_active === false ? " (неактивен)" : "";
         options.push(`<option value="${escapeHtml(user.id)}">${escapeHtml(userLabel(user) + inactive)}</option>`);
       }
       el.employee.innerHTML = options.join("");
-      el.employee.value = users.some((user) => user.id === current) ? current : "";
+      el.employee.value = employees.some((user) => user.id === current) ? current : "";
     }
 
     function userCellHtml(item) {
@@ -281,17 +281,6 @@
           <div class="management-statistics-user-name">${escapeHtml(name)}</div>
           ${meta ? `<div class="management-statistics-user-muted">${escapeHtml(meta)}</div>` : ""}
         </td>
-      `;
-    }
-
-    function completedRowHtml(item) {
-      return `
-        <tr>
-          ${userCellHtml(item)}
-          <td>${Number(item.tickets || 0)}</td>
-          <td>${Number(item.tasks || 0)}</td>
-          <td>${Number(item.total || 0)}</td>
-        </tr>
       `;
     }
 
@@ -313,30 +302,30 @@
       return `
         <tr>
           ${userCellHtml(item)}
+          <td>${escapeHtml(durationLabel(item.offline_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.online_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.on_ticket_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.waiting_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.lunch_seconds))}</td>
-          <td>${escapeHtml(durationLabel(item.offline_seconds))}</td>
-          <td>${escapeHtml(durationLabel(item.total_seconds))}</td>
         </tr>
       `;
     }
 
-    function renderCompleted(payload) {
-      const total = payload?.total || {};
-      const items = Array.isArray(payload?.items) ? payload.items : [];
-      el.completedSummary.textContent = `Всего выполнено: ${Number(total.total || 0)} · Заявки: ${Number(total.tickets || 0)} · Задачи: ${Number(total.tasks || 0)}`;
-      el.completedTableBody.innerHTML = items.map(completedRowHtml).join("");
-      el.completedEmpty.hidden = items.length > 0;
-      el.completedEmpty.textContent = "За выбранный период выполненных объектов нет";
-      setStatus("");
+    function summaryHtml(parts) {
+      return parts.map((part, index) => `<span>${index > 0 ? "| " : ""}${escapeHtml(part)}</span>`).join("");
     }
 
     function renderWorkTime(payload) {
       const total = payload?.total || {};
       const items = Array.isArray(payload?.items) ? payload.items : [];
-      el.workTimeSummary.textContent = `Общее время: ${durationLabel(total.total_seconds)} · Объектов: ${Number(total.objects || 0)} · Среднее: ${durationLabel(total.average_seconds)} · Медиана: ${durationLabel(total.median_seconds)} · Заявки: ${Number(total.tickets || 0)} · Задачи: ${Number(total.tasks || 0)}`;
+      el.workTimeSummary.innerHTML = summaryHtml([
+        `Общее время: ${durationLabel(total.total_seconds)}`,
+        `Объектов: ${Number(total.objects || 0)}`,
+        `Среднее: ${durationLabel(total.average_seconds)}`,
+        `Медиана: ${durationLabel(total.median_seconds)}`,
+        `Заявки: ${Number(total.tickets || 0)}`,
+        `Задачи: ${Number(total.tasks || 0)}`,
+      ]);
       el.workTimeTableBody.innerHTML = items.map(workTimeRowHtml).join("");
       el.workTimeEmpty.hidden = items.length > 0;
       el.workTimeEmpty.textContent = "За выбранный период времени работы нет";
@@ -346,7 +335,14 @@
     function renderStatuses(payload) {
       const total = payload?.total || {};
       const items = Array.isArray(payload?.items) ? payload.items : [];
-      el.statusesSummary.textContent = `Учтено времени: ${durationLabel(total.total_seconds)} · Онлайн: ${durationLabel(total.online_seconds)} · В заявке: ${durationLabel(total.on_ticket_seconds)} · Ожидание: ${durationLabel(total.waiting_seconds)} · Обед: ${durationLabel(total.lunch_seconds)} · Офлайн: ${durationLabel(total.offline_seconds)}`;
+      el.statusesSummary.innerHTML = summaryHtml([
+        `Учтено времени: ${durationLabel(total.total_seconds)}`,
+        `Не в сети: ${durationLabel(total.offline_seconds)}`,
+        `В сети: ${durationLabel(total.online_seconds)}`,
+        `На заявке: ${durationLabel(total.on_ticket_seconds)}`,
+        `В ожидании: ${durationLabel(total.waiting_seconds)}`,
+        `Обед: ${durationLabel(total.lunch_seconds)}`,
+      ]);
       el.statusesTableBody.innerHTML = items.map(statusRowHtml).join("");
       el.statusesEmpty.hidden = items.length > 0;
       el.statusesEmpty.textContent = "За выбранный период данных по статусам нет";
@@ -366,7 +362,7 @@
 
     async function loadActiveTab() {
       const activeTab = state.tab;
-      const endpoint = activeTab === "work-time" ? "work-time" : activeTab === "statuses" ? "statuses" : "completed";
+      const endpoint = activeTab === "statuses" ? "statuses" : "work-time";
       const requestGeneration = clearActiveResults("Загрузка...");
       setStatus("Загрузка...");
       const built = buildStatisticsUrl(endpoint);
@@ -381,8 +377,7 @@
         const payload = await api(built.url, state.controller.signal);
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab) return;
         if (activeTab === "work-time") renderWorkTime(payload);
-        else if (activeTab === "statuses") renderStatuses(payload);
-        else renderCompleted(payload);
+        else renderStatuses(payload);
       } catch (error) {
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab || error.name === "AbortError") return;
         panelElements(activeTab).empty.textContent = "";
@@ -394,6 +389,7 @@
       state.tab = tab;
       for (const button of el.tabs) button.classList.toggle("active", button.dataset.statisticsTab === tab);
       for (const panel of el.panels) panel.hidden = panel.dataset.statisticsPanel !== tab;
+      if (el.medianHelp) el.medianHelp.hidden = tab !== "work-time";
       loadActiveTab();
     }
 

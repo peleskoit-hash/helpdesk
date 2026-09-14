@@ -60,67 +60,51 @@
 
         <div class="panel table-wrap management-statistics-panel">
           <div class="settings-section-tabs management-statistics-tabs" role="tablist" aria-label="Разделы статистики">
-            <button class="action active" type="button" data-statistics-tab="completed">Выполнено</button>
-            <button class="action" type="button" data-statistics-tab="work-time">Время работы</button>
+            <button class="action active" type="button" data-statistics-tab="work-time">Время выполнения Заявок/Задач</button>
             <button class="action" type="button" data-statistics-tab="statuses">Статусы сотрудников</button>
           </div>
 
-          <div class="integration-log-filters management-statistics-filters">
-            <label>Сотрудник:
-              <select id="managementStatisticsEmployee"></select>
-            </label>
-            <label>Период:
-              <select id="managementStatisticsPeriod">
-                <option value="today">Сегодня</option>
-                <option value="yesterday">Вчера</option>
-                <option value="week">Неделя</option>
-                <option value="30days" selected>30 дней</option>
-                <option value="month">Календарный месяц</option>
-                <option value="year">Год</option>
-                <option value="all">Всё время</option>
-                <option value="custom">Свой период</option>
-              </select>
-            </label>
-            <label class="management-statistics-custom" hidden>с:
-              <input id="managementStatisticsDateFrom" type="date" />
-            </label>
-            <label class="management-statistics-custom" hidden>по:
-              <input id="managementStatisticsDateTo" type="date" />
-            </label>
+          <div class="management-statistics-filter-row">
+            <div class="integration-log-filters management-statistics-filters">
+              <label>Сотрудник:
+                <select id="managementStatisticsEmployee"></select>
+              </label>
+              <label>Период:
+                <select id="managementStatisticsPeriod">
+                  <option value="today">Сегодня</option>
+                  <option value="yesterday">Вчера</option>
+                  <option value="week">Неделя</option>
+                  <option value="30days" selected>30 дней</option>
+                  <option value="month">Календарный месяц</option>
+                  <option value="year">Год</option>
+                  <option value="all">Всё время</option>
+                  <option value="custom">Свой период</option>
+                </select>
+              </label>
+              <label class="management-statistics-custom" hidden>с:
+                <input id="managementStatisticsDateFrom" type="date" />
+              </label>
+              <label class="management-statistics-custom" hidden>по:
+                <input id="managementStatisticsDateTo" type="date" />
+              </label>
+            </div>
+            <div class="management-statistics-median-help">Медианное значение — время, которое находится посередине выборки: у половины выполненных объектов время меньше, у половины — больше.</div>
           </div>
           <div id="managementStatisticsValidation" class="status management-statistics-validation" hidden></div>
 
-          <section id="managementStatisticsCompletedPanel" data-statistics-panel="completed">
-            <div id="managementStatisticsSummary" class="management-statistics-summary">Всего выполнено: 0 · Заявки: 0 · Задачи: 0</div>
-            <div class="table-scroll management-statistics-table-wrap">
-              <table class="management-statistics-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Сотрудник</th>
-                    <th scope="col">Заявки</th>
-                    <th scope="col">Задачи</th>
-                    <th scope="col">Всего</th>
-                  </tr>
-                </thead>
-                <tbody id="managementStatisticsTableBody"></tbody>
-              </table>
-              <div id="managementStatisticsEmpty" class="status management-statistics-empty">Загрузка...</div>
-            </div>
-          </section>
-
-          <section id="managementStatisticsWorkTimePanel" data-statistics-panel="work-time" hidden>
-            <div id="managementStatisticsWorkTimeSummary" class="management-statistics-summary">Общее время: 0 сек · Объектов: 0 · Среднее: 0 сек · Медиана: 0 сек · Заявки: 0 · Задачи: 0</div>
+          <section id="managementStatisticsWorkTimePanel" data-statistics-panel="work-time">
+            <div id="managementStatisticsWorkTimeSummary" class="management-statistics-summary">Общее время: 0 сек | Объектов: 0 | Среднее: 0 сек | Медиана: 0 сек | Заявки: 0 | Задачи: 0</div>
             <div class="table-scroll management-statistics-table-wrap">
               <table class="management-statistics-table management-statistics-work-time-table">
                 <thead>
                   <tr>
                     <th scope="col">Сотрудник</th>
-                    <th scope="col">Заявки</th>
-                    <th scope="col">Задачи</th>
-                    <th scope="col">Объектов</th>
-                    <th scope="col">Общее время</th>
-                    <th scope="col">Среднее</th>
-                    <th scope="col">Медиана</th>
+                    <th scope="col">Выполнено заявок</th>
+                    <th scope="col">Выполнено задач</th>
+                    <th scope="col">Всего выполнено</th>
+                    <th scope="col">Общее время выполнения</th>
+                    <th scope="col">Среднее время выполнения</th>
+                    <th scope="col">Медианное значение</th>
                   </tr>
                 </thead>
                 <tbody id="managementStatisticsWorkTimeTableBody"></tbody>
@@ -129,18 +113,17 @@
             </div>
           </section>
           <section id="managementStatisticsStatusesPanel" data-statistics-panel="statuses" hidden>
-            <div id="managementStatisticsStatusesSummary" class="management-statistics-summary">Учтено времени: 0 сек · Онлайн: 0 сек · В заявке: 0 сек · Ожидание: 0 сек · Обед: 0 сек · Офлайн: 0 сек</div>
+            <div id="managementStatisticsStatusesSummary" class="management-statistics-summary">Учтено времени: 0 сек | Не в сети: 0 сек | В сети: 0 сек | На заявке: 0 сек | В ожидании: 0 сек | Обед: 0 сек</div>
             <div class="table-scroll management-statistics-table-wrap">
               <table class="management-statistics-table management-statistics-statuses-table">
                 <thead>
                   <tr>
                     <th scope="col">Сотрудник</th>
-                    <th scope="col">Онлайн</th>
-                    <th scope="col">В заявке</th>
-                    <th scope="col">Ожидание</th>
+                    <th scope="col">Не в сети</th>
+                    <th scope="col">В сети</th>
+                    <th scope="col">На заявке</th>
+                    <th scope="col">В ожидании</th>
                     <th scope="col">Обед</th>
-                    <th scope="col">Офлайн</th>
-                    <th scope="col">Всего</th>
                   </tr>
                 </thead>
                 <tbody id="managementStatisticsStatusesTableBody"></tbody>

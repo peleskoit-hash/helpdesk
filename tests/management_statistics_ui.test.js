@@ -16,7 +16,7 @@ class Element {
     this.text = "";
     this.html = "";
     this.disabled = false;
-    this.className = dataset.statisticsTab === "completed" ? "action active" : "action";
+    this.className = dataset.statisticsTab === "work-time" ? "action active" : "action";
     this.classList = {
       toggle: (name, enabled) => {
         const names = new Set(this.className.split(" ").filter(Boolean));
@@ -35,18 +35,13 @@ class Element {
 }
 
 const users = [
-  { id: "agent-a", full_name: "Agent A", is_active: true },
-  { id: "inactive-agent", full_name: "Inactive Agent", is_active: false },
+  { id: "agent-a", full_name: "Agent A", role: "agent", is_active: true },
+  { id: "trainee-a", full_name: "Trainee A", role: "trainee", is_active: true },
+  { id: "inactive-agent", full_name: "Inactive Agent", role: "agent", is_active: false },
+  { id: "inactive-trainee", full_name: "Inactive Trainee", role: "trainee", is_active: false },
+  { id: "admin-a", full_name: "Admin A", role: "admin", is_active: true },
+  { id: "chiki-a", full_name: "Chiki A", role: "chiki_piki", is_active: true },
 ];
-
-const completedPayload = {
-  total: { total: 4, tickets: 2, tasks: 2 },
-  items: [
-    { user_id: "agent-a", full_name: "Agent A", is_active: true, tickets: 1, tasks: 1, total: 2 },
-    { user_id: "inactive-agent", full_name: "Inactive Agent", is_active: false, tickets: 0, tasks: 1, total: 1 },
-    { user_id: "deleted-agent", full_name: null, is_active: null, tickets: 1, tasks: 0, total: 1 },
-  ],
-};
 
 const workTimePayload = {
   total: { tickets: 3, tasks: 2, objects: 9, total_seconds: 90061, average_seconds: 3660, median_seconds: 90 },
@@ -76,13 +71,12 @@ async function load({ handler, role = "admin", appTimezone = "UTC", now = "2026-
     "StatusesSummary", "StatusesTableBody", "StatusesEmpty"]) {
     el[key] = new Element();
   }
+  el.MedianHelp = new Element();
   const tabs = [
-    new Element({ statisticsTab: "completed" }),
     new Element({ statisticsTab: "work-time" }),
     new Element({ statisticsTab: "statuses" }),
   ];
   const panels = [
-    new Element({ statisticsPanel: "completed" }),
     new Element({ statisticsPanel: "work-time" }),
     new Element({ statisticsPanel: "statuses" }),
   ];
@@ -90,7 +84,10 @@ async function load({ handler, role = "admin", appTimezone = "UTC", now = "2026-
   el.Period.value = "30days";
 
   const root = {
-    querySelector: (selector) => el[selector.slice("#managementStatistics".length)],
+    querySelector: (selector) => {
+      if (selector === ".management-statistics-median-help") return el.MedianHelp;
+      return el[selector.slice("#managementStatistics".length)];
+    },
     querySelectorAll: (selector) => {
       if (selector === "[data-statistics-tab]") return tabs;
       if (selector === "[data-statistics-panel]") return panels;
@@ -124,7 +121,7 @@ async function load({ handler, role = "admin", appTimezone = "UTC", now = "2026-
             ? workTimePayload
             : url.startsWith("/api/v1/management/statistics/statuses")
               ? statusesPayload
-            : completedPayload;
+            : workTimePayload;
       if (payload instanceof Error) {
         return { ok: false, status: 500, text: async () => payload.message };
       }
@@ -140,7 +137,7 @@ function statisticsRequests(ui, endpoint) {
   return ui.requests.filter((request) => request.url.startsWith("/api/v1/management/statistics/" + endpoint));
 }
 
-function lastQuery(ui, endpoint = "completed") {
+function lastQuery(ui, endpoint = "work-time") {
   const requests = statisticsRequests(ui, endpoint);
   return new URL(requests.at(-1).url, "http://local").searchParams;
 }
@@ -151,24 +148,33 @@ test("management statistics route and navigation are registered", () => {
   assert.match(fs.readFileSync("api/app/templates/management.html", "utf8"), /href="\/management\/statistics">Статистика/);
   const template = fs.readFileSync("api/app/templates/management_statistics.html", "utf8");
   assert.match(template, /data-shell-page="management-statistics"/);
-  assert.match(template, /data-statistics-tab="completed">Выполнено/);
-  assert.match(template, /data-statistics-tab="work-time">Время работы/);
+  assert.doesNotMatch(template, /data-statistics-tab="completed"/);
+  assert.match(template, /data-statistics-tab="work-time">Время выполнения Заявок\/Задач/);
   assert.match(template, /data-statistics-tab="statuses">Статусы сотрудников/);
+  assert.match(template, /Медианное значение — время, которое находится посередине выборки/);
+  assert.doesNotMatch(template, /<th scope="col">Всего<\/th>/);
 });
 
-test("defaults load all employees and completed statistics for last 30 days", async () => {
+test("defaults load all employees and work-time statistics for last 30 days", async () => {
   const ui = await load();
   assert.equal(ui.el.Employee.value, "");
   assert.equal(ui.el.Period.value, "30days");
   assert.match(ui.el.Employee.innerHTML, />Все сотрудники</);
+  assert.match(ui.el.Employee.innerHTML, /Agent A/);
+  assert.match(ui.el.Employee.innerHTML, /Trainee A/);
   assert.match(ui.el.Employee.innerHTML, /Inactive Agent \(неактивен\)/);
+  assert.match(ui.el.Employee.innerHTML, /Inactive Trainee \(неактивен\)/);
+  assert.doesNotMatch(ui.el.Employee.innerHTML, /Admin A/);
+  assert.doesNotMatch(ui.el.Employee.innerHTML, /Chiki A/);
   const query = lastQuery(ui);
   assert.equal(query.has("user_id"), false);
   assert.equal(query.get("date_from"), "2026-08-15T00:00:00+00:00");
   assert.equal(query.get("date_to"), "2026-09-14T00:00:00+00:00");
+  assert.equal(statisticsRequests(ui, "completed").length, 0);
+  assert.equal(statisticsRequests(ui, "work-time").length, 1);
 });
 
-test("employee filter and all-time period update completed API params", async () => {
+test("employee filter and all-time period update work-time API params", async () => {
   const ui = await load();
   ui.el.Employee.value = "agent-a";
   ui.el.Employee.fire("change");
@@ -235,23 +241,8 @@ test("timezone boundary helper uses date-specific DST offset", async () => {
   assert.equal(hooks.isoBoundaryInTimezone("2026-03-30", "Europe/Berlin"), "2026-03-30T00:00:00+02:00");
 });
 
-test("invalid custom period shows validation and does not call completed API", async () => {
+test("invalid custom period shows validation and does not call work-time API", async () => {
   const ui = await load();
-  const before = ui.requests.length;
-  ui.el.Period.value = "custom";
-  ui.el.DateFrom.value = "2026-09-04";
-  ui.el.DateTo.value = "2026-09-03";
-  ui.el.Period.fire("change");
-  await settle();
-  assert.equal(ui.requests.length, before);
-  assert.equal(ui.el.Validation.hidden, false);
-  assert.match(ui.el.Validation.textContent, /Дата окончания/);
-});
-
-test("invalid custom period does not call work-time API", async () => {
-  const ui = await load();
-  ui.tabs[1].fire("click");
-  await settle();
   const before = statisticsRequests(ui, "work-time").length;
   ui.el.Period.value = "custom";
   ui.el.DateFrom.value = "2026-09-04";
@@ -260,11 +251,12 @@ test("invalid custom period does not call work-time API", async () => {
   await settle();
   assert.equal(statisticsRequests(ui, "work-time").length, before);
   assert.equal(ui.el.Validation.hidden, false);
+  assert.match(ui.el.Validation.textContent, /Дата окончания/);
 });
 
 test("invalid custom period does not call statuses API", async () => {
   const ui = await load();
-  ui.tabs[2].fire("click");
+  ui.tabs[1].fire("click");
   await settle();
   const before = statisticsRequests(ui, "statuses").length;
   ui.el.Period.value = "custom";
@@ -276,33 +268,12 @@ test("invalid custom period does not call statuses API", async () => {
   assert.equal(ui.el.Validation.hidden, false);
 });
 
-test("completed response renders totals inactive users deleted fallback and empty state", async () => {
-  const ui = await load();
-  assert.equal(ui.el.Summary.textContent, "Всего выполнено: 4 · Заявки: 2 · Задачи: 2");
-  assert.match(ui.el.TableBody.innerHTML, /Agent A/);
-  assert.match(ui.el.TableBody.innerHTML, /Неактивен/);
-  assert.match(ui.el.TableBody.innerHTML, /Удалённый сотрудник/);
-  assert.match(ui.el.TableBody.innerHTML, /deleted-agent/);
-  assert.equal(ui.el.Empty.hidden, true);
-
-  const empty = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : { total: { total: 0, tickets: 0, tasks: 0 }, items: [] } });
-  assert.equal(empty.el.Empty.hidden, false);
-  assert.equal(empty.el.Empty.textContent, "За выбранный период выполненных объектов нет");
-  assert.equal(empty.el.Summary.textContent, "Всего выполнено: 0 · Заявки: 0 · Задачи: 0");
-});
-
-test("completed API error shows page error", async () => {
-  const ui = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : new Error("boom") });
-  assert.equal(ui.el.Status.textContent, "Не удалось загрузить статистику. Повторите попытку.");
-  assert.equal(ui.el.Empty.textContent, "");
-});
-
-test("work-time tab calls only work-time API with shared period and employee filters", async () => {
+test("work-time default tab uses shared period and employee filters", async () => {
   const ui = await load({ appTimezone: "Europe/Moscow", now: "2026-09-13T12:00:00Z" });
   const completedBefore = statisticsRequests(ui, "completed").length;
   ui.el.Employee.value = "agent-a";
   ui.el.Period.value = "today";
-  ui.tabs[1].fire("click");
+  ui.el.Period.fire("change");
   await settle();
   assert.equal(statisticsRequests(ui, "completed").length, completedBefore);
   assert.equal(statisticsRequests(ui, "statuses").length, 0);
@@ -329,9 +300,7 @@ test("work-time tab calls only work-time API with shared period and employee fil
 
 test("work-time response renders counts durations inactive deleted and empty state", async () => {
   const ui = await load();
-  ui.tabs[1].fire("click");
-  await settle();
-  assert.equal(ui.el.WorkTimeSummary.textContent, "Общее время: 1 д 1 ч · Объектов: 9 · Среднее: 1 ч 1 мин · Медиана: 1 мин 30 сек · Заявки: 3 · Задачи: 2");
+  assert.equal(ui.el.WorkTimeSummary.innerHTML, "<span>Общее время: 1 д 1 ч</span><span>| Объектов: 9</span><span>| Среднее: 1 ч 1 мин</span><span>| Медиана: 1 мин 30 сек</span><span>| Заявки: 3</span><span>| Задачи: 2</span>");
   assert.match(ui.el.WorkTimeTableBody.innerHTML, /Agent A/);
   assert.match(ui.el.WorkTimeTableBody.innerHTML, /<td>1<\/td>/);
   assert.match(ui.el.WorkTimeTableBody.innerHTML, /<td>5<\/td>/);
@@ -342,21 +311,30 @@ test("work-time response renders counts durations inactive deleted and empty sta
   assert.equal(ui.el.WorkTimeEmpty.hidden, true);
 
   const empty = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : { total: { tickets: 0, tasks: 0, objects: 0, total_seconds: 0, average_seconds: 0, median_seconds: 0 }, items: [] } });
-  empty.tabs[1].fire("click");
-  await settle();
-  assert.equal(empty.el.WorkTimeSummary.textContent, "Общее время: 0 сек · Объектов: 0 · Среднее: 0 сек · Медиана: 0 сек · Заявки: 0 · Задачи: 0");
+  assert.equal(empty.el.WorkTimeSummary.innerHTML, "<span>Общее время: 0 сек</span><span>| Объектов: 0</span><span>| Среднее: 0 сек</span><span>| Медиана: 0 сек</span><span>| Заявки: 0</span><span>| Задачи: 0</span>");
   assert.equal(empty.el.WorkTimeEmpty.hidden, false);
   assert.equal(empty.el.WorkTimeEmpty.textContent, "За выбранный период времени работы нет");
+});
+
+test("median help is visible only on work-time tab", async () => {
+  const ui = await load();
+  assert.equal(ui.el.MedianHelp.hidden, false);
+
+  ui.tabs[1].fire("click");
+  await settle();
+  assert.equal(ui.el.MedianHelp.hidden, true);
+
+  ui.tabs[0].fire("click");
+  await settle();
+  assert.equal(ui.el.MedianHelp.hidden, false);
 });
 
 test("work-time API error shows page error", async () => {
   const ui = await load({ handler: (url) => {
     if (url === "/api/v1/settings/users") return users;
     if (url.startsWith("/api/v1/management/statistics/work-time")) return new Error("boom");
-    return completedPayload;
+    return workTimePayload;
   } });
-  ui.tabs[1].fire("click");
-  await settle();
   assert.equal(ui.el.Status.textContent, "Не удалось загрузить статистику. Повторите попытку.");
   assert.equal(ui.el.WorkTimeEmpty.textContent, "");
 });
@@ -366,10 +344,10 @@ test("statuses tab calls only statuses API with shared period and employee filte
   const completedBefore = statisticsRequests(ui, "completed").length;
   ui.el.Employee.value = "agent-a";
   ui.el.Period.value = "today";
-  ui.tabs[2].fire("click");
+  ui.tabs[1].fire("click");
   await settle();
   assert.equal(statisticsRequests(ui, "completed").length, completedBefore);
-  assert.equal(statisticsRequests(ui, "work-time").length, 0);
+  assert.equal(statisticsRequests(ui, "work-time").length, 1);
   let query = lastQuery(ui, "statuses");
   assert.equal(query.get("user_id"), "agent-a");
   assert.equal(query.get("date_from"), "2026-09-13T00:00:00+03:00");
@@ -393,20 +371,20 @@ test("statuses tab calls only statuses API with shared period and employee filte
 
 test("statuses response renders durations inactive deleted and backend total", async () => {
   const ui = await load();
-  ui.tabs[2].fire("click");
+  ui.tabs[1].fire("click");
   await settle();
-  assert.equal(ui.el.StatusesSummary.textContent, "Учтено времени: 2 д 2 ч · Онлайн: 1 д 1 ч · В заявке: 1 ч 1 мин · Ожидание: 1 мин 30 сек · Обед: 45 сек · Офлайн: 0 сек");
+  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 2 д 2 ч</span><span>| Не в сети: 0 сек</span><span>| В сети: 1 д 1 ч</span><span>| На заявке: 1 ч 1 мин</span><span>| В ожидании: 1 мин 30 сек</span><span>| Обед: 45 сек</span>");
   assert.match(ui.el.StatusesTableBody.innerHTML, /Agent A/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /1 мин 30 сек/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /1 ч 1 мин/);
-  assert.match(ui.el.StatusesTableBody.innerHTML, /2 ч 30 мин/);
+  assert.doesNotMatch(ui.el.StatusesTableBody.innerHTML, /2 ч 30 мин/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /Неактивен/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /Удалённый сотрудник/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /deleted-agent/);
   assert.equal(ui.el.StatusesEmpty.hidden, true);
 
   const totalCells = ui.el.StatusesTableBody.innerHTML.match(/<td>2 д 2 ч<\/td>/g) || [];
-  assert.equal(totalCells.length, 1);
+  assert.equal(totalCells.length, 0);
 });
 
 test("statuses empty response shows zero summary and empty state", async () => {
@@ -414,10 +392,10 @@ test("statuses empty response shows zero summary and empty state", async () => {
     total: { offline_seconds: 0, online_seconds: 0, on_ticket_seconds: 0, waiting_seconds: 0, lunch_seconds: 0, total_seconds: 0 },
     items: [],
   };
-  const ui = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : url.startsWith("/api/v1/management/statistics/statuses") ? emptyPayload : completedPayload });
-  ui.tabs[2].fire("click");
+  const ui = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : url.startsWith("/api/v1/management/statistics/statuses") ? emptyPayload : workTimePayload });
+  ui.tabs[1].fire("click");
   await settle();
-  assert.equal(ui.el.StatusesSummary.textContent, "Учтено времени: 0 сек · Онлайн: 0 сек · В заявке: 0 сек · Ожидание: 0 сек · Обед: 0 сек · Офлайн: 0 сек");
+  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 0 сек</span><span>| Не в сети: 0 сек</span><span>| В сети: 0 сек</span><span>| На заявке: 0 сек</span><span>| В ожидании: 0 сек</span><span>| Обед: 0 сек</span>");
   assert.equal(ui.el.StatusesEmpty.hidden, false);
   assert.equal(ui.el.StatusesEmpty.textContent, "За выбранный период данных по статусам нет");
 });
@@ -426,9 +404,9 @@ test("statuses API error shows page error", async () => {
   const ui = await load({ handler: (url) => {
     if (url === "/api/v1/settings/users") return users;
     if (url.startsWith("/api/v1/management/statistics/statuses")) return new Error("boom");
-    return completedPayload;
+    return workTimePayload;
   } });
-  ui.tabs[2].fire("click");
+  ui.tabs[1].fire("click");
   await settle();
   assert.equal(ui.el.Status.textContent, "Не удалось загрузить статистику. Повторите попытку.");
   assert.equal(ui.el.StatusesEmpty.textContent, "");
@@ -440,13 +418,13 @@ test("stale statuses response does not render after switching tabs", async () =>
   const ui = await load({ handler: (url) => {
     if (url === "/api/v1/settings/users") return users;
     if (url.startsWith("/api/v1/management/statistics/statuses")) return delayedStatuses;
-    return completedPayload;
+    return workTimePayload;
   } });
-  ui.tabs[2].fire("click");
+  ui.tabs[1].fire("click");
   await tick();
   ui.tabs[0].fire("click");
   resolveStatuses(statusesPayload);
   await settle();
   assert.equal(ui.el.StatusesTableBody.innerHTML, "");
-  assert.equal(ui.el.Summary.textContent, "Всего выполнено: 4 · Заявки: 2 · Задачи: 2");
+  assert.equal(ui.el.WorkTimeSummary.innerHTML, "<span>Общее время: 1 д 1 ч</span><span>| Объектов: 9</span><span>| Среднее: 1 ч 1 мин</span><span>| Медиана: 1 мин 30 сек</span><span>| Заявки: 3</span><span>| Задачи: 2</span>");
 });

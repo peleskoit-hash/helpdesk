@@ -360,13 +360,67 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .management-statistics-tabs {
-  padding: 12px 14px 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 14px 14px 0;
+  border-bottom: 1px solid rgba(11, 122, 140, 0.28);
+}
+
+.management-statistics-tabs .action {
+  min-height: 52px;
+  padding: 14px 20px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-color: rgba(11, 122, 140, 0.22);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.15;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.46);
 }
 
 .management-statistics-tabs .action.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(231, 241, 255, 0.9);
+  position: relative;
+  z-index: 1;
+  margin-bottom: -1px;
+  border-color: rgba(11, 122, 140, 0.52);
+  border-bottom-color: rgba(255, 255, 255, 0.82);
+  color: #075563;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 -2px 18px rgba(11, 122, 140, 0.12);
+}
+
+.management-statistics-filter-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+}
+
+.management-statistics-filter-row .management-statistics-filters {
+  padding: 0;
+  flex: 1 1 auto;
+}
+
+.management-statistics-median-help {
+  flex: 0 1 440px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+@media (max-width: 1100px) {
+  .management-statistics-filter-row {
+    flex-direction: column;
+  }
+
+  .management-statistics-median-help {
+    flex-basis: auto;
+    text-align: left;
+  }
 }
 
 .management-statistics-filters select {
@@ -383,11 +437,15 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .management-statistics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 18px;
   padding: 12px 14px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 400;
+  line-height: 1.45;
 }
 
 .management-statistics-table {
@@ -399,7 +457,7 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .management-statistics-statuses-table {
-  min-width: 920px;
+  min-width: 820px;
 }
 
 .management-statistics-table th:nth-child(n+2),
