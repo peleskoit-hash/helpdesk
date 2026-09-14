@@ -57,13 +57,23 @@ const workTimePayload = {
   ],
 };
 
+const statusesPayload = {
+  total: { online_seconds: 90061, on_ticket_seconds: 3660, waiting_seconds: 90, lunch_seconds: 45, offline_seconds: 0, total_seconds: 180000 },
+  items: [
+    { user_id: "agent-a", full_name: "Agent A", is_active: true, online_seconds: 90, on_ticket_seconds: 3660, waiting_seconds: 45, lunch_seconds: 0, offline_seconds: 0, total_seconds: 9000 },
+    { user_id: "inactive-agent", full_name: "Inactive Agent", is_active: false, online_seconds: 45, on_ticket_seconds: 0, waiting_seconds: 0, lunch_seconds: 0, offline_seconds: 0, total_seconds: 45 },
+    { user_id: "deleted-agent", full_name: null, is_active: null, online_seconds: 0, on_ticket_seconds: 0, waiting_seconds: 90, lunch_seconds: 3660, offline_seconds: 90061, total_seconds: 180000 },
+  ],
+};
+
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 async function settle() { await tick(); await tick(); }
 
 async function load({ handler, role = "admin", appTimezone = "UTC", now = "2026-09-13T12:00:00Z" } = {}) {
   const el = {};
   for (const key of ["Status", "Employee", "Period", "DateFrom", "DateTo", "Validation", "Summary", "TableBody", "Empty",
-    "WorkTimeSummary", "WorkTimeTableBody", "WorkTimeEmpty"]) {
+    "WorkTimeSummary", "WorkTimeTableBody", "WorkTimeEmpty",
+    "StatusesSummary", "StatusesTableBody", "StatusesEmpty"]) {
     el[key] = new Element();
   }
   const tabs = [
@@ -112,6 +122,8 @@ async function load({ handler, role = "admin", appTimezone = "UTC", now = "2026-
           ? users
           : url.startsWith("/api/v1/management/statistics/work-time")
             ? workTimePayload
+            : url.startsWith("/api/v1/management/statistics/statuses")
+              ? statusesPayload
             : completedPayload;
       if (payload instanceof Error) {
         return { ok: false, status: 500, text: async () => payload.message };
@@ -250,6 +262,20 @@ test("invalid custom period does not call work-time API", async () => {
   assert.equal(ui.el.Validation.hidden, false);
 });
 
+test("invalid custom period does not call statuses API", async () => {
+  const ui = await load();
+  ui.tabs[2].fire("click");
+  await settle();
+  const before = statisticsRequests(ui, "statuses").length;
+  ui.el.Period.value = "custom";
+  ui.el.DateFrom.value = "2026-09-04";
+  ui.el.DateTo.value = "2026-09-03";
+  ui.el.Period.fire("change");
+  await settle();
+  assert.equal(statisticsRequests(ui, "statuses").length, before);
+  assert.equal(ui.el.Validation.hidden, false);
+});
+
 test("completed response renders totals inactive users deleted fallback and empty state", async () => {
   const ui = await load();
   assert.equal(ui.el.Summary.textContent, "Всего выполнено: 4 · Заявки: 2 · Задачи: 2");
@@ -335,17 +361,92 @@ test("work-time API error shows page error", async () => {
   assert.equal(ui.el.WorkTimeEmpty.textContent, "");
 });
 
-test("statuses tab does not call statistics endpoints on filter changes", async () => {
-  const ui = await load();
-  const before = ui.requests.length;
+test("statuses tab calls only statuses API with shared period and employee filters", async () => {
+  const ui = await load({ appTimezone: "Europe/Moscow", now: "2026-09-13T12:00:00Z" });
+  const completedBefore = statisticsRequests(ui, "completed").length;
+  ui.el.Employee.value = "agent-a";
+  ui.el.Period.value = "today";
   ui.tabs[2].fire("click");
   await settle();
-  ui.el.Employee.value = "agent-a";
+  assert.equal(statisticsRequests(ui, "completed").length, completedBefore);
+  assert.equal(statisticsRequests(ui, "work-time").length, 0);
+  let query = lastQuery(ui, "statuses");
+  assert.equal(query.get("user_id"), "agent-a");
+  assert.equal(query.get("date_from"), "2026-09-13T00:00:00+03:00");
+  assert.equal(query.get("date_to"), "2026-09-14T00:00:00+03:00");
+
+  ui.el.Employee.value = "inactive-agent";
   ui.el.Employee.fire("change");
+  await settle();
+  query = lastQuery(ui, "statuses");
+  assert.equal(query.get("user_id"), "inactive-agent");
+  assert.equal(statisticsRequests(ui, "completed").length, completedBefore);
+
   ui.el.Period.value = "all";
   ui.el.Period.fire("change");
   await settle();
-  assert.equal(ui.requests.length, before);
-  assert.equal(ui.requests.some((request) => request.url.includes("/work-time")), false);
-  assert.equal(ui.requests.some((request) => request.url.includes("/statuses")), false);
+  query = lastQuery(ui, "statuses");
+  assert.equal(query.get("user_id"), "inactive-agent");
+  assert.equal(query.has("date_from"), false);
+  assert.equal(query.has("date_to"), false);
+});
+
+test("statuses response renders durations inactive deleted and backend total", async () => {
+  const ui = await load();
+  ui.tabs[2].fire("click");
+  await settle();
+  assert.equal(ui.el.StatusesSummary.textContent, "Учтено времени: 2 д 2 ч · Онлайн: 1 д 1 ч · В заявке: 1 ч 1 мин · Ожидание: 1 мин 30 сек · Обед: 45 сек · Офлайн: 0 сек");
+  assert.match(ui.el.StatusesTableBody.innerHTML, /Agent A/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /1 мин 30 сек/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /1 ч 1 мин/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /2 ч 30 мин/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /Неактивен/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /Удалённый сотрудник/);
+  assert.match(ui.el.StatusesTableBody.innerHTML, /deleted-agent/);
+  assert.equal(ui.el.StatusesEmpty.hidden, true);
+
+  const totalCells = ui.el.StatusesTableBody.innerHTML.match(/<td>2 д 2 ч<\/td>/g) || [];
+  assert.equal(totalCells.length, 1);
+});
+
+test("statuses empty response shows zero summary and empty state", async () => {
+  const emptyPayload = {
+    total: { offline_seconds: 0, online_seconds: 0, on_ticket_seconds: 0, waiting_seconds: 0, lunch_seconds: 0, total_seconds: 0 },
+    items: [],
+  };
+  const ui = await load({ handler: (url) => url === "/api/v1/settings/users" ? users : url.startsWith("/api/v1/management/statistics/statuses") ? emptyPayload : completedPayload });
+  ui.tabs[2].fire("click");
+  await settle();
+  assert.equal(ui.el.StatusesSummary.textContent, "Учтено времени: 0 сек · Онлайн: 0 сек · В заявке: 0 сек · Ожидание: 0 сек · Обед: 0 сек · Офлайн: 0 сек");
+  assert.equal(ui.el.StatusesEmpty.hidden, false);
+  assert.equal(ui.el.StatusesEmpty.textContent, "За выбранный период данных по статусам нет");
+});
+
+test("statuses API error shows page error", async () => {
+  const ui = await load({ handler: (url) => {
+    if (url === "/api/v1/settings/users") return users;
+    if (url.startsWith("/api/v1/management/statistics/statuses")) return new Error("boom");
+    return completedPayload;
+  } });
+  ui.tabs[2].fire("click");
+  await settle();
+  assert.equal(ui.el.Status.textContent, "Не удалось загрузить статистику. Повторите попытку.");
+  assert.equal(ui.el.StatusesEmpty.textContent, "");
+});
+
+test("stale statuses response does not render after switching tabs", async () => {
+  let resolveStatuses;
+  const delayedStatuses = new Promise((resolve) => { resolveStatuses = resolve; });
+  const ui = await load({ handler: (url) => {
+    if (url === "/api/v1/settings/users") return users;
+    if (url.startsWith("/api/v1/management/statistics/statuses")) return delayedStatuses;
+    return completedPayload;
+  } });
+  ui.tabs[2].fire("click");
+  await tick();
+  ui.tabs[0].fire("click");
+  resolveStatuses(statusesPayload);
+  await settle();
+  assert.equal(ui.el.StatusesTableBody.innerHTML, "");
+  assert.equal(ui.el.Summary.textContent, "Всего выполнено: 4 · Заявки: 2 · Задачи: 2");
 });

@@ -169,6 +169,9 @@
       workTimeSummary: root.querySelector("#managementStatisticsWorkTimeSummary"),
       workTimeTableBody: root.querySelector("#managementStatisticsWorkTimeTableBody"),
       workTimeEmpty: root.querySelector("#managementStatisticsWorkTimeEmpty"),
+      statusesSummary: root.querySelector("#managementStatisticsStatusesSummary"),
+      statusesTableBody: root.querySelector("#managementStatisticsStatusesTableBody"),
+      statusesEmpty: root.querySelector("#managementStatisticsStatusesEmpty"),
       tabs: [...root.querySelectorAll("[data-statistics-tab]")],
       panels: [...root.querySelectorAll("[data-statistics-panel]")],
       customFields: [...root.querySelectorAll(".management-statistics-custom")],
@@ -200,6 +203,9 @@
     function panelElements(tab) {
       if (tab === "work-time") {
         return { tableBody: el.workTimeTableBody, empty: el.workTimeEmpty };
+      }
+      if (tab === "statuses") {
+        return { tableBody: el.statusesTableBody, empty: el.statusesEmpty };
       }
       return { tableBody: el.completedTableBody, empty: el.completedEmpty };
     }
@@ -303,6 +309,20 @@
       `;
     }
 
+    function statusRowHtml(item) {
+      return `
+        <tr>
+          ${userCellHtml(item)}
+          <td>${escapeHtml(durationLabel(item.online_seconds))}</td>
+          <td>${escapeHtml(durationLabel(item.on_ticket_seconds))}</td>
+          <td>${escapeHtml(durationLabel(item.waiting_seconds))}</td>
+          <td>${escapeHtml(durationLabel(item.lunch_seconds))}</td>
+          <td>${escapeHtml(durationLabel(item.offline_seconds))}</td>
+          <td>${escapeHtml(durationLabel(item.total_seconds))}</td>
+        </tr>
+      `;
+    }
+
     function renderCompleted(payload) {
       const total = payload?.total || {};
       const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -323,6 +343,16 @@
       setStatus("");
     }
 
+    function renderStatuses(payload) {
+      const total = payload?.total || {};
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      el.statusesSummary.textContent = `Учтено времени: ${durationLabel(total.total_seconds)} · Онлайн: ${durationLabel(total.online_seconds)} · В заявке: ${durationLabel(total.on_ticket_seconds)} · Ожидание: ${durationLabel(total.waiting_seconds)} · Обед: ${durationLabel(total.lunch_seconds)} · Офлайн: ${durationLabel(total.offline_seconds)}`;
+      el.statusesTableBody.innerHTML = items.map(statusRowHtml).join("");
+      el.statusesEmpty.hidden = items.length > 0;
+      el.statusesEmpty.textContent = "За выбранный период данных по статусам нет";
+      setStatus("");
+    }
+
     function buildStatisticsUrl(endpoint) {
       const bounds = periodBounds(el.period.value, el.dateFrom.value, el.dateTo.value, new Date(), state.appTimezone);
       if (bounds.error) return { error: bounds.error };
@@ -335,9 +365,8 @@
     }
 
     async function loadActiveTab() {
-      if (state.tab === "statuses") return;
       const activeTab = state.tab;
-      const endpoint = activeTab === "work-time" ? "work-time" : "completed";
+      const endpoint = activeTab === "work-time" ? "work-time" : activeTab === "statuses" ? "statuses" : "completed";
       const requestGeneration = clearActiveResults("Загрузка...");
       setStatus("Загрузка...");
       const built = buildStatisticsUrl(endpoint);
@@ -352,6 +381,7 @@
         const payload = await api(built.url, state.controller.signal);
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab) return;
         if (activeTab === "work-time") renderWorkTime(payload);
+        else if (activeTab === "statuses") renderStatuses(payload);
         else renderCompleted(payload);
       } catch (error) {
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab || error.name === "AbortError") return;
@@ -364,8 +394,7 @@
       state.tab = tab;
       for (const button of el.tabs) button.classList.toggle("active", button.dataset.statisticsTab === tab);
       for (const panel of el.panels) panel.hidden = panel.dataset.statisticsPanel !== tab;
-      if (tab === "completed" || tab === "work-time") loadActiveTab();
-      else setStatus("");
+      loadActiveTab();
     }
 
     async function start() {

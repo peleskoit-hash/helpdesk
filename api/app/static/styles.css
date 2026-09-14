@@ -398,6 +398,10 @@ body[data-sidebar-ready="0"] .admin-select-col {
   min-width: 920px;
 }
 
+.management-statistics-statuses-table {
+  min-width: 920px;
+}
+
 .management-statistics-table th:nth-child(n+2),
 .management-statistics-table td:nth-child(n+2) {
   text-align: right;

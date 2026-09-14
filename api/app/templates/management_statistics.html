@@ -129,7 +129,24 @@
             </div>
           </section>
           <section id="managementStatisticsStatusesPanel" data-statistics-panel="statuses" hidden>
-            <div class="status management-statistics-empty">Статусы сотрудников будут подключены в следующем срезе.</div>
+            <div id="managementStatisticsStatusesSummary" class="management-statistics-summary">Учтено времени: 0 сек · Онлайн: 0 сек · В заявке: 0 сек · Ожидание: 0 сек · Обед: 0 сек · Офлайн: 0 сек</div>
+            <div class="table-scroll management-statistics-table-wrap">
+              <table class="management-statistics-table management-statistics-statuses-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Сотрудник</th>
+                    <th scope="col">Онлайн</th>
+                    <th scope="col">В заявке</th>
+                    <th scope="col">Ожидание</th>
+                    <th scope="col">Обед</th>
+                    <th scope="col">Офлайн</th>
+                    <th scope="col">Всего</th>
+                  </tr>
+                </thead>
+                <tbody id="managementStatisticsStatusesTableBody"></tbody>
+              </table>
+              <div id="managementStatisticsStatusesEmpty" class="status management-statistics-empty">Загрузка...</div>
+            </div>
           </section>
         </div>
       </div>
