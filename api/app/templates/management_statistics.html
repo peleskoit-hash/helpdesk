@@ -109,7 +109,24 @@
           </section>
 
           <section id="managementStatisticsWorkTimePanel" data-statistics-panel="work-time" hidden>
-            <div class="status management-statistics-empty">Время работы будет подключено в следующем срезе.</div>
+            <div id="managementStatisticsWorkTimeSummary" class="management-statistics-summary">Общее время: 0 сек · Объектов: 0 · Среднее: 0 сек · Медиана: 0 сек · Заявки: 0 · Задачи: 0</div>
+            <div class="table-scroll management-statistics-table-wrap">
+              <table class="management-statistics-table management-statistics-work-time-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Сотрудник</th>
+                    <th scope="col">Заявки</th>
+                    <th scope="col">Задачи</th>
+                    <th scope="col">Объектов</th>
+                    <th scope="col">Общее время</th>
+                    <th scope="col">Среднее</th>
+                    <th scope="col">Медиана</th>
+                  </tr>
+                </thead>
+                <tbody id="managementStatisticsWorkTimeTableBody"></tbody>
+              </table>
+              <div id="managementStatisticsWorkTimeEmpty" class="status management-statistics-empty">Загрузка...</div>
+            </div>
           </section>
           <section id="managementStatisticsStatusesPanel" data-statistics-panel="statuses" hidden>
             <div class="status management-statistics-empty">Статусы сотрудников будут подключены в следующем срезе.</div>
