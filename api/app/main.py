@@ -22,6 +22,7 @@ from .db import Base, engine, get_db, SessionLocal
 from .models import User
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.integrations import router as integrations_router
+from .routers.internal_tasks import router as internal_tasks_router
 from .routers.management_integrations import router as management_integrations_router
 from .routers.management_feedback import router as management_feedback_router
 from .routers.management_statistics import router as management_statistics_router
@@ -96,6 +97,7 @@ app.include_router(settings_client_card_router)
 app.include_router(settings_notification_bot_basic_router)
 app.include_router(employee_notification_preferences_router)
 app.include_router(mass_notifications_router)
+app.include_router(internal_tasks_router)
 app.include_router(management_integrations_router)
 app.include_router(management_feedback_router)
 app.include_router(management_statistics_router)
