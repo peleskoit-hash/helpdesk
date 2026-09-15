@@ -12,6 +12,7 @@ TICKET_REVIEWS_CYCLE_UNIQUE_NAME = "uq_ticket_reviews_cycle_id"
 TICKET_REVIEW_CYCLES_REVIEW_FK_NAME = "fk_ticket_review_cycles_review_id"
 TICKET_FEEDBACK_TICKET_UNIQUE_NAME = "uq_ticket_feedback_ticket_id"
 STATS_COMPLETIONS_COMPANY_OBJECT_UNIQUE_NAME = "uq_stats_completions_company_object"
+INTERNAL_TASK_OCCURRENCES_DEFINITION_TIME_UNIQUE_NAME = "uq_internal_task_occurrences_definition_time"
 
 
 def _telegram_contact_duplicate_group_count(conn) -> int:
@@ -1462,6 +1463,123 @@ def ensure_employee_notification_preferences_table() -> None:
         conn.execute(text("UPDATE employee_notification_preferences SET receive_new_message = TRUE WHERE receive_new_message IS NULL"))
 
 
+def ensure_internal_task_tables() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        timestamp_type = "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE"
+        bool_type = "BOOLEAN"
+        json_type = "TEXT" if dialect == "sqlite" else "JSONB"
+
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS internal_task_definitions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    company_id VARCHAR(36) NOT NULL REFERENCES companies(id),
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT NOT NULL,
+                    creator_admin_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                    responsible_admin_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                    display_author {bool_type} NOT NULL,
+                    assignment_mode VARCHAR(30) NOT NULL,
+                    assignee_user_id VARCHAR(36) REFERENCES users(id),
+                    notify_on_completion {bool_type} NOT NULL,
+                    deadline_at_utc {timestamp_type},
+                    schedule_kind VARCHAR(30) NOT NULL,
+                    timezone_name VARCHAR(100) NOT NULL,
+                    scheduled_for_utc {timestamp_type},
+                    recurrence_mode VARCHAR(30),
+                    recurrence_config {json_type},
+                    cycle_start_at_utc {timestamp_type},
+                    cycle_end_mode VARCHAR(30),
+                    cycle_end_at_utc {timestamp_type},
+                    cycle_max_occurrences INTEGER,
+                    state VARCHAR(30) NOT NULL DEFAULT 'active',
+                    generation_not_before_utc {timestamp_type},
+                    created_at {timestamp_type} NOT NULL,
+                    updated_at {timestamp_type} NOT NULL,
+                    CONSTRAINT ck_internal_task_definitions_assignment_mode
+                        CHECK (assignment_mode IN ('direct', 'distribution')),
+                    CONSTRAINT ck_internal_task_definitions_schedule_kind
+                        CHECK (schedule_kind IN ('immediate', 'scheduled', 'recurring')),
+                    CONSTRAINT ck_internal_task_definitions_recurrence_mode
+                        CHECK (
+                            recurrence_mode IS NULL
+                            OR recurrence_mode IN ('daily', 'selected_weekdays', 'weekly', 'monthly', 'every_n_days')
+                        ),
+                    CONSTRAINT ck_internal_task_definitions_cycle_end_mode
+                        CHECK (cycle_end_mode IS NULL OR cycle_end_mode IN ('never', 'at', 'count')),
+                    CONSTRAINT ck_internal_task_definitions_state
+                        CHECK (state IN ('active', 'paused', 'finished', 'disabled')),
+                    CONSTRAINT ck_internal_task_definitions_cycle_max_occurrences_positive
+                        CHECK (cycle_max_occurrences IS NULL OR cycle_max_occurrences > 0)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS internal_task_occurrences (
+                    id VARCHAR(36) PRIMARY KEY,
+                    definition_id VARCHAR(36) NOT NULL REFERENCES internal_task_definitions(id),
+                    occurrence_at_utc {timestamp_type} NOT NULL,
+                    ticket_id VARCHAR(36) NOT NULL,
+                    title_snapshot VARCHAR(255) NOT NULL,
+                    description_snapshot TEXT NOT NULL,
+                    creator_admin_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                    responsible_admin_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                    display_author {bool_type} NOT NULL,
+                    effective_assignment_mode VARCHAR(30) NOT NULL,
+                    effective_assignee_user_id VARCHAR(36) REFERENCES users(id),
+                    notify_on_completion {bool_type} NOT NULL,
+                    deadline_at_utc {timestamp_type},
+                    materialized_at_utc {timestamp_type} NOT NULL,
+                    created_at {timestamp_type} NOT NULL,
+                    CONSTRAINT ck_internal_task_occurrences_effective_assignment_mode
+                        CHECK (effective_assignment_mode IN ('direct', 'distribution')),
+                    CONSTRAINT {INTERNAL_TASK_OCCURRENCES_DEFINITION_TIME_UNIQUE_NAME}
+                        UNIQUE (definition_id, occurrence_at_utc)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_internal_task_definitions_company_schedule_state "
+                "ON internal_task_definitions(company_id, schedule_kind, state)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_internal_task_definitions_due_once "
+                "ON internal_task_definitions(schedule_kind, state, scheduled_for_utc)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_internal_task_definitions_active_recurring "
+                "ON internal_task_definitions(schedule_kind, state, generation_not_before_utc)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_internal_task_definitions_creator "
+                "ON internal_task_definitions(company_id, creator_admin_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_internal_task_definitions_responsible "
+                "ON internal_task_definitions(company_id, responsible_admin_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_internal_task_occurrences_ticket_id "
+                "ON internal_task_occurrences(ticket_id)"
+            )
+        )
 def ensure_ticket_message_columns() -> None:
     required_columns = {
         "agent_visible": "BOOLEAN",

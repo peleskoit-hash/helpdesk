@@ -51,6 +51,7 @@ from .services.schema_evolution import (
     ensure_call_center_employee_resolver_state_table,
     ensure_client_profile_columns,
     ensure_employee_notification_preferences_table,
+    ensure_internal_task_tables,
     ensure_integration_logs_table,
     ensure_stats_foundation_tables,
     ensure_telegram_contact_company_user_unique,
@@ -135,6 +136,7 @@ async def on_startup():
             ensure_client_card_field_config_columns()
             ensure_call_center_employee_resolver_state_table()
             ensure_employee_notification_preferences_table()
+            ensure_internal_task_tables()
             ensure_integration_logs_table()
             ensure_stats_foundation_tables()
             with SessionLocal() as db:

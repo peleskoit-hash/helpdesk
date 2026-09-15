@@ -26,6 +26,38 @@ class TicketTaskKind(str, Enum):
     GROUP_CHILD = "group_child"
 
 
+class InternalTaskAssignmentMode(str, Enum):
+    DIRECT = "direct"
+    DISTRIBUTION = "distribution"
+
+
+class InternalTaskScheduleKind(str, Enum):
+    IMMEDIATE = "immediate"
+    SCHEDULED = "scheduled"
+    RECURRING = "recurring"
+
+
+class InternalTaskRecurrenceMode(str, Enum):
+    DAILY = "daily"
+    SELECTED_WEEKDAYS = "selected_weekdays"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    EVERY_N_DAYS = "every_n_days"
+
+
+class InternalTaskCycleEndMode(str, Enum):
+    NEVER = "never"
+    AT = "at"
+    COUNT = "count"
+
+
+class InternalTaskDefinitionState(str, Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    FINISHED = "finished"
+    DISABLED = "disabled"
+
+
 class TicketIntakeState(str, Enum):
     COLLECTING = "collecting"
     READY = "ready"
@@ -493,6 +525,104 @@ class EmployeeNotificationPreference(Base):
     receive_new_message: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class InternalTaskDefinition(Base):
+    __tablename__ = "internal_task_definitions"
+    __table_args__ = (
+        CheckConstraint(
+            "assignment_mode IN ('direct', 'distribution')",
+            name="ck_internal_task_definitions_assignment_mode",
+        ),
+        CheckConstraint(
+            "schedule_kind IN ('immediate', 'scheduled', 'recurring')",
+            name="ck_internal_task_definitions_schedule_kind",
+        ),
+        CheckConstraint(
+            "recurrence_mode IS NULL OR recurrence_mode IN "
+            "('daily', 'selected_weekdays', 'weekly', 'monthly', 'every_n_days')",
+            name="ck_internal_task_definitions_recurrence_mode",
+        ),
+        CheckConstraint(
+            "cycle_end_mode IS NULL OR cycle_end_mode IN ('never', 'at', 'count')",
+            name="ck_internal_task_definitions_cycle_end_mode",
+        ),
+        CheckConstraint(
+            "state IN ('active', 'paused', 'finished', 'disabled')",
+            name="ck_internal_task_definitions_state",
+        ),
+        CheckConstraint(
+            "cycle_max_occurrences IS NULL OR cycle_max_occurrences > 0",
+            name="ck_internal_task_definitions_cycle_max_occurrences_positive",
+        ),
+        Index("ix_internal_task_definitions_company_schedule_state", "company_id", "schedule_kind", "state"),
+        Index("ix_internal_task_definitions_due_once", "schedule_kind", "state", "scheduled_for_utc"),
+        Index("ix_internal_task_definitions_active_recurring", "schedule_kind", "state", "generation_not_before_utc"),
+        Index("ix_internal_task_definitions_creator", "company_id", "creator_admin_id"),
+        Index("ix_internal_task_definitions_responsible", "company_id", "responsible_admin_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    creator_admin_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    responsible_admin_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    display_author: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    assignment_mode: Mapped[str] = mapped_column(String(30), nullable=False)
+    assignee_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    notify_on_completion: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    deadline_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    schedule_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    timezone_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    scheduled_for_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recurrence_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    recurrence_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cycle_start_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cycle_end_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    cycle_end_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cycle_max_occurrences: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[str] = mapped_column(
+        String(30),
+        default=InternalTaskDefinitionState.ACTIVE.value,
+        server_default=text("'active'"),
+        nullable=False,
+    )
+    generation_not_before_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class InternalTaskOccurrence(Base):
+    __tablename__ = "internal_task_occurrences"
+    __table_args__ = (
+        CheckConstraint(
+            "effective_assignment_mode IN ('direct', 'distribution')",
+            name="ck_internal_task_occurrences_effective_assignment_mode",
+        ),
+        UniqueConstraint(
+            "definition_id",
+            "occurrence_at_utc",
+            name="uq_internal_task_occurrences_definition_time",
+        ),
+        Index("ux_internal_task_occurrences_ticket_id", "ticket_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    definition_id: Mapped[str] = mapped_column(ForeignKey("internal_task_definitions.id"), nullable=False)
+    occurrence_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ticket_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    title_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    description_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    creator_admin_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    responsible_admin_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    display_author: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    effective_assignment_mode: Mapped[str] = mapped_column(String(30), nullable=False)
+    effective_assignee_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    notify_on_completion: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    deadline_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    materialized_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
 class TelegramUpdate(Base):
