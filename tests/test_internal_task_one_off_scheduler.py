@@ -564,11 +564,15 @@ def test_batch_limit_is_fetch_chunk_size_and_one_pass_picks_up_remaining_definit
         assert _count(session, InternalTaskOccurrence) == 3
 
 
-def test_scheduler_loop_runs_scan_before_first_sleep(monkeypatch):
+def test_scheduler_loop_runs_one_off_and_recurring_before_first_sleep(monkeypatch):
     calls = []
 
     def run_once():
-        calls.append("scan")
+        calls.append("one_off")
+        return 0
+
+    def run_recurring_once():
+        calls.append("recurring")
         return 0
 
     async def stop_on_sleep(_seconds):
@@ -576,6 +580,7 @@ def test_scheduler_loop_runs_scan_before_first_sleep(monkeypatch):
         raise asyncio.CancelledError
 
     monkeypatch.setattr(internal_task_scheduler, "run_internal_task_scheduler_once", run_once)
+    monkeypatch.setattr(internal_task_scheduler, "run_internal_task_recurring_once", run_recurring_once)
     monkeypatch.setattr(internal_task_scheduler.asyncio, "sleep", stop_on_sleep)
 
     try:
@@ -583,4 +588,4 @@ def test_scheduler_loop_runs_scan_before_first_sleep(monkeypatch):
     except asyncio.CancelledError:
         pass
 
-    assert calls == ["scan", "sleep"]
+    assert calls == ["one_off", "recurring", "sleep"]
