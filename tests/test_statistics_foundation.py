@@ -250,10 +250,13 @@ def test_stats_sql_schema_matches_orm_core_contract(monkeypatch):
         "ix_stats_work_intervals_company_object",
         "ix_stats_work_intervals_company_ended",
     } <= {idx["name"] for idx in inspector.get_indexes("stats_work_intervals")}
+    status_indexes = {idx["name"]: idx for idx in inspector.get_indexes("stats_user_status_intervals")}
     assert {
         "ix_stats_user_status_intervals_company_user_started",
+        "ix_stats_user_status_intervals_company_started_id",
         "ix_stats_user_status_intervals_company_ended",
-    } <= {idx["name"] for idx in inspector.get_indexes("stats_user_status_intervals")}
+    } <= set(status_indexes)
+    assert status_indexes["ix_stats_user_status_intervals_company_started_id"]["column_names"] == ["company_id", "started_at", "id"]
 
 
 def test_reset_statistics_is_company_scoped_and_preserves_operational_data():

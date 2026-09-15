@@ -113,22 +113,46 @@
             </div>
           </section>
           <section id="managementStatisticsStatusesPanel" data-statistics-panel="statuses" hidden>
-            <div id="managementStatisticsStatusesSummary" class="management-statistics-summary">Учтено времени: 0 сек | Не в сети: 0 сек | В сети: 0 сек | На заявке: 0 сек | В ожидании: 0 сек | Обед: 0 сек</div>
-            <div class="table-scroll management-statistics-table-wrap">
-              <table class="management-statistics-table management-statistics-statuses-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Сотрудник</th>
-                    <th scope="col">Не в сети</th>
-                    <th scope="col">В сети</th>
-                    <th scope="col">На заявке</th>
-                    <th scope="col">В ожидании</th>
-                    <th scope="col">Обед</th>
-                  </tr>
-                </thead>
-                <tbody id="managementStatisticsStatusesTableBody"></tbody>
-              </table>
-              <div id="managementStatisticsStatusesEmpty" class="status management-statistics-empty">Загрузка...</div>
+            <div class="management-statistics-inner-card management-statistics-statuses-card">
+              <div id="managementStatisticsStatusesSummary" class="management-statistics-summary">Учтено времени: 0 сек | Не в сети: 0 сек | В сети: 0 сек | На заявке: 0 сек | В ожидании: 0 сек | Обед: 0 сек</div>
+              <div class="table-scroll management-statistics-table-wrap">
+                <table class="management-statistics-table management-statistics-statuses-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Сотрудник</th>
+                      <th scope="col">Не в сети</th>
+                      <th scope="col">В сети</th>
+                      <th scope="col">На заявке</th>
+                      <th scope="col">В ожидании</th>
+                      <th scope="col">Обед</th>
+                    </tr>
+                  </thead>
+                  <tbody id="managementStatisticsStatusesTableBody"></tbody>
+                </table>
+                <div id="managementStatisticsStatusesEmpty" class="status management-statistics-empty">Загрузка...</div>
+              </div>
+            </div>
+            <div class="management-statistics-inner-card management-statistics-transition-log">
+              <h2>Лог смен статусов</h2>
+              <div id="managementStatisticsTransitionsViewport" class="table-scroll management-statistics-table-wrap management-statistics-transitions-viewport">
+                <table class="management-statistics-table management-statistics-transitions-table">
+                  <thead id="managementStatisticsTransitionsHead">
+                    <tr>
+                      <th scope="col">Сотрудник</th>
+                      <th scope="col">Был статус</th>
+                      <th scope="col">Стал статус</th>
+                      <th scope="col">Дата и время</th>
+                    </tr>
+                  </thead>
+                  <tbody id="managementStatisticsTransitionsTableBody"></tbody>
+                </table>
+                <div id="managementStatisticsTransitionsEmpty" class="status management-statistics-empty">Загрузка...</div>
+              </div>
+              <div class="management-statistics-pagination">
+                <button id="managementStatisticsTransitionsPrev" class="action" type="button">← Назад</button>
+                <span id="managementStatisticsTransitionsPage">Страница 1</span>
+                <button id="managementStatisticsTransitionsNext" class="action" type="button">Вперёд →</button>
+              </div>
             </div>
           </section>
         </div>

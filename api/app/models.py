@@ -419,6 +419,7 @@ class StatsUserStatusInterval(Base):
     __tablename__ = "stats_user_status_intervals"
     __table_args__ = (
         Index("ix_stats_user_status_intervals_company_user_started", "company_id", "user_id", "started_at"),
+        Index("ix_stats_user_status_intervals_company_started_id", "company_id", "started_at", "id"),
         Index("ix_stats_user_status_intervals_company_ended", "company_id", "ended_at"),
     )
 

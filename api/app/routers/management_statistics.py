@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 from datetime import datetime, timezone
 from statistics import median
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
@@ -18,6 +21,8 @@ from ..schemas import (
     ManagementStatusStatsItem,
     ManagementStatusStatsOut,
     ManagementStatusStatsTotal,
+    ManagementStatusTransitionItem,
+    ManagementStatusTransitionsOut,
     ManagementWorkTimeStatsItem,
     ManagementWorkTimeStatsOut,
     ManagementWorkTimeStatsTotal,
@@ -32,6 +37,8 @@ STATUS_STATS_FIELDS = {
     "waiting": "waiting_seconds",
     "lunch": "lunch_seconds",
 }
+STATUS_TRANSITIONS_DEFAULT_LIMIT = 15
+STATUS_TRANSITIONS_MAX_LIMIT = 100
 
 
 def _error(status_code: int, code: str, message: str):
@@ -55,6 +62,25 @@ def _naive_utc(value: datetime) -> datetime:
 
 def _numeric_seconds(value: float) -> int | float:
     return int(value) if value.is_integer() else value
+
+
+def _encode_status_transition_cursor(started_at: datetime, interval_id: str) -> str:
+    payload = {"started_at": _naive_utc(started_at).isoformat(), "id": interval_id}
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_status_transition_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        started_at = _naive_utc(datetime.fromisoformat(payload["started_at"]))
+        interval_id = payload["id"]
+    except (binascii.Error, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        _error(400, "invalid_cursor", "Некорректный cursor")
+    if not isinstance(interval_id, str) or not interval_id:
+        _error(400, "invalid_cursor", "Некорректный cursor")
+    return started_at, interval_id
 
 
 def _stats_total(observations: list[tuple[str, int]]) -> ManagementWorkTimeStatsTotal:
@@ -319,3 +345,105 @@ def get_status_statistics(
         for status, field in STATUS_STATS_FIELDS.items()
     }
     return ManagementStatusStatsOut(items=items, total=_status_stats_total(total_status_seconds))
+
+
+@router.get("/status-transitions", response_model=ManagementStatusTransitionsOut)
+def get_status_transitions(
+    user_id: Annotated[str | None, Query()] = None,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=STATUS_TRANSITIONS_MAX_LIMIT)] = STATUS_TRANSITIONS_DEFAULT_LIMIT,
+    cursor: Annotated[str | None, Query()] = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    if date_from is not None:
+        date_from = _naive_utc(date_from)
+    if date_to is not None:
+        date_to = _naive_utc(date_to)
+    if date_from is not None and date_to is not None and date_to <= date_from:
+        _error(400, "invalid_date_range", "date_to должен быть позже date_from")
+
+    admin = db.get(User, user.id)
+    if admin is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+    company_id = admin.company_id
+
+    CurrentStatusInterval = aliased(StatsUserStatusInterval)
+    PreviousStatusInterval = aliased(StatsUserStatusInterval)
+    OtherPreviousStatusInterval = aliased(StatsUserStatusInterval)
+
+    filters = [CurrentStatusInterval.company_id == company_id]
+    if user_id is not None:
+        filters.append(CurrentStatusInterval.user_id == user_id)
+    if date_from is not None:
+        filters.append(CurrentStatusInterval.started_at >= date_from)
+    if date_to is not None:
+        filters.append(CurrentStatusInterval.started_at < date_to)
+    if cursor is not None:
+        cursor_started_at, cursor_id = _decode_status_transition_cursor(cursor)
+        filters.append(
+            or_(
+                CurrentStatusInterval.started_at < cursor_started_at,
+                and_(CurrentStatusInterval.started_at == cursor_started_at, CurrentStatusInterval.id < cursor_id),
+            )
+        )
+
+    other_previous_exists = exists(
+        select(OtherPreviousStatusInterval.id).where(
+            OtherPreviousStatusInterval.company_id == CurrentStatusInterval.company_id,
+            OtherPreviousStatusInterval.user_id == CurrentStatusInterval.user_id,
+            OtherPreviousStatusInterval.ended_at == CurrentStatusInterval.started_at,
+            OtherPreviousStatusInterval.id != CurrentStatusInterval.id,
+            OtherPreviousStatusInterval.id != PreviousStatusInterval.id,
+        )
+    )
+
+    rows = db.execute(
+        select(CurrentStatusInterval, PreviousStatusInterval.status)
+        .join(
+            PreviousStatusInterval,
+            and_(
+                PreviousStatusInterval.company_id == CurrentStatusInterval.company_id,
+                PreviousStatusInterval.user_id == CurrentStatusInterval.user_id,
+                PreviousStatusInterval.ended_at == CurrentStatusInterval.started_at,
+                PreviousStatusInterval.id != CurrentStatusInterval.id,
+                PreviousStatusInterval.status != CurrentStatusInterval.status,
+            ),
+        )
+        .where(*filters, ~other_previous_exists)
+        .order_by(CurrentStatusInterval.started_at.desc(), CurrentStatusInterval.id.desc())
+        .limit(limit + 1)
+    ).all()
+
+    page_rows = rows[:limit]
+    has_more = len(rows) > limit
+    next_cursor = _encode_status_transition_cursor(page_rows[-1][0].started_at, page_rows[-1][0].id) if has_more and page_rows else None
+    transition_user_ids = set()
+    for current, _from_status in page_rows:
+        transition_user_ids.add(current.user_id)
+
+    users_by_id: dict[str, User] = {}
+    if transition_user_ids:
+        users_by_id = {
+            item.id: item
+            for item in db.execute(
+                select(User).where(User.id.in_(transition_user_ids), User.company_id == company_id)
+            ).scalars().all()
+        }
+
+    items = []
+    for current, from_status in page_rows:
+        found_user = users_by_id.get(current.user_id)
+        items.append(
+            ManagementStatusTransitionItem(
+                user_id=current.user_id,
+                full_name=found_user.full_name if found_user is not None else None,
+                is_active=found_user.is_active if found_user is not None else None,
+                from_status=from_status,
+                to_status=current.status,
+                changed_at=current.started_at,
+            )
+        )
+    return ManagementStatusTransitionsOut(items=items, next_cursor=next_cursor, has_more=has_more)

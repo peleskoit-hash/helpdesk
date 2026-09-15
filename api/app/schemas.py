@@ -483,6 +483,21 @@ class ManagementStatusStatsOut(BaseModel):
     total: ManagementStatusStatsTotal
 
 
+class ManagementStatusTransitionItem(BaseModel):
+    user_id: str
+    full_name: str | None = None
+    is_active: bool | None = None
+    from_status: str
+    to_status: str
+    changed_at: datetime
+
+
+class ManagementStatusTransitionsOut(BaseModel):
+    items: list[ManagementStatusTransitionItem]
+    next_cursor: str | None = None
+    has_more: bool = False
+
+
 class ReviewEmployeeOut(BaseModel):
     employee_id: str
     display_name: str

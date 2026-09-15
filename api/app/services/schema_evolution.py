@@ -431,6 +431,7 @@ def ensure_stats_foundation_tables() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_object ON stats_work_intervals(company_id, object_type, object_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_ended ON stats_work_intervals(company_id, ended_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_user_status_intervals_company_user_started ON stats_user_status_intervals(company_id, user_id, started_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_user_status_intervals_company_started_id ON stats_user_status_intervals(company_id, started_at, id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_user_status_intervals_company_ended ON stats_user_status_intervals(company_id, ended_at)"))
 
 

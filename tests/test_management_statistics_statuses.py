@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -82,6 +82,25 @@ def _status_interval(
     )
 
 
+def _add_status_chain(session, company_id: str, user_id: str, *, count: int, start_hour: int = 8) -> list[StatsUserStatusInterval]:
+    rows = []
+    statuses = ["online", "waiting"]
+    for index in range(count):
+        started_at = datetime(2026, 9, 2, start_hour, index, 0)
+        ended_at = datetime(2026, 9, 2, start_hour, index + 1, 0) if index < count - 1 else datetime(2026, 9, 2, start_hour, index + 1, 0)
+        rows.append(
+            _status_interval(
+                company_id,
+                user_id=user_id,
+                status=statuses[index % 2],
+                started_at=started_at,
+                ended_at=ended_at,
+            )
+        )
+    session.add_all(rows)
+    return rows
+
+
 def _seed_admin_context(session):
     company = Company(id="company-a", name="ACME", created_at=datetime.utcnow())
     session.add(company)
@@ -92,6 +111,10 @@ def _seed_admin_context(session):
 
 def _get(session, admin: User, **params):
     return _api_client(session, _current_user(admin.id)).get("/api/v1/management/statistics/statuses", params=params)
+
+
+def _get_transitions(session, admin: User, **params):
+    return _api_client(session, _current_user(admin.id)).get("/api/v1/management/statistics/status-transitions", params=params)
 
 
 def _zero_total():
@@ -293,4 +316,305 @@ def test_status_stats_rejects_non_admin_roles():
     assert _get(session, admin).status_code == 200
     for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
         response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/statuses")
+        assert response.status_code == 403
+
+
+def test_status_transitions_returns_adjacent_status_change():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    changed_at = datetime(2026, 9, 2, 10, 10)
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=changed_at),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=changed_at, ended_at=datetime(2026, 9, 2, 10, 20)),
+        ]
+    )
+    session.commit()
+
+    response = _get_transitions(session, admin)
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "user_id": agent.id,
+            "full_name": "Agent A",
+            "is_active": True,
+            "from_status": "online",
+            "to_status": "waiting",
+            "changed_at": "2026-09-02T10:10:00",
+        }
+    ]
+
+
+def test_status_transitions_excludes_same_status_first_interval_and_gaps():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 8, 0), ended_at=datetime(2026, 9, 2, 8, 10)),
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 8, 10), ended_at=datetime(2026, 9, 2, 8, 20)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 9, 0), ended_at=datetime(2026, 9, 2, 9, 10)),
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 9, 20), ended_at=datetime(2026, 9, 2, 9, 30)),
+        ]
+    )
+    session.commit()
+
+    assert _get_transitions(session, admin).json()["items"] == []
+
+
+def test_status_transitions_reactivation_after_tracking_gap_is_not_transition():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 10, 10)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 11, 0), ended_at=datetime(2026, 9, 2, 11, 10)),
+        ]
+    )
+    session.commit()
+
+    assert _get_transitions(session, admin).json()["items"] == []
+
+
+def test_status_transitions_user_filter_and_started_at_period_filter():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    other = _user(session, company, "agent-b")
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 9, 0), ended_at=datetime(2026, 9, 2, 10, 0)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 11, 0)),
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 11, 0), ended_at=datetime(2026, 9, 2, 12, 0)),
+            _status_interval(company.id, user_id=other.id, status="online", started_at=datetime(2026, 9, 2, 9, 30), ended_at=datetime(2026, 9, 2, 10, 30)),
+            _status_interval(company.id, user_id=other.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 30), ended_at=datetime(2026, 9, 2, 11, 30)),
+        ]
+    )
+    session.commit()
+
+    filtered = _get_transitions(
+        session,
+        admin,
+        user_id=agent.id,
+        date_from="2026-09-02T10:30:00",
+        date_to="2026-09-02T12:00:00",
+    ).json()
+
+    assert [(item["user_id"], item["from_status"], item["to_status"], item["changed_at"]) for item in filtered["items"]] == [
+        (agent.id, "waiting", "online", "2026-09-02T11:00:00")
+    ]
+
+
+def test_status_transitions_company_isolation_and_deleted_user_metadata():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    deleted = _user(session, company, "deleted-agent")
+    other_company = Company(id="company-b", name="Other", created_at=datetime.utcnow())
+    session.add(other_company)
+    other_admin = _user(session, other_company, "other-admin", role="admin")
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=deleted.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 10, 10)),
+            _status_interval(company.id, user_id=deleted.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 10), ended_at=datetime(2026, 9, 2, 10, 20)),
+            _status_interval(other_company.id, user_id=other_admin.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 10, 10)),
+            _status_interval(other_company.id, user_id=other_admin.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 10), ended_at=datetime(2026, 9, 2, 10, 20)),
+        ]
+    )
+    session.delete(deleted)
+    session.commit()
+
+    items = _get_transitions(session, admin).json()["items"]
+
+    assert len(items) == 1
+    assert items[0]["user_id"] == "deleted-agent"
+    assert items[0]["full_name"] is None
+    assert items[0]["is_active"] is None
+
+
+def test_status_transitions_ambiguous_previous_interval_is_skipped():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    changed_at = datetime(2026, 9, 2, 10, 10)
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=changed_at),
+            _status_interval(company.id, user_id=agent.id, status="lunch", started_at=datetime(2026, 9, 2, 10, 5), ended_at=changed_at),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=changed_at, ended_at=datetime(2026, 9, 2, 10, 20)),
+        ]
+    )
+    session.commit()
+
+    assert _get_transitions(session, admin).json()["items"] == []
+
+
+def test_status_transitions_loads_history_with_single_status_interval_select():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    other = _user(session, company, "agent-b")
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 10, 10)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 10), ended_at=datetime(2026, 9, 2, 10, 20)),
+            _status_interval(company.id, user_id=agent.id, status="lunch", started_at=datetime(2026, 9, 2, 10, 20), ended_at=datetime(2026, 9, 2, 10, 30)),
+            _status_interval(company.id, user_id=other.id, status="online", started_at=datetime(2026, 9, 2, 11, 0), ended_at=datetime(2026, 9, 2, 11, 10)),
+            _status_interval(company.id, user_id=other.id, status="waiting", started_at=datetime(2026, 9, 2, 11, 10), ended_at=datetime(2026, 9, 2, 11, 20)),
+        ]
+    )
+    session.commit()
+    counter = {"count": 0}
+    engine = session.get_bind()
+
+    def count_status_interval_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        normalized = statement.lower()
+        if normalized.lstrip().startswith("select") and "stats_user_status_intervals" in normalized:
+            counter["count"] += 1
+
+    event.listen(engine, "before_cursor_execute", count_status_interval_selects)
+    try:
+        response = _get_transitions(session, admin)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_status_interval_selects)
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 3
+    assert counter["count"] == 1
+
+
+def test_status_transitions_default_limit_and_cursor_paginates_without_duplicates():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    _add_status_chain(session, company.id, agent.id, count=18)
+    session.commit()
+
+    first = _get_transitions(session, admin).json()
+    second = _get_transitions(session, admin, cursor=first["next_cursor"]).json()
+
+    first_ids = {(item["changed_at"], item["to_status"]) for item in first["items"]}
+    second_ids = {(item["changed_at"], item["to_status"]) for item in second["items"]}
+    assert len(first["items"]) == 15
+    assert first["has_more"] is True
+    assert first["next_cursor"]
+    assert len(second["items"]) == 2
+    assert second["has_more"] is False
+    assert second["next_cursor"] is None
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_status_transitions_cursor_tie_break_with_same_changed_at():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    other = _user(session, company, "agent-b")
+    third = _user(session, company, "agent-c")
+    changed_at = datetime(2026, 9, 2, 10, 10)
+    currents = []
+    for index, user_id in enumerate([agent.id, other.id, third.id]):
+        previous = _status_interval(
+            company.id,
+            user_id=user_id,
+            status="online",
+            started_at=datetime(2026, 9, 2, 10, index, 0),
+            ended_at=changed_at,
+        )
+        current = _status_interval(
+            company.id,
+            user_id=user_id,
+            status="waiting",
+            started_at=changed_at,
+            ended_at=datetime(2026, 9, 2, 10, 20 + index, 0),
+        )
+        current.id = f"current-{index}"
+        currents.append(current)
+        session.add_all([previous, current])
+    session.commit()
+
+    first = _get_transitions(session, admin, limit=2).json()
+    second = _get_transitions(session, admin, limit=2, cursor=first["next_cursor"]).json()
+
+    seen = [item["user_id"] for item in first["items"] + second["items"]]
+    assert len(first["items"]) == 2
+    assert first["has_more"] is True
+    assert len(second["items"]) == 1
+    assert set(seen) == {agent.id, other.id, third.id}
+    assert len(seen) == len(set(seen)) == 3
+
+
+def test_status_transitions_invalid_rows_do_not_consume_page_size():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    _add_status_chain(session, company.id, agent.id, count=17)
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 11, 0), ended_at=datetime(2026, 9, 2, 11, 10)),
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 11, 10), ended_at=datetime(2026, 9, 2, 11, 20)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 12, 0), ended_at=datetime(2026, 9, 2, 12, 10)),
+        ]
+    )
+    session.commit()
+
+    first = _get_transitions(session, admin).json()
+
+    assert len(first["items"]) == 15
+    assert first["has_more"] is True
+
+
+def test_status_transitions_cursor_preserves_user_and_period_semantics():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    other = _user(session, company, "agent-b")
+    _add_status_chain(session, company.id, agent.id, count=18)
+    _add_status_chain(session, company.id, other.id, count=18, start_hour=9)
+    session.commit()
+
+    first = _get_transitions(
+        session,
+        admin,
+        user_id=agent.id,
+        date_from="2026-09-02T08:05:00",
+        date_to="2026-09-02T08:18:00",
+        limit=5,
+    ).json()
+    second = _get_transitions(
+        session,
+        admin,
+        user_id=agent.id,
+        date_from="2026-09-02T08:05:00",
+        date_to="2026-09-02T08:18:00",
+        limit=5,
+        cursor=first["next_cursor"],
+    ).json()
+
+    assert first["has_more"] is True
+    assert all(item["user_id"] == agent.id for item in first["items"] + second["items"])
+    assert all("2026-09-02T08:" in item["changed_at"] for item in first["items"] + second["items"])
+
+
+def test_status_transitions_rejects_invalid_cursor_and_too_large_limit():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    _add_status_chain(session, company.id, agent.id, count=3)
+    session.commit()
+
+    invalid_cursor = _get_transitions(session, admin, cursor="not-a-valid-cursor")
+    too_large_limit = _get_transitions(session, admin, limit=101)
+
+    assert invalid_cursor.status_code == 400
+    assert invalid_cursor.json()["detail"]["error"]["code"] == "invalid_cursor"
+    assert too_large_limit.status_code == 422
+
+
+def test_status_transitions_rejects_non_admin_roles():
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    trainee = _user(session, company, "trainee-a", role="trainee")
+    readonly = _user(session, company, "chiki-a", role="chiki_piki")
+    session.add_all(
+        [
+            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=datetime(2026, 9, 2, 10, 10)),
+            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=datetime(2026, 9, 2, 10, 10), ended_at=datetime(2026, 9, 2, 10, 20)),
+        ]
+    )
+    session.commit()
+
+    assert _get_transitions(session, admin).status_code == 200
+    for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
+        response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/status-transitions")
         assert response.status_code == 403

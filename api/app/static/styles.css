@@ -324,18 +324,20 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .main[data-shell-page="management-statistics"] {
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
 .management-statistics-page {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   align-content: start;
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   padding: 16px;
   min-width: 0;
 }
@@ -353,10 +355,13 @@ body[data-sidebar-ready="0"] .admin-select-col {
   line-height: 1.2;
 }
 
-.management-statistics-panel {
+.panel.table-wrap.management-statistics-panel {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 0;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .management-statistics-tabs {
@@ -436,6 +441,21 @@ body[data-sidebar-ready="0"] .admin-select-col {
   color: #b45309;
 }
 
+#managementStatisticsWorkTimePanel:not([hidden]),
+#managementStatisticsStatusesPanel:not([hidden]) {
+  grid-row: 4;
+  align-self: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#managementStatisticsStatusesPanel:not([hidden]) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+}
+
 .management-statistics-summary {
   display: flex;
   flex-wrap: wrap;
@@ -449,15 +469,114 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .management-statistics-table {
-  min-width: 680px;
+  width: 100%;
+  margin: 0;
+  min-width: 620px;
 }
 
 .management-statistics-work-time-table {
-  min-width: 920px;
+  width: min(100%, 1160px);
+  min-width: 1040px;
 }
 
 .management-statistics-statuses-table {
-  min-width: 820px;
+  width: min(100%, 760px);
+  min-width: 640px;
+}
+
+.management-statistics-transitions-table {
+  width: min(100%, 720px);
+  min-width: 620px;
+}
+
+.table-scroll.management-statistics-table-wrap {
+  flex: none;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 0 14px 14px;
+}
+
+.management-statistics-work-time-table-wrap,
+#managementStatisticsWorkTimePanel .management-statistics-table-wrap {
+  width: min(100%, 1160px);
+}
+
+.management-statistics-work-time-table th:nth-child(1),
+.management-statistics-work-time-table td:nth-child(1) {
+  width: 20%;
+}
+
+.management-statistics-work-time-table th:nth-child(2),
+.management-statistics-work-time-table td:nth-child(2),
+.management-statistics-work-time-table th:nth-child(3),
+.management-statistics-work-time-table td:nth-child(3),
+.management-statistics-work-time-table th:nth-child(4),
+.management-statistics-work-time-table td:nth-child(4) {
+  width: 8.5%;
+}
+
+.management-statistics-work-time-table th:nth-child(5),
+.management-statistics-work-time-table td:nth-child(5),
+.management-statistics-work-time-table th:nth-child(6),
+.management-statistics-work-time-table td:nth-child(6),
+.management-statistics-work-time-table th:nth-child(7),
+.management-statistics-work-time-table td:nth-child(7) {
+  width: 18.16%;
+}
+
+.management-statistics-statuses-card .management-statistics-table-wrap,
+.management-statistics-transition-log .management-statistics-table-wrap,
+.management-statistics-transition-log .management-statistics-pagination {
+  width: min(100%, 760px);
+}
+
+.management-statistics-inner-card {
+  margin: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: visible;
+}
+
+.management-statistics-statuses-card {
+  flex: 0 0 auto;
+}
+
+.management-statistics-transition-log {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.management-statistics-transition-log h2 {
+  margin: 0;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.management-statistics-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 12px 14px 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.table-scroll.management-statistics-transitions-viewport {
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .management-statistics-table th:nth-child(n+2),
@@ -479,6 +598,48 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .management-statistics-empty {
   padding: 14px;
+}
+
+.management-statistics-transitions-table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.management-statistics-transitions-table th,
+.management-statistics-transitions-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.management-statistics-transitions-table thead th {
+  border-bottom-color: rgba(11, 122, 140, 0.28);
+}
+
+@media (min-width: 1280px) {
+  .management-statistics-statuses-card .management-statistics-table-wrap,
+  .management-statistics-transition-log .management-statistics-table-wrap,
+  .management-statistics-transition-log .management-statistics-pagination {
+    width: 58%;
+    min-width: 720px;
+  }
+
+  .management-statistics-work-time-table-wrap,
+  #managementStatisticsWorkTimePanel .management-statistics-table-wrap {
+    width: 88%;
+    min-width: 1040px;
+  }
+}
+
+@media (max-width: 900px) {
+  .management-statistics-table-wrap,
+  .management-statistics-statuses-card .management-statistics-table-wrap,
+  .management-statistics-transition-log .management-statistics-table-wrap,
+  .management-statistics-transition-log .management-statistics-pagination,
+  #managementStatisticsWorkTimePanel .management-statistics-table-wrap {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .management-user-block-state {
