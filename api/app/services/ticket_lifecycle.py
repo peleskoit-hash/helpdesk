@@ -28,6 +28,7 @@ from .telegram_post_close import (
 from .ticket_messages import persist_client_delivery_failure, record_client_delivery_failure
 from .ticket_subject import resolve_ticket_subject
 from .telegram_text_format import telegram_html_code, telegram_html_text
+from .internal_tasks import is_internal_task_ticket
 
 
 def _error(status_code: int, code: str, message: str):
@@ -713,7 +714,7 @@ def _close_task_without_reply(
     ticket.freeze_until = None
     sync_work_interval_after_close(db, ticket, now=closed_at)
     add_message_fn(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
-    if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value:
+    if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value and not is_internal_task_ticket(db, ticket):
         client_message = first_client_message_fn(db, ticket)
         subject_text = resolve_ticket_subject(db, ticket)
         _send_optional_client_message(
@@ -838,6 +839,7 @@ def close_ticket_by_actor(
         clear_ticket_auto_close_timer(ticket)
 
     if workflow_type == TicketWorkflowType.TASK.value:
+        suppress_task_client_delivery = is_internal_task_ticket(db, ticket)
         client_message = first_client_message_fn(db, ticket)
         if client_message is None:
             if force_without_agent_reply_for_task:
@@ -855,35 +857,36 @@ def close_ticket_by_actor(
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
             subject_text = resolve_ticket_subject(db, ticket)
-            _send_optional_client_message(
-                db,
-                ticket,
-                _format_group_task_completion_text(
+            if not suppress_task_client_delivery:
+                _send_optional_client_message(
                     db,
                     ticket,
-                    client_message,
-                    answers,
-                    subject_text=subject_text,
-                ),
-                failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
-                send_to_telegram_client_fn=send_to_telegram_client_fn,
-                reply_markup=_post_close_markup_for_ticket(db, ticket),
-            )
-            for attachment in attachments:
-                filename = attachment.original_filename or "файл"
-                _send_required_client_attachment(
-                    db,
-                    ticket,
-                    attachment,
-                    failure_note=f"Групповая задача завершена, но не удалось отправить клиенту вложение «{filename}».",
-                    send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                    _format_group_task_completion_text(
+                        db,
+                        ticket,
+                        client_message,
+                        answers,
+                        subject_text=subject_text,
+                    ),
+                    failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
+                    send_to_telegram_client_fn=send_to_telegram_client_fn,
+                    reply_markup=_post_close_markup_for_ticket(db, ticket),
                 )
-            _send_pending_wrong_problem_hint(
-                db,
-                ticket,
-                send_to_telegram_client_fn=send_to_telegram_client_fn,
-                add_message_fn=add_message_fn,
-            )
+                for attachment in attachments:
+                    filename = attachment.original_filename or "файл"
+                    _send_required_client_attachment(
+                        db,
+                        ticket,
+                        attachment,
+                        failure_note=f"Групповая задача завершена, но не удалось отправить клиенту вложение «{filename}».",
+                        send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                    )
+                _send_pending_wrong_problem_hint(
+                    db,
+                    ticket,
+                    send_to_telegram_client_fn=send_to_telegram_client_fn,
+                    add_message_fn=add_message_fn,
+                )
             close_text = "Групповая задача завершена сотрудником" if not is_admin_action else f"Групповая задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         elif ticket.task_kind == TicketTaskKind.GROUP_CHILD.value:
@@ -899,29 +902,30 @@ def close_ticket_by_actor(
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         else:
             subject_text = resolve_ticket_subject(db, ticket)
-            _send_optional_client_message(
-                db,
-                ticket,
-                _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
-                failure_note="Задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
-                send_to_telegram_client_fn=send_to_telegram_client_fn,
-                reply_markup=_post_close_markup_for_ticket(db, ticket),
-            )
-            for attachment in message_attachments_fn(db, last_agent_message.id):
-                filename = attachment.original_filename or "файл"
-                _send_required_client_attachment(
+            if not suppress_task_client_delivery:
+                _send_optional_client_message(
                     db,
                     ticket,
-                    attachment,
-                    failure_note=f"Не удалось отправить клиенту вложение «{filename}».",
-                    send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                    _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
+                    failure_note="Задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
+                    send_to_telegram_client_fn=send_to_telegram_client_fn,
+                    reply_markup=_post_close_markup_for_ticket(db, ticket),
                 )
-            _send_pending_wrong_problem_hint(
-                db,
-                ticket,
-                send_to_telegram_client_fn=send_to_telegram_client_fn,
-                add_message_fn=add_message_fn,
-            )
+                for attachment in message_attachments_fn(db, last_agent_message.id):
+                    filename = attachment.original_filename or "файл"
+                    _send_required_client_attachment(
+                        db,
+                        ticket,
+                        attachment,
+                        failure_note=f"Не удалось отправить клиенту вложение «{filename}».",
+                        send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
+                    )
+                _send_pending_wrong_problem_hint(
+                    db,
+                    ticket,
+                    send_to_telegram_client_fn=send_to_telegram_client_fn,
+                    add_message_fn=add_message_fn,
+                )
             close_text = "Задача завершена сотрудником" if not is_admin_action else f"Задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
     elif workflow_type == TicketWorkflowType.TICKET.value:

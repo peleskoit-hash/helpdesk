@@ -161,6 +161,70 @@ def assign_ticket_to_agent(db: Session, ticket: Ticket, agent: User, notify_clie
     return True
 
 
+def assign_ticket_by_admin(
+    db: Session,
+    ticket: Ticket,
+    assignee: User,
+    *,
+    actor_user_id: str | None = None,
+    old_is_special: bool | None = None,
+    notify_client: bool = True,
+) -> None:
+    old_assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
+    old_status = ticket.status
+    previous_is_special = bool(ticket.is_special) if old_is_special is None else old_is_special
+    actor_user = db.get(User, actor_user_id) if actor_user_id else None
+    actor_name = actor_user.full_name if actor_user and actor_user.full_name else "Администратор"
+    now = datetime.utcnow()
+
+    ticket.assignee_id = assignee.id
+    ticket.intake_state = TicketIntakeState.READY.value
+    if ticket.status == TicketStatus.UNASSIGNED.value:
+        ticket.status = TicketStatus.NEW.value
+    ticket.updated_at = now
+    sync_work_interval_after_assignment_change(
+        db,
+        ticket,
+        old_assignee_id=old_assignee.id if old_assignee else None,
+        new_assignee_id=assignee.id,
+        now=now,
+    )
+    append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
+    run_group_parent_assigned_hook(db, ticket, assignee)
+    schedule_employee_assignment_notification(
+        db,
+        ticket,
+        old_assignee=old_assignee,
+        new_assignee=assignee,
+        old_is_special=previous_is_special,
+        new_is_special=bool(ticket.is_special),
+        actor_user_id=actor_user.id if actor_user is not None else None,
+    )
+    if actor_user is not None and actor_user.role == "admin":
+        ticket_word = "задачу" if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TASK.value else "заявку"
+        if assignee.id == actor_user.id and old_assignee is not None and old_assignee.id != actor_user.id:
+            append_system_message(
+                db,
+                ticket,
+                f"{actor_name} забрал {ticket_word}",
+                agent_visible=True,
+            )
+        if old_assignee is not None and old_assignee.id == actor_user.id and assignee.id != actor_user.id:
+            append_system_message(
+                db,
+                ticket,
+                f"{actor_name} перевёл {ticket_word} на Вас",
+                agent_visible=True,
+            )
+    if (
+        notify_client
+        and ticket.status != TicketStatus.CLOSED.value
+        and old_assignee is None
+        and old_status == TicketStatus.UNASSIGNED.value
+    ):
+        notify_client_about_assignee(db, ticket, assignee)
+
+
 def resolve_forced_assignee(db: Session, forced_assignee_type: str, forced_assignee_value: str) -> tuple[User | None, str | None, User | None]:
     value = (forced_assignee_value or "").strip()
     if not value:

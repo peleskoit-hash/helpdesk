@@ -27,7 +27,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
-from ..services.assignment import append_system_message, assignee_change_message, assignee_label, notify_client_about_assignee, run_group_parent_assigned_hook, schedule_employee_assignment_notification
+from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
 from ..services.telegram_post_close import cleanup_feedback_flow_for_ticket_reopen, cleanup_review_flow_for_ticket_reopen
@@ -311,47 +311,14 @@ def _assign_ticket_by_admin(db: Session, ticket: Ticket, assignee: User | None, 
         )
         return
 
-    now = datetime.utcnow()
-    ticket.assignee_id = assignee.id
-    ticket.intake_state = TicketIntakeState.READY.value
-    if ticket.status == TicketStatus.UNASSIGNED.value:
-        ticket.status = TicketStatus.NEW.value
-    ticket.updated_at = now
-    sync_work_interval_after_assignment_change(db, ticket, old_assignee_id=old_assignee.id if old_assignee else None, new_assignee_id=assignee.id, now=now)
-    append_system_message(db, ticket, assignee_change_message(old_assignee, assignee))
-    run_group_parent_assigned_hook(db, ticket, assignee)
-    schedule_employee_assignment_notification(
+    assign_ticket_by_admin(
         db,
         ticket,
-        old_assignee=old_assignee,
-        new_assignee=assignee,
-        old_is_special=old_is_special,
-        new_is_special=bool(ticket.is_special),
+        assignee,
         actor_user_id=actor_user.id if actor_user is not None else None,
+        old_is_special=old_is_special,
+        notify_client=True,
     )
-    if is_admin(actor):
-        # Admin took ticket from support queue.
-        if assignee.id == actor.id and old_assignee is not None and old_assignee.id != actor.id:
-            append_system_message(
-                db,
-                ticket,
-                f"{actor_name} забрал {_ticket_word(ticket)}",
-                agent_visible=True,
-            )
-        # Admin handed off ticket from self back to support.
-        if old_assignee is not None and old_assignee.id == actor.id and assignee.id != actor.id:
-            append_system_message(
-                db,
-                ticket,
-                f"{actor_name} перевёл {_ticket_word(ticket)} на Вас",
-                agent_visible=True,
-            )
-    if (
-        ticket.status != TicketStatus.CLOSED.value
-        and old_assignee is None
-        and old_status == TicketStatus.UNASSIGNED.value
-    ):
-        notify_client_about_assignee(db, ticket, assignee)
 
 
 def _get_or_create_client_profile(db: Session, client_id: str) -> ClientProfile:
