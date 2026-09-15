@@ -523,6 +523,7 @@ class EmployeeNotificationPreference(Base):
     receive_transfer_to_agent: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     receive_transfer_from_agent: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     receive_new_message: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    notify_internal_task_completion: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

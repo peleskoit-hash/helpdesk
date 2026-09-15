@@ -99,6 +99,7 @@ def _payload(
             "transfer_to_agent": delivery.get("transfer_to_agent", True),
             "transfer_from_agent": delivery.get("transfer_from_agent", True),
             "new_message": delivery.get("new_message", True),
+            "notify_internal_task_completion": delivery.get("notify_internal_task_completion", True),
         },
     )
 
@@ -121,6 +122,7 @@ def test_defaults_without_personal_row_and_base_mode_reflects_current_base(monke
         "transfer_to_agent": True,
         "transfer_from_agent": True,
         "new_message": True,
+        "notify_internal_task_completion": True,
     }
     assert session.query(EmployeeNotificationPreference).count() == 0
     assert {item["type"]: item["template"] for item in result["items"]} == {
@@ -458,6 +460,7 @@ def test_delivery_switches_are_saved_independently_and_new_assignment_stays_true
             transfer_to_agent=False,
             transfer_from_agent=False,
             new_message=False,
+            notify_internal_task_completion=False,
         ),
         db=session,
         user=user,
@@ -472,8 +475,11 @@ def test_delivery_switches_are_saved_independently_and_new_assignment_stays_true
         "transfer_to_agent": False,
         "transfer_from_agent": False,
         "new_message": False,
+        "notify_internal_task_completion": False,
     }
-    assert session.query(EmployeeNotificationPreference).filter_by(user_id=user.id).one().personal_new_assignment_template is None
+    row = session.query(EmployeeNotificationPreference).filter_by(user_id=user.id).one()
+    assert row.personal_new_assignment_template is None
+    assert row.notify_internal_task_completion is False
 
     reloaded = get_my_notification_bot_preferences(db=session, user=user)
     assert reloaded["delivery"] == {
@@ -481,7 +487,29 @@ def test_delivery_switches_are_saved_independently_and_new_assignment_stays_true
         "transfer_to_agent": False,
         "transfer_from_agent": False,
         "new_message": False,
+        "notify_internal_task_completion": False,
     }
+
+
+def test_internal_task_completion_delivery_default_and_roundtrip_true():
+    session = _session()
+    user = _user(session)
+
+    assert get_my_notification_bot_preferences(db=session, user=user)["delivery"]["notify_internal_task_completion"] is True
+
+    update_my_notification_bot_preferences(
+        _payload(use_base_settings=True, notify_internal_task_completion=False),
+        db=session,
+        user=user,
+    )
+    result = update_my_notification_bot_preferences(
+        _payload(use_base_settings=True, notify_internal_task_completion=True),
+        db=session,
+        user=user,
+    )
+
+    assert result["delivery"]["notify_internal_task_completion"] is True
+    assert session.query(EmployeeNotificationPreference).filter_by(user_id=user.id).one().notify_internal_task_completion is True
 
 
 def test_delivery_payload_cannot_disable_mandatory_new_assignment():
@@ -496,6 +524,7 @@ def test_delivery_payload_cannot_disable_mandatory_new_assignment():
                 "transfer_to_agent": True,
                 "transfer_from_agent": True,
                 "new_message": True,
+                "notify_internal_task_completion": True,
             },
         )
 
@@ -606,7 +635,12 @@ def test_api_payload_forbids_user_id_and_cannot_edit_another_user():
                 {"type": "new_assignment", "use_base_settings": True},
                 {"type": "new_message", "use_base_settings": True},
             ],
-            delivery={"transfer_to_agent": True, "transfer_from_agent": True, "new_message": True},
+            delivery={
+                "transfer_to_agent": True,
+                "transfer_from_agent": True,
+                "new_message": True,
+                "notify_internal_task_completion": True,
+            },
         )
 
     update_my_notification_bot_preferences(_payload(use_base_settings=False), db=session, user=user)

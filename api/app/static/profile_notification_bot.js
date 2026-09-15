@@ -21,6 +21,10 @@
         key: "new_message",
         label: "Получать уведомления о новых сообщениях и комментариях",
       },
+      {
+        key: "notify_internal_task_completion",
+        label: "Завершение внутренних задач",
+      },
     ],
     [
       {
@@ -55,6 +59,7 @@
         transfer_to_agent: true,
         transfer_from_agent: true,
         new_message: true,
+        notify_internal_task_completion: true,
       },
       telegramBindingActive: false,
       activeTextarea: null,
@@ -358,6 +363,7 @@
         transfer_to_agent: payload?.delivery?.transfer_to_agent !== false,
         transfer_from_agent: payload?.delivery?.transfer_from_agent !== false,
         new_message: payload?.delivery?.new_message !== false,
+        notify_internal_task_completion: payload?.delivery?.notify_internal_task_completion !== false,
       };
       state.telegramBindingActive = !!payload?.telegram_binding?.active;
       state.items = Array.isArray(payload?.items) ? payload.items : [];
@@ -402,6 +408,7 @@
           transfer_to_agent: state.delivery.transfer_to_agent !== false,
           transfer_from_agent: state.delivery.transfer_from_agent !== false,
           new_message: state.delivery.new_message !== false,
+          notify_internal_task_completion: state.delivery.notify_internal_task_completion !== false,
         },
       };
     }

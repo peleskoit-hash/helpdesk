@@ -1389,6 +1389,7 @@ def ensure_employee_notification_preferences_table() -> None:
                     receive_transfer_to_agent {bool_type} NOT NULL DEFAULT TRUE,
                     receive_transfer_from_agent {bool_type} NOT NULL DEFAULT TRUE,
                     receive_new_message {bool_type} NOT NULL DEFAULT TRUE,
+                    notify_internal_task_completion {bool_type} NOT NULL DEFAULT TRUE,
                     created_at {timestamp_type},
                     updated_at {timestamp_type}
                 )
@@ -1424,6 +1425,7 @@ def ensure_employee_notification_preferences_table() -> None:
             "receive_transfer_to_agent": "BOOLEAN",
             "receive_transfer_from_agent": "BOOLEAN",
             "receive_new_message": "BOOLEAN",
+            "notify_internal_task_completion": "BOOLEAN",
             "created_at": "TIMESTAMP",
             "updated_at": "TIMESTAMP",
         }
@@ -1461,6 +1463,10 @@ def ensure_employee_notification_preferences_table() -> None:
         conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_to_agent = TRUE WHERE receive_transfer_to_agent IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_from_agent = TRUE WHERE receive_transfer_from_agent IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET receive_new_message = TRUE WHERE receive_new_message IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET notify_internal_task_completion = TRUE WHERE notify_internal_task_completion IS NULL"))
+        if conn.dialect.name != "sqlite":
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN notify_internal_task_completion SET DEFAULT TRUE"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN notify_internal_task_completion SET NOT NULL"))
 
 
 def ensure_internal_task_tables() -> None:

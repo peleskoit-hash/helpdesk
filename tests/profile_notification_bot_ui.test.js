@@ -53,13 +53,14 @@ test("personal notification tabs use dedicated two-column class", () => {
 
 test("delivery switches are page-level with explicit two-column order", () => {
   assert.match(source, /const DELIVERY_SWITCH_COLUMNS = \[/);
-  assert.match(source, /key: "new_assignment"[\s\S]+key: "new_message"[\s\S]+key: "transfer_to_agent"[\s\S]+key: "transfer_from_agent"/);
+  assert.match(source, /key: "new_assignment"[\s\S]+key: "new_message"[\s\S]+key: "notify_internal_task_completion"[\s\S]+key: "transfer_to_agent"[\s\S]+key: "transfer_from_agent"/);
+  assert.match(source, /label: "Завершение внутренних задач"/);
   assert.match(source, /function renderDeliverySwitches\(\)/);
   assert.match(source, /notification-control-card notification-delivery-card/);
   assert.match(source, /data-delivery-switch/);
   assert.match(source, /item\.mandatory \? "disabled" : ""/);
   assert.match(source, /state\.delivery\.new_assignment = true/);
-  assert.match(source, /delivery: \{[\s\S]+transfer_to_agent:[\s\S]+transfer_from_agent:[\s\S]+new_message:/);
+  assert.match(source, /delivery: \{[\s\S]+transfer_to_agent:[\s\S]+transfer_from_agent:[\s\S]+new_message:[\s\S]+notify_internal_task_completion:/);
 });
 
 test("restore-base requires confirmation", () => {

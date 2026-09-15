@@ -32,6 +32,7 @@ class EmployeeNotificationDeliveryPayload(BaseModel):
     transfer_to_agent: bool = True
     transfer_from_agent: bool = True
     new_message: bool = True
+    notify_internal_task_completion: bool = True
 
 
 class EmployeeNotificationPreferencesPayload(BaseModel):
@@ -67,6 +68,7 @@ def update_my_notification_bot_preferences(
             receive_transfer_to_agent=payload.delivery.transfer_to_agent,
             receive_transfer_from_agent=payload.delivery.transfer_from_agent,
             receive_new_message=payload.delivery.new_message,
+            notify_internal_task_completion=payload.delivery.notify_internal_task_completion,
         )
     except ValueError as exc:
         _error(422, "notification_template_invalid", str(exc))

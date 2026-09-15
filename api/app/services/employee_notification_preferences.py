@@ -58,6 +58,7 @@ def get_or_create_employee_notification_preference(
         receive_transfer_to_agent=True,
         receive_transfer_from_agent=True,
         receive_new_message=True,
+        notify_internal_task_completion=True,
         created_at=now,
         updated_at=now,
     )
@@ -209,6 +210,9 @@ def serialize_employee_notification_preferences(
             "transfer_to_agent": True if row is None else bool(row.receive_transfer_to_agent),
             "transfer_from_agent": True if row is None else bool(row.receive_transfer_from_agent),
             "new_message": True if row is None else bool(row.receive_new_message),
+            "notify_internal_task_completion": True
+            if row is None
+            else bool(row.notify_internal_task_completion),
         },
         "telegram_binding": {
             "active": _binding_active(db, user_id),
@@ -224,11 +228,13 @@ def update_employee_notification_preferences(
     receive_transfer_to_agent: bool,
     receive_transfer_from_agent: bool,
     receive_new_message: bool,
+    notify_internal_task_completion: bool,
 ) -> EmployeeNotificationPreference:
     row = get_or_create_employee_notification_preference(db, user_id=user_id)
     row.receive_transfer_to_agent = bool(receive_transfer_to_agent)
     row.receive_transfer_from_agent = bool(receive_transfer_from_agent)
     row.receive_new_message = bool(receive_new_message)
+    row.notify_internal_task_completion = bool(notify_internal_task_completion)
 
     by_type = {str(item.get("type") or ""): item for item in (items or [])}
     unknown = sorted(set(by_type) - set(PERSONAL_NOTIFICATION_TYPES))
