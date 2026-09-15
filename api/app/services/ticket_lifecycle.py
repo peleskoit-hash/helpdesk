@@ -25,6 +25,7 @@ from .telegram_post_close import (
     post_close_actions_markup,
     prepare_review_offer_cycle,
 )
+from .employee_telegram_notifications import schedule_internal_task_completion_notification
 from .ticket_messages import persist_client_delivery_failure, record_client_delivery_failure
 from .ticket_subject import resolve_ticket_subject
 from .telegram_text_format import telegram_html_code, telegram_html_text
@@ -902,6 +903,13 @@ def close_ticket_by_actor(
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         else:
             subject_text = resolve_ticket_subject(db, ticket)
+            final_attachments = message_attachments_fn(db, last_agent_message.id)
+            if suppress_task_client_delivery and not is_admin_action and actor.role in {"agent", "trainee"}:
+                schedule_internal_task_completion_notification(
+                    db,
+                    ticket=ticket,
+                    final_message=last_agent_message,
+                )
             if not suppress_task_client_delivery:
                 _send_optional_client_message(
                     db,
@@ -911,7 +919,7 @@ def close_ticket_by_actor(
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
                     reply_markup=_post_close_markup_for_ticket(db, ticket),
                 )
-                for attachment in message_attachments_fn(db, last_agent_message.id):
+                for attachment in final_attachments:
                     filename = attachment.original_filename or "файл"
                     _send_required_client_attachment(
                         db,

@@ -18,6 +18,7 @@ from ..models import (
     Client,
     ClientProfile,
     EmployeeNotificationPreference,
+    InternalTaskOccurrence,
     MessageType,
     TelegramNotificationAccount,
     Ticket,
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 _PENDING_ASSIGNMENT_NOTIFICATIONS_KEY = "employee_assignment_notifications"
 _PENDING_MESSAGE_NOTIFICATIONS_KEY = "employee_message_notifications"
 _PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY = "employee_media_group_notifications"
+_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY = "internal_task_completion_notifications"
 EMPLOYEE_MEDIA_GROUP_DEBOUNCE_SECONDS = 10.0
 TELEGRAM_MEDIA_GROUP_MAX_ATTACHMENTS = 10
 EMPLOYEE_NOTIFICATION_MESSAGE_TEXT_LIMIT = 200
@@ -101,6 +103,13 @@ class EmployeeTelegramDelivery:
 
 
 AssignmentNotificationTelegramDelivery = EmployeeTelegramDelivery
+
+
+@dataclass(frozen=True)
+class InternalTaskCompletionTelegramDelivery:
+    user_id: str
+    telegram_chat_id: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -184,6 +193,12 @@ def _personal_switch_enabled(preference: EmployeeNotificationPreference | None, 
     if notification_type == "new_message":
         return bool(preference.receive_new_message)
     return False
+
+
+def _internal_task_completion_enabled(preference: EmployeeNotificationPreference | None) -> bool:
+    if preference is None:
+        return True
+    return bool(preference.notify_internal_task_completion)
 
 
 def _effective_template(
@@ -684,6 +699,81 @@ def schedule_new_message_notification(
     )
 
 
+def _format_internal_task_completion_text(
+    *,
+    title: str,
+    result_text: str,
+) -> str:
+    return "\n".join([
+        "Внутренняя задача выполнена",
+        f"Задача: {title}",
+        "Результат:",
+        result_text,
+    ])
+
+
+def schedule_internal_task_completion_notification(
+    db: Session,
+    *,
+    ticket: Ticket,
+    final_message: TicketMessage,
+) -> None:
+    db.info.setdefault(_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY, []).append(
+        {
+            "ticket_id": ticket.id,
+            "final_message_id": final_message.id,
+        }
+    )
+
+
+def resolve_internal_task_completion_telegram_delivery(
+    db: Session,
+    *,
+    ticket_id: str,
+    final_message_id: str,
+) -> InternalTaskCompletionTelegramDelivery | None:
+    occurrence = db.execute(
+        select(InternalTaskOccurrence)
+        .where(InternalTaskOccurrence.ticket_id == ticket_id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if occurrence is None or not occurrence.notify_on_completion or not occurrence.responsible_admin_id:
+        return None
+
+    responsible = db.get(User, occurrence.responsible_admin_id)
+    if responsible is None or responsible.role != "admin" or not responsible.is_active:
+        return None
+    preference = _preference_for_user(db, responsible.id)
+    if not _internal_task_completion_enabled(preference):
+        return None
+    account = _approved_account_for_user(db, responsible.id)
+    if account is None:
+        return None
+
+    final_message = db.get(TicketMessage, final_message_id)
+    if (
+        final_message is None
+        or final_message.ticket_id != ticket_id
+        or final_message.message_type != MessageType.AGENT.value
+        or final_message.message_status == "deleted"
+    ):
+        return None
+
+    attachments = _load_message_attachments(db, final_message_id)
+    result_text = _composite_message_body(final_message, attachments)
+    if not result_text:
+        return None
+
+    return InternalTaskCompletionTelegramDelivery(
+        user_id=responsible.id,
+        telegram_chat_id=str(account.telegram_chat_id),
+        text=_format_internal_task_completion_text(
+            title=occurrence.title_snapshot or "Внутренняя задача",
+            result_text=result_text,
+        ),
+    )
+
+
 def _resolve_new_message_delivery(
     db: Session,
     *,
@@ -794,6 +884,14 @@ def _send_delivery(delivery: EmployeeTelegramDelivery) -> None:
     )
 
 
+def _send_internal_task_completion_delivery(delivery: InternalTaskCompletionTelegramDelivery) -> None:
+    send_message(
+        delivery.telegram_chat_id,
+        delivery.text,
+        bot_token=settings.employee_telegram_bot_token,
+    )
+
+
 def _media_group_attachment_count(
     db: Session,
     *,
@@ -867,7 +965,8 @@ def _send_scheduled_employee_notifications(session: Session) -> None:
     assignment_pending = session.info.pop(_PENDING_ASSIGNMENT_NOTIFICATIONS_KEY, [])
     message_pending = session.info.pop(_PENDING_MESSAGE_NOTIFICATIONS_KEY, [])
     media_group_pending = session.info.pop(_PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY, [])
-    if not assignment_pending and not message_pending and not media_group_pending:
+    internal_task_completion_pending = session.info.pop(_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY, [])
+    if not assignment_pending and not message_pending and not media_group_pending and not internal_task_completion_pending:
         return
     if not settings.employee_telegram_bot_token:
         return
@@ -920,12 +1019,26 @@ def _send_scheduled_employee_notifications(session: Session) -> None:
         except Exception:
             logger.exception("Failed to debounce employee media group message notification")
 
+    for item in internal_task_completion_pending:
+        try:
+            with SessionLocal() as db:
+                delivery = resolve_internal_task_completion_telegram_delivery(
+                    db,
+                    ticket_id=item["ticket_id"],
+                    final_message_id=item["final_message_id"],
+                )
+                if delivery is not None:
+                    _send_internal_task_completion_delivery(delivery)
+        except Exception:
+            logger.exception("Failed to send internal task completion notification")
+
 
 @event.listens_for(Session, "after_rollback")
 def _clear_scheduled_employee_notifications(session: Session) -> None:
     session.info.pop(_PENDING_ASSIGNMENT_NOTIFICATIONS_KEY, None)
     session.info.pop(_PENDING_MESSAGE_NOTIFICATIONS_KEY, None)
     session.info.pop(_PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY, None)
+    session.info.pop(_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY, None)
 
 
 @event.listens_for(Session, "after_soft_rollback")
@@ -933,6 +1046,7 @@ def _clear_scheduled_employee_notifications_after_soft_rollback(session: Session
     session.info.pop(_PENDING_ASSIGNMENT_NOTIFICATIONS_KEY, None)
     session.info.pop(_PENDING_MESSAGE_NOTIFICATIONS_KEY, None)
     session.info.pop(_PENDING_MEDIA_GROUP_NOTIFICATIONS_KEY, None)
+    session.info.pop(_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY, None)
 
 
 def notify_user(db: Session, user_id: str, text: str) -> bool:
