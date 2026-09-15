@@ -68,6 +68,7 @@ from .services.schema_evolution import (
 )
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
 from .services.integration_tasks import cleanup_old_integration_logs_on_startup
+from .services.internal_task_scheduler import internal_task_scheduler_loop
 from .services.employee_telegram_bot import set_employee_bot_commands
 from .services.employee_telegram_polling import employee_telegram_polling_loop
 from .services.telegram_bot import TelegramApiError, set_bot_commands
@@ -107,12 +108,13 @@ app.include_router(integrations_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 telegram_polling_task: asyncio.Task | None = None
 employee_telegram_polling_task: asyncio.Task | None = None
+internal_task_scheduler_task: asyncio.Task | None = None
 call_center_employee_refresh_thread = None
 
 
 @app.on_event("startup")
 async def on_startup():
-    global telegram_polling_task, employee_telegram_polling_task, call_center_employee_refresh_thread
+    global telegram_polling_task, employee_telegram_polling_task, internal_task_scheduler_task, call_center_employee_refresh_thread
 
     settings.validate_runtime_guards()
 
@@ -179,13 +181,16 @@ async def on_startup():
     ):
         employee_telegram_polling_task = asyncio.create_task(employee_telegram_polling_loop())
 
+    if internal_task_scheduler_task is None:
+        internal_task_scheduler_task = asyncio.create_task(internal_task_scheduler_loop())
+
     if call_center_employee_refresh_thread is None:
         call_center_employee_refresh_thread = start_periodic_refresh_loop()
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    global telegram_polling_task, employee_telegram_polling_task, call_center_employee_refresh_thread
+    global telegram_polling_task, employee_telegram_polling_task, internal_task_scheduler_task, call_center_employee_refresh_thread
 
     if telegram_polling_task is not None:
         telegram_polling_task.cancel()
@@ -201,6 +206,13 @@ async def on_shutdown():
         except asyncio.CancelledError:
             pass
         employee_telegram_polling_task = None
+    if internal_task_scheduler_task is not None:
+        internal_task_scheduler_task.cancel()
+        try:
+            await internal_task_scheduler_task
+        except asyncio.CancelledError:
+            pass
+        internal_task_scheduler_task = None
     stop_periodic_refresh_loop()
     call_center_employee_refresh_thread = None
 
