@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Управление - Задачи</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260911a" />
+</head>
+<body data-sidebar-ready="0">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">&#1047;&#1072;&#1103;&#1074;&#1082;&#1080;</h2>
+      <div class="tab-list">
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=unassigned" data-tab="unassigned"><span class="tab-btn-label">&#1053;&#1077;&#1088;&#1072;&#1089;&#1087;&#1088;&#1077;&#1076;&#1077;&#1083;&#1105;&#1085;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active" data-tab="active"><span class="tab-btn-label">&#1040;&#1082;&#1090;&#1080;&#1074;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen" data-tab="frozen"><span class="tab-btn-label">&#1047;&#1072;&#1084;&#1086;&#1088;&#1086;&#1078;&#1077;&#1085;&#1085;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed" data-tab="closed"><span class="tab-btn-label">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special" data-tab="special"><span class="tab-btn-label">&#1054;&#1089;&#1086;&#1073;&#1099;&#1077;</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>&#1042;&#1089;&#1077; &#1079;&#1072;&#1103;&#1074;&#1082;&#1080;</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings">
+        <span>&#1053;&#1072;&#1089;&#1090;&#1088;&#1086;&#1081;&#1082;&#1080;</span>
+        <img src="/static/settings-gear.svg" alt="" />
+      </a>
+      <a class="settings-link admin-only hidden" href="/statuses">
+        <span>&#1057;&#1090;&#1072;&#1090;&#1091;&#1089;&#1099;</span>
+      </a>
+      <a class="settings-link admin-only hidden" href="/mass-notifications">
+        <span>&#1052;&#1072;&#1089;&#1089;&#1086;&#1074;&#1099;&#1077; &#1086;&#1087;&#1086;&#1074;&#1077;&#1097;&#1077;&#1085;&#1080;&#1103;</span>
+      </a>
+      <div id="sidebarUserStats" class="sidebar-user-stats">
+        <div class="sidebar-user-name-row">
+          <div id="sidebarUserDisplayName" class="sidebar-user-name">&mdash;</div>
+        </div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="&#1058;&#1077;&#1082;&#1091;&#1097;&#1080;&#1081; &#1087;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1100;">A</div>
+          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appContent" class="main" data-shell-page="management-tasks">
+      <div class="management-tasks-page">
+        <div class="management-statistics-head">
+          <div>
+            <div class="management-eyebrow">Управление</div>
+            <h1>Задачи</h1>
+          </div>
+          <div class="management-tasks-head-actions">
+            <button id="internalTaskCreateBtn" class="action primary" type="button">Создать задачу</button>
+            <span class="status" id="internalTasksStatus">Загрузка...</span>
+          </div>
+        </div>
+
+        <div class="panel table-wrap management-tasks-panel">
+          <div class="settings-section-tabs management-tasks-tabs" role="tablist" aria-label="Внутренние задачи">
+            <button class="action active" type="button" data-internal-task-tab="active">Активные</button>
+            <button class="action" type="button" data-internal-task-tab="scheduled">Запланированные</button>
+            <button class="action" type="button" data-internal-task-tab="recurring">Циклические</button>
+            <button class="action" type="button" data-internal-task-tab="completed">Завершённые</button>
+          </div>
+          <div class="management-tasks-toolbar">
+            <div class="segmented-control" role="group" aria-label="Фильтр задач">
+              <button class="action active" type="button" data-internal-task-scope="all">Все</button>
+              <button class="action" type="button" data-internal-task-scope="mine">Мои</button>
+            </div>
+          </div>
+          <div id="internalTasksValidation" class="status management-statistics-validation" hidden></div>
+
+          <section data-internal-task-panel="active">
+            <div class="table-scroll management-tasks-table-wrap">
+              <table class="management-statistics-table management-tasks-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Название</th>
+                    <th scope="col">Сотрудник</th>
+                    <th scope="col">Ответственный</th>
+                    <th scope="col">Создана</th>
+                    <th scope="col">Статус</th>
+                    <th scope="col">Дедлайн</th>
+                    <th scope="col">Task</th>
+                  </tr>
+                </thead>
+                <tbody id="internalTasksActiveBody"></tbody>
+              </table>
+              <div id="internalTasksActiveEmpty" class="status management-statistics-empty">Загрузка...</div>
+            </div>
+          </section>
+          <section data-internal-task-panel="scheduled" hidden>
+            <div class="table-scroll management-tasks-table-wrap">
+              <table class="management-statistics-table management-tasks-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Название</th>
+                    <th scope="col">Когда создать</th>
+                    <th scope="col">Назначение</th>
+                    <th scope="col">Ответственный</th>
+                    <th scope="col">Дедлайн</th>
+                    <th scope="col">Действия</th>
+                  </tr>
+                </thead>
+                <tbody id="internalTasksScheduledBody"></tbody>
+              </table>
+              <div id="internalTasksScheduledEmpty" class="status management-statistics-empty">Загрузка...</div>
+            </div>
+          </section>
+          <section data-internal-task-panel="recurring" hidden>
+            <div class="management-tasks-placeholder">Будет добавлено следующим этапом.</div>
+          </section>
+          <section data-internal-task-panel="completed" hidden>
+            <div class="table-scroll management-tasks-table-wrap">
+              <table class="management-statistics-table management-tasks-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Название</th>
+                    <th scope="col">Сотрудник</th>
+                    <th scope="col">Ответственный</th>
+                    <th scope="col">Завершена</th>
+                    <th scope="col">Task</th>
+                  </tr>
+                </thead>
+                <tbody id="internalTasksCompletedBody"></tbody>
+              </table>
+              <div id="internalTasksCompletedEmpty" class="status management-statistics-empty">Загрузка...</div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div id="internalTaskModal" class="modal hidden">
+        <div class="modal-dialog management-tasks-modal">
+          <div class="modal-head">
+            <h2 id="internalTaskModalTitle">Создать задачу</h2>
+            <button id="internalTaskCloseModalBtn" class="icon-btn" type="button" aria-label="Закрыть">×</button>
+          </div>
+          <form id="internalTaskForm" class="modal-body management-tasks-form">
+            <label>Название
+              <input id="internalTaskTitle" type="text" maxlength="255" required />
+            </label>
+            <label>Описание
+              <textarea id="internalTaskDescription" rows="4" required></textarea>
+            </label>
+            <div class="management-tasks-form-grid">
+              <label>Назначение
+                <select id="internalTaskAssignmentMode">
+                  <option value="distribution">Распределить автоматически</option>
+                  <option value="direct">Конкретному сотруднику</option>
+                </select>
+              </label>
+              <label id="internalTaskAssigneeWrap">Сотрудник
+                <select id="internalTaskAssignee"></select>
+              </label>
+              <label>Ответственный администратор
+                <select id="internalTaskResponsible"></select>
+              </label>
+            </div>
+            <div class="management-tasks-checks">
+              <label><input id="internalTaskDisplayAuthor" type="checkbox" checked /> Показывать меня как автора</label>
+              <label><input id="internalTaskNotify" type="checkbox" checked /> Уведомить о завершении</label>
+            </div>
+            <div class="management-tasks-form-grid">
+              <label>Когда создать
+                <select id="internalTaskTiming">
+                  <option value="now">Сейчас</option>
+                  <option value="scheduled">Запланировать</option>
+                </select>
+              </label>
+              <label id="internalTaskScheduledAtWrap">Дата и время
+                <input id="internalTaskScheduledAt" type="datetime-local" />
+              </label>
+            </div>
+            <div class="management-tasks-form-grid">
+              <label class="management-tasks-checkbox-row">
+                <input id="internalTaskDeadlineEnabled" type="checkbox" />
+                <span>Указать дедлайн</span>
+              </label>
+              <label id="internalTaskDeadlineAtWrap">Дедлайн
+                <input id="internalTaskDeadlineAt" type="datetime-local" />
+              </label>
+            </div>
+            <div id="internalTaskFormError" class="status management-tasks-form-error" hidden></div>
+          </form>
+          <div class="modal-foot">
+            <button id="internalTaskCancelBtn" class="action" type="button">Отмена</button>
+            <button id="internalTaskSaveBtn" class="action primary" type="button">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js?v=20260911a"></script>
+  <script src="/static/app_shell.js?v=20260911a"></script>
+  <script src="/static/management_tasks.js?v=20260916a"></script>
+</body>
+</html>

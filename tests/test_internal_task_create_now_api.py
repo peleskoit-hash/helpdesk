@@ -350,6 +350,22 @@ def test_create_now_normalizes_deadline_to_utc():
     assert definition.deadline_at_utc.replace(tzinfo=timezone.utc) == datetime(2026, 9, 16, 10, 30, 0, tzinfo=timezone.utc)
 
 
+def test_create_now_keeps_naive_deadline_semantics_as_utc():
+    session = _session()
+    company = _company(session)
+    admin = _user(session, company, "admin")
+    session.commit()
+
+    response = _client(session, admin).post(
+        "/api/v1/management/internal-tasks",
+        json=_payload(deadline_enabled=True, deadline_at="2026-09-17T13:30:00"),
+    )
+
+    assert response.status_code == 200
+    definition = session.get(InternalTaskDefinition, response.json()["definition_id"])
+    assert definition.deadline_at_utc.replace(tzinfo=timezone.utc) == datetime(2026, 9, 17, 13, 30, 0, tzinfo=timezone.utc)
+
+
 def test_create_now_has_no_external_idempotency():
     session = _session()
     company = _company(session)
