@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
@@ -159,6 +159,35 @@ def test_due_scheduled_definition_is_materialized_and_finished():
         assert processed == 1
         assert session.get(InternalTaskDefinition, definition.id).state == InternalTaskDefinitionState.FINISHED.value
         assert _count(session, Ticket) == 1
+        assert occurrence.definition_id == definition.id
+
+
+def test_due_scheduled_definition_accepts_postgresql_aware_timestamp():
+    Session = _session_factory()
+    company, creator, responsible = _seed_base(Session)
+    with Session() as session:
+        definition = _definition(
+            session,
+            company,
+            creator,
+            responsible,
+            scheduled_for_utc=datetime(2026, 9, 16, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        assert internal_task_scheduler._is_due_scheduled_definition(
+            definition,
+            now_utc=datetime(2026, 9, 16, 10, 1, 0),
+        )
+        session.commit()
+
+    processed = internal_task_scheduler.run_internal_task_scheduler_once(
+        session_factory=Session,
+        now_utc=datetime(2026, 9, 16, 10, 1, 0),
+    )
+
+    with Session() as session:
+        occurrence = session.execute(select(InternalTaskOccurrence)).scalar_one()
+        assert processed == 1
+        assert session.get(InternalTaskDefinition, definition.id).state == InternalTaskDefinitionState.FINISHED.value
         assert occurrence.definition_id == definition.id
 
 

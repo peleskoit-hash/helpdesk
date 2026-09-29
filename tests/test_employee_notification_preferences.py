@@ -32,7 +32,7 @@ def _session():
     return Session()
 
 
-def _user(session, user_id: str = "user-1"):
+def _user(session, user_id: str = "user-1", role: str = "agent"):
     company = Company(id=f"company-{user_id}", name="Company", is_active=True)
     user = User(
         id=user_id,
@@ -41,7 +41,7 @@ def _user(session, user_id: str = "user-1"):
         login=user_id,
         password_hash="hash",
         full_name="User One",
-        role="agent",
+        role=role,
         is_active=True,
     )
     session.add(company)
@@ -72,6 +72,7 @@ def _save_base(session, notification_type: str, template: str, **flags):
 def _payload(
     *,
     use_base_settings: bool | None = None,
+    top_level_use_base_settings: bool | None = None,
     assignment_use_base: bool | None = None,
     message_use_base: bool | None = None,
     assignment: str = "Personal assignment",
@@ -80,8 +81,8 @@ def _payload(
 ):
     assignment_base = use_base_settings if assignment_use_base is None else assignment_use_base
     message_base = use_base_settings if message_use_base is None else message_use_base
-    return EmployeeNotificationPreferencesPayload(
-        items=[
+    data = {
+        "items": [
             {
                 "type": "new_assignment",
                 "use_base_settings": assignment_base is not False,
@@ -95,11 +96,40 @@ def _payload(
                 "html_enabled": True,
             },
         ],
-        delivery={
+        "delivery": {
             "transfer_to_agent": delivery.get("transfer_to_agent", True),
             "transfer_from_agent": delivery.get("transfer_from_agent", True),
             "new_message": delivery.get("new_message", True),
             "notify_internal_task_completion": delivery.get("notify_internal_task_completion", True),
+        },
+    }
+    if top_level_use_base_settings is not None:
+        data["use_base_settings"] = top_level_use_base_settings
+    return EmployeeNotificationPreferencesPayload(**data)
+
+
+def _admin_payload(
+    *,
+    use_base_settings: bool,
+    template: str = "Personal internal completion",
+    notify_internal_task_completion: bool = True,
+):
+    return EmployeeNotificationPreferencesPayload(
+        items=[
+            {
+                "type": "internal_task_completion",
+                "use_base_settings": use_base_settings,
+                "template": template,
+                "html_enabled": True,
+                "disable_link_preview": True,
+                "send_silently": True,
+            }
+        ],
+        delivery={
+            "transfer_to_agent": True,
+            "transfer_from_agent": True,
+            "new_message": True,
+            "notify_internal_task_completion": notify_internal_task_completion,
         },
     )
 
@@ -510,6 +540,58 @@ def test_internal_task_completion_delivery_default_and_roundtrip_true():
 
     assert result["delivery"]["notify_internal_task_completion"] is True
     assert session.query(EmployeeNotificationPreference).filter_by(user_id=user.id).one().notify_internal_task_completion is True
+
+
+def test_admin_preferences_include_internal_task_completion_delivery():
+    session = _session()
+    user = _user(session, user_id="admin-1", role="admin")
+
+    result = get_my_notification_bot_preferences(db=session, user=user)
+    assert result["role"] == "admin"
+    assert [item["type"] for item in result["items"]] == ["internal_task_completion"]
+    assert result["items"][0]["title"] == "Выполнение внутренних задач"
+    assert result["delivery"]["notify_internal_task_completion"] is True
+
+    updated = update_my_notification_bot_preferences(
+        _admin_payload(use_base_settings=True, notify_internal_task_completion=False),
+        db=session,
+        user=user,
+    )
+    assert updated["use_base_settings"] is True
+    assert updated["delivery"]["notify_internal_task_completion"] is False
+
+
+def test_admin_internal_task_completion_personal_template_roundtrips():
+    session = _session()
+    user = _user(session, user_id="admin-1", role="admin")
+
+    update_my_notification_bot_preferences(
+        _admin_payload(use_base_settings=False),
+        db=session,
+        user=user,
+    )
+    updated = update_my_notification_bot_preferences(
+        _admin_payload(
+            use_base_settings=False,
+            template="<b>[Автор сообщения]</b> [Задача] [Результат]",
+        ),
+        db=session,
+        user=user,
+    )
+
+    item = updated["items"][0]
+    assert item["type"] == "internal_task_completion"
+    assert item["use_base_settings"] is False
+    assert item["template"] == "<b>[Автор сообщения]</b> [Задача] [Результат]"
+    assert item["disable_link_preview"] is True
+    assert item["send_silently"] is True
+    row = session.query(EmployeeNotificationPreference).filter_by(user_id=user.id).one()
+    assert row.use_base_internal_task_completion_settings is False
+    assert row.personal_internal_task_completion_template == "<b>[Автор сообщения]</b> [Задача] [Результат]"
+
+    reloaded = get_my_notification_bot_preferences(db=session, user=user)
+    assert reloaded["items"][0]["template"] == "<b>[Автор сообщения]</b> [Задача] [Результат]"
+    assert reloaded["items"][0]["use_base_settings"] is False
 
 
 def test_delivery_payload_cannot_disable_mandatory_new_assignment():

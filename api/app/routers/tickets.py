@@ -63,7 +63,7 @@ from ..services.statistics_lifecycle import (
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
-from ..services.ticket_list import build_ticket_counts, list_special_tickets, list_tickets_paginated
+from ..services.ticket_list import build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
     format_task_closed_without_answer_text,
@@ -879,7 +879,8 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         ]
     profile = _get_or_create_client_profile(db, t.client_id)
     contact = _telegram_contact_for_client(db, t.client_id)
-    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else (t.client.display_name if t.client else None)
+    visible_client_name = internal_task_requester_display_name(db, t) or (t.client.display_name if t.client else "")
+    telegram_display_name = contact.external_display_name if contact and contact.external_display_name else visible_client_name
     telegram_username = contact.external_username if contact else None
     assignee = db.get(User, t.assignee_id) if t.assignee_id else None
     special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
@@ -957,7 +958,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         call_center_employee_last_name=t.call_center_employee_last_name,
         call_center_employee_id=t.call_center_employee_id,
         call_center_employee_bitrix_login=t.call_center_employee_bitrix_login,
-        client_name=t.client.display_name if t.client else "",
+        client_name=visible_client_name,
         client_profile=_profile_out(
             profile,
             telegram_username,

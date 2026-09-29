@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 from sqlalchemy import and_, func, select
@@ -28,7 +28,16 @@ INTERNAL_TASK_SCHEDULER_BATCH_LIMIT = 50
 SessionFactory = Callable[[], Session]
 
 
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _due_filters(now_utc: datetime) -> list:
+    now_utc = _utc_naive(now_utc) or now_utc
     return [
         InternalTaskDefinition.schedule_kind == InternalTaskScheduleKind.SCHEDULED.value,
         InternalTaskDefinition.state == InternalTaskDefinitionState.ACTIVE.value,
@@ -100,12 +109,14 @@ def _recurring_definition_ids(
 
 
 def _is_due_scheduled_definition(definition: InternalTaskDefinition | None, *, now_utc: datetime) -> bool:
+    scheduled_for_utc = _utc_naive(definition.scheduled_for_utc) if definition is not None else None
+    now_utc = _utc_naive(now_utc) or now_utc
     return (
         definition is not None
         and definition.schedule_kind == InternalTaskScheduleKind.SCHEDULED.value
         and definition.state == InternalTaskDefinitionState.ACTIVE.value
-        and definition.scheduled_for_utc is not None
-        and definition.scheduled_for_utc <= now_utc
+        and scheduled_for_utc is not None
+        and scheduled_for_utc <= now_utc
     )
 
 
@@ -118,15 +129,19 @@ def _is_active_recurring_definition(definition: InternalTaskDefinition | None) -
 
 
 def _effective_recurring_window_start(definition: InternalTaskDefinition) -> datetime:
-    if definition.cycle_start_at_utc is None:
+    cycle_start_at_utc = _utc_naive(definition.cycle_start_at_utc)
+    generation_not_before_utc = _utc_naive(definition.generation_not_before_utc)
+    if cycle_start_at_utc is None:
         raise ValueError("recurring internal task definition requires cycle_start_at_utc")
-    if definition.generation_not_before_utc is None:
-        return definition.cycle_start_at_utc
-    return max(definition.cycle_start_at_utc, definition.generation_not_before_utc)
+    if generation_not_before_utc is None:
+        return cycle_start_at_utc
+    return max(cycle_start_at_utc, generation_not_before_utc)
 
 
 def _existing_occurrence_times(db: Session, definition_id: str, *, window_start_utc: datetime, window_end_utc: datetime) -> set[datetime]:
-    return set(
+    return {
+        _utc_naive(value) or value
+        for value in
         db.execute(
             select(InternalTaskOccurrence.occurrence_at_utc).where(
                 and_(
@@ -136,7 +151,7 @@ def _existing_occurrence_times(db: Session, definition_id: str, *, window_start_
                 )
             )
         ).scalars()
-    )
+    }
 
 
 def _successful_occurrence_count(db: Session, definition_id: str) -> int:
@@ -160,6 +175,8 @@ def _materialize_recurring_candidate(
     candidate_at_utc: datetime,
     now_utc: datetime,
 ) -> bool:
+    candidate_at_utc = _utc_naive(candidate_at_utc) or candidate_at_utc
+    now_utc = _utc_naive(now_utc) or now_utc
     with session_factory() as db:
         try:
             definition = db.get(InternalTaskDefinition, definition_id)
@@ -221,6 +238,7 @@ def _materialize_recurring_candidate(
 
 
 def _process_recurring_definition(*, session_factory: SessionFactory, definition_id: str, now_utc: datetime) -> int:
+    now_utc = _utc_naive(now_utc) or now_utc
     with session_factory() as db:
         try:
             definition = db.get(InternalTaskDefinition, definition_id)
@@ -233,6 +251,7 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
                 cycle_max_occurrences=definition.cycle_max_occurrences,
             )
             window_start = _effective_recurring_window_start(definition)
+            cycle_end_at_utc = _utc_naive(definition.cycle_end_at_utc)
             if not has_recurrence_capacity(
                 cycle_end_mode=definition.cycle_end_mode,
                 cycle_max_occurrences=definition.cycle_max_occurrences,
@@ -246,9 +265,9 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
             if window_start > now_utc:
                 if (
                     definition.cycle_end_mode == CYCLE_END_AT
-                    and definition.cycle_end_at_utc is not None
-                    and now_utc >= definition.cycle_end_at_utc
-                    and window_start > definition.cycle_end_at_utc
+                    and cycle_end_at_utc is not None
+                    and now_utc >= cycle_end_at_utc
+                    and window_start > cycle_end_at_utc
                 ):
                     _finish_definition(db, definition)
                 else:
@@ -262,8 +281,9 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
                 window_start_utc=window_start,
                 window_end_utc=now_utc,
                 cycle_end_mode=definition.cycle_end_mode,
-                cycle_end_at_utc=definition.cycle_end_at_utc,
+                cycle_end_at_utc=cycle_end_at_utc,
             )
+            candidates = [_utc_naive(candidate) or candidate for candidate in candidates]
             existing = _existing_occurrence_times(
                 db,
                 definition_id,
@@ -271,7 +291,7 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
                 window_end_utc=now_utc,
             )
             pending = [candidate for candidate in candidates if candidate not in existing]
-            should_finish_at = definition.cycle_end_mode == CYCLE_END_AT and definition.cycle_end_at_utc is not None and now_utc >= definition.cycle_end_at_utc
+            should_finish_at = definition.cycle_end_mode == CYCLE_END_AT and cycle_end_at_utc is not None and now_utc >= cycle_end_at_utc
             if not pending and should_finish_at:
                 _finish_definition(db, definition)
             else:
@@ -295,7 +315,8 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
             definition = db.get(InternalTaskDefinition, definition_id)
             if not _is_active_recurring_definition(definition):
                 break
-            if definition.cycle_end_mode == CYCLE_END_AT and definition.cycle_end_at_utc is not None and now_utc >= definition.cycle_end_at_utc:
+            cycle_end_at_utc = _utc_naive(definition.cycle_end_at_utc)
+            if definition.cycle_end_mode == CYCLE_END_AT and cycle_end_at_utc is not None and now_utc >= cycle_end_at_utc:
                 remaining = calculate_recurrence_occurrences(
                     recurrence_mode=definition.recurrence_mode,
                     recurrence_config=definition.recurrence_config,
@@ -304,8 +325,9 @@ def _process_recurring_definition(*, session_factory: SessionFactory, definition
                     window_start_utc=_effective_recurring_window_start(definition),
                     window_end_utc=now_utc,
                     cycle_end_mode=definition.cycle_end_mode,
-                    cycle_end_at_utc=definition.cycle_end_at_utc,
+                    cycle_end_at_utc=cycle_end_at_utc,
                 )
+                remaining = [_utc_naive(candidate) or candidate for candidate in remaining]
                 existing = _existing_occurrence_times(
                     db,
                     definition_id,
@@ -325,7 +347,7 @@ def run_internal_task_scheduler_once(
     now_utc: datetime | None = None,
     batch_limit: int = INTERNAL_TASK_SCHEDULER_BATCH_LIMIT,
 ) -> int:
-    now_utc = now_utc or datetime.utcnow()
+    now_utc = _utc_naive(now_utc) or datetime.utcnow()
     processed = 0
     attempted_definition_ids: set[str] = set()
     with session_factory() as scan_db:
@@ -350,7 +372,7 @@ def run_internal_task_scheduler_once(
                     if not _is_due_scheduled_definition(definition, now_utc=now_utc):
                         db.rollback()
                         continue
-                    materialize_internal_task(db, definition, occurrence_at_utc=definition.scheduled_for_utc)
+                    materialize_internal_task(db, definition, occurrence_at_utc=_utc_naive(definition.scheduled_for_utc))
                     db.commit()
                     processed += 1
                 except Exception:
@@ -366,7 +388,7 @@ def run_internal_task_recurring_once(
     now_utc: datetime | None = None,
     batch_limit: int = INTERNAL_TASK_SCHEDULER_BATCH_LIMIT,
 ) -> int:
-    now_utc = now_utc or datetime.utcnow()
+    now_utc = _utc_naive(now_utc) or datetime.utcnow()
     processed = 0
     attempted_definition_ids: set[str] = set()
     with session_factory() as scan_db:

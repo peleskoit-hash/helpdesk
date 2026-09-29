@@ -43,7 +43,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20260826a",
-        "/static/settings_notification_bot_basic.js?v=20260826a",
+        "/static/settings_notification_bot_basic.js?v=20260831a",
       ],
     }],
     ["/profile/notification-bot", {

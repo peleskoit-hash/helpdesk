@@ -3,7 +3,7 @@ from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import BotButtonSetting, Client, ClientProfile, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, Client, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
@@ -200,7 +200,7 @@ def _snapshot_name_parts(ticket: Ticket) -> tuple[str, str]:
     )
 
 
-def requester_display_name(db: Session, ticket: Ticket) -> str:
+def _ordinary_requester_display_name(db: Session, ticket: Ticket) -> str:
     telegram_contact = _telegram_contact(db, ticket)
     values = [_snapshot_custom_fio(ticket)]
     if _call_center_lookup_performed(ticket):
@@ -219,6 +219,57 @@ def requester_display_name(db: Session, ticket: Ticket) -> str:
         if value:
             return value
     return "Клиент"
+
+
+def _display_author_enabled(value) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    return False
+
+
+def requester_display_name(db: Session, ticket: Ticket) -> str:
+    internal_name = internal_task_requester_display_name(db, ticket)
+    if internal_name is not None:
+        return internal_name
+    return _ordinary_requester_display_name(db, ticket)
+
+
+def internal_task_requester_display_name(db: Session, ticket: Ticket) -> str | None:
+    occurrence = db.execute(
+        select(InternalTaskOccurrence)
+        .where(InternalTaskOccurrence.ticket_id == ticket.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    if occurrence is None:
+        return None
+    if not _display_author_enabled(occurrence.display_author):
+        return "Система"
+    creator = db.get(User, occurrence.creator_admin_id)
+    return _normalized_text(creator.full_name if creator else "") or _normalized_text(creator.login if creator else "") or "Система"
+
+
+def _internal_task_requester_map(db: Session, ticket_ids: list[str]) -> dict[str, str]:
+    if not ticket_ids:
+        return {}
+    rows = db.execute(
+        select(
+            InternalTaskOccurrence.ticket_id,
+            InternalTaskOccurrence.display_author,
+            User.full_name,
+            User.login,
+        )
+        .join(User, User.id == InternalTaskOccurrence.creator_admin_id, isouter=True)
+        .where(InternalTaskOccurrence.ticket_id.in_(ticket_ids))
+    ).all()
+    result: dict[str, str] = {}
+    for ticket_id, display_author, full_name, login in rows:
+        if _display_author_enabled(display_author):
+            result[ticket_id] = _normalized_text(full_name) or _normalized_text(login) or "Система"
+        else:
+            result[ticket_id] = "Система"
+    return result
 
 
 def seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
@@ -284,6 +335,7 @@ def list_tickets_paginated(
     items: list[TicketListItem] = []
     has_new_numbers = False
     subject_map = build_ticket_subject_map(db, tickets)
+    internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
     for t in tickets:
         if t.ticket_number is None:
             has_new_numbers = True
@@ -293,6 +345,8 @@ def list_tickets_paginated(
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
         display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
+        internal_requester_name = internal_requester_map.get(t.id)
+        visible_requester_name = internal_requester_name or _ordinary_requester_display_name(db, t)
         items.append(
             TicketListItem(
                 id=t.id,
@@ -303,8 +357,8 @@ def list_tickets_paginated(
                 status=t.status,
                 is_frozen=t.is_frozen,
                 seen_by_agent=seen,
-                client_name=t.client.display_name if t.client else "",
-                requester_display_name=requester_display_name(db, t),
+                client_name=internal_requester_name or (t.client.display_name if t.client else ""),
+                requester_display_name=visible_requester_name,
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=bool(t.is_special),
@@ -351,6 +405,7 @@ def list_special_tickets(
     tickets = db.execute(stmt).scalars().all()
     items: list[TicketListItem] = []
     subject_map = build_ticket_subject_map(db, tickets)
+    internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
     for t in tickets:
         if t.ticket_number is None:
             ensure_ticket_number_fn(db, t)
@@ -358,6 +413,8 @@ def list_special_tickets(
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
         display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
+        internal_requester_name = internal_requester_map.get(t.id)
+        visible_requester_name = internal_requester_name or _ordinary_requester_display_name(db, t)
         items.append(
             TicketListItem(
                 id=t.id,
@@ -368,8 +425,8 @@ def list_special_tickets(
                 status=t.status,
                 is_frozen=t.is_frozen,
                 seen_by_agent=False,
-                client_name=t.client.display_name if t.client else "",
-                requester_display_name=requester_display_name(db, t),
+                client_name=internal_requester_name or (t.client.display_name if t.client else ""),
+                requester_display_name=visible_requester_name,
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=True,

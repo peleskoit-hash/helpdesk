@@ -1378,6 +1378,7 @@ def ensure_employee_notification_preferences_table() -> None:
                     user_id VARCHAR(36) UNIQUE NOT NULL,
                     use_base_new_assignment_settings {bool_type} NOT NULL DEFAULT TRUE,
                     use_base_new_message_settings {bool_type} NOT NULL DEFAULT TRUE,
+                    use_base_internal_task_completion_settings {bool_type} NOT NULL DEFAULT TRUE,
                     personal_new_assignment_template TEXT,
                     personal_new_assignment_html_enabled {bool_type} NOT NULL DEFAULT TRUE,
                     personal_new_assignment_disable_link_preview {bool_type} NOT NULL DEFAULT FALSE,
@@ -1386,6 +1387,10 @@ def ensure_employee_notification_preferences_table() -> None:
                     personal_new_message_html_enabled {bool_type} NOT NULL DEFAULT TRUE,
                     personal_new_message_disable_link_preview {bool_type} NOT NULL DEFAULT FALSE,
                     personal_new_message_send_silently {bool_type} NOT NULL DEFAULT FALSE,
+                    personal_internal_task_completion_template TEXT,
+                    personal_internal_task_completion_html_enabled {bool_type} NOT NULL DEFAULT TRUE,
+                    personal_internal_task_completion_disable_link_preview {bool_type} NOT NULL DEFAULT FALSE,
+                    personal_internal_task_completion_send_silently {bool_type} NOT NULL DEFAULT FALSE,
                     receive_transfer_to_agent {bool_type} NOT NULL DEFAULT TRUE,
                     receive_transfer_from_agent {bool_type} NOT NULL DEFAULT TRUE,
                     receive_new_message {bool_type} NOT NULL DEFAULT TRUE,
@@ -1414,6 +1419,7 @@ def ensure_employee_notification_preferences_table() -> None:
         required_columns = {
             "use_base_new_assignment_settings": "BOOLEAN",
             "use_base_new_message_settings": "BOOLEAN",
+            "use_base_internal_task_completion_settings": "BOOLEAN",
             "personal_new_assignment_template": "TEXT",
             "personal_new_assignment_html_enabled": "BOOLEAN",
             "personal_new_assignment_disable_link_preview": "BOOLEAN",
@@ -1422,6 +1428,10 @@ def ensure_employee_notification_preferences_table() -> None:
             "personal_new_message_html_enabled": "BOOLEAN",
             "personal_new_message_disable_link_preview": "BOOLEAN",
             "personal_new_message_send_silently": "BOOLEAN",
+            "personal_internal_task_completion_template": "TEXT",
+            "personal_internal_task_completion_html_enabled": "BOOLEAN",
+            "personal_internal_task_completion_disable_link_preview": "BOOLEAN",
+            "personal_internal_task_completion_send_silently": "BOOLEAN",
             "receive_transfer_to_agent": "BOOLEAN",
             "receive_transfer_from_agent": "BOOLEAN",
             "receive_new_message": "BOOLEAN",
@@ -1452,19 +1462,33 @@ def ensure_employee_notification_preferences_table() -> None:
                 )
             else:
                 conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_message_settings = TRUE"))
+        if "use_base_internal_task_completion_settings" not in existing:
+            conn.execute(text("UPDATE employee_notification_preferences SET use_base_internal_task_completion_settings = TRUE"))
         conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_assignment_settings = TRUE WHERE use_base_new_assignment_settings IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET use_base_new_message_settings = TRUE WHERE use_base_new_message_settings IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET use_base_internal_task_completion_settings = TRUE WHERE use_base_internal_task_completion_settings IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_html_enabled = TRUE WHERE personal_new_assignment_html_enabled IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_disable_link_preview = FALSE WHERE personal_new_assignment_disable_link_preview IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_assignment_send_silently = FALSE WHERE personal_new_assignment_send_silently IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_html_enabled = TRUE WHERE personal_new_message_html_enabled IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_disable_link_preview = FALSE WHERE personal_new_message_disable_link_preview IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET personal_new_message_send_silently = FALSE WHERE personal_new_message_send_silently IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_internal_task_completion_html_enabled = TRUE WHERE personal_internal_task_completion_html_enabled IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_internal_task_completion_disable_link_preview = FALSE WHERE personal_internal_task_completion_disable_link_preview IS NULL"))
+        conn.execute(text("UPDATE employee_notification_preferences SET personal_internal_task_completion_send_silently = FALSE WHERE personal_internal_task_completion_send_silently IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_to_agent = TRUE WHERE receive_transfer_to_agent IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET receive_transfer_from_agent = TRUE WHERE receive_transfer_from_agent IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET receive_new_message = TRUE WHERE receive_new_message IS NULL"))
         conn.execute(text("UPDATE employee_notification_preferences SET notify_internal_task_completion = TRUE WHERE notify_internal_task_completion IS NULL"))
         if conn.dialect.name != "sqlite":
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN use_base_internal_task_completion_settings SET DEFAULT TRUE"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN use_base_internal_task_completion_settings SET NOT NULL"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_html_enabled SET DEFAULT TRUE"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_html_enabled SET NOT NULL"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_disable_link_preview SET DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_disable_link_preview SET NOT NULL"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_send_silently SET DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN personal_internal_task_completion_send_silently SET NOT NULL"))
             conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN notify_internal_task_completion SET DEFAULT TRUE"))
             conn.execute(text("ALTER TABLE employee_notification_preferences ALTER COLUMN notify_internal_task_completion SET NOT NULL"))
 

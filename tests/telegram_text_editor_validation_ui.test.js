@@ -22,6 +22,7 @@ function loadEditor() {
 
 const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "telegram_html_validation_cases.json"), "utf8"));
 const stylesSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "styles.css"), "utf8");
+const appShellSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "app_shell.js"), "utf8");
 
 test("frontend telegram html validation follows shared contract", () => {
   const editor = loadEditor();
@@ -43,6 +44,19 @@ test("notification bot page keeps draft state before tab switching", () => {
   assert.match(source, /draft\.disableLinkPreview = !!pane\?\.querySelector\("\[data-telegram-disable-link-preview\]"\)\?\.checked/);
   assert.match(source, /draft\.sendSilently = !!pane\?\.querySelector\("\[data-telegram-send-silently\]"\)\?\.checked/);
   assert.match(source, /button\.addEventListener\("click", \(\) => \{\s+syncActiveDraftFromDom\(\);\s+state\.activeType/s);
+});
+
+test("notification bot basic SPA route loads current script and saves active fifth type", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "settings_notification_bot_basic.js"), "utf8");
+  const template = fs.readFileSync(path.join(__dirname, "..", "api", "app", "templates", "settings_notification_bot_basic.html"), "utf8");
+  const templateScript = template.match(/settings_notification_bot_basic\.js\?v=([0-9a-z]+)/)?.[1];
+  const shellScript = appShellSource.match(/settings_notification_bot_basic\.js\?v=([0-9a-z]+)/)?.[1];
+
+  assert.equal(shellScript, templateScript);
+  assert.match(source, /state\.items\.forEach\(\(item\) => state\.drafts\.set\(item\.type, normalizeDraft\(item\)\)\)/);
+  assert.match(source, /state\.activeType = button\.getAttribute\("data-tab-type"\) \|\| state\.activeType/);
+  assert.match(source, /api\(`\$\{apiBase\}\/\$\{encodeURIComponent\(draft\.type\)\}`/);
+  assert.match(source, /body: JSON\.stringify\(\{[\s\S]+template: draft\.template/s);
 });
 
 test("admin notification bot editor uses shared atomic tag helper with backend tags", () => {

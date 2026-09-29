@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
@@ -23,6 +23,16 @@ from ..models import (
     User,
 )
 from ..services.internal_tasks import materialize_internal_task
+from ..services.ticket_admin_actions import _delete_ticket_hard
+from ..services.internal_task_recurrence import (
+    CYCLE_END_AT,
+    CYCLE_END_COUNT,
+    CYCLE_END_NEVER,
+    RECURRENCE_WEEKLY,
+    calculate_recurrence_occurrences,
+    normalize_recurrence_config,
+    validate_recurrence_end_rule,
+)
 
 
 router = APIRouter(prefix="/api/v1/management/internal-tasks", tags=["management-internal-tasks"])
@@ -62,6 +72,33 @@ class InternalTaskScheduledPayload(BaseModel):
     scheduled_for: datetime
     deadline_enabled: bool
     deadline_at: datetime | None = None
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def _strip_text(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class InternalTaskRecurringPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(...)
+    description: str = Field(...)
+    assignment_mode: str
+    assignee_user_id: str | None = None
+    display_author: bool
+    responsible_admin_id: str | None = None
+    notify_on_completion: bool
+    deadline_enabled: bool
+    deadline_at: datetime | None = None
+    recurrence_mode: str
+    recurrence_config: dict
+    cycle_start_at: datetime
+    cycle_end_mode: str
+    cycle_end_at: datetime | None = None
+    cycle_max_occurrences: int | None = None
 
     @field_validator("title", "description", mode="before")
     @classmethod
@@ -145,7 +182,11 @@ def _direct_assignee(db: Session, company_id: str, assignee_user_id: str | None)
     return assignee
 
 
-def _validate_assignment(payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload, db: Session, company_id: str) -> str | None:
+def _validate_assignment(
+    payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload | InternalTaskRecurringPayload,
+    db: Session,
+    company_id: str,
+) -> str | None:
     if payload.assignment_mode == InternalTaskAssignmentMode.DIRECT.value:
         return _direct_assignee(db, company_id, payload.assignee_user_id).id
     if payload.assignment_mode == InternalTaskAssignmentMode.DISTRIBUTION.value:
@@ -156,7 +197,7 @@ def _validate_assignment(payload: InternalTaskCreateNowPayload | InternalTaskSch
 
 
 def _validate_deadline(
-    payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload,
+    payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload | InternalTaskRecurringPayload,
     *,
     app_local_naive: bool = False,
 ) -> datetime | None:
@@ -169,7 +210,7 @@ def _validate_deadline(
     return _normalize_datetime(payload.deadline_at)
 
 
-def _validate_text(payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload) -> None:
+def _validate_text(payload: InternalTaskCreateNowPayload | InternalTaskScheduledPayload | InternalTaskRecurringPayload) -> None:
     if not payload.title:
         _error(422, "title_required", "Название задачи обязательно")
     if len(payload.title) > 255:
@@ -186,6 +227,139 @@ def _validate_scheduled_for(payload: InternalTaskScheduledPayload) -> datetime:
     if comparable is None or comparable <= datetime.utcnow():
         _error(422, "scheduled_for_past", "Запланированное время должно быть в будущем")
     return scheduled_for_utc
+
+
+def _local_datetime_parts(value: datetime) -> tuple[int, int, int, int, int]:
+    local = _normalize_app_local_datetime(value)
+    if local is None:
+        _error(422, "cycle_start_required", "Укажите начало расписания")
+    local_value = local.astimezone(ZoneInfo(settings.app_timezone))
+    return local_value.year, local_value.month, local_value.day, local_value.hour, local_value.minute
+
+
+def _first_weekly_start_at_utc(cycle_start_at: datetime, time_value: str) -> datetime:
+    config = normalize_recurrence_config(RECURRENCE_WEEKLY, {"time": time_value})
+    weekday = _positive_weekday(cycle_start_at)
+    year, month, day, _, _ = _local_datetime_parts(cycle_start_at)
+    tz = ZoneInfo(settings.app_timezone)
+    local_start = datetime(year, month, day, 0, 0, tzinfo=tz)
+    days_ahead = (weekday - local_start.isoweekday()) % 7
+    hour, minute = (int(part) for part in config["time"].split(":", 1))
+    candidate = (local_start + timedelta(days=days_ahead)).replace(hour=hour, minute=minute)
+    lower_bound = _normalize_app_local_datetime(cycle_start_at)
+    if lower_bound is not None and candidate.astimezone(timezone.utc) < lower_bound:
+        candidate += timedelta(days=7)
+    return candidate.astimezone(timezone.utc)
+
+
+def _positive_weekday(value: datetime) -> int:
+    local = _normalize_app_local_datetime(value)
+    if local is None:
+        _error(422, "cycle_start_required", "Укажите начало расписания")
+    return local.astimezone(ZoneInfo(settings.app_timezone)).isoweekday()
+
+
+def _validate_recurrence(payload: InternalTaskRecurringPayload) -> tuple[str, dict, datetime, str, datetime | None, int | None]:
+    try:
+        raw_config = dict(payload.recurrence_config or {})
+        if payload.recurrence_mode == RECURRENCE_WEEKLY and "weekday" in raw_config:
+            weekday = raw_config.pop("weekday")
+            if isinstance(weekday, bool) or not isinstance(weekday, int) or weekday < 1 or weekday > 7:
+                raise ValueError("Invalid recurrence weekday")
+            normalized_config = normalize_recurrence_config(payload.recurrence_mode, raw_config)
+            cycle_start_at_utc = _first_weekly_start_at_utc(payload.cycle_start_at, normalized_config["time"])
+            configured_weekday = cycle_start_at_utc.astimezone(ZoneInfo(settings.app_timezone)).isoweekday()
+            if configured_weekday != weekday:
+                year, month, day, _, _ = _local_datetime_parts(payload.cycle_start_at)
+                tz = ZoneInfo(settings.app_timezone)
+                anchor = datetime(year, month, day, 0, 0, tzinfo=tz)
+                days_ahead = (weekday - anchor.isoweekday()) % 7
+                hour, minute = (int(part) for part in normalized_config["time"].split(":", 1))
+                candidate = (anchor + timedelta(days=days_ahead)).replace(hour=hour, minute=minute)
+                lower_bound = _normalize_app_local_datetime(payload.cycle_start_at)
+                if lower_bound is not None and candidate.astimezone(timezone.utc) < lower_bound:
+                    candidate += timedelta(days=7)
+                cycle_start_at_utc = candidate.astimezone(timezone.utc)
+        else:
+            normalized_config = normalize_recurrence_config(payload.recurrence_mode, payload.recurrence_config)
+            cycle_start_at_utc = _normalize_app_local_datetime(payload.cycle_start_at)
+        cycle_end_at_utc = _normalize_app_local_datetime(payload.cycle_end_at)
+        validate_recurrence_end_rule(
+            cycle_end_mode=payload.cycle_end_mode,
+            cycle_end_at_utc=cycle_end_at_utc,
+            cycle_max_occurrences=payload.cycle_max_occurrences,
+        )
+    except ValueError as exc:
+        _error(422, "recurrence_invalid", str(exc))
+    if cycle_start_at_utc is None:
+        _error(422, "cycle_start_required", "Укажите начало расписания")
+    return (
+        payload.recurrence_mode,
+        normalized_config,
+        cycle_start_at_utc,
+        payload.cycle_end_mode,
+        cycle_end_at_utc,
+        payload.cycle_max_occurrences,
+    )
+
+
+def _successful_occurrence_count(db: Session, definition_id: str) -> int:
+    return db.execute(
+        select(func.count())
+        .select_from(InternalTaskOccurrence)
+        .where(InternalTaskOccurrence.definition_id == definition_id)
+    ).scalar_one()
+
+
+def _first_recurring_candidate_at_or_after(definition: InternalTaskDefinition, *, window_start: datetime) -> datetime | None:
+    cycle_start_at_utc = _utc_naive(definition.cycle_start_at_utc)
+    window_start = _utc_naive(window_start)
+    cycle_end_at_utc = _utc_naive(definition.cycle_end_at_utc)
+    if cycle_start_at_utc is None or window_start is None:
+        return None
+    window_start = max(cycle_start_at_utc, window_start)
+    window_end = min(
+        cycle_end_at_utc or (window_start + timedelta(days=366 * 5)),
+        window_start + timedelta(days=366 * 5),
+    )
+    if window_end < window_start:
+        return None
+    try:
+        candidates = calculate_recurrence_occurrences(
+            recurrence_mode=definition.recurrence_mode,
+            recurrence_config=definition.recurrence_config,
+            timezone_name=definition.timezone_name,
+            cycle_start_at_utc=cycle_start_at_utc,
+            window_start_utc=window_start,
+            window_end_utc=window_end,
+            cycle_end_mode=definition.cycle_end_mode,
+            cycle_end_at_utc=cycle_end_at_utc,
+        )
+    except ValueError:
+        return None
+    return candidates[0] if candidates else None
+
+
+def _next_recurring_at(db: Session, definition: InternalTaskDefinition) -> datetime | None:
+    if definition.state != InternalTaskDefinitionState.ACTIVE.value or definition.cycle_start_at_utc is None:
+        return None
+    successful_count = _successful_occurrence_count(db, definition.id)
+    if definition.cycle_end_mode == CYCLE_END_COUNT and definition.cycle_max_occurrences is not None and successful_count >= definition.cycle_max_occurrences:
+        return None
+    now = datetime.utcnow()
+    cycle_start_at_utc = _utc_naive(definition.cycle_start_at_utc)
+    generation_not_before_utc = _utc_naive(definition.generation_not_before_utc)
+    cycle_end_at_utc = _utc_naive(definition.cycle_end_at_utc)
+    if cycle_start_at_utc is None:
+        return None
+    if definition.cycle_end_mode == CYCLE_END_AT and cycle_end_at_utc is not None and cycle_end_at_utc < now:
+        return None
+    window_start = max(
+        cycle_start_at_utc,
+        generation_not_before_utc or cycle_start_at_utc,
+        now,
+    )
+    return _first_recurring_candidate_at_or_after(definition, window_start=window_start)
 
 
 def _user_out(user: User | None) -> dict | None:
@@ -226,6 +400,35 @@ def _scheduled_definition_out(db: Session, definition: InternalTaskDefinition) -
         "state": definition.state,
         "schedule_kind": definition.schedule_kind,
         "created_at": definition.created_at,
+    }
+
+
+def _recurring_definition_out(db: Session, definition: InternalTaskDefinition) -> dict:
+    return {
+        "kind": "recurring",
+        "definition_id": definition.id,
+        "title": definition.title,
+        "description": definition.description,
+        "creator_admin": _user_out(db.get(User, definition.creator_admin_id)),
+        "responsible_admin": _user_out(db.get(User, definition.responsible_admin_id)),
+        "assignment_mode": definition.assignment_mode,
+        "assignee": _user_out(db.get(User, definition.assignee_user_id)) if definition.assignee_user_id else None,
+        "display_author": bool(definition.display_author),
+        "notify_on_completion": bool(definition.notify_on_completion),
+        "deadline_at": definition.deadline_at_utc,
+        "state": definition.state,
+        "schedule_kind": definition.schedule_kind,
+        "timezone_name": definition.timezone_name,
+        "recurrence_mode": definition.recurrence_mode,
+        "recurrence_config": definition.recurrence_config,
+        "cycle_start_at": definition.cycle_start_at_utc,
+        "cycle_end_mode": definition.cycle_end_mode,
+        "cycle_end_at": definition.cycle_end_at_utc,
+        "cycle_max_occurrences": definition.cycle_max_occurrences,
+        "generation_not_before": definition.generation_not_before_utc,
+        "next_occurrence_at": _next_recurring_at(db, definition),
+        "created_at": definition.created_at,
+        "updated_at": definition.updated_at,
     }
 
 
@@ -290,6 +493,54 @@ def _create_scheduled_definition(
         cycle_end_mode=None,
         cycle_end_at_utc=None,
         cycle_max_occurrences=None,
+        state=InternalTaskDefinitionState.ACTIVE.value,
+        generation_not_before_utc=None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(definition)
+    db.commit()
+    db.refresh(definition)
+    return definition
+
+
+def _create_recurring_definition(
+    db: Session,
+    *,
+    payload: InternalTaskRecurringPayload,
+    actor: User,
+    responsible: User,
+    assignee_user_id: str | None,
+    deadline_at_utc: datetime | None,
+    recurrence_mode: str,
+    recurrence_config: dict,
+    cycle_start_at_utc: datetime,
+    cycle_end_mode: str,
+    cycle_end_at_utc: datetime | None,
+    cycle_max_occurrences: int | None,
+) -> InternalTaskDefinition:
+    now = datetime.utcnow()
+    definition = InternalTaskDefinition(
+        id=str(uuid.uuid4()),
+        company_id=actor.company_id,
+        title=payload.title,
+        description=payload.description,
+        creator_admin_id=actor.id,
+        responsible_admin_id=responsible.id,
+        display_author=payload.display_author,
+        assignment_mode=payload.assignment_mode,
+        assignee_user_id=assignee_user_id,
+        notify_on_completion=payload.notify_on_completion,
+        deadline_at_utc=deadline_at_utc,
+        schedule_kind=InternalTaskScheduleKind.RECURRING.value,
+        timezone_name=settings.app_timezone,
+        scheduled_for_utc=None,
+        recurrence_mode=recurrence_mode,
+        recurrence_config=recurrence_config,
+        cycle_start_at_utc=cycle_start_at_utc,
+        cycle_end_mode=cycle_end_mode,
+        cycle_end_at_utc=cycle_end_at_utc,
+        cycle_max_occurrences=cycle_max_occurrences,
         state=InternalTaskDefinitionState.ACTIVE.value,
         generation_not_before_utc=None,
         created_at=now,
@@ -424,11 +675,31 @@ def internal_task_overview(
     if scope == "mine":
         scheduled_stmt = scheduled_stmt.where(mine_definition_filter)
 
+    recurring_stmt = (
+        select(InternalTaskDefinition)
+        .where(
+            and_(
+                InternalTaskDefinition.company_id == actor.company_id,
+                InternalTaskDefinition.schedule_kind == InternalTaskScheduleKind.RECURRING.value,
+                InternalTaskDefinition.state.in_([
+                    InternalTaskDefinitionState.ACTIVE.value,
+                    InternalTaskDefinitionState.PAUSED.value,
+                    InternalTaskDefinitionState.FINISHED.value,
+                ]),
+            )
+        )
+        .order_by(InternalTaskDefinition.updated_at.desc(), InternalTaskDefinition.created_at.desc())
+        .limit(limit)
+    )
+    if scope == "mine":
+        recurring_stmt = recurring_stmt.where(mine_definition_filter)
+
     materialized_filters = [
         InternalTaskDefinition.company_id == actor.company_id,
         InternalTaskDefinition.schedule_kind.in_([
             InternalTaskScheduleKind.IMMEDIATE.value,
             InternalTaskScheduleKind.SCHEDULED.value,
+            InternalTaskScheduleKind.RECURRING.value,
         ]),
     ]
     if scope == "mine":
@@ -455,7 +726,7 @@ def internal_task_overview(
         "active": active[:limit],
         "scheduled": [_scheduled_definition_out(db, item) for item in db.execute(scheduled_stmt).scalars().all()],
         "completed": completed[:limit],
-        "recurring": [],
+        "recurring": [_recurring_definition_out(db, item) for item in db.execute(recurring_stmt).scalars().all()],
     }
 
 
@@ -528,3 +799,288 @@ def update_internal_task_scheduled(
     db.commit()
     db.refresh(definition)
     return _scheduled_definition_out(db, definition)
+
+
+def _recurring_definition(db: Session, company_id: str, definition_id: str) -> InternalTaskDefinition:
+    definition = db.execute(
+        select(InternalTaskDefinition)
+        .where(
+            and_(
+                InternalTaskDefinition.id == definition_id,
+                InternalTaskDefinition.company_id == company_id,
+                InternalTaskDefinition.schedule_kind == InternalTaskScheduleKind.RECURRING.value,
+            )
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if definition is None:
+        _error(404, "recurring_definition_not_found", "Регулярная задача не найдена")
+    return definition
+
+
+def _materialized_internal_task_row(db: Session, company_id: str, ticket_id: str) -> tuple[InternalTaskDefinition, InternalTaskOccurrence, Ticket]:
+    row = db.execute(
+        select(InternalTaskDefinition, InternalTaskOccurrence, Ticket)
+        .join(InternalTaskOccurrence, InternalTaskOccurrence.definition_id == InternalTaskDefinition.id)
+        .join(Ticket, Ticket.id == InternalTaskOccurrence.ticket_id)
+        .where(
+            and_(
+                InternalTaskDefinition.company_id == company_id,
+                InternalTaskOccurrence.ticket_id == ticket_id,
+                Ticket.company_id == company_id,
+            )
+        )
+        .limit(1)
+    ).first()
+    if row is None:
+        _error(404, "internal_task_ticket_not_found", "Внутренняя задача не найдена")
+    return row
+
+
+def _disable_definition(definition: InternalTaskDefinition) -> None:
+    now = datetime.utcnow()
+    definition.state = InternalTaskDefinitionState.DISABLED.value
+    definition.updated_at = now
+
+
+def _apply_recurring_payload(
+    db: Session,
+    *,
+    definition: InternalTaskDefinition,
+    payload: InternalTaskRecurringPayload,
+    actor: User,
+) -> None:
+    _validate_text(payload)
+    responsible = _responsible_admin(db, actor.company_id, payload.responsible_admin_id, actor)
+    assignee_user_id = _validate_assignment(payload, db, actor.company_id)
+    deadline_at_utc = _validate_deadline(payload, app_local_naive=True)
+    (
+        recurrence_mode,
+        recurrence_config,
+        cycle_start_at_utc,
+        cycle_end_mode,
+        cycle_end_at_utc,
+        cycle_max_occurrences,
+    ) = _validate_recurrence(payload)
+
+    now = datetime.utcnow()
+    edit_boundary = None
+    if definition.state == InternalTaskDefinitionState.ACTIVE.value:
+        existing_generation_boundary = _utc_naive(definition.generation_not_before_utc)
+        edit_boundary = max(
+            existing_generation_boundary or now,
+            now,
+        )
+
+    definition.title = payload.title
+    definition.description = payload.description
+    definition.assignment_mode = payload.assignment_mode
+    definition.assignee_user_id = assignee_user_id
+    definition.display_author = payload.display_author
+    definition.responsible_admin_id = responsible.id
+    definition.notify_on_completion = payload.notify_on_completion
+    definition.deadline_at_utc = deadline_at_utc
+    definition.recurrence_mode = recurrence_mode
+    definition.recurrence_config = recurrence_config
+    definition.cycle_start_at_utc = cycle_start_at_utc
+    definition.cycle_end_mode = cycle_end_mode
+    definition.cycle_end_at_utc = cycle_end_at_utc
+    definition.cycle_max_occurrences = cycle_max_occurrences
+    if edit_boundary is not None:
+        definition.generation_not_before_utc = edit_boundary
+    definition.updated_at = now
+
+
+def _can_resume_recurring(db: Session, definition: InternalTaskDefinition, *, now: datetime) -> None:
+    now = _utc_naive(now) or now
+    cycle_end_at_utc = _utc_naive(definition.cycle_end_at_utc)
+    if definition.cycle_end_mode == CYCLE_END_AT and cycle_end_at_utc is not None and cycle_end_at_utc <= now:
+        _error(409, "recurring_end_at_elapsed", "Дата окончания расписания уже прошла")
+    if (
+        definition.cycle_end_mode == CYCLE_END_AT
+        and cycle_end_at_utc is not None
+        and _first_recurring_candidate_at_or_after(definition, window_start=now) is None
+    ):
+        _error(409, "recurring_no_future_occurrence", "В расписании нет будущего создания до даты окончания расписания")
+    if (
+        definition.cycle_end_mode == CYCLE_END_COUNT
+        and definition.cycle_max_occurrences is not None
+        and _successful_occurrence_count(db, definition.id) >= definition.cycle_max_occurrences
+    ):
+        _error(409, "recurring_count_exhausted", "Лимит повторений уже исчерпан")
+
+
+@router.post("/recurring")
+def create_internal_task_recurring(
+    payload: InternalTaskRecurringPayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    _validate_text(payload)
+    actor = _current_admin(db, user)
+    responsible = _responsible_admin(db, actor.company_id, payload.responsible_admin_id, actor)
+    assignee_user_id = _validate_assignment(payload, db, actor.company_id)
+    deadline_at_utc = _validate_deadline(payload, app_local_naive=True)
+    (
+        recurrence_mode,
+        recurrence_config,
+        cycle_start_at_utc,
+        cycle_end_mode,
+        cycle_end_at_utc,
+        cycle_max_occurrences,
+    ) = _validate_recurrence(payload)
+    definition = _create_recurring_definition(
+        db,
+        payload=payload,
+        actor=actor,
+        responsible=responsible,
+        assignee_user_id=assignee_user_id,
+        deadline_at_utc=deadline_at_utc,
+        recurrence_mode=recurrence_mode,
+        recurrence_config=recurrence_config,
+        cycle_start_at_utc=cycle_start_at_utc,
+        cycle_end_mode=cycle_end_mode,
+        cycle_end_at_utc=cycle_end_at_utc,
+        cycle_max_occurrences=cycle_max_occurrences,
+    )
+    return _recurring_definition_out(db, definition)
+
+
+@router.patch("/recurring/{definition_id}")
+def update_internal_task_recurring(
+    definition_id: str,
+    payload: InternalTaskRecurringPayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = _recurring_definition(db, actor.company_id, definition_id)
+    _apply_recurring_payload(db, definition=definition, payload=payload, actor=actor)
+    db.commit()
+    db.refresh(definition)
+    return _recurring_definition_out(db, definition)
+
+
+@router.delete("/scheduled/{definition_id}")
+def delete_internal_task_scheduled(
+    definition_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = db.execute(
+        select(InternalTaskDefinition)
+        .where(
+            and_(
+                InternalTaskDefinition.id == definition_id,
+                InternalTaskDefinition.company_id == actor.company_id,
+                InternalTaskDefinition.schedule_kind == InternalTaskScheduleKind.SCHEDULED.value,
+            )
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if definition is None:
+        _error(404, "scheduled_definition_not_found", "Запланированная задача не найдена")
+    if definition.state != InternalTaskDefinitionState.ACTIVE.value or _definition_has_occurrence(db, definition.id):
+        _error(409, "scheduled_definition_materialized", "Запланированная задача уже материализована")
+    _disable_definition(definition)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/recurring/{definition_id}/pause")
+def pause_internal_task_recurring(
+    definition_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = _recurring_definition(db, actor.company_id, definition_id)
+    if definition.state != InternalTaskDefinitionState.ACTIVE.value:
+        _error(409, "recurring_not_active", "Поставить на паузу можно только активное расписание")
+    now = datetime.utcnow()
+    definition.state = InternalTaskDefinitionState.PAUSED.value
+    definition.generation_not_before_utc = now
+    definition.updated_at = now
+    db.commit()
+    db.refresh(definition)
+    return _recurring_definition_out(db, definition)
+
+
+@router.delete("/recurring/{definition_id}")
+def delete_internal_task_recurring(
+    definition_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = _recurring_definition(db, actor.company_id, definition_id)
+    _disable_definition(definition)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/recurring/{definition_id}/skip-next")
+def skip_next_internal_task_recurring(
+    definition_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = _recurring_definition(db, actor.company_id, definition_id)
+    if definition.state != InternalTaskDefinitionState.ACTIVE.value:
+        _error(409, "recurring_not_active", "Пропустить можно только активное расписание")
+    next_at = _next_recurring_at(db, definition)
+    if next_at is None:
+        _error(409, "recurring_no_next_occurrence", "Следующего создания задачи нет")
+    now = datetime.utcnow()
+    definition.generation_not_before_utc = (_utc_naive(next_at) or next_at) + timedelta(microseconds=1)
+    definition.updated_at = now
+    db.commit()
+    db.refresh(definition)
+    return {
+        "ok": True,
+        "skipped_occurrence_at": next_at,
+        "definition": _recurring_definition_out(db, definition),
+    }
+
+
+@router.post("/recurring/{definition_id}/resume")
+def resume_internal_task_recurring(
+    definition_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    definition = _recurring_definition(db, actor.company_id, definition_id)
+    if definition.state not in {InternalTaskDefinitionState.PAUSED.value, InternalTaskDefinitionState.FINISHED.value}:
+        _error(409, "recurring_not_resumable", "Возобновить можно только paused или finished расписание")
+    now = datetime.utcnow()
+    _can_resume_recurring(db, definition, now=now)
+    definition.state = InternalTaskDefinitionState.ACTIVE.value
+    definition.generation_not_before_utc = now
+    definition.updated_at = now
+    db.commit()
+    db.refresh(definition)
+    return _recurring_definition_out(db, definition)
+
+
+@router.delete("/materialized/{ticket_id}")
+def delete_internal_task_materialized(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    actor = _current_admin(db, user)
+    _, _, ticket = _materialized_internal_task_row(db, actor.company_id, ticket_id)
+    warnings = _delete_ticket_hard(db, ticket)
+    db.commit()
+    return {"ok": True, "file_delete_warnings": warnings}

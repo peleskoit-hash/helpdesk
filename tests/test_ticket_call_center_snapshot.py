@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 import uuid
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
@@ -16,6 +16,11 @@ from api.app.models import (
     ClientCardSourceConfig,
     ClientProfile,
     Company,
+    InternalTaskAssignmentMode,
+    InternalTaskDefinition,
+    InternalTaskDefinitionState,
+    InternalTaskOccurrence,
+    InternalTaskScheduleKind,
     MessageType,
     TelegramContact,
     Ticket,
@@ -28,7 +33,7 @@ from api.app.routers import telegram, tickets
 from api.app.schemas import ClientCardSourceRunRequest, ClientProfileUpdate
 from api.app.services import call_center_employee_resolver, client_card_sources
 from api.app.services.call_center_employee_resolver import CallCenterEmployee, ResolveResult
-from api.app.services.ticket_list import list_tickets_paginated, requester_display_name
+from api.app.services.ticket_list import _display_author_enabled, list_special_tickets, list_tickets_paginated, requester_display_name
 from api.app.services.ticket_call_center_snapshot import (
     CALL_CENTER_EMPLOYEE_SOURCE_KEY,
     apply_call_center_employee_snapshot_on_ticket_create,
@@ -812,6 +817,183 @@ def test_ticket_list_uses_ticket_specific_snapshot_fio_for_each_row():
     assert by_id[new_ticket.id].requester_display_name == "Петрова Анна"
     assert by_id[old_ticket.id].requester_display_name != by_id[old_ticket.id].client_name
     assert by_id[new_ticket.id].requester_display_name != "Анна"
+
+
+def _internal_definition(session, company_id: str, creator_id: str) -> InternalTaskDefinition:
+    now = datetime.utcnow()
+    definition = InternalTaskDefinition(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        title="Internal",
+        description="Internal description",
+        creator_admin_id=creator_id,
+        responsible_admin_id=creator_id,
+        display_author=True,
+        assignment_mode=InternalTaskAssignmentMode.DISTRIBUTION.value,
+        assignee_user_id=None,
+        notify_on_completion=False,
+        deadline_at_utc=None,
+        schedule_kind=InternalTaskScheduleKind.IMMEDIATE.value,
+        timezone_name="Europe/Moscow",
+        state=InternalTaskDefinitionState.FINISHED.value,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(definition)
+    return definition
+
+
+def _internal_occurrence(
+    session,
+    definition: InternalTaskDefinition,
+    ticket: Ticket,
+    *,
+    display_author: bool,
+    occurrence_at_utc: datetime | None = None,
+) -> None:
+    now = datetime.utcnow()
+    occurrence_at_utc = occurrence_at_utc or now
+    session.add(
+        InternalTaskOccurrence(
+            id=str(uuid.uuid4()),
+            definition_id=definition.id,
+            occurrence_at_utc=occurrence_at_utc,
+            ticket_id=ticket.id,
+            title_snapshot=ticket.subject,
+            description_snapshot="Internal description",
+            creator_admin_id=definition.creator_admin_id,
+            responsible_admin_id=definition.responsible_admin_id,
+            display_author=display_author,
+            effective_assignment_mode=InternalTaskAssignmentMode.DISTRIBUTION.value,
+            effective_assignee_user_id=None,
+            notify_on_completion=False,
+            deadline_at_utc=None,
+            materialized_at_utc=now,
+            created_at=now,
+        )
+    )
+
+
+def test_ticket_list_batches_internal_task_requester_lookup_without_per_row_queries():
+    session = _session()
+    client, _profile, ordinary_ticket = _seed_case(session)
+    admin = session.get(User, "admin-1")
+    definition = _internal_definition(session, ordinary_ticket.company_id, admin.id)
+    internal_tickets = []
+    for index, display_author in enumerate([True, False]):
+        ticket = Ticket(
+            id=str(uuid.uuid4()),
+            company_id=ordinary_ticket.company_id,
+            client_id=client.id,
+            subject=f"Internal {index}",
+            status=TicketStatus.NEW.value,
+            workflow_type=TicketWorkflowType.TASK.value,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(ticket)
+        internal_tickets.append(ticket)
+        _internal_occurrence(
+            session,
+            definition,
+            ticket,
+            display_author=display_author,
+            occurrence_at_utc=datetime(2026, 9, 16, 10, index),
+        )
+    session.commit()
+
+    occurrence_queries = []
+
+    def before_cursor_execute(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "internal_task_occurrences" in statement.lower():
+            occurrence_queries.append(statement)
+
+    engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        payload = list_tickets_paginated(
+            db=session,
+            user=_admin(),
+            statuses=[TicketStatus.NEW.value],
+            is_frozen=False,
+            sort="created_at",
+            order="asc",
+            page=1,
+            limit=20,
+            filter_admin_assignees=False,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+    by_subject = {item.subject: item for item in payload.items}
+    assert by_subject["Internal 0"].requester_display_name == "Admin"
+    assert by_subject["Internal 1"].requester_display_name == "Система"
+    assert by_subject[ordinary_ticket.subject].requester_display_name == "Client"
+    assert len(occurrence_queries) == 1
+
+
+def test_special_ticket_list_batches_internal_task_requester_lookup_without_per_row_queries():
+    session = _session()
+    client, _profile, ordinary_ticket = _seed_case(session)
+    admin = session.get(User, "admin-1")
+    definition = _internal_definition(session, ordinary_ticket.company_id, admin.id)
+    ordinary_ticket.is_special = True
+    for index in range(2):
+        ticket = Ticket(
+            id=str(uuid.uuid4()),
+            company_id=ordinary_ticket.company_id,
+            client_id=client.id,
+            subject=f"Special internal {index}",
+            status=TicketStatus.NEW.value,
+            workflow_type=TicketWorkflowType.TASK.value,
+            is_special=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        session.add(ticket)
+        _internal_occurrence(
+            session,
+            definition,
+            ticket,
+            display_author=index == 0,
+            occurrence_at_utc=datetime(2026, 9, 16, 10, index),
+        )
+    session.commit()
+
+    occurrence_queries = []
+
+    def before_cursor_execute(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "internal_task_occurrences" in statement.lower():
+            occurrence_queries.append(statement)
+
+    engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        payload = list_special_tickets(
+            db=session,
+            user=_admin(),
+            sort="created_at",
+            order="asc",
+            page=1,
+            limit=20,
+            query=None,
+            ensure_ticket_number_fn=lambda _db, ticket: ticket.ticket_number,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+    by_subject = {item.subject: item for item in payload.items}
+    assert by_subject["Special internal 0"].requester_display_name == "Admin"
+    assert by_subject["Special internal 1"].requester_display_name == "Система"
+    assert len(occurrence_queries) == 1
+
+
+def test_internal_task_display_author_false_like_values_hide_author():
+    for value in (False, None, 0, "", "0", "false", "False", "no", "off"):
+        assert _display_author_enabled(value) is False
+
+    for value in (True, "1", "true", "True", "yes", "on"):
+        assert _display_author_enabled(value) is True
 
 
 def test_ticket_list_requester_display_name_keeps_old_snapshot_after_profile_change_and_close():

@@ -652,6 +652,18 @@ test("sidebar status panel stays hidden for admin", async () => {
   assert.equal(document.querySelectorAll("[data-availability-status]").length, 5);
 });
 
+for (const role of ["admin", "agent", "trainee"]) {
+  test("notification bot menu entry is visible for role: " + role, async () => {
+    const { document } = buildSidebarDom();
+    const window = await loadSidebar(document, role);
+    const item = document.querySelector('[data-sidebar-user-menu-item="bot-notifications"]');
+    assert.equal(item.hidden, false);
+
+    item.dispatchEvent({ type: "click", target: item });
+    assert.equal(window.location.href, "/profile/notification-bot");
+  });
+}
+
 for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
   test("review profile entry follows role: " + role, async () => {
     const { document } = buildSidebarDom();

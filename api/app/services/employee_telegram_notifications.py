@@ -110,6 +110,9 @@ class InternalTaskCompletionTelegramDelivery:
     user_id: str
     telegram_chat_id: str
     text: str
+    parse_mode: str | None
+    disable_link_preview: bool
+    send_silently: bool
 
 
 @dataclass(frozen=True)
@@ -195,10 +198,15 @@ def _personal_switch_enabled(preference: EmployeeNotificationPreference | None, 
     return False
 
 
-def _internal_task_completion_enabled(preference: EmployeeNotificationPreference | None) -> bool:
+def _internal_task_completion_enabled(db: Session, preference: EmployeeNotificationPreference | None) -> bool:
+    notification_type = "internal_task_completion"
     if preference is None:
-        return True
-    return bool(preference.notify_internal_task_completion)
+        return _global_enabled(db, notification_type)
+    if not preference.notify_internal_task_completion:
+        return False
+    if preference.use_base_internal_task_completion_settings:
+        return _global_enabled(db, notification_type)
+    return True
 
 
 def _effective_template(
@@ -225,6 +233,15 @@ def _effective_template(
             html_enabled=bool(preference.personal_new_message_html_enabled),
             disable_link_preview=bool(preference.personal_new_message_disable_link_preview),
             send_silently=bool(preference.personal_new_message_send_silently),
+        )
+    if notification_type == "internal_task_completion":
+        if preference is None or preference.use_base_internal_task_completion_settings:
+            return base
+        return EffectiveNotificationTemplate(
+            template=preference.personal_internal_task_completion_template or "",
+            html_enabled=bool(preference.personal_internal_task_completion_html_enabled),
+            disable_link_preview=bool(preference.personal_internal_task_completion_disable_link_preview),
+            send_silently=bool(preference.personal_internal_task_completion_send_silently),
         )
     return base
 
@@ -431,6 +448,8 @@ def _render_tags(
     actor_user: User | None = None,
     event_at: datetime | None = None,
     message_body: str | None = None,
+    internal_task_title: str | None = None,
+    internal_task_result: str | None = None,
     html_enabled: bool,
 ) -> str:
     previous_agent = ADMINISTRATIVE_CONTROL_LABEL if old_is_special else _user_name(old_assignee, html_enabled=html_enabled)
@@ -451,6 +470,8 @@ def _render_tags(
         "[Куда передана заявка]": destination,
         "[Администратор перевода]": _user_name(actor_user, html_enabled=html_enabled),
         "[Дата перевода]": _format_dt(event_at, html_enabled=html_enabled),
+        "[Задача]": _value(internal_task_title, html_enabled=html_enabled),
+        "[Результат]": _value(internal_task_result, html_enabled=html_enabled),
     }
     allowed_tags = set(NOTIFICATION_BOT_BASIC_TAGS.get(notification_type, ()))
 
@@ -699,25 +720,13 @@ def schedule_new_message_notification(
     )
 
 
-def _format_internal_task_completion_text(
-    *,
-    title: str,
-    result_text: str,
-) -> str:
-    return "\n".join([
-        "Внутренняя задача выполнена",
-        f"Задача: {title}",
-        "Результат:",
-        result_text,
-    ])
-
-
 def schedule_internal_task_completion_notification(
     db: Session,
     *,
     ticket: Ticket,
     final_message: TicketMessage,
 ) -> None:
+    ensure_ticket_number(db, ticket)
     db.info.setdefault(_PENDING_INTERNAL_TASK_COMPLETION_NOTIFICATIONS_KEY, []).append(
         {
             "ticket_id": ticket.id,
@@ -744,7 +753,8 @@ def resolve_internal_task_completion_telegram_delivery(
     if responsible is None or responsible.role != "admin" or not responsible.is_active:
         return None
     preference = _preference_for_user(db, responsible.id)
-    if not _internal_task_completion_enabled(preference):
+    notification_type = "internal_task_completion"
+    if not _internal_task_completion_enabled(db, preference):
         return None
     account = _approved_account_for_user(db, responsible.id)
     if account is None:
@@ -763,14 +773,30 @@ def resolve_internal_task_completion_telegram_delivery(
     result_text = _composite_message_body(final_message, attachments)
     if not result_text:
         return None
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        return None
+    effective = _effective_template(db, notification_type=notification_type, preference=preference)
+    rendered = _render_tags(
+        db,
+        notification_type=notification_type,
+        template=effective.template,
+        account=account,
+        ticket=ticket,
+        message=final_message,
+        internal_task_title=occurrence.title_snapshot or "Внутренняя задача",
+        internal_task_result=result_text,
+        html_enabled=effective.html_enabled,
+    )
+    text_value, parse_mode = _render_telegram_text(effective, rendered)
 
     return InternalTaskCompletionTelegramDelivery(
         user_id=responsible.id,
         telegram_chat_id=str(account.telegram_chat_id),
-        text=_format_internal_task_completion_text(
-            title=occurrence.title_snapshot or "Внутренняя задача",
-            result_text=result_text,
-        ),
+        text=text_value,
+        parse_mode=parse_mode,
+        disable_link_preview=effective.disable_link_preview,
+        send_silently=effective.send_silently,
     )
 
 
@@ -888,7 +914,10 @@ def _send_internal_task_completion_delivery(delivery: InternalTaskCompletionTele
     send_message(
         delivery.telegram_chat_id,
         delivery.text,
+        parse_mode=delivery.parse_mode,
         bot_token=settings.employee_telegram_bot_token,
+        disable_web_page_preview=delivery.disable_link_preview,
+        disable_notification=delivery.send_silently,
     )
 
 

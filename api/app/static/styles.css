@@ -200,6 +200,12 @@ body[data-sidebar-ready="0"] .admin-select-col {
   flex: 0 0 auto;
 }
 
+.sidebar-admin-separator {
+  height: 1px;
+  margin: 8px 0;
+  background: rgba(148, 163, 184, 0.35);
+}
+
 .settings-title {
   font-weight: 800;
   font-size: 16px;
@@ -6305,6 +6311,11 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   margin-bottom: 14px;
 }
 
+.notification-admin-compact {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
 .notification-page-mode {
   display: flex;
   align-items: center;
@@ -6314,7 +6325,7 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
 .notification-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 0;
 }
@@ -6325,12 +6336,14 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
 .notification-tab {
   min-height: 42px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
   font: inherit;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -6529,6 +6542,8 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   gap: 14px;
   height: 100%;
   min-height: 0;
+  width: 100%;
+  padding: 0 18px 12px;
 }
 
 .management-tasks-head-actions,
@@ -6543,8 +6558,51 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 .management-tasks-panel {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.management-tasks-page [hidden],
+.management-tasks-modal [hidden],
+.management-tasks-form [hidden] {
+  display: none !important;
+}
+
+.management-tasks-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 14px 14px 0;
+  border-bottom: 1px solid rgba(11, 122, 140, 0.28);
+}
+
+.management-tasks-tabs .action {
+  min-height: 52px;
+  padding: 14px 20px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-color: rgba(11, 122, 140, 0.22);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.15;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.management-tasks-tabs .action.active {
+  position: relative;
+  z-index: 1;
+  margin-bottom: -1px;
+  border-color: rgba(11, 122, 140, 0.52);
+  border-bottom-color: rgba(255, 255, 255, 0.82);
+  color: #075563;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 -2px 18px rgba(11, 122, 140, 0.12);
+}
+
+.management-tasks-toolbar {
+  padding: 14px;
 }
 
 .management-tasks-table-wrap {
@@ -6568,6 +6626,10 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   text-align: center;
 }
 
+.management-tasks-muted-row {
+  color: var(--muted);
+}
+
 .management-tasks-modal {
   width: min(760px, calc(100vw - 32px));
 }
@@ -6587,24 +6649,97 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   gap: 12px;
 }
 
+.management-tasks-assignment-grid {
+  grid-template-areas:
+    "assignment assignee"
+    "responsible responsible";
+}
+
+.management-tasks-assignment-mode {
+  grid-area: assignment;
+}
+
+.management-tasks-assignee-field {
+  grid-area: assignee;
+}
+
+.management-tasks-responsible-field {
+  grid-area: responsible;
+}
+
+.management-tasks-recurrence {
+  display: grid;
+  gap: 12px;
+}
+
+.management-tasks-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.management-tasks-weekdays label {
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+}
+
 .management-tasks-form-grid label:first-child:nth-last-child(3),
 .management-tasks-form-grid label:first-child:nth-last-child(3) ~ label {
   grid-column: auto;
 }
 
 .management-tasks-checkbox-row {
+  display: inline-flex;
   align-items: center;
   flex-direction: row;
   gap: 8px;
+  justify-content: flex-start;
+  width: fit-content;
+}
+
+.management-tasks-checkbox-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 .management-tasks-form-error {
   color: #b91c1c;
 }
 
+.management-tasks-form .field-help {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.management-tasks-form .field-error {
+  display: block;
+  margin-top: 6px;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.management-tasks-schedule-info {
+  padding: 10px 12px;
+  border: 1px solid rgba(11, 122, 140, 0.18);
+  border-radius: 10px;
+  background: rgba(11, 122, 140, 0.08);
+}
+
 @media (max-width: 900px) {
   .management-tasks-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .management-tasks-assignment-grid {
+    grid-template-areas:
+      "assignment"
+      "assignee"
+      "responsible";
   }
 
   .management-tasks-head-actions {

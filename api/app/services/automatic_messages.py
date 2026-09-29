@@ -596,6 +596,22 @@ NOTIFICATION_BOT_BASIC_DEFINITIONS: tuple[AutomaticMessageDefinition, ...] = (
         channel="employee_telegram",
         runtime_enabled=False,
     ),
+    AutomaticMessageDefinition(
+        key="telegram.notification_bot.basic.internal_task_completion",
+        title="Админская задача | Регулярка",
+        description="Уведомление ответственному администратору о выполнении внутренней административной задачи",
+        category=NOTIFICATION_BOT_BASIC_CATEGORY,
+        category_title="Базовые уведомления в боте",
+        sort_order=50,
+        default_text=(
+            "[Автор сообщения] выполнил задачу\n\n"
+            "<a href=\"[Ссылка на заявку]\">[Задача]</a>\n\n"
+            "Результат:\n"
+            "[Результат]"
+        ),
+        channel="employee_telegram",
+        runtime_enabled=False,
+    ),
 )
 
 _REGISTRY_BY_KEY = {item.key: item for item in AUTOMATIC_MESSAGE_REGISTRY}
@@ -718,6 +734,20 @@ NOTIFICATION_BOT_BASIC_TAG_REGISTRY: tuple[NotificationBotBasicTag, ...] = (
         admin_description="Новый сотрудник, «Распределение» или административный список.",
         personal_description="Новый сотрудник, «Распределение» или административный список.",
     ),
+    NotificationBotBasicTag(
+        semantic="internal_task_title",
+        admin_label="[Задача]",
+        personal_label="[Задача]",
+        admin_description="Название внутренней административной задачи.",
+        personal_description="Название внутренней административной задачи.",
+    ),
+    NotificationBotBasicTag(
+        semantic="internal_task_result",
+        admin_label="[Результат]",
+        personal_label="[Результат]",
+        admin_description="Финальный текст и имена файлов результата внутренней задачи.",
+        personal_description="Финальный текст и имена файлов результата внутренней задачи.",
+    ),
     NOTIFICATION_BOT_RECIPIENT_TG_USERNAME_TAG,
 )
 
@@ -768,6 +798,13 @@ _NOTIFICATION_BOT_BASIC_TAG_SEMANTICS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "ticket_link",
         "recipient_telegram_username",
     ),
+    "internal_task_completion": (
+        "message_author",
+        "internal_task_title",
+        "ticket_link",
+        "internal_task_result",
+        "recipient_telegram_username",
+    ),
 }
 
 NOTIFICATION_BOT_BASIC_SEMANTIC_TAGS: tuple[NotificationBotBasicTag, ...] = (
@@ -811,6 +848,12 @@ NOTIFICATION_BOT_BASIC_TAGS: dict[str, tuple[str, ...]] = {
         "[Администратор перевода]",
         "[Дата перевода]",
         "[Ссылка на заявку]",
+    ),
+    "internal_task_completion": (
+        "[Автор сообщения]",
+        "[Задача]",
+        "[Ссылка на заявку]",
+        "[Результат]",
     ),
 }
 

@@ -376,7 +376,7 @@
     }
     const notificationItem = menu?.querySelector("[data-sidebar-user-menu-item='bot-notifications']");
     if (notificationItem) {
-      notificationItem.hidden = state.role === "admin";
+      notificationItem.hidden = false;
     }
   }
 

@@ -39,6 +39,7 @@ class EmployeeNotificationPreferencesPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[EmployeeNotificationTemplatePayload]
+    use_base_settings: bool | None = None
     delivery: EmployeeNotificationDeliveryPayload = Field(default_factory=EmployeeNotificationDeliveryPayload)
 
 
@@ -51,7 +52,7 @@ def get_my_notification_bot_preferences(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    return serialize_employee_notification_preferences(db, user_id=user.id)
+    return serialize_employee_notification_preferences(db, user_id=user.id, role=user.role)
 
 
 @router.put("/notification-bot")
@@ -69,11 +70,13 @@ def update_my_notification_bot_preferences(
             receive_transfer_from_agent=payload.delivery.transfer_from_agent,
             receive_new_message=payload.delivery.new_message,
             notify_internal_task_completion=payload.delivery.notify_internal_task_completion,
+            use_base_settings=payload.use_base_settings,
+            role=user.role,
         )
     except ValueError as exc:
         _error(422, "notification_template_invalid", str(exc))
     db.commit()
-    return serialize_employee_notification_preferences(db, user_id=user.id)
+    return serialize_employee_notification_preferences(db, user_id=user.id, role=user.role)
 
 
 @router.post("/notification-bot/restore-base/{notification_type}")
@@ -87,4 +90,4 @@ def restore_my_notification_bot_preferences_from_base(
     except KeyError:
         _error(404, "notification_type_not_found", "Неизвестный тип уведомления")
     db.commit()
-    return serialize_employee_notification_preferences(db, user_id=user.id)
+    return serialize_employee_notification_preferences(db, user_id=user.id, role=user.role)

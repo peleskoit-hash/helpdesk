@@ -44,7 +44,7 @@ def _save(session, notification_type: str, **payload):
     )
 
 
-def test_initial_four_notification_types_exist_and_enabled_by_default(monkeypatch):
+def test_initial_notification_types_exist_and_enabled_by_default(monkeypatch):
     monkeypatch.setattr(settings_notification_bot_basic, "_require_admin", lambda user: None)
     session = _session()
 
@@ -55,6 +55,7 @@ def test_initial_four_notification_types_exist_and_enabled_by_default(monkeypatc
         "new_message",
         "transfer_to_agent",
         "transfer_from_agent",
+        "internal_task_completion",
     ]
     assert all(item["enabled"] is True for item in result["items"])
 
@@ -87,6 +88,12 @@ def test_initial_templates_match_specification():
             "Администратор: [Администратор перевода]\n"
             "Заголовок: [Заголовок заявки]\n\n"
             "[Ссылка на заявку]"
+        ),
+        "internal_task_completion": (
+            "[Автор сообщения] выполнил задачу\n\n"
+            "<a href=\"[Ссылка на заявку]\">[Задача]</a>\n\n"
+            "Результат:\n"
+            "[Результат]"
         ),
     }
 
@@ -134,6 +141,12 @@ def test_runtime_tag_whitelist_keeps_real_display_labels_per_notification_type()
             "[Администратор перевода]",
             "[Дата перевода]",
             "[Ссылка на заявку]",
+        ),
+        "internal_task_completion": (
+            "[Автор сообщения]",
+            "[Задача]",
+            "[Ссылка на заявку]",
+            "[Результат]",
         ),
     }
 
@@ -299,6 +312,13 @@ def test_displayed_admin_tags_have_centralized_tooltip_descriptions_in_order():
             ("[Ссылка на заявку]", "Прямая ссылка на заявку или задачу в ES DESK."),
             ("[TG @username адресата]", "Telegram @username сотрудника, которому отправляется уведомление."),
         ],
+        "internal_task_completion": [
+            ("[Автор сообщения]", "Кто отправил новое сообщение или комментарий."),
+            ("[Задача]", "Название внутренней административной задачи."),
+            ("[Ссылка на заявку]", "Прямая ссылка на заявку или задачу в ES DESK."),
+            ("[Результат]", "Финальный текст и имена файлов результата внутренней задачи."),
+            ("[TG @username адресата]", "Telegram @username сотрудника, которому отправляется уведомление."),
+        ],
     }
 
     for notification_type, expected_items in expected.items():
@@ -355,3 +375,38 @@ def test_notification_bot_basic_save_route_uses_put_not_patch():
     )
     assert "PUT" in route.methods
     assert "PATCH" not in route.methods
+
+
+def test_internal_task_completion_basic_type_has_user_facing_title(monkeypatch):
+    monkeypatch.setattr(settings_notification_bot_basic, "_require_admin", lambda user: None)
+    session = _session()
+
+    result = settings_notification_bot_basic.list_notification_bot_basic_templates(db=session, user=_admin())
+    by_type = {item["type"]: item for item in result["items"]}
+
+    assert by_type["internal_task_completion"]["title"] == "Админская задача | Регулярка"
+    assert by_type["internal_task_completion"]["template"].startswith("[Автор сообщения] выполнил задачу")
+
+
+def test_internal_task_completion_basic_template_save_and_reload(monkeypatch):
+    monkeypatch.setattr(settings_notification_bot_basic, "_require_admin", lambda user: None)
+    session = _session()
+
+    settings_notification_bot_basic.update_notification_bot_basic_template(
+        "internal_task_completion",
+        NotificationBotBasicUpdatePayload(
+            enabled=True,
+            template="CUSTOM [Автор сообщения] [Задача] [Результат]",
+            html_enabled=True,
+            disable_link_preview=True,
+            send_silently=True,
+        ),
+        db=session,
+        user=_admin(),
+    )
+    result = settings_notification_bot_basic.list_notification_bot_basic_templates(db=session, user=_admin())
+    item = {item["type"]: item for item in result["items"]}["internal_task_completion"]
+
+    assert item["template"] == "CUSTOM [Автор сообщения] [Задача] [Результат]"
+    assert item["disable_link_preview"] is True
+    assert item["send_silently"] is True

@@ -5,14 +5,21 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "profile_notification_bot.js"), "utf8");
+const styles = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "styles.css"), "utf8");
 
-function loadValidationHelper() {
-  const instrumented = source.replace(/\}\)\(\);\s*$/, 'window.__profileNotificationBotTest = { shouldSkipTemplateValidationForInheritanceTransition };\n})();');
+function loadTestHooks() {
+  const instrumented = source.replace(/\}\)\(\);\s*$/, 'window.__profileNotificationBotTest = { shouldSkipTemplateValidationForInheritanceTransition, initProfileNotificationBotPage };\n})();');
   const context = {
     window: {
       HelpdeskAppShell: { registerPage() {} },
+      HelpdeskSidebar: { init: async () => ({ role: "admin" }) },
     },
-    document: {},
+    document: {
+      getElementById() { return null; },
+    },
+    fetch: async () => ({ ok: true, text: async () => "{}" }),
+    setTimeout,
+    clearTimeout,
   };
   vm.createContext(context);
   vm.runInContext(instrumented, context);
@@ -23,6 +30,7 @@ test("profile notification bot uses one config-driven renderer for two tabs", ()
   assert.match(source, /const PERSONAL_NOTIFICATION_TAB_CONFIG = \{/);
   assert.match(source, /new_assignment: \{/);
   assert.match(source, /new_message: \{/);
+  assert.match(source, /internal_task_completion: \{[\s\S]+title: "Выполнение внутренних задач"/);
   assert.match(source, /function renderTab\(config\)/);
   assert.match(source, /function bindTab\(config\)/);
   assert.match(source, /function syncDraft\(config\)/);
@@ -51,16 +59,32 @@ test("personal notification tabs use dedicated two-column class", () => {
   assert.match(source, /class="notification-tabs notification-tabs-personal"/);
 });
 
+test("basic notification tabs fit five desktop tabs in one row with responsive fallback", () => {
+  assert.match(styles, /\.notification-tabs \{[\s\S]+grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /@media \(max-width: 900px\) \{[\s\S]+\.notification-tabs \{[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+});
+
 test("delivery switches are page-level with explicit two-column order", () => {
   assert.match(source, /const DELIVERY_SWITCH_COLUMNS = \[/);
   assert.match(source, /key: "new_assignment"[\s\S]+key: "new_message"[\s\S]+key: "notify_internal_task_completion"[\s\S]+key: "transfer_to_agent"[\s\S]+key: "transfer_from_agent"/);
-  assert.match(source, /label: "Завершение внутренних задач"/);
+  assert.match(source, /label: "Выполнение внутренних задач"/);
   assert.match(source, /function renderDeliverySwitches\(\)/);
+  assert.match(source, /isAdminMode\(\)[\s\S]+notify_internal_task_completion/);
   assert.match(source, /notification-control-card notification-delivery-card/);
   assert.match(source, /data-delivery-switch/);
   assert.match(source, /item\.mandatory \? "disabled" : ""/);
   assert.match(source, /state\.delivery\.new_assignment = true/);
   assert.match(source, /delivery: \{[\s\S]+transfer_to_agent:[\s\S]+transfer_from_agent:[\s\S]+new_message:[\s\S]+notify_internal_task_completion:/);
+});
+
+test("admin notification page hides agent-only tabs and switches", () => {
+  assert.match(source, /function isAdminMode\(\) \{\s+return state\.role === "admin";\s+\}/);
+  assert.match(source, /function visibleTabConfigs\(\)/);
+  assert.match(source, /isAdminMode\(\)[\s\S]+config\.baseType === "internal_task_completion"[\s\S]+config\.baseType !== "internal_task_completion"/);
+  assert.match(source, /\$\{config \? renderTab\(config\) : ""\}/);
+  assert.match(source, /isAdminMode\(\)\s+\?\s+\[\[DELIVERY_SWITCH_COLUMNS\.flat\(\)\.find\(\(item\) => item\.key === "notify_internal_task_completion"\)\]/);
+  assert.match(source, /items: visibleTabConfigs\(\)\.map/);
+  assert.match(source, /notification-admin-compact/);
 });
 
 test("restore-base requires confirmation", () => {
@@ -99,14 +123,20 @@ test("profile notification bot shows tooltip metadata on tag buttons without cha
 });
 
 test("save syncs active tab while leaving inactive drafts in state", () => {
-  assert.match(source, /function syncAllDrafts\(\) \{\s+Object\.values\(PERSONAL_NOTIFICATION_TAB_CONFIG\)\.forEach\(syncDraft\);\s+syncDeliveryFromDom\(\);\s+\}/s);
+  assert.match(source, /function syncAllDrafts\(\) \{\s+visibleTabConfigs\(\)\.forEach\(syncDraft\);\s+syncDeliveryFromDom\(\);\s+\}/s);
   assert.match(source, /if \(!pane\) return;/);
 });
 
 test("inheritance is stored per notification type", () => {
   assert.match(source, /useBaseSettings: item\.use_base_settings !== false/);
   assert.match(source, /use_base_settings: draft\?\.useBaseSettings !== false/);
-  assert.doesNotMatch(source, /state\.useBaseSettings/);
+  assert.match(source, /state\.useBaseSettings = payload\?\.use_base_settings !== false/);
+});
+
+test("admin personal editor uses the same validation as visible tabs", () => {
+  assert.match(source, /function validateBeforeSave\(options = \{\}\) \{[\s\S]+for \(const config of visibleTabConfigs\(\)\) \{[\s\S]+const error = validateTab\(config, options\)/);
+  const validateBeforeSave = source.match(/function validateBeforeSave\(options = \{\}\) \{[\s\S]+?\n    \}/)?.[0] || "";
+  assert.doesNotMatch(validateBeforeSave, /isAdminMode/);
 });
 
 test("delivery switches are rendered outside the tab pane and survive tab switching", () => {
@@ -120,7 +150,7 @@ test("binding status is in the action row next to save", () => {
 });
 
 test("inheritance transition bypasses empty-template validation only for first base-to-personal switch", () => {
-  const helper = loadValidationHelper();
+  const helper = loadTestHooks();
 
   assert.equal(
     helper.shouldSkipTemplateValidationForInheritanceTransition(

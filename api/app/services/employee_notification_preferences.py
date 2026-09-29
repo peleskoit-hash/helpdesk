@@ -15,7 +15,9 @@ from .automatic_messages import (
 )
 from .telegram_employee_binding import REQUEST_STATUS_APPROVED
 
-PERSONAL_NOTIFICATION_TYPES = ("new_assignment", "new_message")
+AGENT_PERSONAL_NOTIFICATION_TYPES = ("new_assignment", "new_message")
+ADMIN_PERSONAL_NOTIFICATION_TYPES = ("internal_task_completion",)
+PERSONAL_NOTIFICATION_TYPES = AGENT_PERSONAL_NOTIFICATION_TYPES + ADMIN_PERSONAL_NOTIFICATION_TYPES
 
 
 def _normalize_body(value: str | None) -> str | None:
@@ -55,6 +57,7 @@ def get_or_create_employee_notification_preference(
         user_id=user_id,
         use_base_new_assignment_settings=True,
         use_base_new_message_settings=True,
+        use_base_internal_task_completion_settings=True,
         receive_transfer_to_agent=True,
         receive_transfer_from_agent=True,
         receive_new_message=True,
@@ -79,6 +82,8 @@ def _has_personal_template(row: EmployeeNotificationPreference, notification_typ
         return row.personal_new_assignment_template is not None
     if notification_type == "new_message":
         return row.personal_new_message_template is not None
+    if notification_type == "internal_task_completion":
+        return row.personal_internal_task_completion_template is not None
     raise KeyError(notification_type)
 
 
@@ -96,6 +101,12 @@ def _copy_base_to_personal(db: Session, row: EmployeeNotificationPreference, not
         row.personal_new_message_disable_link_preview = bool(base["disable_link_preview"])
         row.personal_new_message_send_silently = bool(base["send_silently"])
         return
+    if notification_type == "internal_task_completion":
+        row.personal_internal_task_completion_template = _normalize_copied_base_template(base["template"])
+        row.personal_internal_task_completion_html_enabled = bool(base["html_enabled"])
+        row.personal_internal_task_completion_disable_link_preview = bool(base["disable_link_preview"])
+        row.personal_internal_task_completion_send_silently = bool(base["send_silently"])
+        return
     raise KeyError(notification_type)
 
 
@@ -106,6 +117,8 @@ def _get_use_base_settings(row: EmployeeNotificationPreference | None, notificat
         return bool(row.use_base_new_assignment_settings)
     if notification_type == "new_message":
         return bool(row.use_base_new_message_settings)
+    if notification_type == "internal_task_completion":
+        return bool(row.use_base_internal_task_completion_settings)
     raise KeyError(notification_type)
 
 
@@ -115,6 +128,9 @@ def _set_use_base_settings(row: EmployeeNotificationPreference, notification_typ
         return
     if notification_type == "new_message":
         row.use_base_new_message_settings = bool(value)
+        return
+    if notification_type == "internal_task_completion":
+        row.use_base_internal_task_completion_settings = bool(value)
         return
     raise KeyError(notification_type)
 
@@ -133,6 +149,13 @@ def _personal_template(row: EmployeeNotificationPreference, notification_type: s
             "html_enabled": bool(row.personal_new_message_html_enabled),
             "disable_link_preview": bool(row.personal_new_message_disable_link_preview),
             "send_silently": bool(row.personal_new_message_send_silently),
+        }
+    if notification_type == "internal_task_completion":
+        return {
+            "template": row.personal_internal_task_completion_template or "",
+            "html_enabled": bool(row.personal_internal_task_completion_html_enabled),
+            "disable_link_preview": bool(row.personal_internal_task_completion_disable_link_preview),
+            "send_silently": bool(row.personal_internal_task_completion_send_silently),
         }
     raise KeyError(notification_type)
 
@@ -159,7 +182,27 @@ def _set_personal_template(
         row.personal_new_message_disable_link_preview = bool(disable_link_preview)
         row.personal_new_message_send_silently = bool(send_silently)
         return
+    if notification_type == "internal_task_completion":
+        row.personal_internal_task_completion_template = body
+        row.personal_internal_task_completion_html_enabled = bool(html_enabled)
+        row.personal_internal_task_completion_disable_link_preview = bool(disable_link_preview)
+        row.personal_internal_task_completion_send_silently = bool(send_silently)
+        return
     raise KeyError(notification_type)
+
+
+def _notification_types_for_role(role: str | None) -> tuple[str, ...]:
+    if role == "admin":
+        return ADMIN_PERSONAL_NOTIFICATION_TYPES
+    return AGENT_PERSONAL_NOTIFICATION_TYPES
+
+
+def _title_for_type(notification_type: str, base_title: str) -> str:
+    if notification_type == "new_assignment":
+        return "Новая заявка / задача"
+    if notification_type == "internal_task_completion":
+        return "Выполнение внутренних задач"
+    return base_title
 
 
 def _binding_active(db: Session, user_id: str) -> bool:
@@ -177,10 +220,12 @@ def serialize_employee_notification_preferences(
     db: Session,
     *,
     user_id: str,
+    role: str | None = None,
 ) -> dict[str, Any]:
     row = get_employee_notification_preference(db, user_id=user_id)
     items: list[dict[str, Any]] = []
-    for notification_type in PERSONAL_NOTIFICATION_TYPES:
+    notification_types = _notification_types_for_role(role)
+    for notification_type in notification_types:
         base = _base_template(db, notification_type)
         source = base
         use_base_settings = _get_use_base_settings(row, notification_type)
@@ -190,7 +235,7 @@ def serialize_employee_notification_preferences(
             {
                 "type": notification_type,
                 "key": base["key"],
-                "title": "Новая заявка / задача" if notification_type == "new_assignment" else base["title"],
+                "title": _title_for_type(notification_type, base["title"]),
                 "description": base["description"],
                 "template": source["template"],
                 "default_template": base["default_template"],
@@ -217,6 +262,8 @@ def serialize_employee_notification_preferences(
         "telegram_binding": {
             "active": _binding_active(db, user_id),
         },
+        "role": role or "",
+        "use_base_settings": True if row is None else _get_use_base_settings(row, notification_types[0]),
     }
 
 
@@ -229,21 +276,23 @@ def update_employee_notification_preferences(
     receive_transfer_from_agent: bool,
     receive_new_message: bool,
     notify_internal_task_completion: bool,
+    use_base_settings: bool | None = None,
+    role: str | None = None,
 ) -> EmployeeNotificationPreference:
     row = get_or_create_employee_notification_preference(db, user_id=user_id)
     row.receive_transfer_to_agent = bool(receive_transfer_to_agent)
     row.receive_transfer_from_agent = bool(receive_transfer_from_agent)
     row.receive_new_message = bool(receive_new_message)
     row.notify_internal_task_completion = bool(notify_internal_task_completion)
-
+    notification_types = _notification_types_for_role(role)
     by_type = {str(item.get("type") or ""): item for item in (items or [])}
-    unknown = sorted(set(by_type) - set(PERSONAL_NOTIFICATION_TYPES))
+    unknown = sorted(set(by_type) - set(notification_types))
     if unknown:
         raise ValueError("Неизвестный тип уведомления")
-    missing = [notification_type for notification_type in PERSONAL_NOTIFICATION_TYPES if notification_type not in by_type]
+    missing = [notification_type for notification_type in notification_types if notification_type not in by_type]
     if missing:
-        raise ValueError("Передайте настройки для двух вкладок")
-    for notification_type in PERSONAL_NOTIFICATION_TYPES:
+        raise ValueError("Передайте настройки для всех вкладок")
+    for notification_type in notification_types:
         item = by_type[notification_type]
         use_base_settings = item.get("use_base_settings") is not False
         was_use_base_settings = _get_use_base_settings(row, notification_type)

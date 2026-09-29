@@ -29,6 +29,7 @@ from api.app.models import (
     User,
 )
 from api.app.services import employee_telegram_notifications as notifications
+from api.app.services.automatic_messages import upsert_notification_bot_basic_template
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 
 
@@ -60,7 +61,14 @@ def _user(session, company_id: str, role: str, *, is_active: bool = True) -> Use
     return user
 
 
-def _base_entities(session, *, notify_on_completion: bool = True, pref_enabled: bool = True, responsible_missing: bool = False):
+def _base_entities(
+    session,
+    *,
+    notify_on_completion: bool = True,
+    pref_enabled: bool = True,
+    responsible_missing: bool = False,
+    use_base_internal_task_completion_settings: bool | None = None,
+):
     now = datetime.utcnow()
     company = Company(id=str(uuid.uuid4()), name="ACME", is_active=True, created_at=now)
     client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Система")
@@ -116,6 +124,10 @@ def _base_entities(session, *, notify_on_completion: bool = True, pref_enabled: 
     preference = EmployeeNotificationPreference(
         id=str(uuid.uuid4()),
         user_id=responsible.id,
+        use_base_new_assignment_settings=False,
+        use_base_internal_task_completion_settings=pref_enabled
+        if use_base_internal_task_completion_settings is None
+        else use_base_internal_task_completion_settings,
         notify_internal_task_completion=pref_enabled,
     )
     account = TelegramNotificationAccount(
@@ -252,6 +264,7 @@ def _capture_delivery(monkeypatch, Session):
     sent_files: list[str] = []
     monkeypatch.setattr(notifications, "SessionLocal", Session)
     monkeypatch.setattr(notifications.settings, "employee_telegram_bot_token", "employee-token")
+    monkeypatch.setattr(notifications.settings, "app_public_base_url", "https://desk.example.test")
     monkeypatch.setattr(notifications, "send_message", lambda _chat_id, text, **_kwargs: sent_texts.append(text) or {"ok": True})
     monkeypatch.setattr(
         notifications,
@@ -296,8 +309,8 @@ def test_internal_task_completion_sends_snapshot_title_and_final_text_once(monke
 
     assert data.ticket.status == TicketStatus.CLOSED.value
     assert len(sent_texts) == 1
-    assert "Внутренняя задача выполнена" in sent_texts[0]
-    assert "Задача: Snapshot title" in sent_texts[0]
+    assert f"{data.agent.full_name} выполнил задачу" in sent_texts[0]
+    assert f'<a href="https://desk.example.test/tickets/{data.ticket.ticket_number}">Snapshot title</a>' in sent_texts[0]
     assert "Final text" in sent_texts[0]
     assert "Intermediate text" not in sent_texts[0]
     assert sent_files == []
@@ -350,6 +363,92 @@ def test_internal_task_completion_respects_occurrence_flag_and_user_preference(m
 
         assert sent_texts == []
         assert sent_files == []
+
+
+def test_internal_task_completion_personal_preference_on_sends(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    data = _base_entities(session, pref_enabled=True)
+    sent_texts, sent_files = _capture_delivery(monkeypatch, Session)
+    _message(session, data.ticket, MessageType.AGENT.value, "Final", data.agent.id)
+
+    _close(session, data.ticket, data.agent)
+
+    assert len(sent_texts) == 1
+    assert "Final" in sent_texts[0]
+    assert sent_files == []
+
+
+def test_internal_task_completion_personal_template_is_used(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    data = _base_entities(session, pref_enabled=True, use_base_internal_task_completion_settings=False)
+    pref = session.execute(
+        select(EmployeeNotificationPreference).where(EmployeeNotificationPreference.user_id == data.responsible.id)
+    ).scalar_one()
+    pref.personal_internal_task_completion_template = "PERSONAL [Автор сообщения] => [Задача] => [Результат]"
+    pref.personal_internal_task_completion_html_enabled = False
+    pref.personal_internal_task_completion_disable_link_preview = True
+    pref.personal_internal_task_completion_send_silently = True
+    session.commit()
+    sent_texts, _sent_files = _capture_delivery(monkeypatch, Session)
+    _message(session, data.ticket, MessageType.AGENT.value, "Personal final", data.agent.id)
+
+    _close(session, data.ticket, data.agent)
+
+    assert sent_texts == [f"PERSONAL {data.agent.full_name} => Snapshot title => Personal final"]
+
+
+def test_internal_task_completion_base_mode_uses_basic_template_enabled_flag(monkeypatch):
+    for enabled, expected_count in [(False, 0), (True, 1)]:
+        Session = _session_factory()
+        session = Session()
+        data = _base_entities(session, pref_enabled=False)
+        pref = session.execute(
+            select(EmployeeNotificationPreference).where(EmployeeNotificationPreference.user_id == data.responsible.id)
+        ).scalar_one()
+        pref.use_base_internal_task_completion_settings = True
+        pref.notify_internal_task_completion = True
+        upsert_notification_bot_basic_template(
+            session,
+            "internal_task_completion",
+            enabled=enabled,
+            template="CUSTOM [Задача] => [Результат]" if enabled else "",
+        )
+        session.commit()
+        sent_texts, _sent_files = _capture_delivery(monkeypatch, Session)
+        _message(session, data.ticket, MessageType.AGENT.value, "Final from template", data.agent.id)
+
+        _close(session, data.ticket, data.agent)
+
+        assert len(sent_texts) == expected_count
+        if enabled:
+            assert sent_texts[0] == "CUSTOM Snapshot title => Final from template"
+
+
+def test_internal_task_completion_delivery_gate_wins_over_enabled_base_template(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    data = _base_entities(session, pref_enabled=False)
+    pref = session.execute(
+        select(EmployeeNotificationPreference).where(EmployeeNotificationPreference.user_id == data.responsible.id)
+    ).scalar_one()
+    pref.use_base_internal_task_completion_settings = True
+    pref.notify_internal_task_completion = False
+    upsert_notification_bot_basic_template(
+        session,
+        "internal_task_completion",
+        enabled=True,
+        template="CUSTOM [Задача] => [Результат]",
+    )
+    session.commit()
+    sent_texts, sent_files = _capture_delivery(monkeypatch, Session)
+    _message(session, data.ticket, MessageType.AGENT.value, "Final from disabled delivery", data.agent.id)
+
+    _close(session, data.ticket, data.agent)
+
+    assert sent_texts == []
+    assert sent_files == []
 
 
 def test_internal_task_completion_defaults_to_enabled_when_preference_row_missing(monkeypatch):

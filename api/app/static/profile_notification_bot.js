@@ -8,6 +8,10 @@
       title: "Новое сообщение",
       baseType: "new_message",
     },
+    internal_task_completion: {
+      title: "Выполнение внутренних задач",
+      baseType: "internal_task_completion",
+    },
   };
 
   const DELIVERY_SWITCH_COLUMNS = [
@@ -23,7 +27,7 @@
       },
       {
         key: "notify_internal_task_completion",
-        label: "Завершение внутренних задач",
+        label: "Выполнение внутренних задач",
       },
     ],
     [
@@ -63,6 +67,8 @@
       },
       telegramBindingActive: false,
       activeTextarea: null,
+      role: "",
+      useBaseSettings: true,
     };
 
     const el = {
@@ -133,6 +139,18 @@
       return state.drafts.get(state.activeType) || null;
     }
 
+    function isAdminMode() {
+      return state.role === "admin";
+    }
+
+    function visibleTabConfigs() {
+      return Object.values(PERSONAL_NOTIFICATION_TAB_CONFIG).filter((config) => (
+        isAdminMode()
+          ? config.baseType === "internal_task_completion"
+          : config.baseType !== "internal_task_completion"
+      ));
+    }
+
     function syncDeliveryFromDom() {
       el.root?.querySelectorAll("[data-delivery-switch]").forEach((input) => {
         const key = input.getAttribute("data-delivery-switch") || "";
@@ -173,10 +191,13 @@
     }
 
     function renderDeliverySwitches() {
+      const columns = isAdminMode()
+        ? [[DELIVERY_SWITCH_COLUMNS.flat().find((item) => item.key === "notify_internal_task_completion")].filter(Boolean)]
+        : DELIVERY_SWITCH_COLUMNS;
       return `
-        <div class="notification-control-card notification-delivery-card">
+        <div class="notification-control-card notification-delivery-card ${isAdminMode() ? "notification-admin-compact" : ""}">
           <div class="notification-delivery-grid">
-            ${DELIVERY_SWITCH_COLUMNS.map((column) => `
+            ${columns.map((column) => `
               <div class="notification-delivery-column">
                 ${column.map((item) => {
                   const checked = item.mandatory ? true : state.delivery[item.key] !== false;
@@ -197,19 +218,21 @@
 
     function renderModeControls(draft) {
       const restoreDisabled = !draft || draft.useBaseSettings;
+      const checked = draft?.useBaseSettings !== false;
       return `
-        <div class="notification-control-card notification-page-mode">
+        <div class="notification-control-card notification-page-mode ${isAdminMode() ? "notification-admin-compact" : ""}">
           <label class="status-panel-title admin-agent-header notification-enabled-row">
-            <input type="checkbox" data-use-base-settings ${draft?.useBaseSettings !== false ? "checked" : ""} />
+            <input type="checkbox" data-use-base-settings ${checked ? "checked" : ""} />
             <span>Использовать базовые настройки уведомлений</span>
           </label>
-          <button type="button" class="action" data-restore-base ${restoreDisabled ? "disabled" : ""}>Восстановить базовые настройки</button>
+          ${isAdminMode() ? "" : `<button type="button" class="action" data-restore-base ${restoreDisabled ? "disabled" : ""}>Восстановить базовые настройки</button>`}
         </div>
       `;
     }
 
     function renderTabs() {
-      const tabs = Object.values(PERSONAL_NOTIFICATION_TAB_CONFIG);
+      const tabs = visibleTabConfigs();
+      if (isAdminMode() && tabs.length <= 1) return "";
       return `
         <div class="notification-tabs notification-tabs-personal" role="tablist" aria-label="Персональные уведомления">
           ${tabs.map((config) => `
@@ -307,7 +330,7 @@
     }
 
     function syncAllDrafts() {
-      Object.values(PERSONAL_NOTIFICATION_TAB_CONFIG).forEach(syncDraft);
+      visibleTabConfigs().forEach(syncDraft);
       syncDeliveryFromDom();
     }
 
@@ -343,6 +366,17 @@
         if (current) syncDraft(current);
         syncDeliveryFromDom();
         const nextUseBaseSettings = !!event.target.checked;
+        if (isAdminMode()) {
+          const skipTemplateValidationForInheritanceTransitionType = activeDraft?.useBaseSettings && !nextUseBaseSettings
+            ? current?.baseType || state.activeType
+            : "";
+          if (activeDraft) activeDraft.useBaseSettings = nextUseBaseSettings;
+          await save({
+            quiet: true,
+            skipTemplateValidationForInheritanceTransitionType,
+          });
+          return;
+        }
         const skipTemplateValidationForInheritanceTransitionType = activeDraft?.useBaseSettings && !nextUseBaseSettings
           ? current?.baseType || state.activeType
           : "";
@@ -365,6 +399,8 @@
         new_message: payload?.delivery?.new_message !== false,
         notify_internal_task_completion: payload?.delivery?.notify_internal_task_completion !== false,
       };
+      state.role = String(payload?.role || "");
+      state.useBaseSettings = payload?.use_base_settings !== false;
       state.telegramBindingActive = !!payload?.telegram_binding?.active;
       state.items = Array.isArray(payload?.items) ? payload.items : [];
       state.drafts = new Map();
@@ -379,7 +415,7 @@
     }
 
     function validateBeforeSave(options = {}) {
-      for (const config of Object.values(PERSONAL_NOTIFICATION_TAB_CONFIG)) {
+      for (const config of visibleTabConfigs()) {
         const error = validateTab(config, options);
         const draft = state.drafts.get(config.baseType);
         if (draft) draft.error = error;
@@ -393,7 +429,7 @@
 
     function requestPayload() {
       return {
-        items: Object.values(PERSONAL_NOTIFICATION_TAB_CONFIG).map((config) => {
+        items: visibleTabConfigs().map((config) => {
           const draft = state.drafts.get(config.baseType);
           return {
             type: config.baseType,
@@ -404,6 +440,7 @@
             send_silently: !!draft?.sendSilently,
           };
         }),
+        use_base_settings: getActiveDraft()?.useBaseSettings !== false,
         delivery: {
           transfer_to_agent: state.delivery.transfer_to_agent !== false,
           transfer_from_agent: state.delivery.transfer_from_agent !== false,
