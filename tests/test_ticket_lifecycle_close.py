@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import and_, desc, or_, select, create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -162,6 +164,226 @@ def _message_attachments(db, message_id):
     return db.execute(select(TicketAttachment).where(TicketAttachment.message_id == message_id)).scalars().all()
 
 
+def _system_messages(session, ticket: Ticket) -> list[str]:
+    return [
+        message.body
+        for message in session.execute(
+            select(TicketMessage)
+            .where(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.SYSTEM.value)
+            .order_by(TicketMessage.created_at.asc())
+        ).scalars()
+    ]
+
+
+def test_admin_normal_task_close_without_agent_result_is_rejected():
+    session = _session()
+    ticket = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        close_ticket_by_actor(
+            session,
+            ticket,
+            SimpleNamespace(id="admin-1", role="admin"),
+            force_without_agent_reply_for_task=False,
+            is_admin_fn=lambda actor: True,
+            get_or_create_client_profile_fn=lambda *_: None,
+            last_agent_message_fn=lambda *_: None,
+            first_client_message_fn=lambda *_: None,
+            send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+            actor_display_name_fn=lambda *_: "Admin",
+            add_message_fn=_add_message,
+            message_attachments_fn=lambda *_: [],
+            send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+            onsite_close_reminder_text="onsite",
+            ticket_closed_client_text="closed",
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error"]["code"] == "close_not_allowed"
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.PENDING.value
+
+
+def test_admin_normal_task_close_with_agent_result_uses_normal_semantics():
+    session = _session()
+    _seed_user(session, "agent-a", role="agent")
+    ticket = _seed_ticket(
+        session,
+        assignee_id="agent-a",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+    client_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        body="Client task",
+        created_at=datetime.utcnow(),
+    )
+    agent_message = _seed_agent_message(session, ticket, "agent-a", body="Task answer")
+    session.add(client_message)
+    session.commit()
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: client_message,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin Boss",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.status == TicketStatus.CLOSED.value
+    assert ticket.closed_by_user_id == "admin-b"
+    assert ticket.completed_by_user_id == "agent-a"
+    messages = _system_messages(session, ticket)
+    assert "Admin Boss закрыл задачу" in messages
+    assert all("принудительно завершена администратором" not in message for message in messages)
+
+
+def test_admin_normal_ticket_close_uses_admin_actor_message():
+    session = _session()
+    ticket = _seed_ticket(session)
+    agent_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value,
+        body="Done",
+        author_user_id="agent-1",
+        agent_visible=True,
+        created_at=datetime.utcnow(),
+    )
+    session.add(agent_message)
+    session.commit()
+
+    result = close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: None,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin Boss",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+    session.refresh(ticket)
+
+    assert result == "closed"
+    assert ticket.status == TicketStatus.CLOSED.value
+    messages = _system_messages(session, ticket)
+    assert "Admin Boss закрыл заявку" in messages
+    assert all("принудительно завершена администратором" not in message for message in messages)
+
+
+def test_admin_normal_group_parent_close_uses_group_task_actor_message():
+    session = _session()
+    ticket = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+    )
+    client_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        body="Group task",
+        created_at=datetime.utcnow(),
+    )
+    agent_message = _seed_agent_message(session, ticket, "agent-1", body="Group done")
+    session.add(client_message)
+    session.commit()
+
+    close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: client_message,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin Boss",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+
+    messages = _system_messages(session, ticket)
+    assert "Admin Boss закрыл групповую задачу" in messages
+    assert all("принудительно завершена администратором" not in message for message in messages)
+
+
+def test_admin_normal_group_child_close_uses_child_task_actor_message():
+    session = _session()
+    ticket = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id="parent-1",
+    )
+    client_message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.CLIENT.value,
+        body="Child task",
+        created_at=datetime.utcnow(),
+    )
+    agent_message = _seed_agent_message(session, ticket, "agent-1", body="Child done")
+    session.add(client_message)
+    session.commit()
+
+    close_ticket_by_actor(
+        session,
+        ticket,
+        SimpleNamespace(id="admin-b", role="admin"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: True,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda *_: client_message,
+        send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        actor_display_name_fn=lambda *_: "Admin Boss",
+        add_message_fn=_add_message,
+        message_attachments_fn=lambda *_: [],
+        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+    session.flush()
+
+    messages = _system_messages(session, ticket)
+    assert "Admin Boss закрыл подзадачу" in messages
+    assert all("принудительно завершена администратором" not in message for message in messages)
+
+
 def test_manual_ticket_close_clears_auto_close_timer():
     session = _session()
     ticket = _seed_ticket(session)
@@ -264,6 +486,8 @@ def test_admin_forced_ticket_without_assignee_response_does_not_count_completion
     assert ticket.closed_by_user_id == "admin-b"
     assert ticket.completed_by_user_id is None
     assert ticket.completed_counted_at == ticket.closed_at
+    messages = _system_messages(session, ticket)
+    assert any("принудительно завершена администратором" in message for message in messages)
 
 
 def test_admin_forced_ticket_after_assignee_text_is_attributed_to_assignee():

@@ -759,6 +759,7 @@ def close_ticket_by_actor(
 ) -> str:
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     is_admin_action = is_admin_fn(actor)
+    is_force_close_action = is_admin_action and force_without_agent_reply_for_task
 
     def _finalize_wrapper(db_session: Session, parent_ticket: Ticket, **kwargs):
         return finalize_group_parent_if_ready(
@@ -888,7 +889,11 @@ def close_ticket_by_actor(
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
                     add_message_fn=add_message_fn,
                 )
-            close_text = "Групповая задача завершена сотрудником" if not is_admin_action else f"Групповая задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            close_text = (
+                f"{actor_display_name_fn(db, actor)} закрыл групповую задачу"
+                if is_admin_action and not is_force_close_action
+                else "Групповая задача завершена сотрудником" if not is_force_close_action else f"Групповая задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            )
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         elif ticket.task_kind == TicketTaskKind.GROUP_CHILD.value:
             _close_group_child_if_ready(
@@ -899,12 +904,16 @@ def close_ticket_by_actor(
                 add_message_fn=add_message_fn,
                 finalize_group_parent_if_ready_fn=_finalize_wrapper,
             )
-            close_text = "Подзадача завершена сотрудником" if not is_admin_action else f"Подзадача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            close_text = (
+                f"{actor_display_name_fn(db, actor)} закрыл подзадачу"
+                if is_admin_action and not is_force_close_action
+                else "Подзадача завершена сотрудником" if not is_force_close_action else f"Подзадача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            )
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         else:
             subject_text = resolve_ticket_subject(db, ticket)
             final_attachments = message_attachments_fn(db, last_agent_message.id)
-            if suppress_task_client_delivery and not is_admin_action and actor.role in {"agent", "trainee"}:
+            if suppress_task_client_delivery and not is_force_close_action:
                 schedule_internal_task_completion_notification(
                     db,
                     ticket=ticket,
@@ -934,12 +943,20 @@ def close_ticket_by_actor(
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
                     add_message_fn=add_message_fn,
                 )
-            close_text = "Задача завершена сотрудником" if not is_admin_action else f"Задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            close_text = (
+                f"{actor_display_name_fn(db, actor)} закрыл задачу"
+                if is_admin_action and not is_force_close_action
+                else "Задача завершена сотрудником" if not is_force_close_action else f"Задача принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+            )
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
     elif workflow_type == TicketWorkflowType.TICKET.value:
         review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
         review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
-        close_text = "Заявка закрыта сотрудником" if not is_admin_action else f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+        close_text = (
+            f"{actor_display_name_fn(db, actor)} закрыл заявку"
+            if is_admin_action and not is_force_close_action
+            else "Заявка закрыта сотрудником" if not is_force_close_action else f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
+        )
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
         if bool(ticket.onsite_triggered):
             add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
@@ -956,7 +973,7 @@ def close_ticket_by_actor(
         if review_cycle is not None:
             finalize_review_offer_close_message(db, cycle=review_cycle, close_response=close_response)
     else:
-        close_text = "Автообращение завершено системой" if not is_admin_action else f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}"
+        close_text = "Автообращение завершено системой" if not is_force_close_action else f"Автообращение принудительно завершено администратором: {actor_display_name_fn(db, actor)}"
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
     _mark_ticket_completed(db, ticket, actor, closed_at)
     return "closed"

@@ -510,6 +510,35 @@ def test_admin_forced_internal_task_close_without_employee_result_does_not_notif
     assert sent_files == []
 
 
+def test_admin_normal_internal_task_close_notifies_with_agent_result_author(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    data = _base_entities(session)
+    sent_texts, sent_files = _capture_delivery(monkeypatch, Session)
+    _message(session, data.ticket, MessageType.AGENT.value, "Final by employee", data.agent.id)
+
+    assert _close(session, data.ticket, data.responsible, force=False, is_admin=True) == "closed"
+
+    messages = [
+        message.body
+        for message in session.execute(
+            select(TicketMessage)
+            .where(TicketMessage.ticket_id == data.ticket.id, TicketMessage.message_type == MessageType.SYSTEM.value)
+            .order_by(TicketMessage.created_at.asc())
+        ).scalars()
+    ]
+    assert data.ticket.status == TicketStatus.CLOSED.value
+    assert data.ticket.closed_by_user_id == data.responsible.id
+    assert data.ticket.completed_by_user_id == data.agent.id
+    assert f"{data.responsible.full_name} закрыл задачу" in messages
+    assert all("принудительно завершена администратором" not in message for message in messages)
+    assert len(sent_texts) == 1
+    assert f"{data.agent.full_name} выполнил задачу" in sent_texts[0]
+    assert "Final by employee" in sent_texts[0]
+    assert data.responsible.full_name not in sent_texts[0]
+    assert sent_files == []
+
+
 def test_ordinary_task_close_does_not_schedule_internal_completion_notification(monkeypatch):
     Session = _session_factory()
     session = Session()
