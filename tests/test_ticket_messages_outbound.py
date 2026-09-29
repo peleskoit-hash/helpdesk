@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from fastapi import BackgroundTasks
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
@@ -882,6 +884,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert "filePreloads: new Map()" in ticket_js
     assert "canUseAttachmentPreload" in ticket_js
     assert "workflowType: () => state.card?.workflow_type || \"ticket\"" in ticket_js
+    assert '["reply", "comment"].includes(state.composeMode)' in ticket_js
     assert "AbortController" in composer
 
 
@@ -912,6 +915,162 @@ def test_selected_files_css_contract_keeps_rows_non_shrinking_and_container_scro
     assert "flex: 0 0 auto;" in selected_file_item_block
     assert "flex-shrink: 0;" in selected_file_item_block
     assert "min-height: 54px;" in selected_file_item_block
+
+
+def test_comment_mode_keeps_add_files_button_available():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+const toggles = [];
+const ctx = {{
+  state: {{
+    composeMode: "comment",
+    card: {{ status: "pending" }},
+  }},
+  el: {{
+    modeReplyBtn: {{ classList: {{ toggle() {{}} }} }},
+    modeCommentBtn: {{ classList: {{ toggle() {{}} }} }},
+    messageInput: {{ classList: {{ toggle() {{}} }} }},
+    addFilesBtn: {{
+      disabled: true,
+      title: "",
+      classList: {{ toggle(name, value) {{ toggles.push([name, value]); }} }},
+    }},
+  }},
+}};
+
+global.TicketComposer.applyComposeModeUi(ctx);
+console.log(JSON.stringify({{
+  disabled: ctx.el.addFilesBtn.disabled,
+  title: ctx.el.addFilesBtn.title,
+}}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["disabled"] is False
+    assert payload["title"]
+
+
+def test_comment_file_selection_uses_existing_attachment_preload_flow():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.crypto = {{ randomUUID: () => "archive-group-1" }};
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.FormData = class FakeFormData {{
+  constructor() {{
+    this._entries = [];
+  }}
+  append(key, value, filename) {{
+    this._entries.push([key, filename ? filename : value]);
+  }}
+  entries() {{
+    return this._entries[Symbol.iterator]();
+  }}
+}};
+global.AbortController = class FakeAbortController {{
+  constructor() {{
+    this.signal = {{}};
+  }}
+  abort() {{}}
+}};
+global.document = {{
+  createElement() {{
+    return {{
+      className: "",
+      textContent: "",
+      append() {{}},
+      addEventListener() {{}},
+      classList: {{ add() {{}}, remove() {{}}, toggle() {{}} }},
+    }};
+  }},
+}};
+global.setInterval = () => 1;
+global.clearInterval = () => {{}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+(async () => {{
+const preloadCalls = [];
+const sendCalls = [];
+const file = {{ name: "comment.pdf", size: 3 }};
+const ctx = {{
+  state: {{
+    ticketId: "ticket-1",
+    selectedFiles: [],
+    filePreloads: new Map(),
+    currentArchiveGroupId: null,
+    composeMode: "comment",
+    role: "agent",
+    card: {{ workflow_type: "ticket", status: "pending" }},
+    quoteMessageId: null,
+    isSendingReply: false,
+    pendingCloseAfterSend: false,
+  }},
+  el: {{
+    replyFilesInput: {{ value: "" }},
+    selectedFilesList: null,
+    messageInput: {{ value: "internal note" }},
+  }},
+  canUseAttachmentPreload: () => true,
+  workflowType: () => "ticket",
+  api: (url, options = {{}}) => {{
+    const entries = Array.from(options.body.entries());
+    if (url.endsWith("/attachment-preloads")) {{
+      preloadCalls.push(entries);
+      return Promise.resolve({{ id: "preload-ready", status: "ready" }});
+    }}
+    if (url.endsWith("/comment")) {{
+      sendCalls.push(entries);
+      return Promise.resolve({{ ok: true }});
+    }}
+    throw new Error(`Unexpected URL: ${{url}}`);
+  }},
+  loadCard: async () => {{}},
+  setStatus: () => {{}},
+  showError: (message) => {{ throw new Error(message); }},
+  isOnsitePhraseJs: () => false,
+  renderAvailabilityStatus: () => {{}},
+  action: async () => {{}},
+}};
+
+global.TicketComposer.queueSelectedFiles(ctx, [file]);
+await Promise.resolve();
+await Promise.resolve();
+await global.TicketComposer.sendByMode(ctx);
+console.log(JSON.stringify({{ preloadCalls, sendCalls }}));
+}})().catch((error) => {{
+  console.error(error);
+  process.exit(1);
+}});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert len(payload["preloadCalls"]) == 1
+    archive_group_entry = next(entry for entry in payload["preloadCalls"][0] if entry[0] == "archive_group_id")
+    assert archive_group_entry[1]
+    assert len(payload["sendCalls"]) == 1
+    assert ["text", "internal note"] in payload["sendCalls"][0]
+    assert ["preloaded_attachment_id", "preload-ready"] in payload["sendCalls"][0]
 
 
 def test_archive_coordination_contract_avoids_group_wide_for_update_and_limits_dev_reload_scope():
@@ -2694,6 +2853,270 @@ def test_plain_ticket_file_reply_persists_card_attachment_and_starts_auto_close_
     assert scheduled[0]["attachment_id"] == attachments[0].id
     assert len(agent_messages) == 1
     assert agent_messages[0].attachments[0].original_filename == "ready.pdf"
+
+
+def test_internal_comment_raw_file_is_rejected_without_final_attachment(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+
+    async def run():
+        await reply_to_ticket(
+            request=_MultipartRequest(_FormData(text="Internal note", files=[_upload("note.pdf", b"pdf")])),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment text must not be sent")),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw comment file must not be saved")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be sent")),
+            claim_attachment_preload=lambda *_args, **_kwargs: None,
+            schedule_attachment_delivery=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be scheduled")),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+
+    assert raised.value.status_code == 400
+    assert raised.value.detail["error"]["code"] == "comment_raw_files_not_allowed"
+    assert messages == []
+
+
+def test_internal_comment_file_only_ready_preload_is_allowed(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    path = tmp_path / "only.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="only.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        telegram_file_id="ready-file-id",
+        status="ready",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_multipart_request_with_preload(text="", preload_id=preload.id),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment text must not be sent")),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be sent")),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be scheduled")),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+
+    assert messages[0].message_type == MessageType.INTERNAL.value
+    assert messages[0].body == ""
+    assert attachments[0].original_filename == "only.pdf"
+    assert attachments[0].telegram_file_id == "ready-file-id"
+
+
+def test_internal_comment_ready_preload_is_claimed_without_client_delivery(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    path = tmp_path / "ready.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="ready.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        telegram_file_id="ready-file-id",
+        status="ready",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+    sent_to_client = []
+    scheduled = []
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_multipart_request_with_preload(text="Internal with preload", preload_id=preload.id, single_attachment=True),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("text"),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("file"),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+    claimed_preload = session.get(outbound_service.TicketAttachmentPreload, preload.id)
+
+    assert sent_to_client == []
+    assert scheduled == []
+    assert messages[0].message_type == MessageType.INTERNAL.value
+    assert attachments[0].telegram_file_id == "ready-file-id"
+    assert attachments[0].telegram_delivery_status is None
+    assert claimed_preload.final_attachment_id == attachments[0].id
+
+
+def test_internal_comment_claims_multiple_ready_preloads_without_client_delivery(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    preloads = []
+    for filename, file_id in [("first.pdf", "ready-file-1"), ("second.pdf", "ready-file-2")]:
+        path = tmp_path / filename
+        path.write_bytes(b"pdf")
+        preload = outbound_service.TicketAttachmentPreload(
+            id=str(uuid.uuid4()),
+            ticket_id=ticket.id,
+            user_id="agent-1",
+            original_filename=filename,
+            mime_type="application/pdf",
+            file_size=3,
+            local_path=str(path),
+            telegram_file_id=file_id,
+            status="ready",
+            created_at=datetime.utcnow(),
+        )
+        session.add(preload)
+        preloads.append(preload)
+    session.commit()
+    sent_to_client = []
+    scheduled = []
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_MultipartRequest(_FormData(text="Internal with files", files=[], preloaded_attachment_ids=[preload.id for preload in preloads])),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("text"),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: sent_to_client.append("file"),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    attachments = _attachments(session, messages[0].id)
+
+    assert sent_to_client == []
+    assert scheduled == []
+    assert len(messages) == 1
+    assert messages[0].message_type == MessageType.INTERNAL.value
+    assert len(attachments) == 2
+    assert {attachment.original_filename for attachment in attachments} == {"first.pdf", "second.pdf"}
+    assert {attachment.message_id for attachment in attachments} == {messages[0].id}
+
+
+def test_internal_comment_uploading_preload_is_not_claimed_or_sent(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    path = tmp_path / "uploading.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="agent-1",
+        original_filename="uploading.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        status="uploading",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+
+    async def run():
+        await reply_to_ticket(
+            request=_multipart_request_with_preload(text="Internal with uploading preload", preload_id=preload.id),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment text must not be sent")),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw upload should not be used")),
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be sent")),
+            claim_attachment_preload=lambda db, preload_id, expected_ticket_id, expected_user_id: outbound_service.claim_attachment_preload(
+                db,
+                preload_id=preload_id,
+                ticket_id=expected_ticket_id,
+                user_id=expected_user_id,
+            ),
+            schedule_attachment_delivery=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("comment file must not be scheduled")),
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(run())
+
+    messages = _messages(session, ticket.id)
+    saved_preload = session.get(outbound_service.TicketAttachmentPreload, preload.id)
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error"]["code"] == "attachment_preload_not_ready"
+    assert messages == []
+    assert saved_preload.final_attachment_id is None
 
 
 def test_send_attachment_to_client_uses_telegram_file_id_when_local_preload_file_was_cleaned(monkeypatch, tmp_path):

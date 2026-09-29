@@ -208,6 +208,52 @@ def test_admin_normal_task_close_without_agent_result_is_rejected():
     assert ticket.status == TicketStatus.PENDING.value
 
 
+def test_admin_normal_task_close_with_only_internal_comment_attachment_is_rejected():
+    session = _session()
+    ticket = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.NORMAL.value,
+    )
+    comment = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=MessageType.INTERNAL.value,
+        body="Internal note",
+        author_user_id="agent-1",
+        agent_visible=True,
+        message_status="normal",
+        created_at=datetime.utcnow(),
+    )
+    session.add(comment)
+    session.commit()
+    _seed_attachment(session, ticket, comment)
+
+    with pytest.raises(HTTPException) as raised:
+        close_ticket_by_actor(
+            session,
+            ticket,
+            SimpleNamespace(id="admin-1", role="admin"),
+            force_without_agent_reply_for_task=False,
+            is_admin_fn=lambda actor: True,
+            get_or_create_client_profile_fn=lambda *_: None,
+            last_agent_message_fn=lambda *_: None,
+            first_client_message_fn=lambda *_: None,
+            send_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+            actor_display_name_fn=lambda *_: "Admin",
+            add_message_fn=_add_message,
+            message_attachments_fn=_message_attachments,
+            send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
+            onsite_close_reminder_text="onsite",
+            ticket_closed_client_text="closed",
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error"]["code"] == "close_not_allowed"
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.PENDING.value
+
+
 def test_admin_normal_task_close_with_agent_result_uses_normal_semantics():
     session = _session()
     _seed_user(session, "agent-a", role="agent")

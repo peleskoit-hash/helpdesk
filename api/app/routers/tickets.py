@@ -1322,14 +1322,38 @@ def delete_attachment_preload(
 
 
 @router.post("/{ticket_id}/comment")
-def comment(ticket_id: str, payload: TextPayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+async def comment(
+    ticket_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    return comment_on_ticket(
+    return await reply_to_ticket(
+        request=request,
         db=db,
         user=user,
         ticket=ticket,
-        payload=payload,
+        message_type=MessageType.INTERNAL,
+        send_to_telegram_client=_send_to_telegram_client,
+        telegram_message_id_from_response=_telegram_message_id,
+        save_upload_attachment=_save_upload_attachment,
+        send_attachment_to_telegram_client=lambda db_session, t, a, required, **kwargs: _send_attachment_to_telegram_client(
+            db_session, t, a, required=required, **kwargs
+        ),
+        claim_attachment_preload=lambda db_session, preload_id, expected_ticket_id, expected_user_id: claim_attachment_preload(
+            db_session,
+            preload_id=preload_id,
+            ticket_id=expected_ticket_id,
+            user_id=expected_user_id,
+        ),
+        schedule_attachment_delivery=lambda **kwargs: background_tasks.add_task(deliver_ticket_attachment, **kwargs),
         unfreeze_ticket_on_message=unfreeze_ticket_on_message,
+        remove_client_close_button=_remove_client_close_button,
+        refresh_ticket_auto_close=lambda db_session, t, restart_from_now: refresh_ticket_auto_close(
+            db_session, t, restart_from_now=restart_from_now, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer
+        ),
     )
 
 

@@ -387,7 +387,7 @@ function composerCtx() {
     isOnsitePhraseJs,
     updateSendByEnterPreference,
     workflowType: () => state.card?.workflow_type || "ticket",
-    canUseAttachmentPreload: () => state.composeMode === "reply" && ["ticket", "task"].includes(state.card?.workflow_type || "ticket"),
+    canUseAttachmentPreload: () => ["reply", "comment"].includes(state.composeMode) && ["ticket", "task"].includes(state.card?.workflow_type || "ticket"),
   };
 }
 
@@ -948,7 +948,7 @@ function renderCard() {
   el.messageInput.disabled = isClosed || isReadonly;
   el.messageInput.placeholder = isReadonly ? "Режим только для чтения" : "Текст ответа/комментария";
   el.sendNowBtn.disabled = isClosed || isReadonly;
-  if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed || isReadonly || state.composeMode !== "reply";
+  if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed || isReadonly;
 
   TicketControls.renderTicketControlsView(controlsCtx());
   if (renderResult.wasNearBottom) {

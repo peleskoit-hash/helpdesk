@@ -351,6 +351,27 @@ def test_internal_task_completion_sends_text_and_only_final_file(monkeypatch):
     assert sent_files == []
 
 
+def test_internal_task_completion_ignores_comment_attachment_before_agent_result(monkeypatch):
+    Session = _session_factory()
+    session = Session()
+    data = _base_entities(session)
+    sent_texts, sent_files = _capture_delivery(monkeypatch, Session)
+    now = datetime.utcnow()
+    comment = _message(session, data.ticket, MessageType.INTERNAL.value, "Internal context", data.agent.id, created_at=now)
+    _attachment(session, data.ticket, comment, filename="internal.pdf")
+    final = _message(session, data.ticket, MessageType.AGENT.value, "Final with file", data.agent.id, created_at=now + timedelta(seconds=1))
+    _attachment(session, data.ticket, final, filename="final.pdf")
+
+    _close(session, data.ticket, data.agent)
+
+    assert len(sent_texts) == 1
+    assert "Final with file" in sent_texts[0]
+    assert "Файлы:\nfinal.pdf" in sent_texts[0]
+    assert "Internal context" not in sent_texts[0]
+    assert "internal.pdf" not in sent_texts[0]
+    assert sent_files == []
+
+
 def test_internal_task_completion_respects_occurrence_flag_and_user_preference(monkeypatch):
     for notify_on_completion, pref_enabled in [(False, True), (True, False)]:
         Session = _session_factory()

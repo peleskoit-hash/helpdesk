@@ -156,6 +156,7 @@ async def reply_to_ticket(
     db: Session,
     user: CurrentUser,
     ticket: Ticket,
+    message_type: MessageType = MessageType.AGENT,
     send_to_telegram_client: Callable[..., dict | None],
     telegram_message_id_from_response: Callable[[dict | None], str | None],
     save_upload_attachment: Callable[[Session, Ticket, TicketMessage, UploadFile], TicketAttachment],
@@ -166,7 +167,11 @@ async def reply_to_ticket(
     remove_client_close_button: Callable[[Session, Ticket], None],
     refresh_ticket_auto_close: Callable[[Session, Ticket, bool], None],
 ) -> dict:
-    if not can_reply(user):
+    is_internal_comment = message_type == MessageType.INTERNAL
+    if is_internal_comment:
+        if not can_comment(user):
+            _error(403, "readonly_role", "Нет прав на внутренний комментарий")
+    elif not can_reply(user):
         _error(403, "readonly_role", "Нет прав на отправку ответа")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
@@ -199,7 +204,7 @@ async def reply_to_ticket(
         text = payload.text.strip()
         quote_message_id = payload.quote_message_id
         if not text:
-            _error(400, "reply_payload_empty", "Текст ответа не может быть пустым")
+            _error(400, "reply_payload_empty", "Текст сообщения не может быть пустым")
 
     quote_telegram_message_id = None
     if quote_message_id:
@@ -211,10 +216,16 @@ async def reply_to_ticket(
     is_plain_ticket = workflow_type == TicketWorkflowType.TICKET.value
     has_attachments = bool(uploaded_files) or bool(preloaded_attachment_ids)
     prefer_caption = single_attachment_marker and _is_caption_compatible_text(text)
-    if is_plain_ticket and len(preloaded_attachment_ids) > 1:
+    if is_plain_ticket and not is_internal_comment and len(preloaded_attachment_ids) > 1:
         _error(400, "reply_payload_too_many_preloads", "Для обычной заявки preload отправляется по одному файлу")
 
-    if is_plain_ticket and has_attachments:
+    if is_internal_comment and preloaded_attachment_ids:
+        if any(not str(preload_id or "").strip() for preload_id in preloaded_attachment_ids):
+            _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+    if is_internal_comment and uploaded_files:
+        _error(400, "comment_raw_files_not_allowed", "Файлы комментария должны быть сначала подготовлены через preload")
+
+    if is_plain_ticket and has_attachments and not is_internal_comment:
         agent_message = add_message(
             db=db,
             ticket=ticket,
@@ -299,7 +310,7 @@ async def reply_to_ticket(
         return {"ok": True}
 
     sent_message_id = None
-    if workflow_type != TicketWorkflowType.TASK.value and text:
+    if workflow_type != TicketWorkflowType.TASK.value and text and not is_internal_comment:
         try:
             response = send_to_telegram_client(
                 db,
@@ -320,7 +331,7 @@ async def reply_to_ticket(
     agent_message = add_message(
         db=db,
         ticket=ticket,
-        message_type=MessageType.AGENT,
+        message_type=message_type,
         body=text or "",
         author_user_id=user.id,
         telegram_message_id=sent_message_id,
@@ -328,7 +339,7 @@ async def reply_to_ticket(
 
     attachments: list[TicketAttachment] = []
     for preloaded_attachment_id in preloaded_attachment_ids:
-        if workflow_type != TicketWorkflowType.TASK.value:
+        if workflow_type != TicketWorkflowType.TASK.value and not is_internal_comment:
             _error(409, "attachment_preload_unsupported_workflow", "Preload is not available for this reply flow")
         if not user.id:
             _error(409, "user_id_required", "Для отправки preload нужен корректный пользователь")
@@ -349,7 +360,7 @@ async def reply_to_ticket(
         attachment = save_upload_attachment(db, ticket, agent_message, upload)
         attachments.append(attachment)
 
-    if workflow_type != TicketWorkflowType.TASK.value:
+    if workflow_type != TicketWorkflowType.TASK.value and not is_internal_comment:
         for attachment in attachments:
             try:
                 send_attachment_to_telegram_client(
@@ -378,16 +389,17 @@ async def reply_to_ticket(
     unfreeze_ticket_on_message(ticket)
     if was_frozen and not ticket.is_frozen:
         sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
-    if is_plain_ticket and user.role == "agent" and _is_onsite_phrase(text):
+    if is_plain_ticket and not is_internal_comment and user.role == "agent" and _is_onsite_phrase(text):
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
         if actor_user is not None and actor_user.availability_status != "on_ticket":
             set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
-    remove_client_close_button(db, ticket)
-    if ticket.status == TicketStatus.NEW.value:
-        ticket.status = TicketStatus.PENDING.value
-    refresh_ticket_auto_close(db, ticket, True)
+    if not is_internal_comment:
+        remove_client_close_button(db, ticket)
+        if ticket.status == TicketStatus.NEW.value:
+            ticket.status = TicketStatus.PENDING.value
+        refresh_ticket_auto_close(db, ticket, True)
     db.commit()
     return {"ok": True}
 
