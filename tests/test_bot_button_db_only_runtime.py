@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
 from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
@@ -16,6 +16,7 @@ from api.app.routers import telegram as telegram_router
 from api.app.schemas import BotButtonInstructionUpdate
 from api.app.services import bot_button_materialization as materialization
 from api.app.services import button_automation_types
+from api.app.services import saved_files
 from api.app.services import telegram_automation
 from api.app.services.system_tickets import FIRST_CONNECTION_BUTTON_KEY, FIRST_CONNECTION_TITLE, SYSTEM_MENU_TYPE
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
@@ -694,6 +695,174 @@ def test_ticket_send_files_dispatch_keeps_ticket_open(monkeypatch):
     assert result["workflow_type"] == "ticket"
     assert calls == ["direct", "rules"]
     assert ticket.workflow_type == "ticket"
+
+
+def test_legacy_button_file_still_sends(monkeypatch, tmp_path):
+    session = _session()
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    legacy_path = files_dir / "legacy.pdf"
+    legacy_path.write_bytes(b"legacy")
+    _seed_row(session, automation_key="send_files", files_json=["legacy.pdf"])
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "BUTTON_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(telegram_router, "send_document", lambda chat_id, path, filename=None: sent.append((chat_id, path, filename)))
+
+    ok, reason = telegram_router._send_button_direct_file(session, _ticket(), _button(), "chat-1")
+
+    assert ok is True
+    assert reason is None
+    assert sent == [("chat-1", legacy_path.resolve(), "legacy.pdf")]
+
+
+def test_saved_file_reference_resolves_to_physical_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session()
+    saved = saved_files.create_saved_file(session, content=b"saved", display_filename="saved.pdf")
+    session.commit()
+
+    resolved_path, telegram_filename = telegram_router._resolve_button_file_path(session, f"saved:{saved.id}")
+
+    assert resolved_path == saved_files.resolve_saved_file_path(saved)
+    assert telegram_filename == "saved.pdf"
+
+
+def test_direct_button_sends_saved_file_reference(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session()
+    saved = saved_files.create_saved_file(session, content=b"saved", display_filename="saved.pdf")
+    session.commit()
+    _seed_row(session, automation_key="send_files", files_json=[f"saved:{saved.id}"])
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_document", lambda chat_id, path, filename=None: sent.append((chat_id, path, filename)))
+
+    ok, reason = telegram_router._send_button_direct_file(session, _ticket(), _button(), "chat-1")
+
+    assert ok is True
+    assert reason is None
+    assert sent == [("chat-1", saved_files.resolve_saved_file_path(saved), "saved.pdf")]
+
+
+def test_conditional_button_sends_saved_file_reference(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session()
+    saved = saved_files.create_saved_file(session, content=b"saved", display_filename="saved.pdf")
+    session.commit()
+    _seed_row(
+        session,
+        automation_key="send_files",
+        conditional_files_json=[
+            {
+                "conditions": [{"field": "flag", "operator": "eq", "value": "yes"}],
+                "files": [f"saved:{saved.id}"],
+            }
+        ],
+    )
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "_field_value_for_rule", lambda *args, **kwargs: "yes")
+    monkeypatch.setattr(telegram_router, "send_document", lambda chat_id, path, filename=None: sent.append((chat_id, path, filename)))
+
+    telegram_router._send_button_rule_files(session, _ticket(), _button(), "chat-1")
+
+    assert sent == [("chat-1", saved_files.resolve_saved_file_path(saved), "saved.pdf")]
+
+
+def test_direct_saved_file_rename_changes_next_telegram_filename_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session()
+    saved = saved_files.create_saved_file(session, content=b"saved", display_filename="old.pdf")
+    session.commit()
+    original_storage_key = saved.storage_key
+    original_path = saved_files.resolve_saved_file_path(saved)
+    saved_files.rename_saved_file(session, saved, "new.pdf")
+    session.commit()
+    _seed_row(session, automation_key="send_files", files_json=[f"saved:{saved.id}"])
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "send_document", lambda chat_id, path, filename=None: sent.append((chat_id, path, filename)))
+
+    ok, reason = telegram_router._send_button_direct_file(session, _ticket(), _button(), "chat-1")
+
+    assert ok is True
+    assert reason is None
+    assert saved.storage_key == original_storage_key
+    assert saved_files.resolve_saved_file_path(saved) == original_path
+    assert sent == [("chat-1", original_path, "new.pdf")]
+
+
+def test_conditional_saved_file_rename_changes_next_telegram_filename_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session()
+    saved = saved_files.create_saved_file(session, content=b"saved", display_filename="old.pdf")
+    session.commit()
+    original_storage_key = saved.storage_key
+    original_path = saved_files.resolve_saved_file_path(saved)
+    saved_files.rename_saved_file(session, saved, "new.pdf")
+    session.commit()
+    _seed_row(
+        session,
+        automation_key="send_files",
+        conditional_files_json=[
+            {
+                "conditions": [{"field": "flag", "operator": "eq", "value": "yes"}],
+                "files": [f"saved:{saved.id}"],
+            }
+        ],
+    )
+    sent = []
+
+    monkeypatch.setattr(telegram_router, "_field_value_for_rule", lambda *args, **kwargs: "yes")
+    monkeypatch.setattr(telegram_router, "send_document", lambda chat_id, path, filename=None: sent.append((chat_id, path, filename)))
+
+    telegram_router._send_button_rule_files(session, _ticket(), _button(), "chat-1")
+
+    assert saved.storage_key == original_storage_key
+    assert saved_files.resolve_saved_file_path(saved) == original_path
+    assert sent == [("chat-1", original_path, "new.pdf")]
+
+
+def test_missing_saved_file_reference_is_controlled_and_not_sent(monkeypatch):
+    session = _session()
+    _seed_row(session, automation_key="send_files", files_json=[f"saved:{uuid.uuid4()}"])
+    messages = []
+
+    monkeypatch.setattr(telegram_router, "send_document", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not send")))
+    monkeypatch.setattr(telegram_router, "append_system_message", lambda *args, **kwargs: messages.append(args[2]))
+
+    ok, reason = telegram_router._send_button_direct_file(session, _ticket(), _button(), "chat-1")
+
+    assert ok is False
+    assert "saved:" in reason
+    assert messages
+
+
+def test_saved_file_reference_cannot_traverse_storage_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path / "root"))
+    session = _session()
+    saved = SavedFile(
+        id=str(uuid.uuid4()),
+        display_filename="outside.pdf",
+        storage_key="../outside.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        created_at=datetime.utcnow(),
+    )
+    session.add(saved)
+    session.commit()
+    _seed_row(session, automation_key="send_files", files_json=[f"saved:{saved.id}"])
+    messages = []
+
+    monkeypatch.setattr(telegram_router, "send_document", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not send")))
+    monkeypatch.setattr(telegram_router, "append_system_message", lambda *args, **kwargs: messages.append(args[2]))
+
+    ok, reason = telegram_router._send_button_direct_file(session, _ticket(), _button(), "chat-1")
+
+    assert ok is False
+    assert "saved:" in reason
+    assert messages
 
 
 def test_task_send_files_direct_error_does_not_close_task(monkeypatch):

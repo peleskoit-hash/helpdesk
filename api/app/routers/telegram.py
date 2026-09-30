@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import (
+    SavedFile,
     Client,
     Company,
     MessageType,
@@ -55,6 +56,7 @@ from ..services.statistics_lifecycle import (
     sync_work_interval_after_freeze,
     sync_work_interval_after_unfreeze,
 )
+from ..services.saved_files import SavedFileStorageError, resolve_saved_file_path
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
 from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
@@ -1074,15 +1076,16 @@ def _send_file_items(
     for file_item in file_items:
         if not file_item or file_item in sent:
             continue
-        resolved = _resolve_button_file_path(file_item)
+        resolved = _resolve_button_file_path(db, file_item)
         if resolved is None:
             append_system_message(db, ticket, f"Некорректный путь файла {context_label}: {file_item}", agent_visible=True)
             continue
-        if not resolved.exists() or not resolved.is_file():
+        resolved_path, telegram_filename = resolved
+        if not resolved_path.exists() or not resolved_path.is_file():
             append_system_message(db, ticket, f"Файл {context_label} не найден: {file_item}", agent_visible=True)
             continue
         try:
-            send_document(external_chat_id, resolved, filename=resolved.name)
+            send_document(external_chat_id, resolved_path, filename=telegram_filename)
             sent.add(file_item)
         except Exception as exc:
             append_system_message(db, ticket, f"Не удалось отправить файл {context_label} {file_item}: {type(exc).__name__}", agent_visible=True)
@@ -1122,10 +1125,23 @@ def _send_button_rule_files(db: Session, ticket: Ticket, button: ButtonSpec, ext
     _send_file_items(db, ticket, external_chat_id, files_to_send, context_label="по правилу")
 
 
-def _resolve_button_file_path(file_name: str) -> Path | None:
+def _resolve_button_file_path(db: Session, file_name: str) -> tuple[Path, str] | None:
     name = (file_name or "").strip()
     if not name:
         return None
+    if name.startswith("saved:"):
+        saved_file_id = name.removeprefix("saved:").strip()
+        try:
+            saved_file_id = str(uuid.UUID(saved_file_id))
+        except ValueError:
+            return None
+        saved_file = db.get(SavedFile, saved_file_id)
+        if saved_file is None:
+            return None
+        try:
+            return resolve_saved_file_path(saved_file), saved_file.display_filename
+        except SavedFileStorageError:
+            return None
     candidate = Path(name)
     if candidate.is_absolute():
         return None
@@ -1135,7 +1151,7 @@ def _resolve_button_file_path(file_name: str) -> Path | None:
         full_path.relative_to(files_dir)
     except ValueError:
         return None
-    return full_path
+    return full_path, full_path.name
 
 
 def _send_button_direct_file(db: Session, ticket: Ticket, button: ButtonSpec, external_chat_id: str) -> tuple[bool, str | None]:
@@ -1143,17 +1159,18 @@ def _send_button_direct_file(db: Session, ticket: Ticket, button: ButtonSpec, ex
     if not files_to_send:
         return True, None
     for file_item in files_to_send:
-        resolved = _resolve_button_file_path(file_item)
+        resolved = _resolve_button_file_path(db, file_item)
         if resolved is None:
             reason = f"Некорректный путь файла в кнопке: {file_item}"
             append_system_message(db, ticket, reason, agent_visible=True)
             return False, reason
-        if not resolved.exists() or not resolved.is_file():
+        resolved_path, telegram_filename = resolved
+        if not resolved_path.exists() or not resolved_path.is_file():
             reason = f"Файл кнопки не найден: {file_item}"
             append_system_message(db, ticket, reason, agent_visible=True)
             return False, reason
         try:
-            send_document(external_chat_id, resolved, filename=resolved.name)
+            send_document(external_chat_id, resolved_path, filename=telegram_filename)
         except Exception as exc:
             reason = f"Не удалось отправить файл кнопки {file_item}: {type(exc).__name__}"
             append_system_message(db, ticket, reason, agent_visible=True)
