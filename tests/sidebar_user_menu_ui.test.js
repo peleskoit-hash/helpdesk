@@ -102,6 +102,15 @@ class ElementLike extends EventTargetLike {
     this.classList.setFromString(value);
   }
 
+  set innerHTML(value) {
+    this.children = [];
+    this.textContent = String(value || "");
+  }
+
+  get innerHTML() {
+    return this.textContent;
+  }
+
   get id() {
     return this.attributes.id || "";
   }
@@ -124,6 +133,15 @@ class ElementLike extends EventTargetLike {
     child.parentNode = this;
     this.children.push(child);
     return child;
+  }
+
+  closest(selector) {
+    let current = this;
+    while (current) {
+      if (matchesSimpleSelector(current, selector)) return current;
+      current = current.parentNode;
+    }
+    return null;
   }
 
   insertBefore(child, referenceNode) {
@@ -322,6 +340,21 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
     className: "settings-link",
     attributes: { href: "/mass-notifications" },
   });
+  const adminAgentFilter = createElement(document, "div", {
+    id: "adminAgentFilter",
+    className: "admin-agent-filter admin-only hidden",
+  });
+  const adminAgentHeader = createElement(document, "label", { className: "admin-agent-header" });
+  const adminAgentToggle = createElement(document, "input", {
+    id: "adminAgentToggleAll",
+    attributes: { type: "checkbox" },
+  });
+  const adminAgentHeaderText = createElement(document, "span", { textContent: "Все заявки" });
+  const adminAgentList = createElement(document, "div", { id: "adminAgentList", className: "admin-agent-list" });
+  adminAgentHeader.appendChild(adminAgentToggle);
+  adminAgentHeader.appendChild(adminAgentHeaderText);
+  adminAgentFilter.appendChild(adminAgentHeader);
+  adminAgentFilter.appendChild(adminAgentList);
   const stats = createElement(document, "div", { id: "sidebarUserStats", className: "sidebar-user-stats" });
   const statsRow = createElement(document, "div", { className: "sidebar-user-name-row" });
   const legacyName = createElement(document, "div", {
@@ -363,6 +396,7 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
 
   const outside = createElement(document, "div", { id: "outside" });
   aside.appendChild(massLink);
+  aside.appendChild(adminAgentFilter);
   aside.appendChild(stats);
   aside.appendChild(sidebarBottom);
   document.body.appendChild(aside);
@@ -370,8 +404,21 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
   return { document, aside, stats, logoutForm, outside };
 }
 
-function createFetchMock(role = "agent", profileOverrides = {}) {
+const DEFAULT_AGENTS = [
+  { id: "a1", full_name: "Anna Agent" },
+  { id: "b2", full_name: "Boris Trainee" },
+  { id: "c3", full_name: "Cara Agent" },
+];
+
+function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
   const calls = [];
+  const agents = options.agents || DEFAULT_AGENTS;
+  const sessionLoginTs = options.sessionLoginTs ?? 1;
+  const byAssignee = options.byAssignee || {
+    a1: { active: 5, frozen: 2 },
+    b2: { active: 0, frozen: 7 },
+    c3: { active: 4, frozen: 0 },
+  };
   const fetchMock = async (path, options = {}) => {
     calls.push({ path: String(path), method: options.method || "GET", body: options.body || "" });
     let payload = {};
@@ -380,11 +427,11 @@ function createFetchMock(role = "agent", profileOverrides = {}) {
         real_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
         effective_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
         is_real_admin: role === "admin",
-        session_login_ts: 1,
+        session_login_ts: sessionLoginTs,
         app_timezone: "Asia/Tokyo",
       };
     } else if (path === "/api/v1/users/agents") {
-      payload = [{ id: "u1", full_name: "Ivan Petrov" }];
+      payload = agents;
     } else if (path === "/api/v1/users/me/profile") {
       payload = {
         id: "u1",
@@ -396,6 +443,9 @@ function createFetchMock(role = "agent", profileOverrides = {}) {
       };
     } else if (String(path).startsWith("/api/v1/tickets/counts")) {
       payload = { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0 };
+      if (role === "admin") {
+        payload.by_assignee = byAssignee;
+      }
     } else if (path === "/api/v1/users/me/status") {
       payload = { availability_status: JSON.parse(options.body || "{}").availability_status || "offline" };
     }
@@ -408,7 +458,7 @@ function createFetchMock(role = "agent", profileOverrides = {}) {
   return fetchMock;
 }
 
-async function loadSidebar(document, role = "agent", profileOverrides = {}) {
+async function loadSidebar(document, role = "agent", profileOverrides = {}, options = {}) {
   const source = fs.readFileSync("api/app/static/sidebar.js", "utf8");
   const window = {
     location: { pathname: "/tickets", href: "/tickets" },
@@ -427,7 +477,7 @@ async function loadSidebar(document, role = "agent", profileOverrides = {}) {
       return this._src || "";
     }
   }
-  const localStorage = new Map();
+  const localStorage = new Map(Object.entries(options.storage || {}));
   const storageApi = {
     getItem(key) {
       return localStorage.has(key) ? localStorage.get(key) : null;
@@ -439,8 +489,9 @@ async function loadSidebar(document, role = "agent", profileOverrides = {}) {
       localStorage.delete(key);
     },
   };
-  const fetchMock = createFetchMock(role, profileOverrides);
+  const fetchMock = createFetchMock(role, profileOverrides, options);
   window.__fetchCalls = fetchMock.calls;
+  window.__localStorage = localStorage;
   const context = vm.createContext({
     window,
     document,
@@ -462,6 +513,29 @@ async function loadSidebar(document, role = "agent", profileOverrides = {}) {
   vm.runInContext(source, context);
   await window.HelpdeskSidebar.init();
   return window;
+}
+
+async function flushSidebarAsync() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function adminAgentItems(document) {
+  return document.querySelectorAll(".admin-agent-item");
+}
+
+function clickAgent(document, index, ctrlKey = false) {
+  const item = adminAgentItems(document)[index];
+  item.dispatchEvent({ type: "click", target: item, ctrlKey });
+  return item;
+}
+
+function storedAssignees(window) {
+  return JSON.parse(window.__localStorage.get("hd_admin_assignee_ids") || "[]");
+}
+
+function sidebarAssignees(window) {
+  return Array.from(window.HelpdeskSidebar.getState().adminAssigneeIds);
 }
 
 test("sidebar user menu init creates separate panel and binds interactions", async () => {
@@ -524,6 +598,143 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
 
   await window.HelpdeskSidebar.init();
   assert.equal(document.querySelectorAll("[data-sidebar-user-menu]").length, 1);
+});
+
+test("admin agent filter supports click and ctrl click without empty selection", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1", "b2", "c3"]),
+      hd_admin_assignee_login_ts: "1",
+    },
+  });
+
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2", "c3"]);
+  assert.equal(document.querySelector(".admin-agent-header span").textContent, "Все");
+  assert.equal(document.querySelector(".admin-agent-header").classList.contains("pressed"), true);
+  assert.deepEqual(adminAgentItems(document).map((item) => item.classList.contains("active")), [true, true, true]);
+
+  clickAgent(document, 0);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1"]);
+  assert.equal(document.querySelector(".admin-agent-header").classList.contains("pressed"), false);
+
+  clickAgent(document, 1, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2"]);
+  assert.deepEqual(adminAgentItems(document).map((item) => item.classList.contains("active")), [true, true, false]);
+
+  clickAgent(document, 2, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2", "c3"]);
+  assert.equal(document.querySelector(".admin-agent-header").classList.contains("pressed"), true);
+  assert.deepEqual(adminAgentItems(document).map((item) => item.classList.contains("active")), [true, true, true]);
+
+  clickAgent(document, 0, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1"]);
+  assert.equal(document.querySelector(".admin-agent-header").classList.contains("pressed"), false);
+
+  clickAgent(document, 1, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2"]);
+
+  clickAgent(document, 0, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["b2"]);
+  assert.notDeepEqual(sidebarAssignees(window), []);
+
+  const header = document.querySelector(".admin-agent-header");
+  header.dispatchEvent({ type: "click", target: header, ctrlKey: true });
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2", "c3"]);
+  assert.equal(header.classList.contains("pressed"), true);
+  assert.deepEqual(adminAgentItems(document).map((item) => item.classList.contains("active")), [true, true, true]);
+
+  clickAgent(document, 2, true);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["c3"]);
+
+  header.dispatchEvent({ type: "click", target: header });
+  await flushSidebarAsync();
+  assert.deepEqual(storedAssignees(window), ["a1", "b2", "c3"]);
+});
+
+test("admin agent filter keeps reload storage, resets on new login, and preserves first-run marker migration", async () => {
+  let dom = buildSidebarDom();
+  let window = await loadSidebar(dom.document, "admin", {}, {
+    sessionLoginTs: 10,
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["b2"]),
+      hd_admin_assignee_login_ts: "10",
+    },
+  });
+  assert.deepEqual(sidebarAssignees(window), ["b2"]);
+  assert.deepEqual(storedAssignees(window), ["b2"]);
+
+  dom = buildSidebarDom();
+  window = await loadSidebar(dom.document, "admin", {}, {
+    sessionLoginTs: 11,
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["b2"]),
+      hd_admin_assignee_login_ts: "10",
+    },
+  });
+  assert.deepEqual(sidebarAssignees(window), ["a1"]);
+  assert.deepEqual(storedAssignees(window), ["a1"]);
+
+  dom = buildSidebarDom();
+  window = await loadSidebar(dom.document, "admin", {}, {
+    sessionLoginTs: 12,
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["c3"]),
+    },
+  });
+  assert.deepEqual(sidebarAssignees(window), ["c3"]);
+  assert.equal(window.__localStorage.get("hd_admin_assignee_login_ts"), "12");
+
+  dom = buildSidebarDom();
+  window = await loadSidebar(dom.document, "admin", {}, {
+    sessionLoginTs: 13,
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["missing"]),
+      hd_admin_assignee_login_ts: "13",
+    },
+  });
+  assert.deepEqual(sidebarAssignees(window), ["a1"]);
+});
+
+test("admin agent counts render from loadCounts by_assignee without extra fetches and hide zeroes", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1"]),
+      hd_admin_assignee_login_ts: "1",
+    },
+  });
+  const callsAfterInit = window.__fetchCalls.length;
+  const items = adminAgentItems(document);
+
+  assert.equal(items[0].querySelector("[data-agent-count-active]").textContent, "5");
+  assert.equal(items[0].querySelector("[data-agent-count-frozen]").textContent, "2");
+  assert.equal(items[1].querySelector("[data-agent-count-active]").textContent, "");
+  assert.equal(items[1].querySelector("[data-agent-count-frozen]").textContent, "7");
+  assert.equal(items[2].querySelector("[data-agent-count-active]").textContent, "4");
+  assert.equal(items[2].querySelector("[data-agent-count-frozen]").textContent, "");
+
+  assert.equal(window.__fetchCalls.length, callsAfterInit);
+  assert.equal(window.__fetchCalls.filter((call) => String(call.path).startsWith("/api/v1/tickets/counts")).length, 1);
+  assert.equal(window.__fetchCalls.filter((call) => call.path === "/api/v1/users/agents").length, 1);
+});
+
+test("regular non-admin sidebar does not show employee filter", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "agent");
+
+  assert.equal(document.querySelector("#adminAgentFilter").classList.contains("hidden"), true);
+  assert.equal(adminAgentItems(document).length, 0);
+  assert.equal(window.__fetchCalls.filter((call) => call.path === "/api/v1/users/agents").length, 1);
+  assert.equal(window.__fetchCalls.filter((call) => String(call.path).startsWith("/api/v1/tickets/counts")).length, 1);
 });
 
 test("sidebar avatar uses profile avatar_url and keeps user menu clickable", async () => {

@@ -2,6 +2,7 @@
   const TAB_COUNTS_STORAGE_KEY = "hd_tab_counts";
   const AGENTS_CACHE_STORAGE_KEY = "hd_agents_cache";
   const ASSIGNEES_STORAGE_KEY = "hd_admin_assignee_ids";
+  const ASSIGNEES_LOGIN_TS_STORAGE_KEY = "hd_admin_assignee_login_ts";
   const USER_ROLE_STORAGE_KEY = "hd_user_role";
   const STORED_ASSIGNEES_RAW = localStorage.getItem(ASSIGNEES_STORAGE_KEY);
   const rootBody = document.body;
@@ -32,6 +33,21 @@
     };
   }
 
+  function readByAssignee(raw) {
+    if (!raw || typeof raw !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(raw)
+        .filter(([id, value]) => id && value && typeof value === "object")
+        .map(([id, value]) => [
+          String(id),
+          {
+            active: Number(value.active || 0),
+            frozen: Number(value.frozen || 0),
+          },
+        ]),
+    );
+  }
+
   function readStoredAgents() {
     const parsed = safeParse(localStorage.getItem(AGENTS_CACHE_STORAGE_KEY) || "", []);
     if (!Array.isArray(parsed)) return [];
@@ -55,6 +71,7 @@
     avatarFailedUrl: null,
     avatarPendingUrl: null,
     counts: readStoredCounts(),
+    byAssigneeCounts: {},
     agents: readStoredAgents(),
     adminAssigneeIds: safeParse(STORED_ASSIGNEES_RAW || "[]", []),
     hasStoredAssignees: STORED_ASSIGNEES_RAW !== null,
@@ -85,6 +102,7 @@
       appTimezone: state.appTimezone,
       availabilityStatus: state.availabilityStatus || "",
       counts: { ...state.counts },
+      byAssigneeCounts: { ...state.byAssigneeCounts },
       agents: [...state.agents],
       adminAssigneeIds: [...state.adminAssigneeIds],
     };
@@ -535,6 +553,44 @@
     };
   }
 
+  function selectedAgentIds() {
+    const validIds = new Set((state.agents || []).map((agent) => agent.id));
+    return [...new Set(state.adminAssigneeIds || [])].filter((id) => validIds.has(id));
+  }
+
+  function isAllAgentsSelected() {
+    const selected = new Set(selectedAgentIds());
+    return state.agents.length > 0 && state.agents.every((agent) => selected.has(agent.id));
+  }
+
+  function persistAssignees() {
+    try {
+      localStorage.setItem(ASSIGNEES_STORAGE_KEY, JSON.stringify(state.adminAssigneeIds));
+      state.hasStoredAssignees = true;
+    } catch {
+      // noop
+    }
+  }
+
+  function selectAssignees(nextIds) {
+    const validIds = new Set((state.agents || []).map((agent) => agent.id));
+    let normalized = [...new Set(nextIds || [])].filter((id) => validIds.has(id));
+    if (!normalized.length && state.agents.length) {
+      normalized = [state.agents[0].id];
+    }
+    state.adminAssigneeIds = normalized;
+    persistAssignees();
+  }
+
+  function selectAllAssignees() {
+    selectAssignees(state.agents.map((agent) => agent.id));
+  }
+
+  function formatAssigneeCount(value) {
+    const count = Number(value || 0);
+    return count > 0 ? String(count) : "";
+  }
+
   function renderAvailabilityStatus(status) {
     if (status) {
       state.availabilityStatus = status;
@@ -577,25 +633,42 @@
 
   function syncToggleAll(toggle, listEl) {
     if (!toggle || !listEl) return;
-    const selected = new Set(state.adminAssigneeIds || []);
-    const allSelected = state.agents.length > 0 && state.agents.every((a) => selected.has(a.id));
+    const allSelected = isAllAgentsSelected();
     toggle.checked = allSelected;
+    const header = toggle.closest ? toggle.closest(".admin-agent-header") : qs(".admin-agent-header");
+    if (header) {
+      header.classList.toggle("pressed", allSelected);
+      header.setAttribute("aria-pressed", allSelected ? "true" : "false");
+    }
   }
 
   function renderAgentFilter() {
     const listEl = qs("#adminAgentList");
     const toggleAll = qs("#adminAgentToggleAll");
     if (!listEl) return;
+    if (state.role !== "admin") {
+      listEl.innerHTML = "";
+      listEl.dataset.signature = "";
+      return;
+    }
 
     const selectedSet = new Set(state.adminAssigneeIds || []);
-    const signature = (state.agents || []).map((a) => `${a.id}:${a.full_name}`).join("|");
+    const allSelected = isAllAgentsSelected();
+    const countsSignature = Object.entries(state.byAssigneeCounts || {})
+      .map(([id, counts]) => `${id}:${counts.active || 0}:${counts.frozen || 0}`)
+      .join("|");
+    const signature = `${(state.agents || []).map((a) => `${a.id}:${a.full_name}`).join("|")}::${countsSignature}`;
     if (listEl.dataset.signature === signature) {
-      listEl.querySelectorAll("label.admin-agent-item").forEach((label) => {
-        const input = label.querySelector("input[type='checkbox']");
-        if (!input) return;
-        const isSelected = selectedSet.has(input.value);
-        input.checked = isSelected;
-        label.classList.toggle("active", isSelected);
+      listEl.querySelectorAll(".admin-agent-item").forEach((item) => {
+        const id = item.dataset.agentId;
+        const isSelected = selectedSet.has(id);
+        item.classList.toggle("active", isSelected);
+        item.setAttribute("aria-pressed", isSelected ? "true" : "false");
+        const counts = state.byAssigneeCounts?.[id] || {};
+        const activeNode = item.querySelector("[data-agent-count-active]");
+        const frozenNode = item.querySelector("[data-agent-count-frozen]");
+        if (activeNode) activeNode.textContent = formatAssigneeCount(counts.active);
+        if (frozenNode) frozenNode.textContent = formatAssigneeCount(counts.frozen);
       });
       syncToggleAll(toggleAll, listEl);
       return;
@@ -604,26 +677,56 @@
     listEl.dataset.signature = signature;
     listEl.innerHTML = "";
     state.agents.forEach((agent) => {
-      const label = document.createElement("label");
-      label.className = "admin-agent-item";
-      label.innerHTML = `<input type="checkbox" value="${escapeHtml(agent.id)}" /><span>${escapeHtml(agent.full_name)}</span>`;
-      label.addEventListener("click", (event) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "admin-agent-item";
+      item.dataset.agentId = agent.id;
+      const name = document.createElement("span");
+      name.className = "admin-agent-name";
+      name.textContent = agent.full_name;
+      const counts = state.byAssigneeCounts?.[agent.id] || {};
+      const countsNode = document.createElement("span");
+      countsNode.className = "admin-agent-counts";
+      countsNode.setAttribute("aria-label", "\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0435 \u0438 \u0437\u0430\u043c\u043e\u0440\u043e\u0436\u0435\u043d\u043d\u044b\u0435");
+      const activeCount = document.createElement("span");
+      activeCount.className = "admin-agent-count admin-agent-count-active";
+      activeCount.dataset.agentCountActive = "1";
+      activeCount.textContent = formatAssigneeCount(counts.active);
+      const dividerOne = document.createElement("span");
+      dividerOne.className = "admin-agent-count-divider";
+      dividerOne.textContent = "|";
+      const dividerTwo = document.createElement("span");
+      dividerTwo.className = "admin-agent-count-divider admin-agent-count-divider-frozen";
+      dividerTwo.textContent = "|";
+      const frozenCount = document.createElement("span");
+      frozenCount.className = "admin-agent-count admin-agent-count-frozen";
+      frozenCount.dataset.agentCountFrozen = "1";
+      frozenCount.textContent = formatAssigneeCount(counts.frozen);
+      countsNode.appendChild(activeCount);
+      countsNode.appendChild(dividerOne);
+      countsNode.appendChild(dividerTwo);
+      countsNode.appendChild(frozenCount);
+      item.appendChild(name);
+      item.appendChild(countsNode);
+      item.addEventListener("click", (event) => {
         event.preventDefault();
         const currentSet = new Set(state.adminAssigneeIds || []);
-        if (currentSet.has(agent.id)) currentSet.delete(agent.id);
-        else currentSet.add(agent.id);
-        state.adminAssigneeIds = [...currentSet];
-        try {
-          localStorage.setItem(ASSIGNEES_STORAGE_KEY, JSON.stringify(state.adminAssigneeIds));
-          state.hasStoredAssignees = true;
-        } catch {
-          // noop
+        if (event.ctrlKey && !isAllAgentsSelected()) {
+          if (currentSet.has(agent.id)) {
+            if (currentSet.size <= 1) return;
+            currentSet.delete(agent.id);
+          } else {
+            currentSet.add(agent.id);
+          }
+          selectAssignees([...currentSet]);
+        } else {
+          selectAssignees([agent.id]);
         }
         renderAgentFilter();
         loadCounts();
         notify();
       });
-      listEl.appendChild(label);
+      listEl.appendChild(item);
     });
     renderAgentFilter();
   }
@@ -676,11 +779,21 @@
     state.agents = Array.isArray(agents)
       ? agents.filter((item) => item && item.id && item.full_name).map((item) => ({ id: String(item.id), full_name: String(item.full_name) }))
       : [];
-    if (state.role === "admin" && !state.hasStoredAssignees) {
-      state.adminAssigneeIds = state.agents.map((agent) => agent.id);
-      state.hasStoredAssignees = true;
+    if (state.role === "admin") {
+      const loginTs = String(state.sessionLoginTs || "");
+      const storedLoginTs = localStorage.getItem(ASSIGNEES_LOGIN_TS_STORAGE_KEY);
+      const validStoredIds = selectedAgentIds();
+      if (storedLoginTs === null && state.hasStoredAssignees && validStoredIds.length) {
+        state.adminAssigneeIds = validStoredIds;
+      } else if (storedLoginTs !== loginTs) {
+        state.adminAssigneeIds = state.agents[0] ? [state.agents[0].id] : [];
+        persistAssignees();
+      } else {
+        state.adminAssigneeIds = validStoredIds.length || !state.agents.length ? validStoredIds : [state.agents[0].id];
+        persistAssignees();
+      }
       try {
-        localStorage.setItem(ASSIGNEES_STORAGE_KEY, JSON.stringify(state.adminAssigneeIds));
+        localStorage.setItem(ASSIGNEES_LOGIN_TS_STORAGE_KEY, loginTs);
       } catch {
         // noop
       }
@@ -709,25 +822,37 @@
       frozen: Number(counts?.frozen || 0),
       closed: Number(counts?.closed || 0),
     };
+    state.byAssigneeCounts = readByAssignee(counts?.by_assignee);
     state.countsLoaded = true;
     renderCounts();
+    renderAgentFilter();
   }
 
   function bindToggleAll() {
     const toggleAll = qs("#adminAgentToggleAll");
     if (!toggleAll || toggleAll.dataset.bound === "1") return;
     toggleAll.dataset.bound = "1";
-    toggleAll.addEventListener("change", () => {
-      state.adminAssigneeIds = toggleAll.checked ? state.agents.map((a) => a.id) : [];
-      try {
-        localStorage.setItem(ASSIGNEES_STORAGE_KEY, JSON.stringify(state.adminAssigneeIds));
-        state.hasStoredAssignees = true;
-      } catch {
-        // noop
-      }
+    const header = toggleAll.closest ? toggleAll.closest(".admin-agent-header") : qs(".admin-agent-header");
+    if (header) {
+      header.setAttribute("role", "button");
+      header.setAttribute("tabindex", "0");
+      header.setAttribute("aria-label", "\u0412\u0441\u0435");
+    }
+    const label = header?.querySelector("span");
+    if (label) label.textContent = "\u0412\u0441\u0435";
+    const chooseAll = (event) => {
+      event?.preventDefault?.();
+      selectAllAssignees();
       renderAgentFilter();
       loadCounts();
       notify();
+    };
+    toggleAll.tabIndex = -1;
+	toggleAll.setAttribute("aria-hidden", "true");
+    header?.addEventListener("click", chooseAll);
+    header?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      chooseAll(event);
     });
   }
 
@@ -785,7 +910,7 @@
   window.HelpdeskSidebar = {
     init,
     onChange,
-    getState: () => ({ ...state, counts: { ...state.counts }, agents: [...state.agents], adminAssigneeIds: [...state.adminAssigneeIds] }),
+    getState: () => ({ ...state, counts: { ...state.counts }, byAssigneeCounts: { ...state.byAssigneeCounts }, agents: [...state.agents], adminAssigneeIds: [...state.adminAssigneeIds] }),
     refreshCounts: () => loadCounts().then(() => { renderFromCurrentState(); notify(); }),
     setCurrentUserAvatar: (avatarState = {}) => {
       const nextUrl = avatarState.avatar_display_url || avatarState.avatar_url || null;
