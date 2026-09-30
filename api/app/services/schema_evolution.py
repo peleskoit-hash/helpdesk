@@ -88,6 +88,42 @@ def _postgres_has_equivalent_unique_invariant(conn, table_name: str, columns: tu
     return any(_postgres_is_equivalent_unique_invariant(row, columns) for row in rows)
 
 
+def ensure_saved_files_table() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS saved_files (
+                        id VARCHAR(36) PRIMARY KEY,
+                        display_filename VARCHAR(255) NOT NULL,
+                        storage_key VARCHAR(255) NOT NULL UNIQUE,
+                        mime_type VARCHAR(255),
+                        file_size INTEGER NOT NULL,
+                        created_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            return
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS saved_files (
+                    id VARCHAR(36) PRIMARY KEY,
+                    display_filename VARCHAR(255) NOT NULL,
+                    storage_key VARCHAR(255) NOT NULL UNIQUE,
+                    mime_type VARCHAR(255),
+                    file_size INTEGER NOT NULL,
+                    created_at TIMESTAMP
+                )
+                """
+            )
+        )
+
+
 def ensure_client_profile_columns() -> None:
     required_columns = {
         "last_name": "VARCHAR(200)",

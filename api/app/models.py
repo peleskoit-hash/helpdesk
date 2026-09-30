@@ -375,6 +375,17 @@ class TicketAttachmentPreload(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class SavedFile(Base):
+    __tablename__ = "saved_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    display_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class IntegrationLog(Base):
     __tablename__ = "integration_logs"
     __table_args__ = (

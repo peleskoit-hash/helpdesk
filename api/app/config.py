@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     telegram_default_agent_id: str = "00000000-0000-0000-0000-000000000001"
     initial_seed_enabled: bool | None = None
     attachment_storage_dir: str = "/app/storage/attachments"
+    saved_file_storage_dir: str = "/app/storage/saved_files"
     avatar_storage_dir: str = "/app/storage/avatars"
     bitrix_webhook_base: str | None = None
     bitrix_kc_webhook_base: str | None = None

@@ -54,6 +54,7 @@ from .services.schema_evolution import (
     ensure_employee_notification_preferences_table,
     ensure_internal_task_tables,
     ensure_integration_logs_table,
+    ensure_saved_files_table,
     ensure_stats_foundation_tables,
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
@@ -142,6 +143,7 @@ async def on_startup():
             ensure_employee_notification_preferences_table()
             ensure_internal_task_tables()
             ensure_integration_logs_table()
+            ensure_saved_files_table()
             ensure_stats_foundation_tables()
             with SessionLocal() as db:
                 migrate_legacy_bitrix_passwords(db)
