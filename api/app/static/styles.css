@@ -1637,27 +1637,95 @@ tr.ticket-row td:last-child {
 }
 
 tr.ticket-row-new td {
-  background: #eef9ef;
+  background: #fff;
 }
 
 tr.ticket-row-fresh td {
-  background: #dff3e2;
   border-top-color: #c6e7cc;
   border-bottom-color: #c6e7cc;
+  background: #fff;
 }
 
 tr.ticket-row-frozen td {
-  background: #edf5ff;
+  background: #fff;
 }
 
 tr.ticket-row-unassigned td {
-  background: #fff8db;
   border-top-color: #f1df9a;
   border-bottom-color: #f1df9a;
+  background: #fff;
 }
 
 tr.ticket-row-closed td {
-  background: #ffeef0;
+  background: #fff;
+}
+
+tr.ticket-row td.ticket-subject-col {
+  background: #fff;
+}
+
+tr.ticket-color-request td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(255, 202, 158, 0.78) 0%, rgba(255, 202, 158, 0) 100%);
+}
+
+tr.ticket-color-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(197, 243, 203, 0.78) 0%, rgba(197, 243, 203, 0) 100%);
+}
+
+tr.ticket-color-group-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(221, 206, 255, 0.8) 0%, rgba(221, 206, 255, 0) 100%);
+}
+
+tr.ticket-color-internal-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(255, 239, 145, 0.82) 0%, rgba(255, 239, 145, 0) 100%);
+}
+
+tr.ticket-color-frozen td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(205, 231, 255, 0.84) 0%, rgba(205, 231, 255, 0) 100%);
+}
+
+tr.ticket-color-closed td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(255, 207, 213, 0.86) 0%, rgba(255, 207, 213, 0) 100%);
+}
+
+tr.ticket-color-request td.ticket-check-cell {
+  background: rgba(255, 202, 158, 0.78);
+}
+
+tr.ticket-color-task td.ticket-check-cell {
+  background: rgba(197, 243, 203, 0.78);
+}
+
+tr.ticket-color-group-task td.ticket-check-cell {
+  background: rgba(221, 206, 255, 0.8);
+}
+
+tr.ticket-color-internal-task td.ticket-check-cell {
+  background: rgba(255, 239, 145, 0.82);
+}
+
+tr.ticket-color-frozen td.ticket-check-cell {
+  background: rgba(205, 231, 255, 0.84);
+}
+
+tr.ticket-color-closed td.ticket-check-cell {
+  background: rgba(255, 207, 213, 0.86);
+}
+
+tr.ticket-row-seen.ticket-color-request td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(255, 225, 198, 0.58) 0%, rgba(255, 225, 198, 0) 100%);
+}
+
+tr.ticket-row-seen.ticket-color-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(226, 248, 229, 0.6) 0%, rgba(226, 248, 229, 0) 100%);
+}
+
+tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(235, 228, 255, 0.6) 0%, rgba(235, 228, 255, 0) 100%);
+}
+
+tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(255, 247, 190, 0.62) 0%, rgba(255, 247, 190, 0) 100%);
 }
 
 tr.row-click.ticket-row:hover td {
@@ -3594,23 +3662,23 @@ tr.ticket-row td:last-child {
 }
 
 tr.ticket-row-new td {
-  background: rgba(223, 251, 225, 0.62);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 tr.ticket-row-fresh td {
-  background: rgba(197, 243, 203, 0.7);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 tr.ticket-row-frozen td {
-  background: rgba(218, 239, 255, 0.66);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 tr.ticket-row-unassigned td {
-  background: rgba(255, 244, 192, 0.7);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 tr.ticket-row-closed td {
-  background: rgba(255, 225, 230, 0.68);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .send-now {
@@ -4006,23 +4074,87 @@ body[data-theme="dark"] tr.ticket-row td:last-child {
 }
 
 body[data-theme="dark"] tr.ticket-row-new td {
-  background: rgba(38, 98, 59, 0.54);
+  background: rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] tr.ticket-row-fresh td {
-  background: rgba(45, 134, 74, 0.62);
+  background: rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] tr.ticket-row-frozen td {
-  background: rgba(38, 85, 125, 0.58);
+  background: rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] tr.ticket-row-unassigned td {
-  background: rgba(126, 96, 30, 0.58);
+  background: rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] tr.ticket-row-closed td {
-  background: rgba(110, 45, 56, 0.58);
+  background: rgba(18, 28, 42, 0.72);
+}
+
+body[data-theme="dark"] tr.ticket-color-request td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(177, 100, 52, 0.58) 0%, rgba(177, 100, 52, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(54, 137, 82, 0.58) 0%, rgba(54, 137, 82, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-group-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(119, 92, 181, 0.6) 0%, rgba(119, 92, 181, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-internal-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(154, 128, 40, 0.62) 0%, rgba(154, 128, 40, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-frozen td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(48, 107, 156, 0.62) 0%, rgba(48, 107, 156, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-closed td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(142, 57, 68, 0.62) 0%, rgba(142, 57, 68, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-color-request td.ticket-check-cell {
+  background: rgba(177, 100, 52, 0.58);
+}
+
+body[data-theme="dark"] tr.ticket-color-task td.ticket-check-cell {
+  background: rgba(54, 137, 82, 0.58);
+}
+
+body[data-theme="dark"] tr.ticket-color-group-task td.ticket-check-cell {
+  background: rgba(119, 92, 181, 0.6);
+}
+
+body[data-theme="dark"] tr.ticket-color-internal-task td.ticket-check-cell {
+  background: rgba(154, 128, 40, 0.62);
+}
+
+body[data-theme="dark"] tr.ticket-color-frozen td.ticket-check-cell {
+  background: rgba(48, 107, 156, 0.62);
+}
+
+body[data-theme="dark"] tr.ticket-color-closed td.ticket-check-cell {
+  background: rgba(142, 57, 68, 0.62);
+}
+
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-request td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(127, 79, 49, 0.44) 0%, rgba(127, 79, 49, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(51, 112, 74, 0.44) 0%, rgba(51, 112, 74, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(91, 77, 137, 0.46) 0%, rgba(91, 77, 137, 0) 100%);
+}
+
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
+  background: linear-gradient(90deg, rgba(120, 101, 38, 0.46) 0%, rgba(120, 101, 38, 0) 100%);
 }
 
 body[data-theme="dark"] .status-offline {

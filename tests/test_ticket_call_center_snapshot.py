@@ -24,6 +24,7 @@ from api.app.models import (
     MessageType,
     TelegramContact,
     Ticket,
+    TicketTaskKind,
     TicketMessage,
     TicketStatus,
     TicketWorkflowType,
@@ -927,8 +928,13 @@ def test_ticket_list_batches_internal_task_requester_lookup_without_per_row_quer
 
     by_subject = {item.subject: item for item in payload.items}
     assert by_subject["Internal 0"].requester_display_name == "Admin"
+    assert by_subject["Internal 0"].task_kind == TicketTaskKind.NORMAL.value
+    assert by_subject["Internal 0"].is_internal_task is True
     assert by_subject["Internal 1"].requester_display_name == "Система"
+    assert by_subject["Internal 1"].is_internal_task is True
     assert by_subject[ordinary_ticket.subject].requester_display_name == "Client"
+    assert by_subject[ordinary_ticket.subject].task_kind == TicketTaskKind.NORMAL.value
+    assert by_subject[ordinary_ticket.subject].is_internal_task is False
     assert len(occurrence_queries) == 1
 
 
@@ -984,7 +990,12 @@ def test_special_ticket_list_batches_internal_task_requester_lookup_without_per_
 
     by_subject = {item.subject: item for item in payload.items}
     assert by_subject["Special internal 0"].requester_display_name == "Admin"
+    assert by_subject["Special internal 0"].task_kind == TicketTaskKind.NORMAL.value
+    assert by_subject["Special internal 0"].is_internal_task is True
     assert by_subject["Special internal 1"].requester_display_name == "Система"
+    assert by_subject["Special internal 1"].is_internal_task is True
+    assert by_subject[ordinary_ticket.subject].task_kind == TicketTaskKind.NORMAL.value
+    assert by_subject[ordinary_ticket.subject].is_internal_task is False
     assert len(occurrence_queries) == 1
 
 

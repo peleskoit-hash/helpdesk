@@ -78,6 +78,15 @@ const endpointMap = {
   closed: "/api/v1/tickets/closed",
 };
 
+function ticketRowColorClass(t, tab = "") {
+  if (t?.status === "closed" || tab === "closed") return "ticket-color-closed";
+  if (t?.is_frozen || tab === "frozen") return "ticket-color-frozen";
+  if (t?.workflow_type === "ticket") return "ticket-color-request";
+  if (t?.task_kind === "group_parent" || t?.task_kind === "group_child") return "ticket-color-group-task";
+  if (t?.is_internal_task) return "ticket-color-internal-task";
+  return "ticket-color-task";
+}
+
 function tabKeyFromNode(node) {
   const direct = node?.dataset?.tab || "";
   if (TAB_KEYS.has(direct)) return direct;
@@ -615,11 +624,10 @@ function renderTable() {
   for (const t of filtered) {
     const tr = document.createElement("tr");
     const rowClasses = ["row-click", "ticket-row"];
-    if (state.tab === "active" || t.status === "new") rowClasses.push("ticket-row-new");
-    if (state.tab === "unassigned" || t.status === "unassigned") rowClasses.push("ticket-row-unassigned");
-    if (state.tab === "active" && !t.seen_by_agent) rowClasses.push("ticket-row-fresh");
-    if (t.is_frozen || state.tab === "frozen") rowClasses.push("ticket-row-frozen");
-    if (t.status === "closed" || state.tab === "closed") rowClasses.push("ticket-row-closed");
+    rowClasses.push(ticketRowColorClass(t, state.tab));
+    if (t.seen_by_agent && !(t.is_frozen || state.tab === "frozen") && !(t.status === "closed" || state.tab === "closed")) {
+      rowClasses.push("ticket-row-seen");
+    }
     tr.className = rowClasses.join(" ");
     const currentListUrl = `${window.location.pathname}${window.location.search}`;
     const publicId = t.ticket_number || t.id;

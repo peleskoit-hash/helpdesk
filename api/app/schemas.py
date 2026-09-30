@@ -14,6 +14,8 @@ class TicketListItem(BaseModel):
     ticket_number: int | None = None
     subject: str
     workflow_type: str = "ticket"
+    task_kind: str | None = None
+    is_internal_task: bool = False
     intake_state: str = "ready"
     status: str
     is_frozen: bool
