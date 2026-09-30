@@ -453,6 +453,16 @@ def management_tasks_page(request: Request, db: Session = Depends(get_db)):
     return FileResponse(str(BASE_DIR / "templates" / "management_tasks.html"))
 
 
+@app.get("/management/saved-files")
+def management_saved_files_page(request: Request, db: Session = Depends(get_db)):
+    user = _require_page_auth(request, db)
+    if user is None:
+        return _redirect_login("/management/saved-files")
+    if not user.is_real_admin:
+        return RedirectResponse(url="/tickets", status_code=303)
+    return FileResponse(str(BASE_DIR / "templates" / "management_saved_files.html"))
+
+
 @app.get("/statuses")
 def statuses_page(request: Request, db: Session = Depends(get_db)):
     user = _require_page_auth(request, db)
