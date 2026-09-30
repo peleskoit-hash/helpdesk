@@ -25,6 +25,7 @@ from .routers.integrations import router as integrations_router
 from .routers.internal_tasks import router as internal_tasks_router
 from .routers.management_integrations import router as management_integrations_router
 from .routers.management_feedback import router as management_feedback_router
+from .routers.management_saved_files import router as management_saved_files_router
 from .routers.management_statistics import router as management_statistics_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
@@ -103,6 +104,7 @@ app.include_router(mass_notifications_router)
 app.include_router(internal_tasks_router)
 app.include_router(management_integrations_router)
 app.include_router(management_feedback_router)
+app.include_router(management_saved_files_router)
 app.include_router(management_statistics_router)
 app.include_router(management_users_router)
 app.include_router(reviews_router)
