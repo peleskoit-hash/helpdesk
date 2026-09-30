@@ -650,7 +650,7 @@ def list_special(
     )
 
 
-@router.get("/counts", response_model=TicketCountsOut)
+@router.get("/counts", response_model=TicketCountsOut, response_model_exclude_none=True)
 def ticket_counts(
     assignee_ids: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),

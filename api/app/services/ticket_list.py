@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
+from sqlalchemy import Select, and_, asc, case, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
@@ -448,26 +448,61 @@ def build_ticket_counts(
     user: CurrentUser,
     assignee_ids: list[str] | None,
 ) -> TicketCountsOut:
-    def count_tickets(statuses: list[str], is_frozen: bool | None, apply_admin_filter: bool, special_only: bool = False) -> int:
+    def ticket_count_stmt(statuses: list[str], is_frozen: bool | None, special_only: bool = False, count_user: CurrentUser = user):
         conditions = [Ticket.status.in_(statuses)]
         if special_only:
             conditions.append(Ticket.is_special.is_(True))
-        elif TicketStatus.CLOSED.value not in statuses and not is_readonly_chiki_piki(user):
+        elif TicketStatus.CLOSED.value not in statuses and not is_readonly_chiki_piki(count_user):
             conditions.append(Ticket.is_special.is_(False))
         if is_frozen is not None:
             conditions.append(Ticket.is_frozen.is_(is_frozen))
         stmt = select(Ticket).where(and_(*conditions))
-        stmt = apply_role_filter_for_statuses(
+        return apply_role_filter_for_statuses(
             stmt,
-            user,
+            count_user,
             statuses,
             include_support_special_closed=(TicketStatus.CLOSED.value in statuses),
             include_support_all_closed=(TicketStatus.CLOSED.value in statuses),
         )
+
+    def count_tickets(statuses: list[str], is_frozen: bool | None, apply_admin_filter: bool, special_only: bool = False) -> int:
+        stmt = ticket_count_stmt(statuses, is_frozen, special_only)
         if apply_admin_filter:
             stmt = apply_admin_assignee_filter(stmt, user, assignee_ids)
         total_stmt = select(func.count()).select_from(stmt.subquery())
         return int(db.execute(total_stmt).scalar_one() or 0)
+
+    def build_by_assignee() -> dict[str, dict[str, int]] | None:
+        if not bool(getattr(user, "is_real_admin", False)):
+            return None
+
+        agent_ids = db.execute(
+            select(User.id).where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True))
+        ).scalars().all()
+        if not agent_ids:
+            return {}
+
+        real_admin = CurrentUser(
+            id=user.real_user_id,
+            role=user.real_role,
+            real_user_id=user.real_user_id,
+            real_role=user.real_role,
+            is_real_admin=True,
+        )
+        base = ticket_count_stmt([TicketStatus.NEW.value, TicketStatus.PENDING.value], None, count_user=real_admin).subquery()
+        rows = db.execute(
+            select(
+                base.c.assignee_id,
+                func.sum(case((base.c.is_frozen.is_(False), 1), else_=0)).label("active"),
+                func.sum(case((base.c.is_frozen.is_(True), 1), else_=0)).label("frozen"),
+            )
+            .where(base.c.assignee_id.in_(agent_ids))
+            .group_by(base.c.assignee_id)
+        ).all()
+        counts = {agent_id: {"active": 0, "frozen": 0} for agent_id in agent_ids}
+        for assignee_id, active, frozen in rows:
+            counts[assignee_id] = {"active": int(active or 0), "frozen": int(frozen or 0)}
+        return counts
 
     return TicketCountsOut(
         unassigned=count_tickets([TicketStatus.UNASSIGNED.value], False, False) if (is_admin(user) or is_readonly_chiki_piki(user)) else 0,
@@ -475,4 +510,5 @@ def build_ticket_counts(
         frozen=count_tickets([TicketStatus.NEW.value, TicketStatus.PENDING.value], True, True),
         closed=count_tickets([TicketStatus.CLOSED.value], None, False),
         special=count_tickets([TicketStatus.NEW.value, TicketStatus.PENDING.value, TicketStatus.UNASSIGNED.value], None, False, True) if is_admin(user) else 0,
+        by_assignee=build_by_assignee(),
     )

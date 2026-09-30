@@ -4,6 +4,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class AssigneeTicketCounts(BaseModel):
+    active: int = 0
+    frozen: int = 0
+
+
 class TicketListItem(BaseModel):
     id: str
     ticket_number: int | None = None
@@ -40,6 +45,7 @@ class TicketCountsOut(BaseModel):
     frozen: int
     closed: int
     special: int = 0
+    by_assignee: dict[str, AssigneeTicketCounts] | None = None
 
 
 class TicketAttachmentOut(BaseModel):

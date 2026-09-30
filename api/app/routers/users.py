@@ -320,7 +320,7 @@ def get_my_completion_stats(
 @router.get("/agents", response_model=list[AgentOut])
 def list_agents(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     agents = db.execute(
-        select(User).where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True)).order_by(User.full_name.asc())
+        select(User).where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True)).order_by(User.created_at.asc(), User.id.asc())
     ).scalars().all()
     return [
         AgentOut(
