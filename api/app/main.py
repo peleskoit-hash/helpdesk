@@ -68,6 +68,7 @@ from .services.schema_evolution import (
     ensure_user_columns,
 )
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
+from .services.bot_button_saved_file_migration import migrate_legacy_bot_button_pdf_saved_files
 from .services.integration_tasks import cleanup_old_integration_logs_on_startup
 from .services.internal_task_scheduler import internal_task_scheduler_loop
 from .services.employee_telegram_bot import set_employee_bot_commands
@@ -147,6 +148,7 @@ async def on_startup():
             ensure_stats_foundation_tables()
             with SessionLocal() as db:
                 migrate_legacy_bitrix_passwords(db)
+                migrate_legacy_bot_button_pdf_saved_files(db)
                 db.commit()
             ensure_system_seed_data()
             cleanup_old_integration_logs_on_startup()
