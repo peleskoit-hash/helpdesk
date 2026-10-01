@@ -1665,7 +1665,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsTemplate, /data-sort-key="requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20260930c/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261001a/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", t\.requester_display_name \|\| t\.client_name \|\| ""\)/);

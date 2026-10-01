@@ -68,6 +68,7 @@ const state = {
   completionStats: null,
   completionOpen: false,
   hasPageFromUrl: Boolean(urlState.hasPageParam),
+  colorEnabled: true,
 };
 
 const endpointMap = {
@@ -127,6 +128,10 @@ const el = {
   agentSelectWrap: document.getElementById("agentSelectWrap"),
   searchInput: document.getElementById("searchInput"),
   searchClearBtn: document.getElementById("searchClearBtn"),
+  colorEnabledInput: document.getElementById("colorEnabledInput"),
+  colorToggleLabel: document.getElementById("colorToggleLabel"),
+  colorToggleText: document.getElementById("colorToggleText"),
+  colorLegend: document.getElementById("colorLegend"),
   ticketsTableBody: document.getElementById("ticketsTableBody"),
   ticketCount: document.getElementById("ticketCount"),
   prevPageBtn: document.getElementById("prevPageBtn"),
@@ -247,6 +252,41 @@ function showError(message) {
 
 function closeError() {
   el.errorModal.classList.add("hidden");
+}
+
+function applyColorPreference() {
+  if (el.colorEnabledInput) {
+    el.colorEnabledInput.checked = Boolean(state.colorEnabled);
+  }
+  document.body.classList.toggle("ticket-colors-disabled", !state.colorEnabled);
+  if (el.colorToggleLabel) {
+    el.colorToggleLabel.classList.toggle("color-toggle-disabled", !state.colorEnabled);
+  }
+  if (el.colorLegend) {
+    el.colorLegend.setAttribute("aria-hidden", state.colorEnabled ? "false" : "true");
+  }
+}
+
+async function loadPreferences() {
+  const preferences = await api("/api/v1/users/me/preferences");
+  state.colorEnabled = preferences?.color_enabled !== false;
+  applyColorPreference();
+}
+
+async function updateColorPreference(enabled) {
+  const previous = state.colorEnabled;
+  state.colorEnabled = Boolean(enabled);
+  applyColorPreference();
+  try {
+    const preferences = await apiWrite("/api/v1/users/me/preferences", { color_enabled: state.colorEnabled });
+    state.colorEnabled = preferences?.color_enabled !== false;
+    applyColorPreference();
+    setStatus("Настройка цвета сохранена");
+  } catch (e) {
+    state.colorEnabled = previous;
+    applyColorPreference();
+    showError(`Ошибка настройки цвета: ${e.message}`);
+  }
 }
 
 function closeOnBackdropClick(modal, closeHandler) {
@@ -627,6 +667,9 @@ function renderTable() {
     rowClasses.push(ticketRowColorClass(t, state.tab));
     if (t.seen_by_agent && !(t.is_frozen || state.tab === "frozen") && !(t.status === "closed" || state.tab === "closed")) {
       rowClasses.push("ticket-row-seen");
+    }
+    if ((state.role === "agent" || state.role === "trainee") && t.seen_by_agent === false) {
+      rowClasses.push("ticket-row-unseen");
     }
     tr.className = rowClasses.join(" ");
     const currentListUrl = `${window.location.pathname}${window.location.search}`;
@@ -1146,6 +1189,11 @@ function init() {
       await clearSearchQuery();
     }, { signal: pageSignal });
   }
+  if (el.colorEnabledInput) {
+    el.colorEnabledInput.addEventListener("change", async () => {
+      await updateColorPreference(el.colorEnabledInput.checked);
+    }, { signal: pageSignal });
+  }
 
   el.prevPageBtn.addEventListener("click", async () => {
     if (state.page <= 1) return;
@@ -1190,7 +1238,7 @@ async function runTicketsListPage() {
   syncSidebarState(window.HelpdeskSidebar.getState());
   unsubscribeSidebar = window.HelpdeskSidebar.onChange(syncSidebarState);
   init();
-  await loadMe();
+  await Promise.all([loadMe(), loadPreferences()]);
   await Promise.all([loadTickets(), loadCounts(), loadCompletionStats()]);
 }
 

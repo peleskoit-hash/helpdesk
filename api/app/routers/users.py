@@ -236,7 +236,7 @@ def get_my_preferences(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     user = _real_user_model(db, current_user)
-    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter))
+    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter), color_enabled=bool(user.color_enabled))
 
 
 @router.patch("/me/preferences", response_model=UserPreferencesOut)
@@ -246,11 +246,16 @@ def update_my_preferences(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     user = _real_user_model(db, current_user)
-    user.send_by_enter = bool(payload.send_by_enter)
-    user.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(user)
-    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter))
+    updates = payload.model_dump(exclude_unset=True)
+    if "send_by_enter" in updates:
+        user.send_by_enter = bool(updates["send_by_enter"])
+    if "color_enabled" in updates:
+        user.color_enabled = bool(updates["color_enabled"])
+    if updates:
+        user.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(user)
+    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter), color_enabled=bool(user.color_enabled))
 
 
 @router.get("/me/completion-stats", response_model=CompletionStatsOut)

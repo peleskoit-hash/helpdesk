@@ -862,8 +862,8 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in template
     assert f"/static/ticket_attachments.js?v={ticket_static_version}" in app_shell
-    assert '/static/styles.css?v=20260930c' in template
-    assert '/static/styles.css?v=20260930c' in index_template
+    assert '/static/styles.css?v=20261001a' in template
+    assert '/static/styles.css?v=20261001a' in index_template
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():

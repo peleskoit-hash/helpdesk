@@ -879,6 +879,7 @@ def ensure_user_columns() -> None:
     required_columns = {
         "availability_status": "VARCHAR(40)",
         "send_by_enter": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "color_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
         "legacy_ticket_count": "INTEGER",
         "last_assigned_at": "TIMESTAMP",
         "login": "VARCHAR(100)",
@@ -912,6 +913,7 @@ def ensure_user_columns() -> None:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
         conn.execute(text("UPDATE users SET availability_status = 'online' WHERE availability_status IS NULL"))
         conn.execute(text("UPDATE users SET send_by_enter = FALSE WHERE send_by_enter IS NULL"))
+        conn.execute(text("UPDATE users SET color_enabled = TRUE WHERE color_enabled IS NULL"))
         conn.execute(text("UPDATE users SET legacy_ticket_count = 0 WHERE legacy_ticket_count IS NULL"))
         conn.execute(text("UPDATE users SET login = email WHERE login IS NULL"))
         conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))

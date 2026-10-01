@@ -322,10 +322,12 @@ class UserStatusUpdate(BaseModel):
 
 class UserPreferencesOut(BaseModel):
     send_by_enter: bool = False
+    color_enabled: bool = True
 
 
 class UserPreferencesUpdate(BaseModel):
-    send_by_enter: bool
+    send_by_enter: bool | None = None
+    color_enabled: bool | None = None
 
 
 class TelegramNotificationSummaryOut(BaseModel):

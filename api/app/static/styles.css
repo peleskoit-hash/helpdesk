@@ -1375,6 +1375,9 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .toolbar {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
   border-bottom: 1px solid var(--border);
   background: #fef3c7;
   display: flex;
@@ -1431,6 +1434,84 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .search-clear-btn:hover {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+.color-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.color-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.color-toggle span:not(.color-legend):not(.color-legend-swatch) {
+  cursor: default;
+}
+
+.color-legend {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: max-content;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.color-toggle:not(.color-toggle-disabled):has(#colorToggleText:hover) .color-legend,
+.color-toggle:not(.color-toggle-disabled):has(#colorToggleText:focus-visible) .color-legend,
+.color-toggle:not(.color-toggle-disabled) .color-legend:hover {
+  display: flex;
+}
+
+.color-legend-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 104px;
+  height: 24px;
+  border-radius: 6px;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.color-legend-task {
+  background: rgba(197, 243, 203, 0.78);
+}
+
+.color-legend-request {
+  background: rgba(255, 202, 158, 0.78);
+}
+
+.color-legend-group-task {
+  background: rgba(221, 206, 255, 0.8);
+}
+
+.color-legend-internal-task {
+  background: rgba(255, 239, 145, 0.82);
+}
+
+.color-legend-frozen {
+  background: rgba(205, 231, 255, 0.84);
+}
+
+.color-legend-closed {
+  background: rgba(255, 207, 213, 0.86);
 }
 
 #searchInput.search-active {
@@ -1664,6 +1745,12 @@ tr.ticket-row td.ticket-subject-col {
   background: #fff;
 }
 
+tr.ticket-row-unseen td,
+tr.ticket-row-unseen .ticket-row-link,
+tr.ticket-row-unseen .row-assignee-select {
+  font-weight: 700;
+}
+
 tr.ticket-color-request td.ticket-subject-col {
   background: linear-gradient(90deg, rgba(255, 202, 158, 0.78) 0%, rgba(255, 202, 158, 0) 100%);
 }
@@ -1730,6 +1817,25 @@ tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
 
 tr.row-click.ticket-row:hover td {
   filter: brightness(0.99);
+}
+
+body.ticket-colors-disabled tr.ticket-color-request td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-group-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-internal-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-frozen td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-closed td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-request td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col,
+body.ticket-colors-disabled tr.ticket-color-request td.ticket-check-cell,
+body.ticket-colors-disabled tr.ticket-color-task td.ticket-check-cell,
+body.ticket-colors-disabled tr.ticket-color-group-task td.ticket-check-cell,
+body.ticket-colors-disabled tr.ticket-color-internal-task td.ticket-check-cell,
+body.ticket-colors-disabled tr.ticket-color-frozen td.ticket-check-cell,
+body.ticket-colors-disabled tr.ticket-color-closed td.ticket-check-cell {
+  background: #fff;
 }
 
 /* ===== ticket card/messages ===== */
@@ -4155,6 +4261,35 @@ body[data-theme="dark"] tr.ticket-row-seen.ticket-color-group-task td.ticket-sub
 
 body[data-theme="dark"] tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
   background: linear-gradient(90deg, rgba(120, 101, 38, 0.46) 0%, rgba(120, 101, 38, 0) 100%);
+}
+
+body[data-theme="dark"] .color-legend {
+  background: #121c2a;
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.42);
+}
+
+body[data-theme="dark"] .color-legend-swatch {
+  color: #f8fafc;
+}
+
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-request td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-group-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-internal-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-frozen td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-request td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-request td.ticket-check-cell,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-task td.ticket-check-cell,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-group-task td.ticket-check-cell,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-internal-task td.ticket-check-cell,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-frozen td.ticket-check-cell,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed td.ticket-check-cell {
+  background: rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] .status-offline {

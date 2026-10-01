@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260930c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261001a" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -106,6 +106,18 @@
           <input id="searchInput" placeholder="Поиск по теме/клиенту/сообщениям" />
           <button id="searchClearBtn" class="search-clear-btn hidden" type="button" aria-label="Очистить поиск">&times;</button>
         </div>
+        <label class="color-toggle" id="colorToggleLabel">
+          <input id="colorEnabledInput" type="checkbox" />
+          <span id="colorToggleText" tabindex="0">Цвет</span>
+          <span id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true">
+            <span class="color-legend-swatch color-legend-task">Задача</span>
+            <span class="color-legend-swatch color-legend-request">Заявка</span>
+            <span class="color-legend-swatch color-legend-group-task">Увольнение</span>
+            <span class="color-legend-swatch color-legend-internal-task">Внутренняя</span>
+            <span class="color-legend-swatch color-legend-frozen">Замороженная</span>
+            <span class="color-legend-swatch color-legend-closed">Закрытая</span>
+          </span>
+        </label>
         <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button">Назначить ответственно</button>
         <button id="bulkCloseBtn" class="action admin-only hidden" type="button" disabled>Завершить</button>
         <button id="bulkDeleteBtn" class="action admin-only hidden danger" type="button" disabled>Удалить</button>
@@ -196,6 +208,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js?v=20260930b"></script>
   <script src="/static/app_shell.js?v=20260911a"></script>
-  <script src="/static/list.js?v=20260930c"></script>
+  <script src="/static/list.js?v=20261001a"></script>
 </body>
 </html>

@@ -418,6 +418,26 @@ def test_user_send_by_enter_column_is_added_idempotently_for_existing_schema(mon
     assert send_by_enter in (0, False)
 
 
+def test_user_color_enabled_column_is_added_idempotently_for_existing_schema(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]: row
+            for row in conn.execute(text("PRAGMA table_info(users)")).mappings().all()
+        }
+        color_enabled = conn.execute(text("SELECT color_enabled FROM users WHERE id = 'user-1'")).scalar_one()
+
+    assert "color_enabled" in columns
+    assert columns["color_enabled"]["notnull"] == 1
+    assert color_enabled in (1, True)
+
+
 def test_user_avatar_path_column_is_added_idempotently_and_keeps_rows(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     _create_legacy_users_table(engine)
@@ -442,6 +462,10 @@ def test_user_avatar_path_column_is_added_idempotently_and_keeps_rows(monkeypatc
 
 def test_user_model_metadata_contains_send_by_enter_column():
     assert "send_by_enter" in User.__table__.columns.keys()
+
+
+def test_user_model_metadata_contains_color_enabled_column():
+    assert "color_enabled" in User.__table__.columns.keys()
 
 
 def test_user_model_metadata_contains_avatar_path_column():

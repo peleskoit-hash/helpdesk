@@ -41,6 +41,7 @@ def _user(
     full_name: str,
     role: str = "agent",
     send_by_enter=None,
+    color_enabled=None,
 ) -> User:
     user = User(
         id=str(uuid.uuid4()),
@@ -58,6 +59,8 @@ def _user(
     )
     if send_by_enter is not None:
         user.send_by_enter = send_by_enter
+    if color_enabled is not None:
+        user.color_enabled = color_enabled
     session.add(user)
     session.commit()
     return user
@@ -84,6 +87,7 @@ def test_user_preferences_default_is_false_for_new_user():
     )
 
     assert result.send_by_enter is False
+    assert result.color_enabled is True
 
 
 def test_user_preferences_patch_true_persists_and_roundtrips():
@@ -101,8 +105,11 @@ def test_user_preferences_patch_true_persists_and_roundtrips():
 
     session.refresh(user)
     assert updated.send_by_enter is True
+    assert updated.color_enabled is True
     assert user.send_by_enter is True
+    assert user.color_enabled is True
     assert loaded.send_by_enter is True
+    assert loaded.color_enabled is True
 
 
 def test_user_preferences_patch_false_after_true_persists():
@@ -122,6 +129,61 @@ def test_user_preferences_patch_false_after_true_persists():
     assert user.send_by_enter is False
 
 
+def test_user_preferences_patch_color_false_persists_without_changing_send_by_enter():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", send_by_enter=True)
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(color_enabled=False),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.color_enabled is False
+    assert updated.send_by_enter is True
+    assert user.color_enabled is False
+    assert user.send_by_enter is True
+
+
+def test_user_preferences_patch_color_true_after_false_persists():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", color_enabled=False)
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(color_enabled=True),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.color_enabled is True
+    assert user.color_enabled is True
+
+
+def test_user_preferences_patch_send_by_enter_does_not_change_color_enabled():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", color_enabled=False)
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(send_by_enter=True),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.send_by_enter is True
+    assert updated.color_enabled is False
+    assert user.send_by_enter is True
+    assert user.color_enabled is False
+
+
 def test_user_preferences_are_isolated_between_users():
     session = _session()
     company = _company(session)
@@ -129,7 +191,7 @@ def test_user_preferences_are_isolated_between_users():
     user_b = _user(session, company_id=company.id, full_name="User B")
 
     users_router.update_my_preferences(
-        UserPreferencesUpdate(send_by_enter=True),
+        UserPreferencesUpdate(send_by_enter=True, color_enabled=False),
         db=session,
         current_user=_current_user(effective_user_id=user_a.id, real_user_id=user_a.id),
     )
@@ -137,7 +199,9 @@ def test_user_preferences_are_isolated_between_users():
     session.refresh(user_a)
     session.refresh(user_b)
     assert user_a.send_by_enter is True
+    assert user_a.color_enabled is False
     assert user_b.send_by_enter is False
+    assert user_b.color_enabled is True
 
 
 def test_user_preferences_use_real_user_id_not_effective_user_id():
@@ -147,7 +211,7 @@ def test_user_preferences_use_real_user_id_not_effective_user_id():
     effective_user = _user(session, company_id=company.id, full_name="Effective Agent", role="agent")
 
     users_router.update_my_preferences(
-        UserPreferencesUpdate(send_by_enter=True),
+        UserPreferencesUpdate(send_by_enter=True, color_enabled=False),
         db=session,
         current_user=_current_user(
             effective_user_id=effective_user.id,
@@ -159,4 +223,6 @@ def test_user_preferences_use_real_user_id_not_effective_user_id():
     session.refresh(real_user)
     session.refresh(effective_user)
     assert real_user.send_by_enter is True
+    assert real_user.color_enabled is False
     assert effective_user.send_by_enter is False
+    assert effective_user.color_enabled is True
