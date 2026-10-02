@@ -56,6 +56,9 @@ const state = {
   stateActionInFlight: null,
   restoreCloseCooldownUntil: 0,
   pendingCardReloadOptions: null,
+  taskPanelEnabled: false,
+  taskPanelItems: [],
+  taskPanelDropdownOpen: false,
 };
 
 const el = {
@@ -68,6 +71,10 @@ const el = {
   ticketSubject: document.getElementById("ticketSubject"),
   ticketStatusBadges: document.getElementById("ticketStatusBadges"),
   instructionBtn: document.getElementById("instructionBtn"),
+  taskPanel: document.getElementById("taskPanel"),
+  taskPanelSlots: document.getElementById("taskPanelSlots"),
+  taskPanelMoreBtn: document.getElementById("taskPanelMoreBtn"),
+  taskPanelDropdown: document.getElementById("taskPanelDropdown"),
 
   clientDynamicCard: document.getElementById("clientDynamicCard"),
 
@@ -288,6 +295,80 @@ function shellNavigateOrReload(urlLike) {
     return;
   }
   window.location.href = href;
+}
+
+function canUseTaskPanel(role = state.role) {
+  return role === "agent" || role === "trainee";
+}
+
+function taskPanelReturnUrl() {
+  const queryReturnUrl = normalizeTicketsReturnUrl(params.get("return_url"));
+  if (queryReturnUrl) return queryReturnUrl;
+  const savedReturnUrl = normalizeTicketsReturnUrl(sessionStorage.getItem("ticketListReturnUrl"));
+  if (savedReturnUrl) return savedReturnUrl;
+  const listUrl = new URL("/tickets", window.location.origin);
+  listUrl.searchParams.set("tab", state.tab || "active");
+  listUrl.searchParams.set("page", String(state.returnPage || 1));
+  if (state.returnQuery) listUrl.searchParams.set("q", state.returnQuery);
+  return `${listUrl.pathname}${listUrl.search}`;
+}
+
+function taskPanelTicketHref(panelTicketId) {
+  const ticketUrl = new URL(`/tickets/${panelTicketId}`, window.location.origin);
+  ticketUrl.searchParams.set("tab", state.tab || "active");
+  ticketUrl.searchParams.set("page", String(state.returnPage || 1));
+  if (state.returnQuery) ticketUrl.searchParams.set("q", state.returnQuery);
+  ticketUrl.searchParams.set("return_url", taskPanelReturnUrl());
+  return `${ticketUrl.pathname}${ticketUrl.search}`;
+}
+
+function taskPanelItemHtml(item, className) {
+  const unread = item?.has_unread ? '<span class="task-panel-unread" aria-label="Новые сообщения"></span>' : "";
+  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" href="${escapeHtml(taskPanelTicketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
+}
+
+function closeTaskPanelDropdown() {
+  state.taskPanelDropdownOpen = false;
+  if (el.taskPanelDropdown) el.taskPanelDropdown.classList.add("hidden");
+  if (el.taskPanelMoreBtn) el.taskPanelMoreBtn.classList.remove("active");
+}
+
+function renderTaskPanel() {
+  if (!el.taskPanel || !el.taskPanelSlots || !el.taskPanelMoreBtn || !el.taskPanelDropdown) return;
+  const canUse = canUseTaskPanel();
+  const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
+  const shouldShow = canUse && state.taskPanelEnabled && items.length > 0;
+  el.taskPanel.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    el.taskPanelSlots.innerHTML = "";
+    el.taskPanelMoreBtn.classList.add("hidden");
+    el.taskPanelDropdown.innerHTML = "";
+    closeTaskPanelDropdown();
+    return;
+  }
+  const visibleItems = items.slice(0, 8);
+  const overflowItems = items.slice(8);
+  el.taskPanel.classList.toggle("has-overflow", overflowItems.length > 0);
+  el.taskPanelSlots.innerHTML = visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("");
+  el.taskPanelMoreBtn.classList.toggle("hidden", overflowItems.length === 0);
+  el.taskPanelDropdown.innerHTML = overflowItems.map((item) => taskPanelItemHtml(item, "task-panel-menu-item")).join("");
+  if (overflowItems.length === 0) closeTaskPanelDropdown();
+}
+
+async function loadTaskPanel(options = {}) {
+  if (!canUseTaskPanel() || !state.taskPanelEnabled) {
+    state.taskPanelItems = [];
+    renderTaskPanel();
+    return;
+  }
+  try {
+    state.taskPanelItems = await api("/api/v1/tickets/task-panel");
+    renderTaskPanel();
+  } catch (e) {
+    state.taskPanelItems = [];
+    renderTaskPanel();
+    if (!options.silent) setStatus(`Ошибка панели задач: ${e.message}`);
+  }
 }
 
 function cleanupTicketCardPage() {
@@ -994,6 +1075,7 @@ async function loadCard(options = {}) {
     applyComposeModeUi();
     focusMessageInputIfAvailable();
     setStatus("Карточка загружена");
+    await loadTaskPanel({ silent: true });
   } catch (e) {
     console.error("loadCard failed", e);
     if (!silent) setStatus(`Ошибка: ${e.message}`);
@@ -1125,10 +1207,14 @@ async function loadComposerPreferences(options = {}) {
   try {
     const payload = await api("/api/v1/users/me/preferences");
     state.sendByEnter = Boolean(payload?.send_by_enter);
+    state.taskPanelEnabled = payload?.task_panel_enabled === true;
     refreshSendByEnterUi();
+    renderTaskPanel();
   } catch (e) {
     state.sendByEnter = false;
+    state.taskPanelEnabled = false;
     refreshSendByEnterUi();
+    renderTaskPanel();
     if (!silent) {
       showError(`Ошибка настройки composer: ${e.message}`);
     }
@@ -1180,6 +1266,7 @@ function syncSidebarState(sidebarState) {
   renderAgentSelect();
   updateTabLinks();
   renderCompletionStats();
+  renderTaskPanel();
   if ((prevRole !== state.role || prevUserId !== state.userId) && state.card) {
     loadCard({ silent: true });
   }
@@ -1250,6 +1337,15 @@ function bindPageHandlers() {
     TicketControls.bindTicketControlHandlers(controlsCtx());
   }
 
+  if (el.taskPanelMoreBtn) {
+    el.taskPanelMoreBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.taskPanelDropdownOpen = !state.taskPanelDropdownOpen;
+      el.taskPanelMoreBtn.classList.toggle("active", state.taskPanelDropdownOpen);
+      el.taskPanelDropdown?.classList.toggle("hidden", !state.taskPanelDropdownOpen);
+    });
+  }
+
   el.closeErrorModalBtn.addEventListener("click", closeError);
   el.okErrorBtn.addEventListener("click", closeError);
   el.copyErrorBtn.addEventListener("click", async () => {
@@ -1270,6 +1366,7 @@ function bindPageHandlers() {
     if (e.key === "Escape") {
       hideMessageContextMenu();
       closeImagePreview();
+      closeTaskPanelDropdown();
     }
     if (e.key === "Escape" && !el.errorModal.classList.contains("hidden")) {
       closeError();
@@ -1291,7 +1388,12 @@ function bindPageHandlers() {
   };
   document.addEventListener("keydown", keydownHandler);
 
-  documentClickHandler = hideMessageContextMenu;
+  documentClickHandler = (event) => {
+    hideMessageContextMenu();
+    if (!state.taskPanelDropdownOpen) return;
+    if (event.target.closest("#taskPanel")) return;
+    closeTaskPanelDropdown();
+  };
   resizeHandler = hideMessageContextMenu;
   document.addEventListener("click", documentClickHandler);
   window.addEventListener("resize", resizeHandler);

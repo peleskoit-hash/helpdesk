@@ -10,7 +10,7 @@ from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import and_, asc, desc, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
@@ -26,7 +26,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
@@ -80,7 +80,7 @@ from ..services.ticket_problem_flow import (
     get_problem_menu_for_ticket,
     menu_name_for_ticket_client,
 )
-from ..services.ticket_subject import resolve_ticket_subject
+from ..services.ticket_subject import build_ticket_subject_map, resolve_ticket_subject
 from ..services.telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 from ..services.automatic_messages import render_automatic_message_text
 
@@ -832,6 +832,47 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
     )
 
 
+@router.get("/task-panel", response_model=list[TaskPanelItem])
+def get_task_panel(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    latest_message = (
+        select(
+            TicketMessage.ticket_id.label("ticket_id"),
+            func.max(TicketMessage.created_at).label("last_message_at"),
+        )
+        .where(or_(TicketMessage.author_user_id.is_(None), TicketMessage.author_user_id != user.id))
+        .group_by(TicketMessage.ticket_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            Ticket,
+            TicketView.last_opened_at,
+            latest_message.c.last_message_at,
+        )
+        .join(TicketView, and_(TicketView.ticket_id == Ticket.id, TicketView.user_id == user.id))
+        .join(latest_message, latest_message.c.ticket_id == Ticket.id, isouter=True)
+        .where(
+            and_(
+                Ticket.assignee_id == user.id,
+                Ticket.agent_visible.is_(True),
+                Ticket.status.in_([TicketStatus.NEW.value, TicketStatus.PENDING.value]),
+                Ticket.is_special.is_(False),
+            )
+        )
+        .order_by(desc(TicketView.first_opened_at))
+    ).all()
+    tickets = [ticket for ticket, _last_opened_at, _last_message_at in rows]
+    subject_map = build_ticket_subject_map(db, tickets)
+    return [
+        TaskPanelItem(
+            id=ticket.id,
+            subject=subject_map.get(ticket.id, ticket.subject),
+            has_unread=bool(last_message_at and last_opened_at and last_message_at > last_opened_at),
+        )
+        for ticket, last_opened_at, last_message_at in rows
+    ]
+
+
 @router.get("/{ticket_id}", response_model=TicketCard)
 def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     t = _get_ticket_or_404(db, ticket_id, user)
@@ -851,7 +892,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
         )
         db.commit()
-    if user.role == "agent":
+    if is_support_user(user):
         view = db.execute(
             select(TicketView).where(and_(TicketView.ticket_id == t.id, TicketView.user_id == user.id))
         ).scalar_one_or_none()

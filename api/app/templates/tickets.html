@@ -125,6 +125,12 @@
         <span class="status" id="statusText">Готово</span>
       </div>
 
+      <div id="taskPanel" class="task-panel hidden">
+        <div id="taskPanelSlots" class="task-panel-slots"></div>
+        <button id="taskPanelMoreBtn" class="task-panel-more hidden" type="button" aria-label="Ещё заявки">…</button>
+        <div id="taskPanelDropdown" class="task-panel-dropdown hidden"></div>
+      </div>
+
       <section class="content" style="grid-template-columns: 1fr;">
         <div class="panel table-wrap">
           <div class="table-scroll">
@@ -190,7 +196,11 @@
         <button id="editColumnsWidthBtn" class="action" type="button">Ред. ширины столбцов</button>
         <div id="columnsDraftList" class="columns-draft-list"></div>
       </div>
-      <div class="modal-foot">
+      <div class="modal-foot columns-modal-foot">
+        <label class="columns-task-panel-toggle">
+          <input id="taskPanelEnabledInput" type="checkbox" />
+          <span>Панель задач</span>
+        </label>
         <button id="saveColumnsBtn" type="button" class="action primary">Сохранить</button>
       </div>
     </div>

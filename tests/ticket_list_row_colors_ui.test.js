@@ -6,6 +6,7 @@ const vm = require("node:vm");
 const listSource = fs.readFileSync("api/app/static/list.js", "utf8");
 const styles = fs.readFileSync("api/app/static/styles.css", "utf8");
 const template = fs.readFileSync("api/app/templates/tickets.html", "utf8");
+const appShellSource = fs.readFileSync("api/app/static/app_shell.js", "utf8");
 
 function sourceBetween(source, start, end) {
   const from = source.indexOf(start);
@@ -98,6 +99,151 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
   assert.match(listSource, /await Promise\.all\(\[loadMe\(\), loadPreferences\(\)\]\)/);
 });
 
+test("ticket task panel preference control and lifecycle are wired into list settings", () => {
+  assert.match(template, /id="taskPanel"/);
+  assert.match(template, /id="taskPanelSlots"/);
+  assert.match(template, /id="taskPanelMoreBtn"[\s\S]*…/);
+  assert.match(template, /id="taskPanelDropdown"/);
+  assert.match(template, /id="taskPanelEnabledInput" type="checkbox"/);
+  assert.match(listSource, /taskPanelToggle: root\?\.querySelector\("\.columns-task-panel-toggle"\) \|\| null/);
+  assert.match(template, />Панель задач<\/span>/);
+
+  const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
+  assert.match(stateSource, /taskPanelEnabled: false/);
+  assert.match(stateSource, /taskPanelItems: \[\]/);
+  assert.match(stateSource, /taskPanelDropdownOpen: false/);
+
+  const loadSource = sourceBetween(listSource, "async function loadPreferences", "async function updateColorPreference");
+  assert.match(loadSource, /state\.taskPanelEnabled = preferences\?\.task_panel_enabled === true/);
+  assert.match(loadSource, /applyTaskPanelPreference\(\)/);
+
+  const saveSource = sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml");
+  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns \}/);
+  assert.match(saveSource, /if \(canUseTaskPanel\(\)\) \{[\s\S]*payload\.task_panel_enabled = nextTaskPanelEnabled/);
+  assert.match(saveSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", payload\)/);
+  assert.match(saveSource, /state\.taskPanelEnabled = preferences\?\.task_panel_enabled === true/);
+  assert.match(saveSource, /await loadTaskPanel\(\)/);
+
+  const loadTicketsSource = sourceBetween(listSource, "async function loadTickets", "async function loadCounts");
+  assert.match(loadTicketsSource, /Promise\.all\(\[[\s\S]*api\(`\$\{base\}\?\$\{queryParams\.toString\(\)\}`\),[\s\S]*fetchTaskPanelItems\(\{ silent: true \}\)/);
+  assert.ok(loadTicketsSource.indexOf("fetchTaskPanelItems({ silent: true })") < loadTicketsSource.indexOf("renderTable();"));
+  assert.ok(loadTicketsSource.indexOf("renderTaskPanel();") < loadTicketsSource.indexOf("renderTable();"));
+});
+
+test("ticket list shell remount refreshes dom refs before binding listeners", () => {
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261001b"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261001b/);
+
+  const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
+  const context = vm.createContext({});
+  vm.runInContext(`${collectSource}\nglobalThis.collectElements = collectElements;`, context);
+
+  function makeRoot(label) {
+    const nodes = new Map();
+    return {
+      label,
+      querySelector(selector) {
+        if (!nodes.has(selector)) nodes.set(selector, { selector, owner: label });
+        return nodes.get(selector);
+      },
+      querySelectorAll(selector) {
+        return [{ selector, owner: label }];
+      },
+    };
+  }
+
+  const rootA = makeRoot("first");
+  const rootB = makeRoot("second");
+  const documentStub = {
+    root: rootA,
+    getElementById(id) {
+      if (id === "appContent") return this.root;
+      return { id, owner: "document" };
+    },
+    querySelector(selector) {
+      return { selector, owner: "document" };
+    },
+    querySelectorAll(selector) {
+      return [{ selector, owner: "document" }];
+    },
+  };
+  context.document = documentStub;
+
+  const first = context.collectElements();
+  documentStub.root = rootB;
+  const second = context.collectElements();
+  assert.equal(first.bulkAssignBtn.owner, "first");
+  assert.equal(second.bulkAssignBtn.owner, "second");
+  assert.notEqual(first.bulkAssignBtn, second.bulkAssignBtn);
+  assert.equal(second.closeAssignModalBtn.owner, "second");
+  assert.equal(second.confirmBulkAssignBtn.owner, "second");
+
+  const initSource = sourceBetween(listSource, "function init()", "async function runTicketsListPage");
+  assert.ok(initSource.indexOf("el = collectElements();") < initSource.indexOf("el.bulkAssignBtn.addEventListener"));
+  assert.ok(initSource.indexOf("requireListElements();") < initSource.indexOf("el.bulkAssignBtn.addEventListener"));
+  assert.match(initSource, /pageEventController\?\.abort\(\)/);
+  assert.match(initSource, /const pageSignal = pageEventController\.signal/);
+});
+
+test("ticket task panel is role-gated without clearing saved preference", () => {
+  const roleSource = sourceBetween(listSource, "function canShowAssigneeColumn", "function allowedTicketColumnKeys");
+  const taskPanelRoleSource = sourceBetween(listSource, "function canUseTaskPanel", "function allowedTicketColumnKeys");
+  assert.match(roleSource, /function canUseTaskPanel\(role = state\.role\)/);
+  assert.match(taskPanelRoleSource, /return role === "agent" \|\| role === "trainee"/);
+  assert.doesNotMatch(taskPanelRoleSource, /admin|chiki_piki/);
+  const roleContext = vm.createContext({ state: { role: "agent" } });
+  vm.runInContext(`${roleSource}\nglobalThis.canUseTaskPanel = canUseTaskPanel;`, roleContext);
+  assert.equal(roleContext.canUseTaskPanel("agent"), true);
+  assert.equal(roleContext.canUseTaskPanel("trainee"), true);
+  assert.equal(roleContext.canUseTaskPanel("admin"), false);
+  assert.equal(roleContext.canUseTaskPanel("chiki_piki"), false);
+
+  const preferenceSource = sourceBetween(listSource, "function applyTaskPanelPreference", "async function loadPreferences");
+  assert.match(preferenceSource, /const canUse = canUseTaskPanel\(\)/);
+  assert.match(preferenceSource, /el\.taskPanelToggle\.classList\.toggle\("hidden", !canUse\)/);
+  assert.match(preferenceSource, /el\.taskPanelEnabledInput\.checked = Boolean\(state\.taskPanelEnabled\)/);
+
+  const renderSource = sourceBetween(listSource, "function renderTaskPanel", "async function loadTaskPanel");
+  assert.match(renderSource, /const canUse = canUseTaskPanel\(\)/);
+  assert.match(renderSource, /const items = canUse && state\.taskPanelEnabled \? \(state\.taskPanelItems \|\| \[\]\) : \[\]/);
+  assert.match(renderSource, /const shouldShow = canUse && state\.taskPanelEnabled && items\.length > 0/);
+
+  const loadPanelSource = sourceBetween(listSource, "async function loadTaskPanel", "function closeOnBackdropClick");
+  assert.match(loadPanelSource, /await fetchTaskPanelItems\(options\)/);
+  assert.match(loadPanelSource, /if \(!canUseTaskPanel\(\) \|\| !state\.taskPanelEnabled\)[\s\S]*return/);
+  assert.match(loadPanelSource, /api\("\/api\/v1\/tickets\/task-panel"\)/);
+
+  const saveSource = sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml");
+  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns \}/);
+  assert.match(saveSource, /if \(canUseTaskPanel\(\)\) \{[\s\S]*payload\.task_panel_enabled = nextTaskPanelEnabled[\s\S]*\}/);
+  assert.doesNotMatch(saveSource, /\{ ticket_list_columns: payloadColumns, task_panel_enabled: nextTaskPanelEnabled \}/);
+
+  const roleUiSource = sourceBetween(listSource, "function applyRoleUi", "function renderAgentSelect");
+  assert.match(roleUiSource, /applyTaskPanelPreference\(\)/);
+});
+
+test("ticket task panel renders eight fixed slots, overflow menu, subjects only, and unread markers", () => {
+  const panelSource = sourceBetween(listSource, "function ticketHref", "async function loadTaskPanel");
+  const panelStyles = sourceBetween(styles, ".task-panel {", "#searchInput.search-active");
+  assert.match(panelSource, /ticketUrl\.searchParams\.set\("return_url", currentListUrl\)/);
+  assert.match(panelSource, /const visibleItems = items\.slice\(0, 8\)/);
+  assert.match(panelSource, /const overflowItems = items\.slice\(8\)/);
+  assert.match(panelSource, /taskPanelItemHtml\(item, "task-panel-chip"\)/);
+  assert.match(panelSource, /taskPanelItemHtml\(item, "task-panel-menu-item"\)/);
+  assert.match(panelSource, /item\?\.has_unread \? '<span class="task-panel-unread"/);
+  assert.match(panelSource, /<span class="task-panel-subject">\$\{escapeHtml\(item\.subject \|\| ""\)\}<\/span>/);
+  assert.doesNotMatch(panelSource, /ticket_number|client_name|assignee|status|is_frozen|Замороженная|актив/);
+  const loadPanelSource = sourceBetween(listSource, "async function loadTaskPanel", "function closeOnBackdropClick");
+  assert.match(loadPanelSource, /if \(!canUseTaskPanel\(\) \|\| !state\.taskPanelEnabled\)[\s\S]*state\.taskPanelItems = \[\][\s\S]*return/);
+  assert.match(loadPanelSource, /api\("\/api\/v1\/tickets\/task-panel"\)/);
+
+  assert.match(styles, /\.task-panel-slots \{[\s\S]*grid-template-columns: repeat\(8, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.task-panel\.has-overflow \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) 44px/);
+  assert.match(styles, /\.task-panel-subject \{[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
+  assert.match(styles, /\.task-panel-unread \{[\s\S]*position: absolute;/);
+  assert.doesNotMatch(panelStyles, /frozen|ticket-color-frozen/);
+});
+
 test("ticket colors disabled state removes semantic backgrounds but keeps unread bold", () => {
   assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-request/);
   assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-closed/);
@@ -171,7 +317,7 @@ test("ticket columns modal supports mandatory subject, add, trash delete, reorde
   assert.match(listSource, /function moveDraftColumn\(fromIndex, toIndex\)/);
   assert.doesNotMatch(listSource, /columns-width-input|data-width-step|columns-width-btn/);
   assert.match(listSource, /enterColumnResizeMode/);
-  assert.match(listSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", \{ ticket_list_columns: payloadColumns \}\)/);
+  assert.match(listSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", payload\)/);
   assert.doesNotMatch(sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml"), /send_by_enter|color_enabled/);
 });
 

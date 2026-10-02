@@ -92,6 +92,7 @@ def test_user_preferences_default_is_false_for_new_user():
 
     assert result.send_by_enter is False
     assert result.color_enabled is True
+    assert result.task_panel_enabled is False
     assert [column.model_dump() for column in result.ticket_list_columns] == [
         {"key": "subject", "width": 0},
         {"key": "requester", "width": 150},
@@ -158,6 +159,37 @@ def test_user_preferences_patch_color_false_persists_without_changing_send_by_en
     assert updated.send_by_enter is True
     assert user.color_enabled is False
     assert user.send_by_enter is True
+
+
+def test_user_preferences_patch_task_panel_persists_without_changing_other_preferences():
+    session = _session()
+    company = _company(session)
+    columns = [{"key": "subject", "width": 0}, {"key": "created_at", "width": 140}]
+    user = _user(
+        session,
+        company_id=company.id,
+        full_name="Ivan Petrov",
+        send_by_enter=True,
+        color_enabled=False,
+        ticket_list_columns_json=columns,
+    )
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(task_panel_enabled=True),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.task_panel_enabled is True
+    assert updated.send_by_enter is True
+    assert updated.color_enabled is False
+    assert [column.model_dump() for column in updated.ticket_list_columns] == columns
+    assert user.task_panel_enabled is True
+    assert user.send_by_enter is True
+    assert user.color_enabled is False
+    assert user.ticket_list_columns_json == columns
 
 
 def test_user_preferences_patch_color_true_after_false_persists():

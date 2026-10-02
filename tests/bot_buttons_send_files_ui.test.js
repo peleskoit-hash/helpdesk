@@ -208,7 +208,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20260903a/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261002a/);
+  assert.match(appShellSource, /ticket\.js\?v=20261002a/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -240,6 +241,64 @@ test('ticket page binds static handlers before sidebar async initialization', ()
   assert.ok(runSource.indexOf('syncSidebarState(window.HelpdeskSidebar.getState());') > runSource.indexOf('await window.HelpdeskSidebar.init();'));
   assert.ok(runSource.indexOf('initPostSidebarState();') > runSource.indexOf('syncSidebarState(window.HelpdeskSidebar.getState());'));
   assert.ok(runSource.indexOf('startPolling();') > runSource.indexOf('await Promise.all([loadCard(), loadTabCounts(), loadCompletionStats()]);'));
+});
+
+test('ticket page task panel mirrors list behavior and preserves return url', () => {
+  assert.match(ticketTemplate, /id="taskPanel"/);
+  assert.match(ticketTemplate, /id="taskPanelSlots"/);
+  assert.match(ticketTemplate, /id="taskPanelMoreBtn"[\s\S]*…/);
+  assert.match(ticketTemplate, /id="taskPanelDropdown"/);
+  assert.ok(ticketTemplate.indexOf('id="taskPanel"') > ticketTemplate.indexOf('<div class="toolbar">'));
+  assert.ok(ticketTemplate.indexOf('id="taskPanel"') < ticketTemplate.indexOf('<section class="content ticket-layout">'));
+
+  const stateSource = sourceBetween(ticketPageSource, 'const state = {', '};\n\nconst el = {');
+  assert.match(stateSource, /taskPanelEnabled: false/);
+  assert.match(stateSource, /taskPanelItems: \[\]/);
+  assert.match(stateSource, /taskPanelDropdownOpen: false/);
+
+  const roleSource = sourceBetween(ticketPageSource, 'function canUseTaskPanel', 'function taskPanelReturnUrl');
+  assert.match(roleSource, /return role === "agent" \|\| role === "trainee"/);
+  assert.doesNotMatch(roleSource, /admin|chiki_piki/);
+  const roleContext = vm.createContext({ state: { role: 'agent' } });
+  vm.runInContext(`${roleSource}\nglobalThis.canUseTaskPanel = canUseTaskPanel;`, roleContext);
+  assert.equal(roleContext.canUseTaskPanel('agent'), true);
+  assert.equal(roleContext.canUseTaskPanel('trainee'), true);
+  assert.equal(roleContext.canUseTaskPanel('admin'), false);
+  assert.equal(roleContext.canUseTaskPanel('chiki_piki'), false);
+
+  const preferencesSource = sourceBetween(ticketPageSource, 'async function loadComposerPreferences', 'async function updateSendByEnterPreference');
+  assert.match(preferencesSource, /state\.taskPanelEnabled = payload\?\.task_panel_enabled === true/);
+  assert.match(preferencesSource, /renderTaskPanel\(\)/);
+
+  const loadPanelSource = sourceBetween(ticketPageSource, 'async function loadTaskPanel', 'function cleanupTicketCardPage');
+  assert.match(loadPanelSource, /if \(!canUseTaskPanel\(\) \|\| !state\.taskPanelEnabled\)[\s\S]*return/);
+  assert.match(loadPanelSource, /api\("\/api\/v1\/tickets\/task-panel"\)/);
+
+  const loadCardSource = sourceBetween(ticketPageSource, 'async function loadCard', 'async function sendByMode');
+  assert.ok(loadCardSource.indexOf('api(`/api/v1/tickets/${state.ticketId}`)') < loadCardSource.indexOf('await loadTaskPanel({ silent: true });'));
+  assert.ok(loadCardSource.indexOf('renderCard();') < loadCardSource.indexOf('await loadTaskPanel({ silent: true });'));
+
+  const returnUrlSource = sourceBetween(ticketPageSource, 'function taskPanelReturnUrl', 'function taskPanelTicketHref');
+  assert.match(returnUrlSource, /normalizeTicketsReturnUrl\(params\.get\("return_url"\)\)/);
+  assert.match(returnUrlSource, /normalizeTicketsReturnUrl\(sessionStorage\.getItem\("ticketListReturnUrl"\)\)/);
+  const hrefSource = sourceBetween(ticketPageSource, 'function taskPanelTicketHref', 'function taskPanelItemHtml');
+  assert.match(hrefSource, /ticketUrl\.searchParams\.set\("return_url", taskPanelReturnUrl\(\)\)/);
+  assert.doesNotMatch(hrefSource, /window\.location\.pathname/);
+
+  const bindSource = sourceBetween(ticketPageSource, 'function bindPageHandlers()', 'function initPostSidebarState()');
+  assert.match(bindSource, /taskPanelMoreBtn[\s\S]*state\.taskPanelDropdownOpen = !state\.taskPanelDropdownOpen/);
+  assert.match(bindSource, /if \(event\.target\.closest\("#taskPanel"\)\) return/);
+});
+
+test('task panel layout stays compact and dropdown is opaque in light and dark themes', () => {
+  assert.match(stylesSource, /\.main\[data-shell-page="tickets-list"\],\s*\.main\[data-shell-page="ticket-card"\] \{[\s\S]*grid-template-rows: auto auto minmax\(0, 1fr\);/);
+  assert.match(stylesSource, /\.main\[data-shell-page="ticket-card"\] > \.content\.ticket-layout \{[\s\S]*grid-row: 3;[\s\S]*min-height: 0;/);
+  assert.match(stylesSource, /\.task-panel \{[\s\S]*align-self: start;[\s\S]*background: #fff;/);
+  assert.match(stylesSource, /\.task-panel-dropdown \{[\s\S]*z-index: 80;[\s\S]*background: #fff;/);
+  assert.match(stylesSource, /\.task-panel-chip,\s*\.task-panel-menu-item \{[\s\S]*background: #f1f7ff;/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.task-panel \{[\s\S]*background: #0f172a;/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.task-panel-chip,\s*body\[data-theme="dark"\] \.task-panel-menu-item,\s*body\[data-theme="dark"\] \.task-panel-more \{[\s\S]*background: #1e293b;/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.task-panel-dropdown \{[\s\S]*background: #111827;/);
 });
 
 test('settings client card uses main tabs with blocks open by default', () => {

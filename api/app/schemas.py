@@ -107,6 +107,12 @@ class TicketCountsOut(BaseModel):
     by_assignee: dict[str, AssigneeTicketCounts] | None = None
 
 
+class TaskPanelItem(BaseModel):
+    id: str
+    subject: str
+    has_unread: bool = False
+
+
 class TicketAttachmentOut(BaseModel):
     id: str
     original_filename: str | None = None
@@ -380,12 +386,14 @@ class UserStatusUpdate(BaseModel):
 class UserPreferencesOut(BaseModel):
     send_by_enter: bool = False
     color_enabled: bool = True
+    task_panel_enabled: bool = False
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
 
 
 class UserPreferencesUpdate(BaseModel):
     send_by_enter: bool | None = None
     color_enabled: bool | None = None
+    task_panel_enabled: bool | None = None
     ticket_list_columns: list[TicketListColumnPreference] | None = None
 
     @field_validator("ticket_list_columns")

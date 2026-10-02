@@ -69,6 +69,9 @@ const state = {
   completionOpen: false,
   hasPageFromUrl: Boolean(urlState.hasPageParam),
   colorEnabled: true,
+  taskPanelEnabled: false,
+  taskPanelItems: [],
+  taskPanelDropdownOpen: false,
   ticketListColumns: [],
   draftTicketListColumns: null,
   columnDraftPreviewActive: false,
@@ -158,88 +161,131 @@ function syncListUrl(mode = "replace") {
   }
 }
 
-const el = {
-  tabButtons: [...document.querySelectorAll(".tab-btn")],
-  sortButtons: [...document.querySelectorAll(".table-sort-btn")],
-  roleSelect: document.getElementById("roleSelect"),
-  roleControl: document.getElementById("roleControl"),
-  agentSelect: document.getElementById("agentSelect"),
-  agentSelectWrap: document.getElementById("agentSelectWrap"),
-  searchInput: document.getElementById("searchInput"),
-  searchClearBtn: document.getElementById("searchClearBtn"),
-  colorEnabledInput: document.getElementById("colorEnabledInput"),
-  colorToggleLabel: document.getElementById("colorToggleLabel"),
-  colorToggleText: document.getElementById("colorToggleText"),
-  colorLegend: document.getElementById("colorLegend"),
-  ticketsHeaderRow: document.getElementById("ticketsHeaderRow"),
-  ticketsTable: document.getElementById("ticketsTable"),
-  ticketsTableBody: document.getElementById("ticketsTableBody"),
-  ticketCount: document.getElementById("ticketCount"),
-  prevPageBtn: document.getElementById("prevPageBtn"),
-  nextPageBtn: document.getElementById("nextPageBtn"),
-  paginationPages: document.getElementById("paginationPages"),
-  emptyText: document.getElementById("emptyText"),
-  statusText: document.getElementById("statusText"),
-  bulkAssignBtn: document.getElementById("bulkAssignBtn"),
-  bulkCloseBtn: document.getElementById("bulkCloseBtn"),
-  bulkDeleteBtn: document.getElementById("bulkDeleteBtn"),
-  selectAllTicketsBtn: document.getElementById("selectAllTicketsBtn"),
-  assignModal: document.getElementById("assignModal"),
-  closeAssignModalBtn: document.getElementById("closeAssignModalBtn"),
-  confirmBulkAssignBtn: document.getElementById("confirmBulkAssignBtn"),
-  bulkAssigneeSelect: document.getElementById("bulkAssigneeSelect"),
-  bulkActionModal: document.getElementById("bulkActionModal"),
-  bulkActionModalTitle: document.getElementById("bulkActionModalTitle"),
-  bulkActionModalText: document.getElementById("bulkActionModalText"),
-  closeBulkActionModalBtn: document.getElementById("closeBulkActionModalBtn"),
-  cancelBulkActionBtn: document.getElementById("cancelBulkActionBtn"),
-  confirmBulkActionBtn: document.getElementById("confirmBulkActionBtn"),
-  columnsModal: document.getElementById("columnsModal"),
-  closeColumnsModalBtn: document.getElementById("closeColumnsModalBtn"),
-  columnAddSelect: document.getElementById("columnAddSelect"),
-  columnsDraftList: document.getElementById("columnsDraftList"),
-  editColumnsWidthBtn: document.getElementById("editColumnsWidthBtn"),
-  resizeColumnsActions: document.getElementById("resizeColumnsActions"),
-  saveResizeColumnsBtn: document.getElementById("saveResizeColumnsBtn"),
-  cancelResizeColumnsBtn: document.getElementById("cancelResizeColumnsBtn"),
-  saveColumnsBtn: document.getElementById("saveColumnsBtn"),
-  errorModal: document.getElementById("errorModal"),
-  errorText: document.getElementById("errorText"),
-  closeErrorModalBtn: document.getElementById("closeErrorModalBtn"),
-  copyErrorBtn: document.getElementById("copyErrorBtn"),
-  okErrorBtn: document.getElementById("okErrorBtn"),
-  statusButtons: [...document.querySelectorAll("[data-availability-status]")],
-  adminOnly: [...document.querySelectorAll(".admin-only")],
-  statusPanel: document.querySelector(".status-panel"),
-  adminAgentFilter: document.getElementById("adminAgentFilter"),
-  adminAgentList: document.getElementById("adminAgentList"),
-  adminAgentToggleAll: document.getElementById("adminAgentToggleAll"),
-  adminAssigneeCols: [...document.querySelectorAll(".admin-assignee-col")],
-  adminSelectCols: [...document.querySelectorAll(".admin-select-col")],
-  agentAvatar: document.querySelector(".agent-avatar"),
-  tabCountNodes: [...document.querySelectorAll("[data-tab-count]")],
-  sidebarUserDisplayName: document.getElementById("sidebarUserDisplayName"),
-  completionToggleBtn: document.getElementById("completionToggleBtn"),
-  completionSummaryArrow: document.getElementById("completionSummaryArrow"),
-  completionDetails: document.getElementById("completionDetails"),
-  completionYearTickets: document.getElementById("completionYearTickets"),
-  completionYearTasks: document.getElementById("completionYearTasks"),
-  completionYearTotal: document.getElementById("completionYearTotal"),
-  completionMonthTickets: document.getElementById("completionMonthTickets"),
-  completionMonthTasks: document.getElementById("completionMonthTasks"),
-  completionMonthTotal: document.getElementById("completionMonthTotal"),
-  completionWeekTickets: document.getElementById("completionWeekTickets"),
-  completionWeekTasks: document.getElementById("completionWeekTasks"),
-  completionWeekTotal: document.getElementById("completionWeekTotal"),
-  completionDayTickets: document.getElementById("completionDayTickets"),
-  completionDayTasks: document.getElementById("completionDayTasks"),
-  completionDayTotal: document.getElementById("completionDayTotal"),
-  completionAllTimeTickets: document.getElementById("completionAllTimeTickets"),
-  completionAllTimeTasks: document.getElementById("completionAllTimeTasks"),
-  completionAllTimeTotal: document.getElementById("completionAllTimeTotal"),
-  completionAllTimeTotalRow: document.getElementById("completionAllTimeTotalRow"),
-  completionLegacy: document.getElementById("completionLegacy"),
-};
+function collectElements() {
+  const root = document.getElementById("appContent");
+  const byId = (id) => root?.querySelector(`#${id}`) || null;
+  return {
+    tabButtons: [...document.querySelectorAll(".tab-btn")],
+    sortButtons: [...(root?.querySelectorAll(".table-sort-btn") || [])],
+    roleSelect: byId("roleSelect"),
+    roleControl: byId("roleControl"),
+    agentSelect: byId("agentSelect"),
+    agentSelectWrap: byId("agentSelectWrap"),
+    searchInput: byId("searchInput"),
+    searchClearBtn: byId("searchClearBtn"),
+    colorEnabledInput: byId("colorEnabledInput"),
+    colorToggleLabel: byId("colorToggleLabel"),
+    colorToggleText: byId("colorToggleText"),
+    colorLegend: byId("colorLegend"),
+    taskPanel: byId("taskPanel"),
+    taskPanelSlots: byId("taskPanelSlots"),
+    taskPanelMoreBtn: byId("taskPanelMoreBtn"),
+    taskPanelDropdown: byId("taskPanelDropdown"),
+    taskPanelToggle: root?.querySelector(".columns-task-panel-toggle") || null,
+    ticketsHeaderRow: byId("ticketsHeaderRow"),
+    ticketsTable: byId("ticketsTable"),
+    ticketsTableBody: byId("ticketsTableBody"),
+    ticketCount: byId("ticketCount"),
+    prevPageBtn: byId("prevPageBtn"),
+    nextPageBtn: byId("nextPageBtn"),
+    paginationPages: byId("paginationPages"),
+    emptyText: byId("emptyText"),
+    statusText: byId("statusText"),
+    bulkAssignBtn: byId("bulkAssignBtn"),
+    bulkCloseBtn: byId("bulkCloseBtn"),
+    bulkDeleteBtn: byId("bulkDeleteBtn"),
+    selectAllTicketsBtn: byId("selectAllTicketsBtn"),
+    assignModal: byId("assignModal"),
+    closeAssignModalBtn: byId("closeAssignModalBtn"),
+    confirmBulkAssignBtn: byId("confirmBulkAssignBtn"),
+    bulkAssigneeSelect: byId("bulkAssigneeSelect"),
+    bulkActionModal: byId("bulkActionModal"),
+    bulkActionModalTitle: byId("bulkActionModalTitle"),
+    bulkActionModalText: byId("bulkActionModalText"),
+    closeBulkActionModalBtn: byId("closeBulkActionModalBtn"),
+    cancelBulkActionBtn: byId("cancelBulkActionBtn"),
+    confirmBulkActionBtn: byId("confirmBulkActionBtn"),
+    columnsModal: byId("columnsModal"),
+    closeColumnsModalBtn: byId("closeColumnsModalBtn"),
+    columnAddSelect: byId("columnAddSelect"),
+    columnsDraftList: byId("columnsDraftList"),
+    taskPanelEnabledInput: byId("taskPanelEnabledInput"),
+    editColumnsWidthBtn: byId("editColumnsWidthBtn"),
+    resizeColumnsActions: byId("resizeColumnsActions"),
+    saveResizeColumnsBtn: byId("saveResizeColumnsBtn"),
+    cancelResizeColumnsBtn: byId("cancelResizeColumnsBtn"),
+    saveColumnsBtn: byId("saveColumnsBtn"),
+    errorModal: byId("errorModal"),
+    errorText: byId("errorText"),
+    closeErrorModalBtn: byId("closeErrorModalBtn"),
+    copyErrorBtn: byId("copyErrorBtn"),
+    okErrorBtn: byId("okErrorBtn"),
+    statusButtons: [...document.querySelectorAll("[data-availability-status]")],
+    adminOnly: [...document.querySelectorAll(".admin-only")],
+    statusPanel: document.querySelector(".status-panel"),
+    adminAgentFilter: document.getElementById("adminAgentFilter"),
+    adminAgentList: document.getElementById("adminAgentList"),
+    adminAgentToggleAll: document.getElementById("adminAgentToggleAll"),
+    adminAssigneeCols: [...(root?.querySelectorAll(".admin-assignee-col") || [])],
+    adminSelectCols: [...(root?.querySelectorAll(".admin-select-col") || [])],
+    agentAvatar: document.querySelector(".agent-avatar"),
+    tabCountNodes: [...document.querySelectorAll("[data-tab-count]")],
+    sidebarUserDisplayName: document.getElementById("sidebarUserDisplayName"),
+    completionToggleBtn: document.getElementById("completionToggleBtn"),
+    completionSummaryArrow: document.getElementById("completionSummaryArrow"),
+    completionDetails: document.getElementById("completionDetails"),
+    completionYearTickets: document.getElementById("completionYearTickets"),
+    completionYearTasks: document.getElementById("completionYearTasks"),
+    completionYearTotal: document.getElementById("completionYearTotal"),
+    completionMonthTickets: document.getElementById("completionMonthTickets"),
+    completionMonthTasks: document.getElementById("completionMonthTasks"),
+    completionMonthTotal: document.getElementById("completionMonthTotal"),
+    completionWeekTickets: document.getElementById("completionWeekTickets"),
+    completionWeekTasks: document.getElementById("completionWeekTasks"),
+    completionWeekTotal: document.getElementById("completionWeekTotal"),
+    completionDayTickets: document.getElementById("completionDayTickets"),
+    completionDayTasks: document.getElementById("completionDayTasks"),
+    completionDayTotal: document.getElementById("completionDayTotal"),
+    completionAllTimeTickets: document.getElementById("completionAllTimeTickets"),
+    completionAllTimeTasks: document.getElementById("completionAllTimeTasks"),
+    completionAllTimeTotal: document.getElementById("completionAllTimeTotal"),
+    completionAllTimeTotalRow: document.getElementById("completionAllTimeTotalRow"),
+    completionLegacy: document.getElementById("completionLegacy"),
+  };
+}
+
+const REQUIRED_LIST_ELEMENT_KEYS = [
+  "roleSelect",
+  "agentSelect",
+  "searchInput",
+  "bulkAssignBtn",
+  "assignModal",
+  "closeAssignModalBtn",
+  "confirmBulkAssignBtn",
+  "bulkAssigneeSelect",
+  "errorModal",
+  "errorText",
+  "closeErrorModalBtn",
+  "copyErrorBtn",
+  "okErrorBtn",
+  "ticketsHeaderRow",
+  "ticketsTableBody",
+  "ticketCount",
+  "prevPageBtn",
+  "nextPageBtn",
+  "paginationPages",
+  "emptyText",
+  "statusText",
+];
+
+function requireListElements() {
+  const missing = REQUIRED_LIST_ELEMENT_KEYS.filter((key) => !el[key]);
+  if (missing.length) {
+    throw new Error(`Tickets list DOM is incomplete: ${missing.join(", ")}`);
+  }
+}
+
+let el = collectElements();
 let pendingBulkAction = null;
 
 function normalizeLoadOptions(options = {}) {
@@ -317,11 +363,24 @@ function applyColorPreference() {
   }
 }
 
+function applyTaskPanelPreference() {
+  const canUse = canUseTaskPanel();
+  if (el.taskPanelToggle) {
+    el.taskPanelToggle.classList.toggle("hidden", !canUse);
+  }
+  if (el.taskPanelEnabledInput) {
+    el.taskPanelEnabledInput.checked = Boolean(state.taskPanelEnabled);
+  }
+  renderTaskPanel();
+}
+
 async function loadPreferences() {
   const preferences = await api("/api/v1/users/me/preferences");
   state.colorEnabled = preferences?.color_enabled !== false;
+  state.taskPanelEnabled = preferences?.task_panel_enabled === true;
   state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || DEFAULT_TICKET_COLUMNS);
   applyColorPreference();
+  applyTaskPanelPreference();
   renderTicketHeader();
 }
 
@@ -338,6 +397,68 @@ async function updateColorPreference(enabled) {
     state.colorEnabled = previous;
     applyColorPreference();
     showError(`Ошибка настройки цвета: ${e.message}`);
+  }
+}
+
+function ticketHref(ticketId) {
+  const currentListUrl = `${window.location.pathname}${window.location.search}`;
+  const ticketUrl = new URL(`/tickets/${ticketId}`, window.location.origin);
+  ticketUrl.searchParams.set("tab", state.tab || DEFAULT_TAB);
+  ticketUrl.searchParams.set("page", String(parsePage(state.page)));
+  const appliedQuery = (state.appliedSearchQuery || "").trim();
+  if (appliedQuery) ticketUrl.searchParams.set("q", appliedQuery);
+  ticketUrl.searchParams.set("return_url", currentListUrl);
+  return `${ticketUrl.pathname}${ticketUrl.search}`;
+}
+
+function taskPanelItemHtml(item, className) {
+  const unread = item?.has_unread ? '<span class="task-panel-unread" aria-label="Новые сообщения"></span>' : "";
+  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" href="${escapeHtml(ticketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
+}
+
+function closeTaskPanelDropdown() {
+  state.taskPanelDropdownOpen = false;
+  if (el.taskPanelDropdown) el.taskPanelDropdown.classList.add("hidden");
+  if (el.taskPanelMoreBtn) el.taskPanelMoreBtn.classList.remove("active");
+}
+
+function renderTaskPanel() {
+  if (!el.taskPanel || !el.taskPanelSlots || !el.taskPanelMoreBtn || !el.taskPanelDropdown) return;
+  const canUse = canUseTaskPanel();
+  const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
+  const shouldShow = canUse && state.taskPanelEnabled && items.length > 0;
+  el.taskPanel.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    el.taskPanelSlots.innerHTML = "";
+    el.taskPanelMoreBtn.classList.add("hidden");
+    el.taskPanelDropdown.innerHTML = "";
+    closeTaskPanelDropdown();
+    return;
+  }
+  const visibleItems = items.slice(0, 8);
+  const overflowItems = items.slice(8);
+  el.taskPanel.classList.toggle("has-overflow", overflowItems.length > 0);
+  el.taskPanelSlots.innerHTML = visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("");
+  el.taskPanelMoreBtn.classList.toggle("hidden", overflowItems.length === 0);
+  el.taskPanelDropdown.innerHTML = overflowItems.map((item) => taskPanelItemHtml(item, "task-panel-menu-item")).join("");
+  if (overflowItems.length === 0) closeTaskPanelDropdown();
+}
+
+async function loadTaskPanel(options = {}) {
+  await fetchTaskPanelItems(options);
+  renderTaskPanel();
+}
+
+async function fetchTaskPanelItems(options = {}) {
+  if (!canUseTaskPanel() || !state.taskPanelEnabled) {
+    state.taskPanelItems = [];
+    return;
+  }
+  try {
+    state.taskPanelItems = await api("/api/v1/tickets/task-panel");
+  } catch (e) {
+    state.taskPanelItems = [];
+    if (!options.silent) setStatus(`Ошибка панели задач: ${e.message}`);
   }
 }
 
@@ -583,6 +704,10 @@ function escapeHtml(value) {
 
 function canShowAssigneeColumn(role = state.role) {
   return role === "admin" || role === "chiki_piki";
+}
+
+function canUseTaskPanel(role = state.role) {
+  return role === "agent" || role === "trainee";
 }
 
 function allowedTicketColumnKeys(role = state.role) {
@@ -966,6 +1091,8 @@ function renderColumnsDraft() {
 function openColumnsModal() {
   state.columnDraftPreviewActive = false;
   state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.ticketListColumns));
+  applyTaskPanelPreference();
+  if (el.taskPanelEnabledInput) el.taskPanelEnabledInput.checked = Boolean(state.taskPanelEnabled);
   renderColumnsDraft();
   el.columnsModal?.classList.remove("hidden");
 }
@@ -1007,12 +1134,19 @@ function moveDraftColumn(fromIndex, toIndex) {
 
 async function saveColumnsModal() {
   const payloadColumns = normalizeTicketColumns(state.draftTicketListColumns).map((column) => ({ key: column.key, width: column.width }));
+  const nextTaskPanelEnabled = Boolean(el.taskPanelEnabledInput?.checked);
+  const payload = { ticket_list_columns: payloadColumns };
+  if (canUseTaskPanel()) {
+    payload.task_panel_enabled = nextTaskPanelEnabled;
+  }
   try {
-    const preferences = await apiWrite("/api/v1/users/me/preferences", { ticket_list_columns: payloadColumns });
+    const preferences = await apiWrite("/api/v1/users/me/preferences", payload);
     state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || payloadColumns);
+    state.taskPanelEnabled = preferences?.task_panel_enabled === true;
     state.columnDraftPreviewActive = false;
     closeColumnsModal();
     renderTable();
+    await loadTaskPanel();
     setStatus("Настройка списка сохранена");
   } catch (e) {
     showError(`Ошибка настройки списка: ${e.message}`);
@@ -1235,6 +1369,7 @@ function applyRoleUi() {
   if (el.adminAgentFilter) {
     el.adminAgentFilter.classList.toggle("hidden", !isAdmin);
   }
+  applyTaskPanelPreference();
   state.ticketListColumns = normalizeTicketColumns(state.ticketListColumns);
   renderTicketHeader();
   const unassignedBtn = el.tabButtons.find((btn) => tabKeyFromNode(btn) === "unassigned");
@@ -1404,7 +1539,10 @@ async function loadTickets(options = {}) {
     }
   }
   try {
-    const payload = await api(`${base}?${queryParams.toString()}`);
+    const [payload] = await Promise.all([
+      api(`${base}?${queryParams.toString()}`),
+      fetchTaskPanelItems({ silent: true }),
+    ]);
 
     state.tickets = payload.items || [];
     state.total = payload.total || 0;
@@ -1414,6 +1552,7 @@ async function loadTickets(options = {}) {
       syncListUrl(historyMode);
     }
 
+    renderTaskPanel();
     renderTable();
     setStatus("Готово");
   } catch (e) {
@@ -1464,6 +1603,8 @@ async function handleListUrlChange() {
 function init() {
   pageEventController?.abort();
   pageEventController = new AbortController();
+  el = collectElements();
+  requireListElements();
   const pageSignal = pageEventController.signal;
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
@@ -1626,6 +1767,22 @@ function init() {
       await updateColorPreference(el.colorEnabledInput.checked);
     }, { signal: pageSignal });
   }
+  if (el.taskPanelMoreBtn) {
+    el.taskPanelMoreBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.taskPanelDropdownOpen = !state.taskPanelDropdownOpen;
+      el.taskPanelMoreBtn.classList.toggle("active", state.taskPanelDropdownOpen);
+      el.taskPanelDropdown?.classList.toggle("hidden", !state.taskPanelDropdownOpen);
+    }, { signal: pageSignal });
+  }
+  document.addEventListener("click", (event) => {
+    if (!state.taskPanelDropdownOpen) return;
+    if (event.target.closest("#taskPanel")) return;
+    closeTaskPanelDropdown();
+  }, { signal: pageSignal });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeTaskPanelDropdown();
+  }, { signal: pageSignal });
 
   el.prevPageBtn.addEventListener("click", async () => {
     if (state.page <= 1) return;
