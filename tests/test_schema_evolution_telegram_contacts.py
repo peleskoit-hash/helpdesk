@@ -438,6 +438,26 @@ def test_user_color_enabled_column_is_added_idempotently_for_existing_schema(mon
     assert color_enabled in (1, True)
 
 
+def test_user_ticket_list_columns_column_is_added_idempotently_for_existing_schema(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]: row
+            for row in conn.execute(text("PRAGMA table_info(users)")).mappings().all()
+        }
+        stored = conn.execute(text("SELECT ticket_list_columns_json FROM users WHERE id = 'user-1'")).scalar_one()
+
+    assert "ticket_list_columns_json" in columns
+    assert columns["ticket_list_columns_json"]["notnull"] == 0
+    assert stored is None
+
+
 def test_user_avatar_path_column_is_added_idempotently_and_keeps_rows(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     _create_legacy_users_table(engine)
@@ -466,6 +486,10 @@ def test_user_model_metadata_contains_send_by_enter_column():
 
 def test_user_model_metadata_contains_color_enabled_column():
     assert "color_enabled" in User.__table__.columns.keys()
+
+
+def test_user_model_metadata_contains_ticket_list_columns_column():
+    assert "ticket_list_columns_json" in User.__table__.columns.keys()
 
 
 def test_user_model_metadata_contains_avatar_path_column():

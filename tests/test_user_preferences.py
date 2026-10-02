@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from api.app.db import Base
 from api.app.models import Company, User
 from api.app.schemas import UserPreferencesUpdate
+from pydantic import ValidationError
 
 try:
     from api.app.routers import users as users_router
@@ -42,6 +43,7 @@ def _user(
     role: str = "agent",
     send_by_enter=None,
     color_enabled=None,
+    ticket_list_columns_json=None,
 ) -> User:
     user = User(
         id=str(uuid.uuid4()),
@@ -61,6 +63,8 @@ def _user(
         user.send_by_enter = send_by_enter
     if color_enabled is not None:
         user.color_enabled = color_enabled
+    if ticket_list_columns_json is not None:
+        user.ticket_list_columns_json = ticket_list_columns_json
     session.add(user)
     session.commit()
     return user
@@ -88,6 +92,14 @@ def test_user_preferences_default_is_false_for_new_user():
 
     assert result.send_by_enter is False
     assert result.color_enabled is True
+    assert [column.model_dump() for column in result.ticket_list_columns] == [
+        {"key": "subject", "width": 0},
+        {"key": "requester", "width": 150},
+        {"key": "assignee", "width": 170},
+        {"key": "age", "width": 120},
+        {"key": "created_at", "width": 140},
+        {"key": "last_reply", "width": 150},
+    ]
 
 
 def test_user_preferences_patch_true_persists_and_roundtrips():
@@ -184,6 +196,90 @@ def test_user_preferences_patch_send_by_enter_does_not_change_color_enabled():
     assert user.color_enabled is False
 
 
+def test_user_preferences_patch_ticket_list_columns_persists_without_changing_other_preferences():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", send_by_enter=True, color_enabled=False)
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+    columns = [
+        {"key": "requester", "width": 150},
+        {"key": "subject", "width": 0},
+        {"key": "age", "width": 80},
+    ]
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(ticket_list_columns=columns),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.send_by_enter is True
+    assert updated.color_enabled is False
+    assert [column.model_dump() for column in updated.ticket_list_columns] == columns
+    assert user.ticket_list_columns_json == columns
+
+
+def test_user_preferences_ticket_list_columns_allow_optional_profile_and_type_columns():
+    columns = [
+        {"key": "subject", "width": 0},
+        {"key": "department", "width": 160},
+        {"key": "type", "width": 130},
+        {"key": "location", "width": 130},
+    ]
+
+    payload = UserPreferencesUpdate(ticket_list_columns=columns)
+
+    assert [column.model_dump() for column in payload.ticket_list_columns] == columns
+
+
+def test_user_preferences_patch_other_fields_does_not_change_ticket_list_columns():
+    session = _session()
+    company = _company(session)
+    columns = [{"key": "subject", "width": 0}, {"key": "created_at", "width": 140}]
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", ticket_list_columns_json=columns)
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(color_enabled=False),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.color_enabled is False
+    assert [column.model_dump() for column in updated.ticket_list_columns] == columns
+    assert user.ticket_list_columns_json == columns
+
+
+def test_user_preferences_ticket_list_columns_reject_invalid_configs():
+    invalid_payloads = [
+        [{"key": "unknown", "width": 100}, {"key": "subject", "width": 0}],
+        [{"key": "subject", "width": 0}, {"key": "subject", "width": 100}],
+        [{"key": "requester", "width": 150}],
+        [{"key": "subject", "width": -1}],
+        [{"key": "subject", "width": 1}],
+        [{"key": "subject", "width": 59}],
+        [],
+    ]
+
+    for payload in invalid_payloads:
+        with pytest.raises((ValidationError, ValueError)):
+            UserPreferencesUpdate(ticket_list_columns=payload)
+
+
+def test_user_preferences_ticket_list_columns_allow_width_zero():
+    payload = UserPreferencesUpdate(ticket_list_columns=[{"key": "subject", "width": 0}])
+
+    assert payload.ticket_list_columns[0].width == 0
+
+
+def test_user_preferences_ticket_list_columns_allow_large_width():
+    payload = UserPreferencesUpdate(ticket_list_columns=[{"key": "subject", "width": 1600}])
+
+    assert payload.ticket_list_columns[0].width == 1600
+
+
 def test_user_preferences_are_isolated_between_users():
     session = _session()
     company = _company(session)
@@ -200,8 +296,20 @@ def test_user_preferences_are_isolated_between_users():
     session.refresh(user_b)
     assert user_a.send_by_enter is True
     assert user_a.color_enabled is False
+    assert user_a.ticket_list_columns_json is None
     assert user_b.send_by_enter is False
     assert user_b.color_enabled is True
+    assert user_b.ticket_list_columns_json is None
+
+    users_router.update_my_preferences(
+        UserPreferencesUpdate(ticket_list_columns=[{"key": "subject", "width": 0}, {"key": "last_reply", "width": 150}]),
+        db=session,
+        current_user=_current_user(effective_user_id=user_a.id, real_user_id=user_a.id),
+    )
+    session.refresh(user_a)
+    session.refresh(user_b)
+    assert user_a.ticket_list_columns_json == [{"key": "subject", "width": 0}, {"key": "last_reply", "width": 150}]
+    assert user_b.ticket_list_columns_json is None
 
 
 def test_user_preferences_use_real_user_id_not_effective_user_id():
@@ -226,3 +334,17 @@ def test_user_preferences_use_real_user_id_not_effective_user_id():
     assert real_user.color_enabled is False
     assert effective_user.send_by_enter is False
     assert effective_user.color_enabled is True
+
+    users_router.update_my_preferences(
+        UserPreferencesUpdate(ticket_list_columns=[{"key": "subject", "width": 0}, {"key": "requester", "width": 150}]),
+        db=session,
+        current_user=_current_user(
+            effective_user_id=effective_user.id,
+            real_user_id=real_user.id,
+            role=effective_user.role,
+        ),
+    )
+    session.refresh(real_user)
+    session.refresh(effective_user)
+    assert real_user.ticket_list_columns_json == [{"key": "subject", "width": 0}, {"key": "requester", "width": 150}]
+    assert effective_user.ticket_list_columns_json is None

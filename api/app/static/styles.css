@@ -1556,10 +1556,21 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 table {
   width: calc(100% - 10px);
+  min-width: max-content;
   margin: 0 5px;
   border-collapse: separate;
   border-spacing: 0 8px;
+  table-layout: auto;
+}
+
+body.ticket-columns-fixed .table-wrap table {
+  min-width: 0;
   table-layout: fixed;
+}
+
+body.ticket-columns-fixed .table-wrap th[data-column-key],
+body.ticket-columns-fixed .table-wrap td[data-column-key] {
+  box-sizing: border-box;
 }
 
 th, td {
@@ -1604,7 +1615,67 @@ th, td {
 .admin-select-col,
 .ticket-check-cell {
   width: 34px;
+  min-width: 34px;
+  max-width: 34px;
   text-align: center;
+}
+
+.ticket-channel-col {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  text-align: center;
+  padding-left: 6px;
+  padding-right: 6px;
+  background: transparent;
+}
+
+.ticket-channel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #64748b;
+  pointer-events: none;
+  vertical-align: middle;
+}
+
+.ticket-channel-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.ticket-channel-telegram {
+  color: #229ed9;
+}
+
+.mini-icon-btn {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  padding: 0;
+}
+
+.ticket-channel-col .mini-icon-btn,
+.ticket-channel-col .mini-icon-btn:hover,
+.ticket-channel-col .mini-icon-btn:focus,
+.ticket-channel-col .mini-icon-btn:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.mini-icon-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.ticket-channel-col .mini-icon-btn:hover {
+  background: transparent;
 }
 
 .ticket-check {
@@ -1661,7 +1732,11 @@ th button {
 }
 
 .table-sort-btn {
+  width: 100%;
   padding: 0;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .table-sort-btn.active {
@@ -1669,33 +1744,84 @@ th button {
 }
 
 th.ticket-subject-col,
-td.ticket-subject-col {
-  width: 31.25%;
-}
-
+td.ticket-subject-col,
 th.ticket-client-col,
-td.ticket-client-col {
-  width: 14.25%;
-}
-
+td.ticket-client-col,
 th.ticket-assignee-col,
-td.ticket-assignee-col {
-  width: 14%;
-}
-
+td.ticket-assignee-col,
+th.ticket-department-col,
+td.ticket-department-col,
+th.ticket-type-col,
+td.ticket-type-col,
+th.ticket-location-col,
+td.ticket-location-col,
 th.ticket-age-col,
-td.ticket-age-col {
-  width: 8%;
-}
-
+td.ticket-age-col,
 th.ticket-created-col,
-td.ticket-created-col {
-  width: 13%;
-}
-
+td.ticket-created-col,
 th.ticket-last-reply-col,
 td.ticket-last-reply-col {
-  width: 19.5%;
+  min-width: 60px;
+}
+
+th.ticket-subject-col,
+td.ticket-subject-col {
+  min-width: 220px;
+}
+
+td.ticket-age-col,
+td.ticket-created-col,
+td.ticket-last-reply-col {
+  text-align: center;
+}
+
+td.ticket-age-col .ticket-row-link,
+td.ticket-created-col .ticket-row-link,
+td.ticket-last-reply-col .ticket-row-link {
+  justify-content: center;
+}
+
+td.ticket-type-col {
+  text-align: center;
+}
+
+.ticket-type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ticket-type-task {
+  background: rgba(197, 243, 203, 0.78);
+}
+
+.ticket-type-request {
+  background: rgba(255, 202, 158, 0.78);
+}
+
+.ticket-type-group-task {
+  background: rgba(221, 206, 255, 0.8);
+}
+
+.ticket-type-internal-task {
+  background: rgba(255, 239, 145, 0.82);
+}
+
+.ticket-type-frozen {
+  background: rgba(205, 231, 255, 0.84);
+}
+
+.ticket-type-closed {
+  background: rgba(255, 207, 213, 0.86);
 }
 
 tr.row-click { cursor: pointer; }
@@ -1703,6 +1829,7 @@ tr.row-click { cursor: pointer; }
 tr.ticket-row td {
   border-top: 1px solid #dfe5ec;
   border-bottom: 1px solid #dfe5ec;
+  background: transparent;
 }
 
 tr.ticket-row td:first-child {
@@ -1718,31 +1845,35 @@ tr.ticket-row td:last-child {
 }
 
 tr.ticket-row-new td {
-  background: #fff;
+  background: transparent;
 }
 
 tr.ticket-row-fresh td {
   border-top-color: #c6e7cc;
   border-bottom-color: #c6e7cc;
-  background: #fff;
+  background: transparent;
 }
 
 tr.ticket-row-frozen td {
-  background: #fff;
+  background: transparent;
 }
 
 tr.ticket-row-unassigned td {
   border-top-color: #f1df9a;
   border-bottom-color: #f1df9a;
-  background: #fff;
+  background: transparent;
 }
 
 tr.ticket-row-closed td {
-  background: #fff;
+  background: transparent;
 }
 
 tr.ticket-row td.ticket-subject-col {
-  background: #fff;
+  background: transparent;
+}
+
+tr.ticket-row td.ticket-channel-col {
+  background: transparent;
 }
 
 tr.ticket-row-unseen td,
@@ -1751,91 +1882,231 @@ tr.ticket-row-unseen .row-assignee-select {
   font-weight: 700;
 }
 
-tr.ticket-color-request td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(255, 202, 158, 0.78) 0%, rgba(255, 202, 158, 0) 100%);
+tr.ticket-color-request {
+  background: linear-gradient(90deg, rgba(255, 202, 158, 0.78) 0%, rgba(255, 202, 158, 0) 50%), #fff;
 }
 
-tr.ticket-color-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(197, 243, 203, 0.78) 0%, rgba(197, 243, 203, 0) 100%);
+tr.ticket-color-task {
+  background: linear-gradient(90deg, rgba(197, 243, 203, 0.78) 0%, rgba(197, 243, 203, 0) 50%), #fff;
 }
 
-tr.ticket-color-group-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(221, 206, 255, 0.8) 0%, rgba(221, 206, 255, 0) 100%);
+tr.ticket-color-group-task {
+  background: linear-gradient(90deg, rgba(221, 206, 255, 0.8) 0%, rgba(221, 206, 255, 0) 50%), #fff;
 }
 
-tr.ticket-color-internal-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(255, 239, 145, 0.82) 0%, rgba(255, 239, 145, 0) 100%);
+tr.ticket-color-internal-task {
+  background: linear-gradient(90deg, rgba(255, 239, 145, 0.82) 0%, rgba(255, 239, 145, 0) 50%), #fff;
 }
 
-tr.ticket-color-frozen td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(205, 231, 255, 0.84) 0%, rgba(205, 231, 255, 0) 100%);
+tr.ticket-color-frozen {
+  background: linear-gradient(90deg, rgba(205, 231, 255, 0.84) 0%, rgba(205, 231, 255, 0) 50%), #fff;
 }
 
-tr.ticket-color-closed td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(255, 207, 213, 0.86) 0%, rgba(255, 207, 213, 0) 100%);
+tr.ticket-color-closed {
+  background: linear-gradient(90deg, rgba(255, 207, 213, 0.86) 0%, rgba(255, 207, 213, 0) 50%), #fff;
 }
 
-tr.ticket-color-request td.ticket-check-cell {
-  background: rgba(255, 202, 158, 0.78);
+tr.ticket-row-seen.ticket-color-request {
+  background: linear-gradient(90deg, rgba(255, 225, 198, 0.58) 0%, rgba(255, 225, 198, 0) 50%), #fff;
 }
 
-tr.ticket-color-task td.ticket-check-cell {
-  background: rgba(197, 243, 203, 0.78);
+tr.ticket-row-seen.ticket-color-task {
+  background: linear-gradient(90deg, rgba(226, 248, 229, 0.6) 0%, rgba(226, 248, 229, 0) 50%), #fff;
 }
 
-tr.ticket-color-group-task td.ticket-check-cell {
-  background: rgba(221, 206, 255, 0.8);
+tr.ticket-row-seen.ticket-color-group-task {
+  background: linear-gradient(90deg, rgba(235, 228, 255, 0.6) 0%, rgba(235, 228, 255, 0) 50%), #fff;
 }
 
-tr.ticket-color-internal-task td.ticket-check-cell {
-  background: rgba(255, 239, 145, 0.82);
-}
-
-tr.ticket-color-frozen td.ticket-check-cell {
-  background: rgba(205, 231, 255, 0.84);
-}
-
-tr.ticket-color-closed td.ticket-check-cell {
-  background: rgba(255, 207, 213, 0.86);
-}
-
-tr.ticket-row-seen.ticket-color-request td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(255, 225, 198, 0.58) 0%, rgba(255, 225, 198, 0) 100%);
-}
-
-tr.ticket-row-seen.ticket-color-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(226, 248, 229, 0.6) 0%, rgba(226, 248, 229, 0) 100%);
-}
-
-tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(235, 228, 255, 0.6) 0%, rgba(235, 228, 255, 0) 100%);
-}
-
-tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(255, 247, 190, 0.62) 0%, rgba(255, 247, 190, 0) 100%);
+tr.ticket-row-seen.ticket-color-internal-task {
+  background: linear-gradient(90deg, rgba(255, 247, 190, 0.62) 0%, rgba(255, 247, 190, 0) 50%), #fff;
 }
 
 tr.row-click.ticket-row:hover td {
   filter: brightness(0.99);
 }
 
-body.ticket-colors-disabled tr.ticket-color-request td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-group-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-internal-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-frozen td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-closed td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-request td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col,
-body.ticket-colors-disabled tr.ticket-color-request td.ticket-check-cell,
-body.ticket-colors-disabled tr.ticket-color-task td.ticket-check-cell,
-body.ticket-colors-disabled tr.ticket-color-group-task td.ticket-check-cell,
-body.ticket-colors-disabled tr.ticket-color-internal-task td.ticket-check-cell,
-body.ticket-colors-disabled tr.ticket-color-frozen td.ticket-check-cell,
-body.ticket-colors-disabled tr.ticket-color-closed td.ticket-check-cell {
+body.ticket-colors-disabled tr.ticket-color-request,
+body.ticket-colors-disabled tr.ticket-color-task,
+body.ticket-colors-disabled tr.ticket-color-group-task,
+body.ticket-colors-disabled tr.ticket-color-internal-task,
+body.ticket-colors-disabled tr.ticket-color-frozen,
+body.ticket-colors-disabled tr.ticket-color-closed {
   background: #fff;
+}
+
+.columns-dialog {
+  max-width: 560px;
+}
+
+.columns-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.columns-add-label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.columns-draft-list {
+  display: grid;
+  gap: 6px;
+}
+
+.columns-draft-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 32px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.columns-drag-handle {
+  cursor: grab;
+  color: #64748b;
+  text-align: center;
+}
+
+.columns-draft-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.columns-delete-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: #b91c1c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.columns-delete-btn:hover {
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.columns-delete-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.columns-delete-spacer {
+  width: 28px;
+  height: 28px;
+}
+
+.columns-resize-mode {
+  background: rgba(15, 23, 42, 0.16);
+  pointer-events: none;
+}
+
+.columns-resize-mode .columns-dialog {
+  display: none;
+}
+
+.resize-columns-actions {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 70;
+  display: flex;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.resize-columns-actions .action {
+  min-width: 120px;
+  min-height: 40px;
+  font-weight: 700;
+}
+
+body.ticket-column-resize-active .table-sort-btn,
+body.ticket-column-resize-active .mini-check-btn,
+body.ticket-column-resize-active .ticket-check,
+body.ticket-column-resize-active .ticket-row-link,
+body.ticket-column-resize-active .row-assignee-select,
+body.ticket-column-resize-active #columnsSettingsBtn {
+  pointer-events: none;
+}
+
+body.ticket-column-resize-active th[data-column-key],
+body.ticket-column-resize-active td[data-column-key] {
+  border-right: 3px solid rgba(15, 23, 42, 0.34);
+}
+
+body.ticket-column-resize-active th[data-column-key] {
+  position: relative;
+}
+
+.column-resize-handle {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translate(50%, -50%);
+  width: 18px;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: #334155;
+  cursor: col-resize;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+}
+
+.column-resize-handle:hover,
+.column-resize-handle:focus,
+.column-resize-handle:active {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: none;
+}
+
+.resize-handle-icon {
+  position: relative;
+  width: 14px;
+  height: 18px;
+  display: inline-block;
+}
+
+.resize-handle-icon::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 1px;
+  width: 2px;
+  height: 16px;
+  background: currentColor;
+}
+
+.resize-handle-icon::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  width: 12px;
+  height: 8px;
+  border-left: 5px solid currentColor;
+  border-right: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  box-sizing: border-box;
 }
 
 /* ===== ticket card/messages ===== */
@@ -4199,68 +4470,49 @@ body[data-theme="dark"] tr.ticket-row-closed td {
   background: rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-request td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(177, 100, 52, 0.58) 0%, rgba(177, 100, 52, 0) 100%);
+body[data-theme="dark"] .columns-draft-row,
+body[data-theme="dark"] .columns-delete-btn {
+  background: rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(54, 137, 82, 0.58) 0%, rgba(54, 137, 82, 0) 100%);
+body[data-theme="dark"] tr.ticket-color-request {
+  background: linear-gradient(90deg, rgba(177, 100, 52, 0.58) 0%, rgba(177, 100, 52, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-group-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(119, 92, 181, 0.6) 0%, rgba(119, 92, 181, 0) 100%);
+body[data-theme="dark"] tr.ticket-color-task {
+  background: linear-gradient(90deg, rgba(54, 137, 82, 0.58) 0%, rgba(54, 137, 82, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-internal-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(154, 128, 40, 0.62) 0%, rgba(154, 128, 40, 0) 100%);
+body[data-theme="dark"] tr.ticket-color-group-task {
+  background: linear-gradient(90deg, rgba(119, 92, 181, 0.6) 0%, rgba(119, 92, 181, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-frozen td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(48, 107, 156, 0.62) 0%, rgba(48, 107, 156, 0) 100%);
+body[data-theme="dark"] tr.ticket-color-internal-task {
+  background: linear-gradient(90deg, rgba(154, 128, 40, 0.62) 0%, rgba(154, 128, 40, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-closed td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(142, 57, 68, 0.62) 0%, rgba(142, 57, 68, 0) 100%);
+body[data-theme="dark"] tr.ticket-color-frozen {
+  background: linear-gradient(90deg, rgba(48, 107, 156, 0.62) 0%, rgba(48, 107, 156, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-request td.ticket-check-cell {
-  background: rgba(177, 100, 52, 0.58);
+body[data-theme="dark"] tr.ticket-color-closed {
+  background: linear-gradient(90deg, rgba(142, 57, 68, 0.62) 0%, rgba(142, 57, 68, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-task td.ticket-check-cell {
-  background: rgba(54, 137, 82, 0.58);
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-request {
+  background: linear-gradient(90deg, rgba(127, 79, 49, 0.44) 0%, rgba(127, 79, 49, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-group-task td.ticket-check-cell {
-  background: rgba(119, 92, 181, 0.6);
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-task {
+  background: linear-gradient(90deg, rgba(51, 112, 74, 0.44) 0%, rgba(51, 112, 74, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-internal-task td.ticket-check-cell {
-  background: rgba(154, 128, 40, 0.62);
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-group-task {
+  background: linear-gradient(90deg, rgba(91, 77, 137, 0.46) 0%, rgba(91, 77, 137, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
-body[data-theme="dark"] tr.ticket-color-frozen td.ticket-check-cell {
-  background: rgba(48, 107, 156, 0.62);
-}
-
-body[data-theme="dark"] tr.ticket-color-closed td.ticket-check-cell {
-  background: rgba(142, 57, 68, 0.62);
-}
-
-body[data-theme="dark"] tr.ticket-row-seen.ticket-color-request td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(127, 79, 49, 0.44) 0%, rgba(127, 79, 49, 0) 100%);
-}
-
-body[data-theme="dark"] tr.ticket-row-seen.ticket-color-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(51, 112, 74, 0.44) 0%, rgba(51, 112, 74, 0) 100%);
-}
-
-body[data-theme="dark"] tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(91, 77, 137, 0.46) 0%, rgba(91, 77, 137, 0) 100%);
-}
-
-body[data-theme="dark"] tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col {
-  background: linear-gradient(90deg, rgba(120, 101, 38, 0.46) 0%, rgba(120, 101, 38, 0) 100%);
+body[data-theme="dark"] tr.ticket-row-seen.ticket-color-internal-task {
+  background: linear-gradient(90deg, rgba(120, 101, 38, 0.46) 0%, rgba(120, 101, 38, 0) 50%), rgba(18, 28, 42, 0.72);
 }
 
 body[data-theme="dark"] .color-legend {
@@ -4273,22 +4525,12 @@ body[data-theme="dark"] .color-legend-swatch {
   color: #f8fafc;
 }
 
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-request td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-group-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-internal-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-frozen td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-request td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-group-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-row-seen.ticket-color-internal-task td.ticket-subject-col,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-request td.ticket-check-cell,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-task td.ticket-check-cell,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-group-task td.ticket-check-cell,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-internal-task td.ticket-check-cell,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-frozen td.ticket-check-cell,
-body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed td.ticket-check-cell {
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-request,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-task,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-group-task,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-internal-task,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-frozen,
+body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed {
   background: rgba(18, 28, 42, 0.72);
 }
 

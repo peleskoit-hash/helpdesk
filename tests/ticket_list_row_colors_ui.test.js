@@ -25,6 +25,16 @@ function loadColorClass() {
   return context.ticketRowColorClass;
 }
 
+function loadTicketTypeInfo() {
+  const helperSource = [
+    sourceBetween(listSource, "function ticketTypeInfo", "function tabKeyFromNode"),
+    "globalThis.ticketTypeInfo = ticketTypeInfo;",
+  ].join("\n");
+  const context = vm.createContext({});
+  vm.runInContext(helperSource, context);
+  return context.ticketTypeInfo;
+}
+
 test("ticket list row color classification follows entity type and status priority", () => {
   const colorClass = loadColorClass();
 
@@ -52,23 +62,25 @@ test("ticket list render uses api seen flag as a visual modifier only", () => {
   assert.doesNotMatch(rowClassSource, /state\.tab === "active"[\s\S]*ticket-row-fresh/);
 });
 
-test("ticket row color css applies gradients only to subject cells", () => {
+test("ticket row color css applies one row-wide gradient from the left edge", () => {
   const ticketScope = sourceBetween(styles, "tr.ticket-row td.ticket-subject-col", "/* ===== ticket card/messages ===== */");
 
   for (const colorName of ["request", "task", "group-task", "internal-task", "frozen", "closed"]) {
-    assert.match(ticketScope, new RegExp(`tr\\.ticket-color-${colorName} td\\.ticket-subject-col \\{[\\s\\S]*linear-gradient\\(90deg`));
+    assert.match(ticketScope, new RegExp(`tr\\.ticket-color-${colorName} \\{[\\s\\S]*linear-gradient\\(90deg,[\\s\\S]*0%[\\s\\S]*50%`));
   }
-  assert.match(ticketScope, /tr\.ticket-row-seen\.ticket-color-request td\.ticket-subject-col/);
-  assert.match(ticketScope, /tr\.ticket-row-seen\.ticket-color-task td\.ticket-subject-col/);
+  assert.match(styles, /tr\.ticket-row td \{[\s\S]*background: transparent;/);
+  assert.match(ticketScope, /tr\.ticket-row td\.ticket-channel-col \{[\s\S]*background: transparent;/);
+  assert.match(ticketScope, /tr\.ticket-row-seen\.ticket-color-request \{/);
+  assert.match(ticketScope, /tr\.ticket-row-seen\.ticket-color-task \{/);
+  assert.doesNotMatch(ticketScope, /tr\.ticket-color-[^{]+ td\.ticket-subject-col \{[\s\S]*linear-gradient/);
   assert.doesNotMatch(ticketScope, /tr\.ticket-color-[^{]+ td \{/);
-  assert.doesNotMatch(ticketScope, /td:first-child[\s\S]*linear-gradient/);
 });
 
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цвет<\/span>/);
-  assert.match(template, /list\.js\?v=20261001a/);
-  assert.match(template, /styles\.css\?v=20261001a/);
+  assert.match(template, /list\.js\?v=20261001b/);
+  assert.match(template, /styles\.css\?v=20261001b/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -87,9 +99,9 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
 });
 
 test("ticket colors disabled state removes semantic backgrounds but keeps unread bold", () => {
-  assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-request td\.ticket-subject-col/);
-  assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-closed td\.ticket-check-cell/);
-  assert.match(styles, /body\[data-theme="dark"\]\.ticket-colors-disabled tr\.ticket-color-request td\.ticket-subject-col/);
+  assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-request/);
+  assert.match(styles, /body\.ticket-colors-disabled tr\.ticket-color-closed/);
+  assert.match(styles, /body\[data-theme="dark"\]\.ticket-colors-disabled tr\.ticket-color-request/);
   assert.match(styles, /background: #fff;/);
   assert.match(styles, /tr\.ticket-row-unseen td,\s*tr\.ticket-row-unseen \.ticket-row-link,\s*tr\.ticket-row-unseen \.row-assignee-select \{[\s\S]*font-weight: 700;/);
 });
@@ -106,4 +118,157 @@ test("ticket color legend is available only while colors are enabled and has exa
   assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\):has\(#colorToggleText:focus-visible\) \.color-legend/);
   assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\) \.color-legend:hover/);
   assert.match(listSource, /el\.colorToggleLabel\.classList\.toggle\("color-toggle-disabled", !state\.colorEnabled\)/);
+});
+
+test("ticket list has a fixed system channel column before configured columns", () => {
+  assert.match(template, /<tr id="ticketsHeaderRow"><\/tr>/);
+  assert.match(listSource, /if \(state\.role === "admin"\) \{\s*cells\.push\('<th class="admin-select-col"/);
+  assert.match(listSource, /cells\.push\('<th class="ticket-channel-col"><button id="columnsSettingsBtn"/);
+  assert.match(listSource, /const channelCell = `<td class="ticket-channel-col">\$\{renderChannelIcon\(t\)\}<\/td>`/);
+  assert.match(styles, /\.ticket-channel-col \{[\s\S]*width: 36px;[\s\S]*min-width: 36px;[\s\S]*max-width: 36px;/);
+});
+
+test("ticket channel abstraction renders internal sync and telegram icons with tooltips", () => {
+  assert.match(listSource, /function ticketChannel\(ticket\)/);
+  assert.match(listSource, /if \(ticket\?\.is_internal_task\) return "internal"/);
+  assert.match(listSource, /return "telegram"/);
+  assert.match(listSource, /function renderChannelIcon\(ticket\)/);
+  assert.match(listSource, /channel === "telegram" \? "Telegram" : \(channel === "internal" \? "Внутренняя" : "Другой канал"\)/);
+  assert.match(listSource, /ticket-channel-telegram/);
+  assert.match(listSource, /ticket-channel-sync/);
+  assert.match(listSource, /<svg viewBox="0 0 24 24"/);
+});
+
+test("ticket column preferences are normalized by role and restored from preferences api", () => {
+  assert.match(listSource, /const DEFAULT_TICKET_COLUMNS = \[/);
+  assert.match(listSource, /\{ key: "subject", width: 0 \}/);
+  assert.match(listSource, /\{ key: "requester", width: 150 \}/);
+  assert.match(listSource, /\{ key: "assignee", width: 170 \}/);
+  const defaultColumnsSource = sourceBetween(listSource, "const DEFAULT_TICKET_COLUMNS = [", "];\n\nconst TICKET_COLUMN_DEFS");
+  assert.doesNotMatch(defaultColumnsSource, /department|type|location/);
+  assert.match(listSource, /department: \{ title: "Подразделение", className: "ticket-department-col", sortKey: "requester_department", defaultWidth: 160 \}/);
+  assert.match(listSource, /type: \{ title: "Тип", className: "ticket-type-col", sortKey: "ticket_type", defaultWidth: 130 \}/);
+  assert.match(listSource, /location: \{ title: "Расположение", className: "ticket-location-col", sortKey: "requester_location_type", defaultWidth: 130 \}/);
+  assert.match(listSource, /function canShowAssigneeColumn\(role = state\.role\)/);
+  assert.match(listSource, /return role === "admin" \|\| role === "chiki_piki"/);
+  assert.match(listSource, /allowedTicketColumnKeys\(role = state\.role\)/);
+  assert.match(listSource, /key !== "assignee" \|\| canShowAssigneeColumn\(role\)/);
+  assert.match(listSource, /state\.ticketListColumns = normalizeTicketColumns\(preferences\?\.ticket_list_columns \|\| DEFAULT_TICKET_COLUMNS\)/);
+});
+
+test("ticket columns modal supports mandatory subject, add, trash delete, reorder, resize entry, and partial save", () => {
+  assert.match(template, /id="columnsModal"/);
+  assert.match(template, /Настройка списка заявок/);
+  assert.match(template, /id="columnAddSelect"/);
+  assert.match(template, /id="editColumnsWidthBtn"[\s\S]*Ред\. ширины столбцов/);
+  assert.match(listSource, /function openColumnsModal\(\)/);
+  assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.ticketListColumns\)\)/);
+  assert.match(listSource, /def\.mandatory[\s\S]*columns-delete-spacer/);
+  assert.match(listSource, /columns-delete-btn[\s\S]*<svg viewBox="0 0 24 24"/);
+  assert.match(listSource, /function addDraftColumn\(key\)/);
+  assert.match(listSource, /draft\.push\(\{ key, width: TICKET_COLUMN_DEFS\[key\]\.defaultWidth \}\)/);
+  assert.match(listSource, /function deleteDraftColumn\(key\)/);
+  assert.match(listSource, /function moveDraftColumn\(fromIndex, toIndex\)/);
+  assert.doesNotMatch(listSource, /columns-width-input|data-width-step|columns-width-btn/);
+  assert.match(listSource, /enterColumnResizeMode/);
+  assert.match(listSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", \{ ticket_list_columns: payloadColumns \}\)/);
+  assert.doesNotMatch(sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml"), /send_by_enter|color_enabled/);
+});
+
+test("ticket column resize mode measures width zero, clamps drag, and does not patch backend", () => {
+  assert.match(template, /id="resizeColumnsActions"/);
+  assert.match(listSource, /function enterColumnResizeMode\(\)/);
+  assert.match(listSource, /state\.columnResizePreviousDraft = cloneColumns\(normalizeTicketColumns\(state\.draftTicketListColumns \|\| state\.ticketListColumns\)\)/);
+  assert.match(listSource, /state\.columnResizeColumns = measureRenderedColumnWidths\(\)/);
+  assert.match(listSource, /function minResizeWidthForColumn\(key\)/);
+  assert.match(listSource, /if \(key === "subject"\) return 160/);
+  assert.match(listSource, /if \(key === "age"\) return 90/);
+  assert.match(listSource, /return 100/);
+  assert.match(listSource, /return Math\.max\(min, Number\.isFinite\(parsed\) \? parsed : min\)/);
+  assert.doesNotMatch(listSource, /Math\.min\(600/);
+  assert.match(listSource, /drag\.startWidth \+ event\.clientX - drag\.startX/);
+  assert.match(listSource, /getBoundingClientRect\(\)\.width/);
+  assert.match(listSource, /column\.key === drag\.key \? \{ \.\.\.column, width: nextWidth \} : column/);
+  assert.match(listSource, /function saveColumnResizeDraft\(\)/);
+  assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.columnResizeColumns\)\)/);
+  assert.match(listSource, /state\.columnDraftPreviewActive = true/);
+  assert.match(listSource, /function cancelColumnResizeDraft\(\)/);
+  assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.columnResizePreviousDraft/);
+  assert.doesNotMatch(sourceBetween(listSource, "function saveColumnResizeDraft", "function cancelColumnResizeDraft"), /apiWrite|fetch/);
+});
+
+test("ticket resize UI weakens overlay, hides modal card, and blocks table actions", () => {
+  assert.match(styles, /\.columns-resize-mode \{[\s\S]*background: rgba\(15, 23, 42, 0\.16\)/);
+  assert.match(styles, /\.columns-resize-mode \.columns-dialog \{[\s\S]*display: none;/);
+  assert.match(styles, /\.column-resize-handle \{[\s\S]*cursor: col-resize;/);
+  assert.match(styles, /body\.ticket-column-resize-active th\[data-column-key\],[\s\S]*td\[data-column-key\] \{[\s\S]*border-right:/);
+  assert.match(styles, /body\.ticket-column-resize-active \.table-sort-btn,[\s\S]*#columnsSettingsBtn \{[\s\S]*pointer-events: none;/);
+  assert.match(listSource, /state\.columnResizeActive[\s\S]*column-resize-handle/);
+  assert.match(listSource, /if \(state\.columnResizeActive\) return;/);
+  assert.match(listSource, /document\.body\.classList\.toggle\("ticket-column-resize-active", state\.columnResizeActive\)/);
+  assert.match(listSource, /const hasFixedColumns = activeColumns\.every\(\(column\) => column\.width > 0\)/);
+  assert.match(listSource, /el\.ticketsTable\.style\.width = hasFixedColumns \? `\$\{fixedTableWidth\(activeColumns\)\}px` : ""/);
+  assert.match(styles, /body\.ticket-columns-fixed \.table-wrap table \{[\s\S]*min-width: 0;[\s\S]*table-layout: fixed;/);
+  assert.match(styles, /body\.ticket-columns-fixed \.table-wrap th\[data-column-key\],[\s\S]*td\[data-column-key\] \{[\s\S]*box-sizing: border-box;/);
+  assert.doesNotMatch(sourceBetween(styles, "body.ticket-columns-fixed .table-wrap table", "th, td"), /width: auto/);
+  assert.match(styles, /\.column-resize-handle \{[\s\S]*right: -1px;[\s\S]*transform: translate\(50%, -50%\);/);
+  assert.match(styles, /\.resize-handle-icon::before \{[\s\S]*left: 6px;[\s\S]*width: 2px;/);
+  assert.match(styles, /\.column-resize-handle:hover,[\s\S]*\.column-resize-handle:active \{[\s\S]*background: transparent;[\s\S]*border: 0;[\s\S]*box-shadow: none;/);
+  assert.match(styles, /\.ticket-channel-col \.mini-icon-btn,[\s\S]*\.ticket-channel-col \.mini-icon-btn:active \{[\s\S]*background: transparent;[\s\S]*box-shadow: none;/);
+});
+
+test("configured columns drive render order, sorting, subject color, and admin assignee select", () => {
+  assert.match(listSource, /columns\.forEach\(\(column\) => \{/);
+  assert.match(listSource, /data-column-key="\$\{escapeHtml\(column\.key\)\}"/);
+  assert.match(listSource, /data-sort-key="\$\{escapeHtml\(def\.sortKey\)\}"/);
+  assert.match(listSource, /handleSortClick\(btn\)/);
+  assert.match(listSource, /key === "subject"[\s\S]*linkedCell\("ticket-subject-col"/);
+  assert.match(listSource, /key === "assignee"[\s\S]*state\.role === "admin"[\s\S]*row-assignee-select/);
+  assert.match(listSource, /key === "department"[\s\S]*linkedCell\("ticket-department-col", ticket\.is_internal_task \? "Система" : \(ticket\.requester_department \|\| "—"\), column\.width\)/);
+  assert.match(listSource, /key === "location"[\s\S]*linkedCell\("ticket-location-col", ticket\.is_internal_task \? "" : \(ticket\.requester_location_type \|\| ""\), column\.width\)/);
+  assert.match(listSource, /key === "type"[\s\S]*ticket-type-badge ticket-type-\$\{escapeHtml\(typeInfo\.className\)\}/);
+  assert.match(listSource, /linkedCell\("ticket-type-col", badge, column\.width, true\)/);
+  assert.match(listSource, /const linkedCell = \(className, textValue, width = 0, isHtml = false\)/);
+  assert.match(listSource, /requester_department/);
+  assert.match(listSource, /requester_location_type/);
+  assert.match(listSource, /ticket_type/);
+  assert.match(listSource, /activeTicketColumns\(\)[\s\S]*\.map\(\(column\) => ticketCellHtml\(column, t, ticketHref, linkedCell\)\)/);
+});
+
+test("ticket type column uses semantic priority and colored badges independent of row colors toggle", () => {
+  const typeInfo = loadTicketTypeInfo();
+  assert.equal(typeInfo({ status: "closed", is_frozen: true, workflow_type: "ticket" }).label, "Закрытая");
+  assert.equal(typeInfo({ status: "closed", is_frozen: true, workflow_type: "ticket" }).className, "closed");
+  assert.equal(typeInfo({ status: "new", is_frozen: true, workflow_type: "ticket" }).label, "Замороженная");
+  assert.equal(typeInfo({ status: "new", is_frozen: true, workflow_type: "ticket" }).className, "frozen");
+  assert.equal(typeInfo({ status: "new", workflow_type: "ticket" }).label, "Заявка");
+  assert.equal(typeInfo({ status: "new", workflow_type: "ticket" }).className, "request");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task", task_kind: "group_parent", is_internal_task: true }).label, "Увольнение");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task", task_kind: "group_parent", is_internal_task: true }).className, "group-task");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task", is_internal_task: true }).label, "Внутренняя");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task", is_internal_task: true }).className, "internal-task");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task" }).label, "Задача");
+  assert.equal(typeInfo({ status: "new", workflow_type: "task" }).className, "task");
+
+  for (const name of ["task", "request", "group-task", "internal-task", "frozen", "closed"]) {
+    assert.match(styles, new RegExp(`\\.ticket-type-${name} \\{[\\s\\S]*background: rgba\\(`));
+  }
+  assert.doesNotMatch(sourceBetween(styles, "body.ticket-colors-disabled tr.ticket-color-request", ".columns-dialog"), /ticket-type-/);
+  assert.match(styles, /td\.ticket-type-col \{[\s\S]*text-align: center;/);
+});
+
+test("ticket resize draft preview rolls back on close and persists on modal save", () => {
+  const activeSource = sourceBetween(listSource, "function activeTicketColumns", "function fixedTableWidth");
+  assert.match(activeSource, /state\.columnDraftPreviewActive && state\.draftTicketListColumns/);
+  assert.match(activeSource, /return normalizeTicketColumns\(state\.draftTicketListColumns\)/);
+
+  const closeSource = sourceBetween(listSource, "function closeColumnsModal", "function deleteDraftColumn");
+  assert.match(closeSource, /const hadPreview = state\.columnDraftPreviewActive/);
+  assert.match(closeSource, /state\.columnDraftPreviewActive = false/);
+  assert.match(closeSource, /state\.draftTicketListColumns = null/);
+  assert.match(closeSource, /if \(hadPreview\) renderTable\(\)/);
+
+  const saveSource = sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml");
+  assert.match(saveSource, /state\.ticketListColumns = normalizeTicketColumns\(preferences\?\.ticket_list_columns \|\| payloadColumns\)/);
+  assert.match(saveSource, /state\.columnDraftPreviewActive = false/);
 });

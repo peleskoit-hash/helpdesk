@@ -999,6 +999,109 @@ def test_special_ticket_list_batches_internal_task_requester_lookup_without_per_
     assert len(occurrence_queries) == 1
 
 
+def test_ticket_list_batches_requester_profile_columns_without_per_row_queries():
+    session = _session()
+    client, profile, ordinary_ticket = _seed_case(session, department="Support")
+    profile.location_type = "Офисный"
+    profile.custom_fields = {"custom_fio": "Client One"}
+    admin = session.get(User, "admin-1")
+    definition = _internal_definition(session, ordinary_ticket.company_id, admin.id)
+    second_client = Client(id=str(uuid.uuid4()), company_id=ordinary_ticket.company_id, display_name="Second Client")
+    second_profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=second_client.id,
+        department="",
+        location_type="",
+        custom_fields={},
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    second_ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=ordinary_ticket.company_id,
+        client_id=second_client.id,
+        subject="No profile fields",
+        status=TicketStatus.NEW.value,
+        workflow_type=TicketWorkflowType.TICKET.value,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    internal_ticket = Ticket(
+        id=str(uuid.uuid4()),
+        company_id=ordinary_ticket.company_id,
+        client_id=client.id,
+        subject="Internal profile columns",
+        status=TicketStatus.NEW.value,
+        workflow_type=TicketWorkflowType.TASK.value,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add_all([second_client, second_profile, second_ticket, internal_ticket])
+    _internal_occurrence(
+        session,
+        definition,
+        internal_ticket,
+        display_author=False,
+        occurrence_at_utc=datetime(2026, 9, 16, 10, 0),
+    )
+    session.commit()
+
+    profile_queries = []
+
+    def before_cursor_execute(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "client_profiles" in statement.lower():
+            profile_queries.append(statement)
+
+    engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        payload = list_tickets_paginated(
+            db=session,
+            user=_admin(),
+            statuses=[TicketStatus.NEW.value],
+            is_frozen=False,
+            sort="created_at",
+            order="asc",
+            page=1,
+            limit=20,
+            filter_admin_assignees=False,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+    by_subject = {item.subject: item for item in payload.items}
+    assert by_subject[ordinary_ticket.subject].requester_display_name == "Client One"
+    assert by_subject[ordinary_ticket.subject].requester_department == "Support"
+    assert by_subject[ordinary_ticket.subject].requester_location_type == "Офисный"
+    assert by_subject["No profile fields"].requester_department == "—"
+    assert by_subject["No profile fields"].requester_location_type == ""
+    assert by_subject["Internal profile columns"].requester_department == "Система"
+    assert by_subject["Internal profile columns"].requester_location_type == ""
+    assert len(profile_queries) == 1
+
+
+def test_special_ticket_list_fills_requester_profile_columns_like_regular_list():
+    session = _session()
+    _client, profile, ticket = _seed_case(session, department="Support")
+    profile.location_type = "Удалённый"
+    ticket.is_special = True
+    session.commit()
+
+    payload = list_special_tickets(
+        db=session,
+        user=_admin(),
+        sort="created_at",
+        order="asc",
+        page=1,
+        limit=20,
+        query=None,
+        ensure_ticket_number_fn=lambda _db, item: item.ticket_number,
+    )
+
+    assert payload.items[0].requester_department == "Support"
+    assert payload.items[0].requester_location_type == "Удалённый"
+
+
 def test_internal_task_display_author_false_like_values_hide_author():
     for value in (False, None, 0, "", "0", "false", "False", "no", "off"):
         assert _display_author_enabled(value) is False

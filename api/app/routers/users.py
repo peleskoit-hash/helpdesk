@@ -25,6 +25,7 @@ from ..schemas import (
     UserPreferencesUpdate,
     UserStatusOut,
     UserStatusUpdate,
+    dump_ticket_list_columns,
 )
 from ..services.assignment import assign_unassigned_fairly
 from ..services.statistics_lifecycle import set_user_availability_status
@@ -236,7 +237,11 @@ def get_my_preferences(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     user = _real_user_model(db, current_user)
-    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter), color_enabled=bool(user.color_enabled))
+    return UserPreferencesOut(
+        send_by_enter=bool(user.send_by_enter),
+        color_enabled=bool(user.color_enabled),
+        ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+    )
 
 
 @router.patch("/me/preferences", response_model=UserPreferencesOut)
@@ -251,11 +256,17 @@ def update_my_preferences(
         user.send_by_enter = bool(updates["send_by_enter"])
     if "color_enabled" in updates:
         user.color_enabled = bool(updates["color_enabled"])
+    if "ticket_list_columns" in updates:
+        user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:
         user.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(user)
-    return UserPreferencesOut(send_by_enter=bool(user.send_by_enter), color_enabled=bool(user.color_enabled))
+    return UserPreferencesOut(
+        send_by_enter=bool(user.send_by_enter),
+        color_enabled=bool(user.color_enabled),
+        ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+    )
 
 
 @router.get("/me/completion-stats", response_model=CompletionStatsOut)

@@ -4,6 +4,61 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+TICKET_LIST_COLUMN_DEFAULTS = {
+    "subject": 0,
+    "requester": 150,
+    "assignee": 170,
+    "age": 120,
+    "created_at": 140,
+    "last_reply": 150,
+}
+TICKET_LIST_COLUMN_KEYS = set(TICKET_LIST_COLUMN_DEFAULTS) | {"department", "type", "location"}
+
+
+class TicketListColumnPreference(BaseModel):
+    key: str
+    width: int
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: str) -> str:
+        if value not in TICKET_LIST_COLUMN_KEYS:
+            raise ValueError("unknown ticket list column")
+        return value
+
+    @field_validator("width")
+    @classmethod
+    def validate_width(cls, value: int) -> int:
+        if value < 0 or 0 < value < 60:
+            raise ValueError("ticket list column width must be 0 or at least 60")
+        return value
+
+
+def default_ticket_list_columns() -> list[TicketListColumnPreference]:
+    return [
+        TicketListColumnPreference(key=key, width=width)
+        for key, width in TICKET_LIST_COLUMN_DEFAULTS.items()
+    ]
+
+
+def normalize_ticket_list_columns(value) -> list[TicketListColumnPreference]:
+    if value is None:
+        return default_ticket_list_columns()
+    if not isinstance(value, list) or not value:
+        raise ValueError("ticket_list_columns must be a non-empty list")
+    columns = [item if isinstance(item, TicketListColumnPreference) else TicketListColumnPreference.model_validate(item) for item in value]
+    keys = [item.key for item in columns]
+    if len(set(keys)) != len(keys):
+        raise ValueError("ticket_list_columns cannot contain duplicate keys")
+    if "subject" not in set(keys):
+        raise ValueError("ticket_list_columns must contain subject")
+    return columns
+
+
+def dump_ticket_list_columns(value) -> list[dict]:
+    return [item.model_dump() for item in normalize_ticket_list_columns(value)]
+
+
 class AssigneeTicketCounts(BaseModel):
     active: int = 0
     frozen: int = 0
@@ -22,6 +77,8 @@ class TicketListItem(BaseModel):
     seen_by_agent: bool
     client_name: str
     requester_display_name: str = ""
+    requester_department: str = ""
+    requester_location_type: str = ""
     assignee_id: str | None = None
     assignee_name: str | None = None
     is_special: bool = False
@@ -323,11 +380,20 @@ class UserStatusUpdate(BaseModel):
 class UserPreferencesOut(BaseModel):
     send_by_enter: bool = False
     color_enabled: bool = True
+    ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
 
 
 class UserPreferencesUpdate(BaseModel):
     send_by_enter: bool | None = None
     color_enabled: bool | None = None
+    ticket_list_columns: list[TicketListColumnPreference] | None = None
+
+    @field_validator("ticket_list_columns")
+    @classmethod
+    def validate_ticket_list_columns(cls, value):
+        if value is None:
+            return value
+        return normalize_ticket_list_columns(value)
 
 
 class TelegramNotificationSummaryOut(BaseModel):

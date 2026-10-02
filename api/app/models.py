@@ -110,6 +110,7 @@ class User(Base):
     availability_status: Mapped[str] = mapped_column(String(40), default="online")
     send_by_enter: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     color_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    ticket_list_columns_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

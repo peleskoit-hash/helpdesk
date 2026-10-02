@@ -69,6 +69,13 @@ const state = {
   completionOpen: false,
   hasPageFromUrl: Boolean(urlState.hasPageParam),
   colorEnabled: true,
+  ticketListColumns: [],
+  draftTicketListColumns: null,
+  columnDraftPreviewActive: false,
+  columnResizeActive: false,
+  columnResizeColumns: null,
+  columnResizePreviousDraft: null,
+  columnResizeDrag: null,
 };
 
 const endpointMap = {
@@ -79,6 +86,29 @@ const endpointMap = {
   closed: "/api/v1/tickets/closed",
 };
 
+const DEFAULT_TICKET_COLUMNS = [
+  { key: "subject", width: 0 },
+  { key: "requester", width: 150 },
+  { key: "assignee", width: 170 },
+  { key: "age", width: 120 },
+  { key: "created_at", width: 140 },
+  { key: "last_reply", width: 150 },
+];
+
+const TICKET_COLUMN_DEFS = {
+  subject: { title: "Тема", className: "ticket-subject-col", sortKey: "subject", mandatory: true, defaultWidth: 0 },
+  requester: { title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name", defaultWidth: 150 },
+  assignee: { title: "Исполнитель", className: "ticket-assignee-col", sortKey: "assignee_name", defaultWidth: 170 },
+  department: { title: "Подразделение", className: "ticket-department-col", sortKey: "requester_department", defaultWidth: 160 },
+  type: { title: "Тип", className: "ticket-type-col", sortKey: "ticket_type", defaultWidth: 130 },
+  location: { title: "Расположение", className: "ticket-location-col", sortKey: "requester_location_type", defaultWidth: 130 },
+  age: { title: "С создания", className: "ticket-age-col", sortKey: "age_created", defaultWidth: 120 },
+  created_at: { title: "Дата создания", className: "ticket-created-col", sortKey: "created_at", defaultWidth: 140 },
+  last_reply: { title: "Последний ответ", className: "ticket-last-reply-col", sortKey: "last_reply_at", defaultWidth: 150 },
+};
+
+const TICKET_COLUMN_KEYS = Object.keys(TICKET_COLUMN_DEFS);
+
 function ticketRowColorClass(t, tab = "") {
   if (t?.status === "closed" || tab === "closed") return "ticket-color-closed";
   if (t?.is_frozen || tab === "frozen") return "ticket-color-frozen";
@@ -86,6 +116,15 @@ function ticketRowColorClass(t, tab = "") {
   if (t?.task_kind === "group_parent" || t?.task_kind === "group_child") return "ticket-color-group-task";
   if (t?.is_internal_task) return "ticket-color-internal-task";
   return "ticket-color-task";
+}
+
+function ticketTypeInfo(t, tab = "") {
+  if (t?.status === "closed" || tab === "closed") return { label: "Закрытая", className: "closed" };
+  if (t?.is_frozen || tab === "frozen") return { label: "Замороженная", className: "frozen" };
+  if (t?.workflow_type === "ticket") return { label: "Заявка", className: "request" };
+  if (t?.task_kind === "group_parent" || t?.task_kind === "group_child") return { label: "Увольнение", className: "group-task" };
+  if (t?.is_internal_task) return { label: "Внутренняя", className: "internal-task" };
+  return { label: "Задача", className: "task" };
 }
 
 function tabKeyFromNode(node) {
@@ -132,6 +171,8 @@ const el = {
   colorToggleLabel: document.getElementById("colorToggleLabel"),
   colorToggleText: document.getElementById("colorToggleText"),
   colorLegend: document.getElementById("colorLegend"),
+  ticketsHeaderRow: document.getElementById("ticketsHeaderRow"),
+  ticketsTable: document.getElementById("ticketsTable"),
   ticketsTableBody: document.getElementById("ticketsTableBody"),
   ticketCount: document.getElementById("ticketCount"),
   prevPageBtn: document.getElementById("prevPageBtn"),
@@ -153,6 +194,15 @@ const el = {
   closeBulkActionModalBtn: document.getElementById("closeBulkActionModalBtn"),
   cancelBulkActionBtn: document.getElementById("cancelBulkActionBtn"),
   confirmBulkActionBtn: document.getElementById("confirmBulkActionBtn"),
+  columnsModal: document.getElementById("columnsModal"),
+  closeColumnsModalBtn: document.getElementById("closeColumnsModalBtn"),
+  columnAddSelect: document.getElementById("columnAddSelect"),
+  columnsDraftList: document.getElementById("columnsDraftList"),
+  editColumnsWidthBtn: document.getElementById("editColumnsWidthBtn"),
+  resizeColumnsActions: document.getElementById("resizeColumnsActions"),
+  saveResizeColumnsBtn: document.getElementById("saveResizeColumnsBtn"),
+  cancelResizeColumnsBtn: document.getElementById("cancelResizeColumnsBtn"),
+  saveColumnsBtn: document.getElementById("saveColumnsBtn"),
   errorModal: document.getElementById("errorModal"),
   errorText: document.getElementById("errorText"),
   closeErrorModalBtn: document.getElementById("closeErrorModalBtn"),
@@ -270,7 +320,9 @@ function applyColorPreference() {
 async function loadPreferences() {
   const preferences = await api("/api/v1/users/me/preferences");
   state.colorEnabled = preferences?.color_enabled !== false;
+  state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || DEFAULT_TICKET_COLUMNS);
   applyColorPreference();
+  renderTicketHeader();
 }
 
 async function updateColorPreference(enabled) {
@@ -471,8 +523,14 @@ function sortValue(ticket, key) {
       return String(ticket.subject || "").toLocaleLowerCase("ru");
     case "requester_display_name":
       return String(ticket.requester_display_name || "").toLocaleLowerCase("ru");
+    case "requester_department":
+      return String(ticket.requester_department || "").toLocaleLowerCase("ru");
+    case "requester_location_type":
+      return String(ticket.requester_location_type || "").toLocaleLowerCase("ru");
     case "assignee_name":
       return String(ticket.assignee_name || "").toLocaleLowerCase("ru");
+    case "ticket_type":
+      return ticketTypeInfo(ticket, state.tab).label.toLocaleLowerCase("ru");
     case "last_reply_at":
       return dateMs(ticket.last_reply_at);
     case "created_at":
@@ -489,7 +547,7 @@ function sortTickets(items) {
   // Backend list endpoints remain the source for global ordering/pagination.
   const key = state.tableSortKey;
   const dir = state.tableSortDir === "asc" ? 1 : -1;
-  const textKeys = new Set(["subject", "requester_display_name", "assignee_name"]);
+  const textKeys = new Set(["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"]);
   const sorted = [...items];
   sorted.sort((a, b) => {
     const av = sortValue(a, key);
@@ -521,6 +579,96 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function canShowAssigneeColumn(role = state.role) {
+  return role === "admin" || role === "chiki_piki";
+}
+
+function allowedTicketColumnKeys(role = state.role) {
+  return TICKET_COLUMN_KEYS.filter((key) => key !== "assignee" || canShowAssigneeColumn(role));
+}
+
+function cloneColumns(columns) {
+  return (columns || []).map((column) => ({ key: column.key, width: Number(column.width || 0) }));
+}
+
+function normalizeColumnWidth(value, fallback = 0) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed <= 0) return 0;
+  return Math.max(60, parsed);
+}
+
+function normalizeTicketColumns(columns, role = state.role) {
+  const allowed = new Set(allowedTicketColumnKeys(role));
+  const source = Array.isArray(columns) && columns.length ? columns : DEFAULT_TICKET_COLUMNS;
+  const normalized = [];
+  const seen = new Set();
+  source.forEach((column) => {
+    const key = column?.key || "";
+    if (!allowed.has(key) || seen.has(key) || !TICKET_COLUMN_DEFS[key]) return;
+    seen.add(key);
+    normalized.push({ key, width: normalizeColumnWidth(column.width, TICKET_COLUMN_DEFS[key].defaultWidth) });
+  });
+  if (!seen.has("subject")) {
+    normalized.unshift({ key: "subject", width: 0 });
+  }
+  return normalized;
+}
+
+function columnStyle(width) {
+  const normalized = normalizeColumnWidth(width);
+  if (normalized === 0) return "";
+  return `width:${normalized}px;min-width:${normalized}px;max-width:${normalized}px;`;
+}
+
+function minResizeWidthForColumn(key) {
+  if (key === "subject") return 160;
+  if (key === "age") return 90;
+  return 100;
+}
+
+function clampResizeWidth(key, width) {
+  const parsed = Number.parseInt(String(width || ""), 10);
+  const min = minResizeWidthForColumn(key);
+  return Math.max(min, Number.isFinite(parsed) ? parsed : min);
+}
+
+function activeTicketColumns() {
+  if (state.columnResizeActive && state.columnResizeColumns) {
+    return normalizeTicketColumns(state.columnResizeColumns);
+  }
+  if (state.columnDraftPreviewActive && state.draftTicketListColumns) {
+    return normalizeTicketColumns(state.draftTicketListColumns);
+  }
+  return normalizeTicketColumns(state.ticketListColumns);
+}
+
+function fixedTableWidth(columns) {
+  const systemWidth = 36 + (state.role === "admin" ? 34 : 0);
+  return columns.reduce((sum, column) => sum + normalizeColumnWidth(column.width), systemWidth);
+}
+
+function ticketChannel(ticket) {
+  if (ticket?.is_internal_task) return "internal";
+  if (ticket?.channel) return ticket.channel;
+  if (ticket?.workflow_type === "ticket") return "telegram";
+  return "telegram";
+}
+
+function channelIconSvg(channel) {
+  if (channel === "telegram") {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4.6 17.9 19c-.2 1-.8 1.2-1.6.8l-4.5-3.3-2.2 2.1c-.2.2-.4.4-.9.4l.3-4.6 8.4-7.6c.4-.3-.1-.5-.6-.2L6.5 13.1 2 11.7c-1-.3-1-1 0-1.4L19.6 3.5c.8-.3 1.5.2 1.4 1.1Z"/></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.1 7.7A7 7 0 0 1 18.7 10h-2.2l3.6 3.6L23.7 10h-2A10 10 0 0 0 4.9 5.6l2.2 2.1Zm9.8 8.6A7 7 0 0 1 5.3 14h2.2l-3.6-3.6L.3 14h2a10 10 0 0 0 16.8 4.4l-2.2-2.1Z"/></svg>';
+}
+
+function renderChannelIcon(ticket) {
+  const channel = ticketChannel(ticket);
+  const title = channel === "telegram" ? "Telegram" : (channel === "internal" ? "Внутренняя" : "Другой канал");
+  const iconClass = channel === "telegram" ? "ticket-channel-telegram" : "ticket-channel-sync";
+  return `<span class="ticket-channel-icon ${iconClass}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${channelIconSvg(channel)}</span>`;
 }
 
 function lastReplyText(ticket) {
@@ -652,9 +800,263 @@ ${result.file_delete_warnings.join("\n")}`);
   await Promise.all([loadTickets(), loadCounts({ silent: true })]);
 }
 
+function toggleAllVisibleTickets() {
+  if (state.columnResizeActive) return;
+  const allVisibleSelected = state.visibleTicketIds.length > 0
+    && state.visibleTicketIds.every((id) => state.selectedTicketIds.has(id));
+  for (const ticketId of state.visibleTicketIds) {
+    if (allVisibleSelected) state.selectedTicketIds.delete(ticketId);
+    else state.selectedTicketIds.add(ticketId);
+  }
+  renderTable();
+}
+
+function handleSortClick(btn) {
+  if (state.columnResizeActive) return;
+  const key = btn.dataset.sortKey;
+  if (!key) return;
+  if (state.tableSortKey === key) {
+    state.tableSortDir = state.tableSortDir === "asc" ? "desc" : "asc";
+  } else {
+    state.tableSortKey = key;
+    state.tableSortDir = ["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"].includes(key) ? "asc" : "desc";
+  }
+  localStorage.setItem("hd_table_sort_key", state.tableSortKey);
+  localStorage.setItem("hd_table_sort_dir", state.tableSortDir);
+  refreshSortHeaderUi();
+  renderTable();
+}
+
+function renderTicketHeader() {
+  if (!el.ticketsHeaderRow) return;
+  const columns = activeTicketColumns();
+  const cells = [];
+  if (state.role === "admin") {
+    cells.push('<th class="admin-select-col"><button id="selectAllTicketsBtn" class="mini-check-btn" type="button">✓</button></th>');
+  }
+  cells.push('<th class="ticket-channel-col"><button id="columnsSettingsBtn" class="mini-icon-btn" type="button" title="Настройка списка" aria-label="Настройка списка">⚙️</button></th>');
+  columns.forEach((column) => {
+    const def = TICKET_COLUMN_DEFS[column.key];
+    const sort = def.sortKey ? ` data-sort-key="${escapeHtml(def.sortKey)}"` : "";
+    const handle = state.columnResizeActive
+      ? `<button class="column-resize-handle" type="button" data-resize-column="${escapeHtml(column.key)}" aria-label="Изменить ширину ${escapeHtml(def.title)}"><span class="resize-handle-icon" aria-hidden="true"></span></button>`
+      : "";
+    cells.push(`<th class="${def.className}" data-column-key="${escapeHtml(column.key)}" style="${columnStyle(column.width)}"><button type="button" class="table-sort-btn"${sort}>${escapeHtml(def.title)}</button>${handle}</th>`);
+  });
+  el.ticketsHeaderRow.innerHTML = cells.join("");
+  el.sortButtons = [...document.querySelectorAll(".table-sort-btn")];
+  el.selectAllTicketsBtn = document.getElementById("selectAllTicketsBtn");
+  el.sortButtons.forEach((btn) => {
+    btn.addEventListener("click", () => handleSortClick(btn));
+  });
+  if (el.selectAllTicketsBtn) {
+    el.selectAllTicketsBtn.addEventListener("click", toggleAllVisibleTickets);
+  }
+  const settingsBtn = document.getElementById("columnsSettingsBtn");
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", () => {
+      if (!state.columnResizeActive) openColumnsModal();
+    });
+  }
+  document.querySelectorAll(".column-resize-handle").forEach((handle) => {
+    handle.addEventListener("pointerdown", startColumnResizeDrag);
+  });
+  refreshSortHeaderUi();
+}
+
+function measureRenderedColumnWidths() {
+  return normalizeTicketColumns(state.columnResizeColumns || state.draftTicketListColumns || state.ticketListColumns)
+    .map((column) => {
+      const node = el.ticketsHeaderRow?.querySelector(`[data-column-key="${CSS.escape(column.key)}"]`);
+      const measured = node ? Math.round(node.getBoundingClientRect().width) : column.width;
+      return { key: column.key, width: clampResizeWidth(column.key, measured) };
+    });
+}
+
+function enterColumnResizeMode() {
+  state.columnResizePreviousDraft = cloneColumns(normalizeTicketColumns(state.draftTicketListColumns || state.ticketListColumns));
+  state.columnResizeColumns = cloneColumns(state.columnResizePreviousDraft);
+  state.columnResizeActive = true;
+  el.columnsModal?.classList.add("columns-resize-mode");
+  el.resizeColumnsActions?.classList.remove("hidden");
+  renderTable();
+  state.columnResizeColumns = measureRenderedColumnWidths();
+  renderTable();
+}
+
+function leaveColumnResizeMode() {
+  state.columnResizeActive = false;
+  state.columnResizeColumns = null;
+  state.columnResizeDrag = null;
+  el.columnsModal?.classList.remove("columns-resize-mode");
+  el.resizeColumnsActions?.classList.add("hidden");
+  renderTable();
+}
+
+function saveColumnResizeDraft() {
+  state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.columnResizeColumns));
+  state.columnDraftPreviewActive = true;
+  state.columnResizePreviousDraft = null;
+  leaveColumnResizeMode();
+  renderColumnsDraft();
+}
+
+function cancelColumnResizeDraft() {
+  state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.columnResizePreviousDraft || state.draftTicketListColumns));
+  state.columnResizePreviousDraft = null;
+  leaveColumnResizeMode();
+  renderColumnsDraft();
+}
+
+function startColumnResizeDrag(event) {
+  if (!state.columnResizeActive) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const key = event.currentTarget?.dataset?.resizeColumn || "";
+  const column = normalizeTicketColumns(state.columnResizeColumns).find((item) => item.key === key);
+  if (!column) return;
+  const headerCell = el.ticketsHeaderRow?.querySelector(`[data-column-key="${CSS.escape(key)}"]`);
+  const renderedWidth = headerCell ? Math.round(headerCell.getBoundingClientRect().width) : column.width;
+  state.columnResizeDrag = {
+    key,
+    startX: event.clientX,
+    startWidth: clampResizeWidth(key, renderedWidth),
+    pointerId: event.pointerId,
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+}
+
+function updateColumnResizeDrag(event) {
+  const drag = state.columnResizeDrag;
+  if (!drag) return;
+  const nextWidth = clampResizeWidth(drag.key, drag.startWidth + event.clientX - drag.startX);
+  state.columnResizeColumns = normalizeTicketColumns(state.columnResizeColumns).map((column) => (
+    column.key === drag.key ? { ...column, width: nextWidth } : column
+  ));
+  renderTable();
+}
+
+function stopColumnResizeDrag() {
+  state.columnResizeDrag = null;
+}
+
+function renderColumnsDraft() {
+  if (!el.columnsDraftList || !el.columnAddSelect) return;
+  const draft = normalizeTicketColumns(state.draftTicketListColumns || state.ticketListColumns);
+  state.draftTicketListColumns = draft;
+  const existing = new Set(draft.map((column) => column.key));
+  const addable = allowedTicketColumnKeys().filter((key) => !existing.has(key));
+  el.columnAddSelect.innerHTML = `<option value="">Добавить колонку</option>${addable.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(TICKET_COLUMN_DEFS[key].title)}</option>`).join("")}`;
+  el.columnAddSelect.disabled = addable.length === 0;
+  el.columnsDraftList.innerHTML = draft.map((column, index) => {
+    const def = TICKET_COLUMN_DEFS[column.key];
+    const deleteButton = def.mandatory
+      ? '<span class="columns-delete-spacer" aria-hidden="true"></span>'
+      : `<button class="columns-delete-btn" type="button" data-column-delete="${escapeHtml(column.key)}" title="Удалить" aria-label="Удалить ${escapeHtml(def.title)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2 .3 7h1.5l-.2-7H10Zm4 0-.2 7h1.5l.3-7H14Z"/></svg></button>`;
+    return `
+      <div class="columns-draft-row" draggable="true" data-column-key="${escapeHtml(column.key)}" data-column-index="${index}">
+        <span class="columns-drag-handle" title="Перетащить">☰</span>
+        <span class="columns-draft-title">${escapeHtml(def.title)}</span>
+        ${deleteButton}
+      </div>
+    `;
+  }).join("");
+}
+
+function openColumnsModal() {
+  state.columnDraftPreviewActive = false;
+  state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.ticketListColumns));
+  renderColumnsDraft();
+  el.columnsModal?.classList.remove("hidden");
+}
+
+function closeColumnsModal() {
+  if (state.columnResizeActive) {
+    cancelColumnResizeDraft();
+  }
+  const hadPreview = state.columnDraftPreviewActive;
+  state.columnDraftPreviewActive = false;
+  state.draftTicketListColumns = null;
+  el.columnsModal?.classList.add("hidden");
+  if (hadPreview) renderTable();
+}
+
+function deleteDraftColumn(key) {
+  if (TICKET_COLUMN_DEFS[key]?.mandatory) return;
+  state.draftTicketListColumns = normalizeTicketColumns(state.draftTicketListColumns).filter((column) => column.key !== key);
+  renderColumnsDraft();
+}
+
+function addDraftColumn(key) {
+  if (!key || !allowedTicketColumnKeys().includes(key)) return;
+  const draft = normalizeTicketColumns(state.draftTicketListColumns);
+  if (draft.some((column) => column.key === key)) return;
+  draft.push({ key, width: TICKET_COLUMN_DEFS[key].defaultWidth });
+  state.draftTicketListColumns = draft;
+  renderColumnsDraft();
+}
+
+function moveDraftColumn(fromIndex, toIndex) {
+  const draft = normalizeTicketColumns(state.draftTicketListColumns);
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= draft.length || toIndex >= draft.length) return;
+  const [moved] = draft.splice(fromIndex, 1);
+  draft.splice(toIndex, 0, moved);
+  state.draftTicketListColumns = draft;
+  renderColumnsDraft();
+}
+
+async function saveColumnsModal() {
+  const payloadColumns = normalizeTicketColumns(state.draftTicketListColumns).map((column) => ({ key: column.key, width: column.width }));
+  try {
+    const preferences = await apiWrite("/api/v1/users/me/preferences", { ticket_list_columns: payloadColumns });
+    state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || payloadColumns);
+    state.columnDraftPreviewActive = false;
+    closeColumnsModal();
+    renderTable();
+    setStatus("Настройка списка сохранена");
+  } catch (e) {
+    showError(`Ошибка настройки списка: ${e.message}`);
+  }
+}
+
+function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
+  const key = column.key;
+  if (key === "subject") return linkedCell("ticket-subject-col", (ticket.subject || "") + intakeBadge(ticket), column.width);
+  if (key === "requester") return linkedCell("ticket-client-col", ticket.requester_display_name || ticket.client_name || "", column.width);
+  if (key === "department") return linkedCell("ticket-department-col", ticket.is_internal_task ? "Система" : (ticket.requester_department || "—"), column.width);
+  if (key === "location") return linkedCell("ticket-location-col", ticket.is_internal_task ? "" : (ticket.requester_location_type || ""), column.width);
+  if (key === "type") {
+    const typeInfo = ticketTypeInfo(ticket, state.tab);
+    const badge = `<span class="ticket-type-badge ticket-type-${escapeHtml(typeInfo.className)}">${escapeHtml(typeInfo.label)}</span>`;
+    return linkedCell("ticket-type-col", badge, column.width, true);
+  }
+  if (key === "assignee") {
+    if (state.role === "admin") {
+      return `<td class="ticket-assignee-col" data-column-key="assignee" style="${columnStyle(column.width)}"><select class="row-assignee-select" data-ticket-id="${escapeHtml(ticket.id)}" data-selected-id="${escapeHtml(ticket.assignee_id || "")}" ${state.columnResizeActive ? "disabled" : ""}>${assigneeOptionsHtml(ticket.assignee_id, ticket.special_assignee_name || ticket.assignee_name || "")}</select></td>`;
+    }
+    if (state.role === "chiki_piki") {
+      return linkedCell("ticket-assignee-col", ticket.special_assignee_name || ticket.assignee_name || "Нераспределён", column.width);
+    }
+    return "";
+  }
+  if (key === "age") return linkedCell("ticket-age-col", ageText(ticket.created_at), column.width);
+  if (key === "created_at") return linkedCell("ticket-created-col", fmtDate(ticket.created_at), column.width);
+  if (key === "last_reply") return linkedCell("ticket-last-reply-col", lastReplyText(ticket), column.width);
+  return "";
+}
+
 function renderTable() {
   const filtered = sortTickets(state.tickets);
+  const activeColumns = activeTicketColumns();
   state.visibleTicketIds = filtered.map((t) => t.id);
+  state.ticketListColumns = normalizeTicketColumns(state.ticketListColumns);
+  document.body.classList.toggle("ticket-column-resize-active", state.columnResizeActive);
+  const hasFixedColumns = activeColumns.every((column) => column.width > 0);
+  document.body.classList.toggle("ticket-columns-fixed", hasFixedColumns);
+  if (el.ticketsTable) {
+    el.ticketsTable.style.width = hasFixedColumns ? `${fixedTableWidth(activeColumns)}px` : "";
+  }
+  renderTicketHeader();
   el.ticketsTableBody.innerHTML = "";
   el.ticketCount.textContent = String(state.total);
   el.prevPageBtn.disabled = state.page <= 1;
@@ -681,25 +1083,20 @@ function renderTable() {
     if (appliedQuery) ticketUrl.searchParams.set("q", appliedQuery);
     ticketUrl.searchParams.set("return_url", currentListUrl);
     const ticketHref = `${ticketUrl.pathname}${ticketUrl.search}`;
-    const linkedCell = (className, textValue) => (
-      `<td class="${className} ticket-linked-cell"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${escapeHtml(textValue)}</a></td>`
+    const linkedCell = (className, textValue, width = 0, isHtml = false) => (
+      `<td class="${className} ticket-linked-cell" data-column-key="${escapeHtml(Object.keys(TICKET_COLUMN_DEFS).find((key) => TICKET_COLUMN_DEFS[key].className === className) || "")}" style="${columnStyle(width)}"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${isHtml ? textValue : escapeHtml(textValue)}</a></td>`
     );
     const selectCell = state.role === "admin"
       ? `<td class="ticket-check-cell"><input class="ticket-check" data-ticket-id="${escapeHtml(t.id)}" type="checkbox" ${state.selectedTicketIds.has(t.id) ? "checked" : ""} /></td>`
       : "";
-    const assigneeCell = state.role === "admin"
-      ? `<td class="ticket-assignee-col"><select class="row-assignee-select" data-ticket-id="${escapeHtml(t.id)}" data-selected-id="${escapeHtml(t.assignee_id || "")}">${assigneeOptionsHtml(t.assignee_id, t.special_assignee_name || t.assignee_name || "")}</select></td>`
-      : (state.role === "chiki_piki"
-        ? linkedCell("ticket-assignee-col", t.special_assignee_name || t.assignee_name || "Нераспределён")
-        : "");
+    const channelCell = `<td class="ticket-channel-col">${renderChannelIcon(t)}</td>`;
+    const dataCells = activeTicketColumns()
+      .map((column) => ticketCellHtml(column, t, ticketHref, linkedCell))
+      .join("");
     tr.innerHTML = `
       ${selectCell}
-      ${linkedCell("ticket-subject-col", (t.subject || "") + intakeBadge(t))}
-      ${linkedCell("ticket-client-col", t.requester_display_name || t.client_name || "")}
-      ${assigneeCell}
-      ${linkedCell("ticket-age-col", ageText(t.created_at))}
-      ${linkedCell("ticket-created-col", fmtDate(t.created_at))}
-      ${linkedCell("ticket-last-reply-col", lastReplyText(t))}
+      ${channelCell}
+      ${dataCells}
     `;
     el.ticketsTableBody.appendChild(tr);
   }
@@ -709,17 +1106,28 @@ function renderTable() {
       const currentListUrl = `${window.location.pathname}${window.location.search}`;
       sessionStorage.setItem("ticketListReturnUrl", currentListUrl);
     };
-    link.addEventListener("click", () => {
+    link.addEventListener("click", (event) => {
+      if (state.columnResizeActive) {
+        event.preventDefault();
+        return;
+      }
       persistReturnUrl();
     });
     link.addEventListener("auxclick", (event) => {
-      if (event.button === 1) persistReturnUrl();
-    });
+      if (state.columnResizeActive) {
+    event.preventDefault();
+    return;
+  }
+  if (event.button === 1) persistReturnUrl();
   });
-
+});
   el.ticketsTableBody.querySelectorAll(".ticket-check").forEach((checkbox) => {
     checkbox.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (state.columnResizeActive) {
+        event.preventDefault();
+        return;
+      }
       const ticketId = checkbox.dataset.ticketId;
       if (checkbox.checked) {
         state.selectedTicketIds.add(ticketId);
@@ -827,6 +1235,8 @@ function applyRoleUi() {
   if (el.adminAgentFilter) {
     el.adminAgentFilter.classList.toggle("hidden", !isAdmin);
   }
+  state.ticketListColumns = normalizeTicketColumns(state.ticketListColumns);
+  renderTicketHeader();
   const unassignedBtn = el.tabButtons.find((btn) => tabKeyFromNode(btn) === "unassigned");
   const specialBtn = el.tabButtons.find((btn) => tabKeyFromNode(btn) === "special");
   if (unassignedBtn) {
@@ -1086,22 +1496,7 @@ function init() {
     }, { signal: pageSignal });
   });
 
-  el.sortButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const key = btn.dataset.sortKey;
-      if (!key) return;
-      if (state.tableSortKey === key) {
-        state.tableSortDir = state.tableSortDir === "asc" ? "desc" : "asc";
-      } else {
-        state.tableSortKey = key;
-        state.tableSortDir = ["subject", "requester_display_name", "assignee_name"].includes(key) ? "asc" : "desc";
-      }
-      localStorage.setItem("hd_table_sort_key", state.tableSortKey);
-      localStorage.setItem("hd_table_sort_dir", state.tableSortDir);
-      refreshSortHeaderUi();
-      renderTable();
-    }, { signal: pageSignal });
-  });
+  renderTicketHeader();
 
   el.roleSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
@@ -1120,16 +1515,6 @@ function init() {
   });
 
   // Admin agent filter toggle is handled by shared sidebar.js
-
-  el.selectAllTicketsBtn.addEventListener("click", () => {
-    const allVisibleSelected = state.visibleTicketIds.length > 0
-      && state.visibleTicketIds.every((id) => state.selectedTicketIds.has(id));
-    for (const ticketId of state.visibleTicketIds) {
-      if (allVisibleSelected) state.selectedTicketIds.delete(ticketId);
-      else state.selectedTicketIds.add(ticketId);
-    }
-    renderTable();
-  }, { signal: pageSignal });
 
   el.bulkAssignBtn.addEventListener("click", openAssignModal, { signal: pageSignal });
   if (el.bulkCloseBtn) {
@@ -1162,6 +1547,53 @@ function init() {
     }, { signal: pageSignal });
   }
   if (el.bulkActionModal) closeOnBackdropClick(el.bulkActionModal, closeBulkActionModal);
+  if (el.closeColumnsModalBtn) el.closeColumnsModalBtn.addEventListener("click", closeColumnsModal, { signal: pageSignal });
+  if (el.saveColumnsBtn) el.saveColumnsBtn.addEventListener("click", saveColumnsModal, { signal: pageSignal });
+  if (el.editColumnsWidthBtn) el.editColumnsWidthBtn.addEventListener("click", enterColumnResizeMode, { signal: pageSignal });
+  if (el.saveResizeColumnsBtn) el.saveResizeColumnsBtn.addEventListener("click", saveColumnResizeDraft, { signal: pageSignal });
+  if (el.cancelResizeColumnsBtn) el.cancelResizeColumnsBtn.addEventListener("click", cancelColumnResizeDraft, { signal: pageSignal });
+  document.addEventListener("pointermove", updateColumnResizeDrag, { signal: pageSignal });
+  document.addEventListener("pointerup", stopColumnResizeDrag, { signal: pageSignal });
+  document.addEventListener("pointercancel", stopColumnResizeDrag, { signal: pageSignal });
+  if (el.columnsModal) {
+    closeOnBackdropClick(el.columnsModal, closeColumnsModal);
+    el.columnsModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeColumnsModal();
+    }, { signal: pageSignal });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && el.columnsModal && !el.columnsModal.classList.contains("hidden")) {
+      closeColumnsModal();
+    }
+  }, { signal: pageSignal });
+  if (el.columnAddSelect) {
+    el.columnAddSelect.addEventListener("change", () => {
+      addDraftColumn(el.columnAddSelect.value);
+    }, { signal: pageSignal });
+  }
+  if (el.columnsDraftList) {
+    el.columnsDraftList.addEventListener("click", (event) => {
+      const deleteButton = event.target.closest("[data-column-delete]");
+      if (deleteButton) {
+        deleteDraftColumn(deleteButton.dataset.columnDelete || "");
+        return;
+      }
+    }, { signal: pageSignal });
+    el.columnsDraftList.addEventListener("dragstart", (event) => {
+      const row = event.target.closest(".columns-draft-row");
+      if (!row) return;
+      event.dataTransfer.setData("text/plain", row.dataset.columnIndex || "0");
+    }, { signal: pageSignal });
+    el.columnsDraftList.addEventListener("dragover", (event) => {
+      if (event.target.closest(".columns-draft-row")) event.preventDefault();
+    }, { signal: pageSignal });
+    el.columnsDraftList.addEventListener("drop", (event) => {
+      const row = event.target.closest(".columns-draft-row");
+      if (!row) return;
+      event.preventDefault();
+      moveDraftColumn(Number(event.dataTransfer.getData("text/plain")), Number(row.dataset.columnIndex || 0));
+    }, { signal: pageSignal });
+  }
 
   el.closeErrorModalBtn.addEventListener("click", closeError, { signal: pageSignal });
   el.okErrorBtn.addEventListener("click", closeError, { signal: pageSignal });

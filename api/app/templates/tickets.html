@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261001a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261001b" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -128,17 +128,9 @@
       <section class="content" style="grid-template-columns: 1fr;">
         <div class="panel table-wrap">
           <div class="table-scroll">
-            <table>
+            <table id="ticketsTable">
               <thead>
-                <tr>
-                  <th class="admin-select-col hidden"><button id="selectAllTicketsBtn" class="mini-check-btn" type="button">✓</button></th>
-                  <th class="ticket-subject-col"><button type="button" class="table-sort-btn" data-sort-key="subject">Тема</button></th>
-                  <th class="ticket-client-col"><button type="button" class="table-sort-btn" data-sort-key="requester_display_name">Заявка от</button></th>
-                  <th class="admin-assignee-col ticket-assignee-col hidden"><button type="button" class="table-sort-btn" data-sort-key="assignee_name">Исполнитель</button></th>
-                  <th class="ticket-age-col"><button type="button" class="table-sort-btn" data-sort-key="age_created">С создания</button></th>
-                  <th class="ticket-created-col"><button type="button" class="table-sort-btn" data-sort-key="created_at">Дата создания</button></th>
-                  <th class="ticket-last-reply-col"><button type="button" class="table-sort-btn" data-sort-key="last_reply_at">Последний ответ</button></th>
-                </tr>
+                <tr id="ticketsHeaderRow"></tr>
               </thead>
               <tbody id="ticketsTableBody"></tbody>
             </table>
@@ -185,6 +177,29 @@
     </div>
   </div>
 
+  <div id="columnsModal" class="modal hidden">
+    <div class="modal-dialog columns-dialog">
+      <div class="modal-head">
+        <div style="font-weight:700;">Настройка списка заявок</div>
+        <button id="closeColumnsModalBtn" type="button" class="action" aria-label="Закрыть">Закрыть</button>
+      </div>
+      <div class="modal-body columns-modal-body">
+        <label class="columns-add-label">Добавить колонку
+          <select id="columnAddSelect"></select>
+        </label>
+        <button id="editColumnsWidthBtn" class="action" type="button">Ред. ширины столбцов</button>
+        <div id="columnsDraftList" class="columns-draft-list"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="saveColumnsBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+    <div id="resizeColumnsActions" class="resize-columns-actions hidden">
+      <button id="saveResizeColumnsBtn" type="button" class="action primary">Сохранить</button>
+      <button id="cancelResizeColumnsBtn" type="button" class="action">Отмена</button>
+    </div>
+  </div>
+
   <div id="errorModal" class="modal hidden">
     <div class="modal-dialog error-dialog">
       <div class="modal-head">
@@ -208,6 +223,6 @@
   <script src="/static/theme.js"></script>
   <script src="/static/sidebar.js?v=20260930b"></script>
   <script src="/static/app_shell.js?v=20260911a"></script>
-  <script src="/static/list.js?v=20261001a"></script>
+  <script src="/static/list.js?v=20261001b"></script>
 </body>
 </html>

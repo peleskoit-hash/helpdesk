@@ -1664,12 +1664,12 @@ test('management users template contains pagination controls', () => {
 });
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
-  assert.match(ticketsTemplate, /data-sort-key="requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261001a/);
+  assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261001b/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
-  assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name"\]\)/);
-  assert.match(ticketsListSource, /linkedCell\("ticket-client-col", t\.requester_display_name \|\| t\.client_name \|\| ""\)/);
-  assert.match(ticketsListSource, /state\.tableSortDir = \["subject", "requester_display_name", "assignee_name"\]\.includes\(key\) \? "asc" : "desc";/);
+  assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
+  assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
+  assert.match(ticketsListSource, /state\.tableSortDir = \["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\.includes\(key\) \? "asc" : "desc";/);
   assert.doesNotMatch(ticketsListSource, /profile\.last_name|profile\.contact_name|telegram_display_name/);
 });
 

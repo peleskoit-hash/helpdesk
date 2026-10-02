@@ -171,6 +171,10 @@ def _snapshot_custom_fio(ticket: Ticket) -> str:
 
 def _profile_custom_fio(db: Session, ticket: Ticket) -> str:
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
+    return _profile_custom_fio_value(profile)
+
+
+def _profile_custom_fio_value(profile: ClientProfile | None) -> str:
     if profile is None or not isinstance(profile.custom_fields, dict):
         return ""
     return _normalized_text(profile.custom_fields.get("custom_fio"))
@@ -201,13 +205,18 @@ def _snapshot_name_parts(ticket: Ticket) -> tuple[str, str]:
 
 
 def _ordinary_requester_display_name(db: Session, ticket: Ticket) -> str:
+    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
+    return _ordinary_requester_display_name_from_profile(db, ticket, profile)
+
+
+def _ordinary_requester_display_name_from_profile(db: Session, ticket: Ticket, profile: ClientProfile | None) -> str:
     telegram_contact = _telegram_contact(db, ticket)
     values = [_snapshot_custom_fio(ticket)]
     if _call_center_lookup_performed(ticket):
         last_name, first_name = _snapshot_name_parts(ticket)
         values.append(_normalized_text(" ".join(part for part in (last_name, first_name) if part)))
     else:
-        values.append(_profile_custom_fio(db, ticket))
+        values.append(_profile_custom_fio_value(profile))
     values.extend(
         [
             _normalized_text(telegram_contact.external_display_name if telegram_contact else ""),
@@ -270,6 +279,26 @@ def _internal_task_requester_map(db: Session, ticket_ids: list[str]) -> dict[str
         else:
             result[ticket_id] = "Система"
     return result
+
+
+def _client_profile_map(db: Session, client_ids: list[str]) -> dict[str, ClientProfile]:
+    ids = [client_id for client_id in dict.fromkeys(client_ids) if client_id]
+    if not ids:
+        return {}
+    rows = db.execute(select(ClientProfile).where(ClientProfile.client_id.in_(ids))).scalars().all()
+    return {profile.client_id: profile for profile in rows}
+
+
+def _list_requester_department(profile: ClientProfile | None, is_internal_task: bool) -> str:
+    if is_internal_task:
+        return "Система"
+    return _normalized_text(profile.department if profile else "") or "—"
+
+
+def _list_requester_location_type(profile: ClientProfile | None, is_internal_task: bool) -> str:
+    if is_internal_task:
+        return ""
+    return _normalized_text(profile.location_type if profile else "")
 
 
 def seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
@@ -336,6 +365,7 @@ def list_tickets_paginated(
     has_new_numbers = False
     subject_map = build_ticket_subject_map(db, tickets)
     internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
+    profile_map = _client_profile_map(db, [ticket.client_id for ticket in tickets])
     for t in tickets:
         if t.ticket_number is None:
             has_new_numbers = True
@@ -346,7 +376,9 @@ def list_tickets_paginated(
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
         display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
         internal_requester_name = internal_requester_map.get(t.id)
-        visible_requester_name = internal_requester_name or _ordinary_requester_display_name(db, t)
+        is_internal_task = t.id in internal_requester_map
+        requester_profile = profile_map.get(t.client_id)
+        visible_requester_name = internal_requester_name or _ordinary_requester_display_name_from_profile(db, t, requester_profile)
         items.append(
             TicketListItem(
                 id=t.id,
@@ -354,13 +386,15 @@ def list_tickets_paginated(
                 subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
                 task_kind=t.task_kind,
-                is_internal_task=t.id in internal_requester_map,
+                is_internal_task=is_internal_task,
                 intake_state=t.intake_state or TicketIntakeState.READY.value,
                 status=t.status,
                 is_frozen=t.is_frozen,
                 seen_by_agent=seen,
                 client_name=internal_requester_name or (t.client.display_name if t.client else ""),
                 requester_display_name=visible_requester_name,
+                requester_department=_list_requester_department(requester_profile, is_internal_task),
+                requester_location_type=_list_requester_location_type(requester_profile, is_internal_task),
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=bool(t.is_special),
@@ -408,6 +442,7 @@ def list_special_tickets(
     items: list[TicketListItem] = []
     subject_map = build_ticket_subject_map(db, tickets)
     internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
+    profile_map = _client_profile_map(db, [ticket.client_id for ticket in tickets])
     for t in tickets:
         if t.ticket_number is None:
             ensure_ticket_number_fn(db, t)
@@ -416,7 +451,9 @@ def list_special_tickets(
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
         display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
         internal_requester_name = internal_requester_map.get(t.id)
-        visible_requester_name = internal_requester_name or _ordinary_requester_display_name(db, t)
+        is_internal_task = t.id in internal_requester_map
+        requester_profile = profile_map.get(t.client_id)
+        visible_requester_name = internal_requester_name or _ordinary_requester_display_name_from_profile(db, t, requester_profile)
         items.append(
             TicketListItem(
                 id=t.id,
@@ -424,13 +461,15 @@ def list_special_tickets(
                 subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
                 task_kind=t.task_kind,
-                is_internal_task=t.id in internal_requester_map,
+                is_internal_task=is_internal_task,
                 intake_state=t.intake_state or TicketIntakeState.READY.value,
                 status=t.status,
                 is_frozen=t.is_frozen,
                 seen_by_agent=False,
                 client_name=internal_requester_name or (t.client.display_name if t.client else ""),
                 requester_display_name=visible_requester_name,
+                requester_department=_list_requester_department(requester_profile, is_internal_task),
+                requester_location_type=_list_requester_location_type(requester_profile, is_internal_task),
                 assignee_id=t.assignee_id,
                 assignee_name=display_assignee_name,
                 is_special=True,

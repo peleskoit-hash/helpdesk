@@ -876,21 +876,22 @@ def ensure_telegram_notification_accounts_table() -> None:
 
 
 def ensure_user_columns() -> None:
-    required_columns = {
-        "availability_status": "VARCHAR(40)",
-        "send_by_enter": "BOOLEAN NOT NULL DEFAULT FALSE",
-        "color_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
-        "legacy_ticket_count": "INTEGER",
-        "last_assigned_at": "TIMESTAMP",
-        "login": "VARCHAR(100)",
-        "password_hash": "VARCHAR(255)",
-        "avatar_path": "VARCHAR(500)",
-        "created_at": "TIMESTAMP",
-        "updated_at": "TIMESTAMP",
-    }
-
     with engine.begin() as conn:
         dialect = conn.dialect.name
+        json_type = "TEXT" if dialect == "sqlite" else "JSONB"
+        required_columns = {
+            "availability_status": "VARCHAR(40)",
+            "send_by_enter": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "color_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
+            "ticket_list_columns_json": json_type,
+            "legacy_ticket_count": "INTEGER",
+            "last_assigned_at": "TIMESTAMP",
+            "login": "VARCHAR(100)",
+            "password_hash": "VARCHAR(255)",
+            "avatar_path": "VARCHAR(500)",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        }
         existing: set[str] = set()
 
         if dialect == "sqlite":
