@@ -40,6 +40,8 @@ from ..services.system_tickets import (
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
+ALLOWED_BUTTON_STYLES = {"primary", "success", "danger"}
+
 
 class FirstConnectionSystemUpdate(BaseModel):
     subject: str | None = None
@@ -207,6 +209,20 @@ def _normalize_relative_button_file_path(raw_path: str) -> str | None:
 
 def _payload_fields_set(payload: BotButtonInstructionUpdate) -> set[str]:
     return set(getattr(payload, "model_fields_set", set()) or set())
+
+
+def _normalize_button_style(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in ALLOWED_BUTTON_STYLES:
+        _error(422, "invalid_button_style", "Недопустимый цвет кнопки")
+    return normalized
+
+
+def _button_style_out(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in ALLOWED_BUTTON_STYLES else None
 
 
 def _validate_existing_button_workflow_transition(row: BotButtonSetting, requested_workflow_type: str) -> str:
@@ -630,6 +646,7 @@ def get_bot_button_item(
             "workflow_type": "",
             "button_path": "",
             "button_label": "",
+            "button_style": None,
             "label_override": None,
             "label_overridden": False,
             "button_label_effective": "",
@@ -697,6 +714,7 @@ def get_bot_button_item(
         "workflow_type": row.workflow_type,
         "button_path": row.button_path,
         "button_label": row.button_label,
+        "button_style": _button_style_out(row.button_style),
         "label_override": row.label_override,
         "label_overridden": bool(row.label_overridden),
         "button_label_effective": ((row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label),
@@ -815,6 +833,9 @@ def save_bot_button_instruction(
     parent_path_value = button_path_value.rsplit("/", 1)[0] if "/" in button_path_value else ""
     override_label_value = (payload.label_override or "").strip() if payload.label_override is not None else None
     override_label_enabled = bool(payload.label_overridden) if payload.label_overridden is not None else None
+    fields_set = _payload_fields_set(payload)
+    button_style_provided = "button_style" in fields_set
+    button_style_value = _normalize_button_style(payload.button_style) if button_style_provided else None
     if override_label_enabled is True and not override_label_value:
         _error(422, "label_override_required", "Название в боте не может быть пустым")
 
@@ -887,6 +908,7 @@ def save_bot_button_instruction(
             workflow_type=effective_workflow_type,
             button_path=button_path,
             button_label=button_label,
+            button_style=button_style_value,
             label_override=override_label_value if override_label_enabled else None,
             label_overridden=bool(override_label_enabled),
             currently_present=True,
@@ -929,6 +951,8 @@ def save_bot_button_instruction(
         row.currently_present = True
         if not row.stable_button_id:
             row.stable_button_id = str(uuid.uuid4())
+        if button_style_provided:
+            row.button_style = button_style_value
         if payload.label_override is not None:
             row.label_override = override_label_value
         if payload.label_overridden is not None:
@@ -1030,6 +1054,7 @@ def save_bot_button_instruction(
         "visibility_overridden": bool(row.visibility_overridden),
         "label_override": row.label_override,
         "label_overridden": bool(row.label_overridden),
+        "button_style": _button_style_out(row.button_style),
         "button_label_effective": ((row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label),
         "button_label_from": ("db" if bool(row.label_overridden) and (row.label_override or "").strip() else "txt"),
     }

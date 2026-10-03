@@ -2459,6 +2459,160 @@ test('editor view renders workflow type select for ticket key fallback without e
   assert.match(content.innerHTML, /\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430/);
 });
 
+test('editor view renders compact button color picker without visual color labels', () => {
+  const content = { innerHTML: '' };
+  editorViewHelpers.renderEditor({
+    state: {
+      selectedLeaf: {
+        technical_key: 'menu-a|ticket|A',
+        label: 'A',
+        full_path: 'A',
+        children_rows: [],
+        removed: false,
+        is_db_created: false,
+      },
+      editorWorkflowType: 'ticket',
+      editorBotLabel: 'A',
+      buttonStyle: 'success',
+      editorText: '',
+      editorClientText: '',
+      editorSystemText: '',
+      confirmationEnabled: false,
+      confirmationText: '',
+      fixedAssigneeEnabled: false,
+      fixedAssigneeUserId: '',
+      freezeOnCreate: false,
+      isEnabled: true,
+      automationTypeValue: 'none',
+      availableAutomations: [
+        { key: 'none', title: '\u041d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c', description: '', available: true, handler: '', workflow_types: ['ticket'] },
+      ],
+      automationTitle: '',
+      automationKey: 'none',
+      automationDescription: '',
+      automationStatus: 'not_applied',
+      automationAvailable: true,
+      automationHandler: '',
+      selectedFiles: [],
+      conditionalRules: [],
+    },
+    el: { content },
+    escapeHtml(value) { return String(value); },
+    renderSelectedFiles() { return ''; },
+    renderConditionalRules() { return ''; },
+    buildMoveCandidates() { return []; },
+    renderAssigneeOptions() { return ''; },
+    openFilePickerModal() {},
+    openConditionalRuleFilesModal() {},
+    fieldMeta() { return null; },
+    fieldLabel(value) { return String(value || ''); },
+    OPERATOR_OPTIONS: { text: [], select: [], number: [], bool: [] },
+    render() {},
+    saveInstruction() {},
+    archiveMenuButton() {},
+    restoreRemovedSetting() {},
+    deleteRemovedSetting() {},
+    moveRemovedSetting() {},
+    hasAnyStoredSettings() { return false; },
+  });
+
+  assert.match(content.innerHTML, /\u0426\u0432\u0435\u0442 \u043a\u043d\u043e\u043f\u043a\u0438/);
+  assert.match(content.innerHTML, />\u0411\u0430\u0437\u043e\u0432\u044b\u0439</);
+  assert.match(content.innerHTML, /data-button-style-option=""/);
+  assert.match(content.innerHTML, /data-button-style-option="primary"/);
+  assert.match(content.innerHTML, /data-button-style-option="success"[\s\S]*aria-pressed="true"/);
+  assert.match(content.innerHTML, /data-button-style-option="danger"/);
+  assert.doesNotMatch(content.innerHTML, />\u0421\u0438\u043d\u0438\u0439</);
+  assert.doesNotMatch(content.innerHTML, />\u0417\u0435\u043b\u0451\u043d\u044b\u0439</);
+  assert.doesNotMatch(content.innerHTML, />\u041a\u0440\u0430\u0441\u043d\u044b\u0439</);
+});
+
+test('editor save sends selected button style and base style as null', async () => {
+  const calls = [];
+  const baseState = {
+    selectedMenu: 'menu-a',
+    selectedLeaf: {
+      technical_key: 'menu-a|ticket|A',
+      workflow_type: 'ticket',
+      label: 'A',
+      full_path: 'A',
+      children_rows: [],
+    },
+    editorWorkflowType: 'ticket',
+    editorBotLabel: 'A',
+    editorText: '',
+    editorClientText: '',
+    editorSystemText: '',
+    fixedAssigneeEnabled: false,
+    fixedAssigneeUserId: '',
+    freezeOnCreate: false,
+    confirmationEnabled: false,
+    confirmationText: '',
+    filesOverridden: false,
+    selectedFiles: [],
+    conditionalFilesOverridden: false,
+    conditionalRules: [],
+    sendFilesProjectionError: '',
+    isEnabled: true,
+    automationTypeValue: 'none',
+    availableAutomations: [],
+  };
+  async function saveWithStyle(buttonStyle) {
+    const state = { ...baseState, buttonStyle };
+    await editorHelpers.saveInstruction({
+      state,
+      api(_url, opts) {
+        calls.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true });
+      },
+      setStatus() {},
+      refreshMenuStructure() { return Promise.resolve(); },
+      fieldMeta() { return null; },
+      fieldLabel(value) { return String(value || ''); },
+    });
+  }
+
+  await saveWithStyle('primary');
+  await saveWithStyle('');
+
+  assert.equal(calls[0].button_style, 'primary');
+  assert.equal(calls[1].button_style, null);
+});
+
+test('editor open loads saved button style into state', async () => {
+  const state = {
+    selectedMenu: 'menu-a',
+    availableAutomations: [],
+  };
+  await editorHelpers.openEditor({
+    state,
+    api() {
+      return Promise.resolve({
+        workflow_type: 'ticket',
+        button_label: 'A',
+        button_style: 'danger',
+        automation_type: 'none',
+        automation_key: null,
+        files: [],
+        conditional_files: [],
+        is_enabled: true,
+      });
+    },
+    setStatus() {},
+    render() {},
+    normalizeConditionalRuleForState(rule) { return rule; },
+  }, {
+    technical_key: 'menu-a|ticket|A',
+    workflow_type: 'ticket',
+    label: 'A',
+    full_path: 'A',
+    children_rows: [],
+  });
+
+  assert.equal(state.buttonStyle, 'danger');
+  assert.equal(state.savedButtonStyle, 'danger');
+});
+
 test('editor view prefers saved workflow_type over technical_key fallback when rendering select', () => {
   const content = { innerHTML: '' };
   editorViewHelpers.renderEditor({

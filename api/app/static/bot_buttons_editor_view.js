@@ -39,6 +39,39 @@
     return String(value || "").trim() ? "Задан" : "Не задан";
   }
 
+  function renderButtonStylePicker(ctx) {
+    const escapeHtml = ctx.escapeHtml || escapeModalHtml;
+    const selectedStyle = String(ctx.state?.buttonStyle || "");
+    const options = [
+      { value: "", label: "Базовый", title: "Базовый" },
+      { value: "primary", label: "", title: "Синий" },
+      { value: "success", label: "", title: "Зелёный" },
+      { value: "danger", label: "", title: "Красный" },
+    ];
+    return `
+      <div class="bot-button-style-picker" role="radiogroup" aria-label="Цвет кнопки">
+        ${options.map((option) => {
+          const active = selectedStyle === option.value;
+          const classes = [
+            "bot-button-style-option",
+            option.value ? `bot-button-style-${option.value}` : "bot-button-style-base",
+            active ? "is-selected" : "",
+          ].filter(Boolean).join(" ");
+          return `
+            <button
+              type="button"
+              class="${classes}"
+              data-button-style-option="${escapeHtml(option.value)}"
+              aria-label="${escapeHtml(option.title)}"
+              title="${escapeHtml(option.title)}"
+              aria-pressed="${active ? "true" : "false"}"
+            >${option.label ? escapeHtml(option.label) : "<span aria-hidden=\"true\"></span>"}</button>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
   function closeTextEditorModal() {
     closeEmojiPicker();
     const modal = document.getElementById(TEXT_MODAL_ID);
@@ -498,6 +531,11 @@
           </div>
 
           <div class="bot-editor-section">
+            <label class="field-label">Цвет кнопки</label>
+            ${renderButtonStylePicker(ctx)}
+          </div>
+
+          <div class="bot-editor-section">
             <div class="bot-removed-title">Параметры подменю</div>
             <label class="status-panel-title admin-agent-header">
               <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
@@ -525,6 +563,11 @@
           <div class="bot-editor-section">
             <label class="field-label">Название в боте</label>
             <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="Введите название кнопки/раздела в боте" />
+          </div>
+
+          <div class="bot-editor-section">
+            <label class="field-label">Цвет кнопки</label>
+            ${renderButtonStylePicker(ctx)}
           </div>
 
           <div class="bot-editor-section">
@@ -749,6 +792,12 @@
     });
     buttonIsEnabledEl?.addEventListener("change", () => {
       state.isEnabled = !!buttonIsEnabledEl.checked;
+    });
+    document.querySelectorAll("[data-button-style-option]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.buttonStyle = btn.getAttribute("data-button-style-option") || "";
+        EditorView.renderEditor(ctx);
+      });
     });
     fixedEnabledEl?.addEventListener("change", () => {
       state.fixedAssigneeEnabled = !!fixedEnabledEl.checked;

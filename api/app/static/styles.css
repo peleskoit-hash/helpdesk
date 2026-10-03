@@ -6395,6 +6395,54 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   box-sizing: border-box;
 }
 
+.bot-button-style-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bot-button-style-option {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid rgba(107, 114, 128, 0.28);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.bot-button-style-base {
+  min-width: 84px;
+  padding: 0 12px;
+}
+
+.bot-button-style-primary {
+  background: #2f80ed;
+  border-color: rgba(47, 128, 237, 0.9);
+}
+
+.bot-button-style-success {
+  background: #27ae60;
+  border-color: rgba(39, 174, 96, 0.9);
+}
+
+.bot-button-style-danger {
+  background: #eb5757;
+  border-color: rgba(235, 87, 87, 0.9);
+}
+
+.bot-button-style-option.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.18), inset 0 0 0 2px rgba(255, 255, 255, 0.72);
+}
+
+.bot-button-style-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .bot-editor-actions {
   display: flex;
   gap: 8px;

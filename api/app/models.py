@@ -762,6 +762,7 @@ class BotButtonSetting(Base):
     workflow_type: Mapped[str] = mapped_column(String(50))
     button_path: Mapped[str] = mapped_column(String(1000))
     button_label: Mapped[str] = mapped_column(String(255))
+    button_style: Mapped[str | None] = mapped_column(String(20), nullable=True)
     label_override: Mapped[str | None] = mapped_column(String(255), nullable=True)
     label_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
     currently_present: Mapped[bool] = mapped_column(Boolean, default=True)

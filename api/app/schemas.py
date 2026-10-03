@@ -943,6 +943,7 @@ class BotButtonItemOut(BaseModel):
     workflow_type: str
     button_path: str
     button_label: str
+    button_style: str | None = None
     label_override: str | None = None
     label_overridden: bool = False
     button_label_effective: str | None = None
@@ -979,6 +980,7 @@ class BotButtonInstructionUpdate(BaseModel):
     visibility_overridden: bool | None = None
     label_override: str | None = None
     label_overridden: bool | None = None
+    button_style: str | None = None
 
 
 

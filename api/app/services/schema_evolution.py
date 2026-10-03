@@ -1047,6 +1047,7 @@ def ensure_bot_button_settings_table() -> None:
                         workflow_type VARCHAR(50) NOT NULL,
                         button_path VARCHAR(1000) NOT NULL,
                         button_label VARCHAR(255) NOT NULL,
+                        button_style VARCHAR(20),
                         label_override VARCHAR(255),
                         label_overridden BOOLEAN,
                         currently_present BOOLEAN,
@@ -1093,6 +1094,8 @@ def ensure_bot_button_settings_table() -> None:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN currently_present BOOLEAN"))
             if "label_override" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN label_override VARCHAR(255)"))
+            if "button_style" not in existing:
+                conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN button_style VARCHAR(20)"))
             if "label_overridden" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN label_overridden BOOLEAN"))
             if "client_text" not in existing:
@@ -1157,6 +1160,7 @@ def ensure_bot_button_settings_table() -> None:
                     workflow_type VARCHAR(50) NOT NULL,
                     button_path VARCHAR(1000) NOT NULL,
                     button_label VARCHAR(255) NOT NULL,
+                    button_style VARCHAR(20),
                     label_override VARCHAR(255),
                     label_overridden BOOLEAN,
                     currently_present BOOLEAN,
@@ -1211,6 +1215,8 @@ def ensure_bot_button_settings_table() -> None:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN currently_present BOOLEAN"))
         if "label_override" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN label_override VARCHAR(255)"))
+        if "button_style" not in existing:
+            conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN button_style VARCHAR(20)"))
         if "label_overridden" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN label_overridden BOOLEAN"))
         if "client_text" not in existing:

@@ -106,6 +106,8 @@ const state = {
   savedClientText: "",
   editorBotLabel: "",
   savedBotLabel: "",
+  buttonStyle: "",
+  savedButtonStyle: "",
   editorSystemText: "",
   savedSystemText: "",
   editorWorkflowType: "",

@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -89,7 +91,7 @@ def _fail_fallback(*args, **kwargs):
     raise AssertionError("TXT fallback should not be used")
 
 
-def _save_button_instruction(session, payload, *, button_key="menu-a|ticket|A", workflow_type="ticket"):
+def _save_button_instruction(session, payload, *, button_key="menu-a|ticket|A", workflow_type="ticket", user=None):
     return settings_bot_button_items.save_bot_button_instruction(
         BotButtonInstructionUpdate(**payload),
         button_key=button_key,
@@ -98,8 +100,24 @@ def _save_button_instruction(session, payload, *, button_key="menu-a|ticket|A", 
         button_path="A",
         button_label="A",
         db=session,
-        user=object(),
+        user=user if user is not None else object(),
     )
+
+
+def test_bot_button_style_save_get_and_validation():
+    for style in ("primary", "success", "danger"):
+        session = _session()
+        result = _save_button_instruction(session, {"button_style": style}, user=SimpleNamespace(role="admin"))
+        assert result["button_style"] == style
+
+        item = settings_bot_button_items.get_bot_button_item("menu-a|ticket|A", menu_type="menu-a", db=session, user=SimpleNamespace(role="admin"))
+        assert item["button_style"] == style
+
+    session = _session()
+    with pytest.raises(HTTPException) as exc_info:
+        _save_button_instruction(session, {"button_style": "purple"}, user=SimpleNamespace(role="admin"))
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["error"]["code"] == "invalid_button_style"
 
 
 def _txt_submenu_config():
@@ -1205,6 +1223,51 @@ def test_txt_submenu_runtime_uses_db_text_instead_of_txt(monkeypatch):
     assert sent["text"] == "DB submenu text"
     assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
     assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "btn:child-a"
+    assert "style" not in sent["reply_markup"]["inline_keyboard"][0][0]
+
+
+def test_txt_backed_runtime_adds_saved_button_style(monkeypatch):
+    session = _session()
+    submenu_row = _seed_row(
+        session,
+        button_key="menu-a|submenu|Submenu",
+        workflow_type="submenu",
+        button_kind="section",
+        button_path="Submenu",
+        button_label="Submenu",
+        client_text="DB submenu text",
+        parent_path="",
+    )
+    child_row = _seed_row(
+        session,
+        button_key="menu-a|ticket|Submenu/Leaf A",
+        workflow_type="ticket",
+        button_kind="terminal",
+        button_path="Submenu/Leaf A",
+        button_label="Leaf A",
+        parent_path="Submenu",
+        button_style="success",
+    )
+    config, refs = _txt_submenu_config()
+    sent = {}
+
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
+        submenu_row.button_key: submenu_row,
+        child_row.button_key: child_row,
+    })
+    monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
+    monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
+
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+
+    button = sent["reply_markup"]["inline_keyboard"][0][0]
+    assert button["text"] == "Leaf A"
+    assert button["callback_data"] == "btn:child-a"
+    assert button["style"] == "success"
 
 
 def test_txt_submenu_runtime_empty_db_text_does_not_fallback_to_txt(monkeypatch):
@@ -1256,7 +1319,8 @@ def test_txt_submenu_runtime_without_db_row_does_not_fallback_to_txt(monkeypatch
     assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
 
 
-def test_db_created_submenu_runtime_uses_db_text(monkeypatch):
+@pytest.mark.parametrize("button_style", ["primary", "success", "danger"])
+def test_db_created_submenu_runtime_uses_db_text(monkeypatch, button_style):
     session = _session()
     section = _seed_row(
         session,
@@ -1276,6 +1340,7 @@ def test_db_created_submenu_runtime_uses_db_text(monkeypatch):
         button_path="Custom submenu/Leaf",
         button_label="Leaf",
         parent_path="Custom submenu",
+        button_style=button_style,
     )
     sent = {}
 
@@ -1285,6 +1350,7 @@ def test_db_created_submenu_runtime_uses_db_text(monkeypatch):
 
     assert sent["text"] == "DB created submenu text"
     assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"btnid:{child.id}"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["style"] == button_style
 
 
 def test_group_parent_does_not_use_submenu_client_text():

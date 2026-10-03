@@ -592,6 +592,11 @@ def _button_visibility_enabled(row: BotButtonSetting | None) -> bool:
     return bool(row.is_enabled)
 
 
+def _button_style_value(row: BotButtonSetting | None) -> str | None:
+    value = str(getattr(row, "button_style", "") or "").strip().lower()
+    return value if value in {"primary", "success", "danger"} else None
+
+
 def _button_settings_map(db: Session, menu_name: str) -> dict[str, BotButtonSetting]:
     return {
         row.button_key: row
@@ -725,6 +730,14 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
     def is_group_enabled(full_path: str) -> bool:
         return _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "group_task", full_path)))
 
+    def button_style_for_key(button_key: str) -> str | None:
+        return _button_style_value(settings_map.get(button_key))
+
+    def add_button_style(item: dict, style: str | None) -> dict:
+        if style:
+            item["style"] = style
+        return item
+
     def build_markup_rows(current_menu_key: str | None, parent_path: str = "") -> list[list[dict]]:
         current_menu = config.menus.get(current_menu_key) if current_menu_key else None
         result_rows: list[list[dict]] = []
@@ -746,11 +759,11 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
                             continue
                         submenu_key_for_visibility = build_visibility_button_key(menu_name, "submenu", full_path)
                         rendered_row.append(
-                            {
+                            add_button_style({
                                 "text": _effective_label(submenu_key_for_visibility, button.label),
                                 "callback_data": f"menu:{button.submenu_key}",
                                 "__layout_key": submenu_key_for_visibility,
-                            }
+                            }, button_style_for_key(submenu_key_for_visibility))
                         )
                         continue
                     if button.kind == "group_task":
@@ -762,11 +775,11 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
                             continue
                         group_key_for_visibility = build_visibility_button_key(menu_name, "group_task", full_path)
                         rendered_row.append(
-                            {
+                            add_button_style({
                                 "text": _effective_label(group_key_for_visibility, button.label),
                                 "callback_data": f"btn:{button.key}",
                                 "__layout_key": group_key_for_visibility,
-                            }
+                            }, button_style_for_key(group_key_for_visibility))
                         )
                         continue
                     if not is_terminal_enabled(button.key):
@@ -774,11 +787,11 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
                     terminal_ref = terminal_by_source.get(button.key)
                     terminal_key = terminal_ref.technical_key if terminal_ref is not None else ""
                     rendered_row.append(
-                        {
+                        add_button_style({
                             "text": _effective_label(terminal_key, button.label),
                             "callback_data": f"btn:{button.key}",
                             "__layout_key": terminal_key,
-                        }
+                        }, button_style_for_key(terminal_key))
                     )
                 if rendered_row:
                     result_rows.append(rendered_row)
@@ -793,11 +806,11 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
                 # They should trigger task flow (btnid), not open DB submenu level (menuid).
                 result_rows.append(
                     [
-                        {
+                        add_button_style({
                             "text": effective_label,
                             "callback_data": f"btnid:{row.id}",
                             "__layout_key": row.button_key,
-                        }
+                        }, _button_style_value(row))
                     ]
                 )
                 continue
@@ -807,27 +820,33 @@ def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: 
                     continue
                 result_rows.append(
                     [
-                        {
+                        add_button_style({
                             "text": effective_label,
                             "callback_data": f"menuid:{row.id}",
                             "__layout_key": row.button_key,
-                        }
+                        }, _button_style_value(row))
                     ]
                 )
                 continue
             result_rows.append(
                 [
-                    {
+                    add_button_style({
                         "text": effective_label,
                         "callback_data": f"btnid:{row.id}",
                         "__layout_key": row.button_key,
-                    }
+                    }, _button_style_value(row))
                 ]
             )
         laid_out = _apply_layout_to_markup_rows(result_rows, level_layout_map.get(current_level_key))
         clean_rows: list[list[dict]] = []
         for row in laid_out:
-            clean_rows.append([{"text": item.get("text"), "callback_data": item.get("callback_data")} for item in row])
+            clean_row: list[dict] = []
+            for item in row:
+                clean_item = {"text": item.get("text"), "callback_data": item.get("callback_data")}
+                if item.get("style"):
+                    clean_item["style"] = item.get("style")
+                clean_row.append(clean_item)
+            clean_rows.append(clean_row)
         return clean_rows
 
     parent_path = _submenu_path_by_key_or_db(db, menu_name, menu_key) if menu_key else ""
@@ -915,6 +934,7 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
                             "text": _effective_label(row),
                             "callback_data": f"btnid:{row.id}",
                             "__layout_key": row.button_key,
+                            **({"style": _button_style_value(row)} if _button_style_value(row) else {}),
                         }
                     ]
                 )
@@ -928,6 +948,7 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
                             "text": _effective_label(row),
                             "callback_data": f"menuid:{row.id}",
                             "__layout_key": row.button_key,
+                            **({"style": _button_style_value(row)} if _button_style_value(row) else {}),
                         }
                     ]
                 )
@@ -938,13 +959,20 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
                         "text": _effective_label(row),
                         "callback_data": f"btnid:{row.id}",
                         "__layout_key": row.button_key,
+                        **({"style": _button_style_value(row)} if _button_style_value(row) else {}),
                     }
                 ]
             )
         laid_out = _apply_layout_to_markup_rows(result_rows, level_layout_map.get(current_level_key))
         clean_rows: list[list[dict]] = []
         for row in laid_out:
-            clean_rows.append([{"text": item.get("text"), "callback_data": item.get("callback_data")} for item in row])
+            clean_row: list[dict] = []
+            for item in row:
+                clean_item = {"text": item.get("text"), "callback_data": item.get("callback_data")}
+                if item.get("style"):
+                    clean_item["style"] = item.get("style")
+                clean_row.append(clean_item)
+            clean_rows.append(clean_row)
         return clean_rows
 
     parent_path = ""

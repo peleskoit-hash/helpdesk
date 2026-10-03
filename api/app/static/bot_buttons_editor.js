@@ -119,6 +119,7 @@
     const { state } = ctx;
     return (state.editorText || "") !== (state.savedText || "")
       || (state.editorBotLabel || "") !== (state.savedBotLabel || "")
+      || (state.buttonStyle || "") !== (state.savedButtonStyle || "")
       || (state.editorClientText || "") !== (state.savedClientText || "")
       || (state.editorSystemText || "") !== (state.savedSystemText || "")
       || state.fixedAssigneeEnabled !== state.savedFixedAssigneeEnabled
@@ -145,6 +146,7 @@
     state.editorText = state.savedText || "";
     state.editorClientText = state.savedClientText || "";
     state.editorBotLabel = state.savedBotLabel || "";
+    state.buttonStyle = state.savedButtonStyle || "";
     state.editorSystemText = state.savedSystemText || "";
     state.fixedAssigneeEnabled = !!state.savedFixedAssigneeEnabled;
     state.fixedAssigneeUserId = state.savedFixedAssigneeUserId || "";
@@ -204,6 +206,8 @@
     const effectiveLabel = String(payload?.button_label_effective || payload?.button_label || leaf.label || "");
     state.savedBotLabel = String(payload?.label_override ?? effectiveLabel);
     state.editorBotLabel = state.savedBotLabel;
+    state.savedButtonStyle = String(payload?.button_style || "");
+    state.buttonStyle = state.savedButtonStyle;
 
     state.savedSystemText = String(payload?.system_text || "");
     state.editorSystemText = state.savedSystemText;
@@ -348,6 +352,7 @@
           client_text: state.editorClientText,
           label_overridden: true,
           label_override: state.editorBotLabel,
+          button_style: state.buttonStyle || null,
           is_enabled: state.isEnabled,
           visibility_overridden: true,
         }
@@ -357,6 +362,7 @@
           client_text: state.editorClientText,
           label_overridden: true,
           label_override: state.editorBotLabel,
+          button_style: state.buttonStyle || null,
           system_text: state.editorSystemText,
           system_text_overridden: true,
           fixed_assignee_enabled: state.fixedAssigneeEnabled,
@@ -387,6 +393,7 @@
     state.savedText = state.editorText;
     state.savedClientText = state.editorClientText;
     state.savedBotLabel = state.editorBotLabel;
+    state.savedButtonStyle = state.buttonStyle || "";
     state.savedSystemText = state.editorSystemText;
     state.systemTextOverridden = true;
     state.savedFixedAssigneeEnabled = state.fixedAssigneeEnabled;
