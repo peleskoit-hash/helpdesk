@@ -2112,8 +2112,10 @@ test('removing file clears it from unconditional and conditional payloads', () =
 
 test('system ticket card exposes a stable selector in menu view', () => {
   const source = fs.readFileSync('api/app/static/bot_buttons_menu_view.js', 'utf8');
-  assert.equal(systemTicket.helpers.selector, '[data-system-ticket-key="first-connection"]');
+  assert.equal(systemTicket.helpers.selector, '[data-system-ticket-key]');
   assert.match(source, /data-system-ticket-key="first-connection"/);
+  assert.match(source, /data-system-ticket-key="review-buttons"/);
+  assert.match(source, /data-system-ticket-key="feedback-buttons"/);
 });
 
 test('system ticket menu block renders clean russian labels without mojibake markers', () => {
@@ -2151,10 +2153,14 @@ test('system ticket menu block renders clean russian labels without mojibake mar
 
   assert.match(el.content.innerHTML, /\u0411\u0430\u0437\u043e\u0432\u043e\u0435/);
   assert.doesNotMatch(el.content.innerHTML, /__system__/);
-  assert.equal(labels.SYSTEM_TICKETS_TITLE, '\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0437\u0430\u044f\u0432\u043a\u0438');
+  assert.equal(labels.SYSTEM_TICKETS_TITLE, '\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0441\u043e\u0431\u044b\u0442\u0438\u044f');
   assert.equal(labels.FIRST_CONNECTION_TITLE, '\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443');
-  assert.match(el.content.innerHTML, /\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0437\u0430\u044f\u0432\u043a\u0438/);
+  assert.equal(labels.REVIEW_SYSTEM_TITLE, '\u041e\u0442\u0437\u044b\u0432\u044b');
+  assert.equal(labels.FEEDBACK_SYSTEM_TITLE, '\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f');
+  assert.match(el.content.innerHTML, /\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0441\u043e\u0431\u044b\u0442\u0438\u044f/);
   assert.match(el.content.innerHTML, /\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443/);
+  assert.match(el.content.innerHTML, /\u041e\u0442\u0437\u044b\u0432\u044b/);
+  assert.match(el.content.innerHTML, /\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f/);
   assert.doesNotMatch(el.content.innerHTML, /\u2568|\u2564|\u00d0|\u00d1|\u0420\u045f|\u0420\u040e|\u0420\u045a|\?\?\?/);
 });
 
@@ -2185,13 +2191,57 @@ test('system ticket click handler triggers system api load path', async () => {
 
   await content.listeners.click({
     preventDefault() {},
-    target: { closest(selector) { return selector === systemTicket.helpers.selector ? {} : null; } },
+    target: { closest(selector) { return selector === systemTicket.helpers.selector ? { getAttribute: () => 'first-connection' } : null; } },
   });
 
   assert.equal(calls[0], 'discard');
   assert.equal(calls[1], '/api/v1/settings/bot-buttons/system/first-connection');
   assert.equal(state.view, 'system_editor');
   assert.equal(statuses.at(-1), '\u0413\u043e\u0442\u043e\u0432\u043e');
+});
+
+test('system event click handler opens review button group api load path', async () => {
+  const calls = [];
+  const state = { view: 'menu_types', systemTicketLoadError: '', systemButtonGroup: null };
+  const content = {
+    listeners: {},
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    removeEventListener() {},
+  };
+  systemTicket.helpers.bindOpenHandler({
+    content,
+    confirmDiscard: () => true,
+    discardEditorChanges: () => calls.push('discard'),
+    onError: (error) => { throw error; },
+    onOpen: () => { throw new Error('first connection should not open'); },
+    onOpenGroup: (key) => systemTicket.helpers.loadButtonGroupEditorState({
+      state,
+      render: () => calls.push('render'),
+      setStatus: (value) => calls.push(value),
+      api: async (path) => {
+        calls.push(path);
+        return {
+          buttons: Array.from({ length: 8 }, (_, index) => ({
+            key: `review-${index}`,
+            text: `Button ${index}`,
+            default_text: `Button ${index}`,
+            button_style: index === 0 ? 'success' : null,
+          })),
+        };
+      },
+    }, key),
+  });
+
+  await content.listeners.click({
+    preventDefault() {},
+    target: { closest(selector) { return selector === systemTicket.helpers.selector ? { getAttribute: () => 'review-buttons' } : null; } },
+  });
+
+  assert.equal(calls[0], 'discard');
+  assert.ok(calls.includes('/api/v1/settings/bot-buttons/system/review-buttons'));
+  assert.equal(state.view, 'system_button_group_editor');
+  assert.equal(state.systemButtonGroup.buttons.length, 8);
+  assert.equal(state.systemButtonGroup.buttons[0].buttonStyle, 'success');
 });
 
 test('system api load failure keeps menu view and shows ui error', async () => {
@@ -2238,7 +2288,7 @@ test('repeated system ticket binding does not create a double handler', async ()
   assert.equal(content.listeners.length, 1);
   await content.listeners[0].fn({
     preventDefault() {},
-    target: { closest() { return {}; } },
+    target: { closest() { return { getAttribute: () => 'first-connection' }; } },
   });
   assert.equal(opened, 1);
 });
@@ -2246,8 +2296,28 @@ test('repeated system ticket binding does not create a double handler', async ()
 test('system editor breadcrumb source keeps clean first-connection label', () => {
   const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
   assert.equal(systemTicket.helpers.labels.firstConnectionTitle, '\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443');
+  assert.equal(systemTicket.helpers.labels.reviewTitle, '\u041e\u0442\u0437\u044b\u0432\u044b');
+  assert.equal(systemTicket.helpers.labels.feedbackTitle, '\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f');
   assert.match(source, /parts\.push\(FIRST_CONNECTION_TITLE\)/);
+  assert.match(source, /parts\.push\(systemButtonGroupTitle\(\)\)/);
   assert.doesNotMatch(source, /╨|╤|Ð|Ñ|Рџ|РЎ|Рњ|\?\?\?/);
+});
+
+test('system button group editor has compact text and color controls without callback editor', () => {
+  const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
+  assert.match(source, /function renderSystemButtonGroupEditor/);
+  assert.match(source, /data-system-editor="button-group"/);
+  assert.match(source, /data-system-button-text/);
+  assert.match(source, /data-system-button-style/);
+  assert.match(source, /bot-button-style-base/);
+  assert.match(source, /`bot-button-style-\$\{option\.value\}`/);
+  assert.match(source, /value: "primary"/);
+  assert.match(source, /value: "success"/);
+  assert.match(source, /value: "danger"/);
+  assert.ok(source.includes('option.label ? escapeHtml(option.label) : "<span aria-hidden=\\"true\\"></span>"'));
+  assert.match(source, /body: JSON\.stringify\(\{ buttons \}\)/);
+  assert.match(source, /loadSystemButtonGroupEditorState\(\{ api, state, render, setStatus \}, group\.key\)/);
+  assert.doesNotMatch(source, /callback_data|callbackData|data-system-button-callback/);
 });
 
 test('test file does not lock mojibake expected strings outside forbidden-marker regexes', () => {

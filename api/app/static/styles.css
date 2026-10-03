@@ -6449,6 +6449,11 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   padding-left: 2px;
 }
 
+.bot-info-actions button.action:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
 .action.action-muted {
   opacity: 0.75;
 }

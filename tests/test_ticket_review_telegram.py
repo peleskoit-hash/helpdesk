@@ -8,11 +8,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import AutomaticMessageTemplate, Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from api.app.models import AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketIntakeState, TicketMessage, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from api.app.routers import telegram as telegram_router
 from api.app.services.automatic_messages import get_automatic_message_definition
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
-from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, feedback_back_callback_data, feedback_start_callback_data, review_back_callback_data, review_finish_callback_data, review_rate_callback_data, review_start_callback_data
+from api.app.services.telegram_post_close import _now_utc, attributable_review_agent_id_for_actor, cleanup_review_flow_for_ticket_reopen, feedback_back_callback_data, feedback_input_markup, feedback_start_callback_data, post_close_actions_markup, review_back_callback_data, review_finish_callback_data, review_finish_markup, review_rate_callback_data, review_rating_markup, review_start_callback_data
 from api.app.services.ticket_reviews import create_review_cycle, save_review_caption, save_review_rating, set_review_current_message_id, start_review_rating_cycle
 
 
@@ -151,6 +151,31 @@ def _markup_labels(markup):
     return [button["text"] for row in (markup or {}).get("inline_keyboard") or [] for button in row]
 
 
+def _seed_system_button(session, *, key: str, default_text: str, text: str | None = None, style: str | None = None):
+    row = BotButtonSetting(
+        id=str(uuid.uuid4()),
+        stable_button_id=str(uuid.uuid4()),
+        button_key=key,
+        menu_type="__system__",
+        workflow_type="system",
+        button_path=default_text,
+        button_label=default_text,
+        label_override=text,
+        label_overridden=text is not None,
+        button_style=style,
+        currently_present=True,
+        is_db_created=True,
+        button_kind="system",
+        parent_path="",
+        is_archived=False,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
 def test_employee_close_offers_review_on_employee_and_same_close_message():
     session = _session()
     company, client, _contact, agent, _admin = _seed_base(session)
@@ -173,6 +198,94 @@ def test_employee_close_offers_review_on_employee_and_same_close_message():
     assert _markup_labels(sent[0][1]["reply_markup"]) == ["Оставить отзыв", "Предложения и замечания"]
     assert sent[0][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == review_start_callback_data(cycle.id)
     assert sent[0][1]["reply_markup"]["inline_keyboard"][1][0]["callback_data"] == feedback_start_callback_data(ticket.id)
+
+
+def test_post_close_actions_default_markup_has_no_button_style():
+    session = _session()
+    company, client, contact, agent, _admin = _seed_base(session)
+    ticket, _message = _seed_ticket(session, company, client, agent)
+    ticket.status = TicketStatus.CLOSED.value
+    cycle = create_review_cycle(session, ticket_id=ticket.id, agent_id=agent.id, client_id=client.id)
+    session.commit()
+
+    markup = post_close_actions_markup(session, ticket=ticket, contact=contact, review_cycle=cycle)
+
+    assert _markup_labels(markup) == ["Оставить отзыв", "Предложения и замечания"]
+    assert "style" not in markup["inline_keyboard"][0][0]
+    assert "style" not in markup["inline_keyboard"][1][0]
+
+
+def test_post_close_actions_apply_custom_review_and_feedback_buttons_in_all_combinations():
+    session = _session()
+    company, client, contact, agent, _admin = _seed_base(session)
+    ticket, _message = _seed_ticket(session, company, client, agent)
+    ticket.status = TicketStatus.CLOSED.value
+    cycle = create_review_cycle(session, ticket_id=ticket.id, agent_id=agent.id, client_id=client.id)
+    _seed_system_button(session, key="__system__|review|start", default_text="Оставить отзыв", text="Оценить", style="primary")
+    _seed_system_button(session, key="__system__|feedback|start", default_text="Предложения и замечания", text="Предложить", style="success")
+    session.commit()
+
+    both = post_close_actions_markup(session, ticket=ticket, contact=contact, review_cycle=cycle)
+    assert both["inline_keyboard"][0][0] == {"text": "Оценить", "callback_data": review_start_callback_data(cycle.id), "style": "primary"}
+    assert both["inline_keyboard"][1][0] == {"text": "Предложить", "callback_data": feedback_start_callback_data(ticket.id), "style": "success"}
+
+    session.add(
+        TicketFeedback(
+            id=str(uuid.uuid4()),
+            ticket_id=ticket.id,
+            client_id=client.id,
+            client_name_snapshot="Client",
+            ticket_title_snapshot=ticket.subject,
+            text="done",
+            submitted_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+        )
+    )
+    session.commit()
+    only_review = post_close_actions_markup(session, ticket=ticket, contact=contact, review_cycle=cycle)
+    assert only_review["inline_keyboard"] == [[{"text": "Оценить", "callback_data": review_start_callback_data(cycle.id), "style": "primary"}]]
+
+    session.query(TicketFeedback).delete()
+    cycle.state = TicketReviewCycleState.COMPLETED.value
+    session.commit()
+    only_feedback = post_close_actions_markup(session, ticket=ticket, contact=contact, review_cycle=cycle)
+    assert only_feedback["inline_keyboard"] == [[{"text": "Предложить", "callback_data": feedback_start_callback_data(ticket.id), "style": "success"}]]
+
+
+def test_review_rating_back_and_finish_markup_apply_custom_text_style_and_keep_callbacks():
+    session = _session()
+    company, client, _contact, agent, _admin = _seed_base(session)
+    ticket, _message = _seed_ticket(session, company, client, agent)
+    cycle = create_review_cycle(session, ticket_id=ticket.id, agent_id=agent.id, client_id=client.id)
+    _seed_system_button(session, key="__system__|review|rate_3", default_text="⭐⭐⭐", text="Три", style="success")
+    _seed_system_button(session, key="__system__|review|back", default_text="Назад", text="К оценкам", style="danger")
+    _seed_system_button(session, key="__system__|review|finish", default_text="Завершить отзыв", text="Готово", style="primary")
+
+    rating_markup = review_rating_markup(cycle, session)
+    buttons = [row[0] for row in rating_markup["inline_keyboard"]]
+    assert [button["callback_data"] for button in buttons] == [
+        review_rate_callback_data(cycle.id, 1),
+        review_rate_callback_data(cycle.id, 2),
+        review_rate_callback_data(cycle.id, 3),
+        review_rate_callback_data(cycle.id, 4),
+        review_rate_callback_data(cycle.id, 5),
+        review_back_callback_data(cycle.id),
+    ]
+    assert buttons[2] == {"text": "Три", "callback_data": review_rate_callback_data(cycle.id, 3), "style": "success"}
+    assert buttons[-1] == {"text": "К оценкам", "callback_data": review_back_callback_data(cycle.id), "style": "danger"}
+
+    finish_button = review_finish_markup(cycle, session)["inline_keyboard"][0][0]
+    assert finish_button == {"text": "Готово", "callback_data": review_finish_callback_data(cycle.id), "style": "primary"}
+
+
+def test_feedback_back_markup_applies_custom_text_style_and_keeps_callback():
+    session = _session()
+    input_state = TicketFeedbackInput(id="input-1", ticket_id="ticket-1", client_id="client-1", state=TicketFeedbackState.AWAITING_TEXT.value)
+    _seed_system_button(session, key="__system__|feedback|back", default_text="Назад", text="Вернуться", style="danger")
+
+    button = feedback_input_markup(input_state, session)["inline_keyboard"][0][0]
+
+    assert button == {"text": "Вернуться", "callback_data": feedback_back_callback_data(input_state.id), "style": "danger"}
 
 
 def test_admin_close_offers_review_on_current_assignee_not_admin():

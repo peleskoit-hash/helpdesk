@@ -1,7 +1,9 @@
 (function initBotButtonsMenuView(global) {
   const MenuView = {};
-  const SYSTEM_TICKETS_TITLE = "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0437\u0430\u044f\u0432\u043a\u0438";
+  const SYSTEM_TICKETS_TITLE = "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0441\u043e\u0431\u044b\u0442\u0438\u044f";
   const FIRST_CONNECTION_TITLE = "\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443";
+  const REVIEW_SYSTEM_TITLE = "\u041e\u0442\u0437\u044b\u0432\u044b";
+  const FEEDBACK_SYSTEM_TITLE = "\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f";
 
   MenuView.buildPreviewFromNode = function buildPreviewFromNode(ctx, node) {
     const { state } = ctx;
@@ -311,6 +313,12 @@
               <button type="button" id="openFirstConnectionSystemBtn" data-system-ticket-key="first-connection" class="bot-buttons-level-item">
                 ${FIRST_CONNECTION_TITLE}
               </button>
+              <button type="button" data-system-ticket-key="review-buttons" class="bot-buttons-level-item">
+                ${REVIEW_SYSTEM_TITLE}
+              </button>
+              <button type="button" data-system-ticket-key="feedback-buttons" class="bot-buttons-level-item">
+                ${FEEDBACK_SYSTEM_TITLE}
+              </button>
             </div>
           </div>
         </div>
@@ -349,5 +357,7 @@
   global.BotButtonsMenuViewSystemText = {
     SYSTEM_TICKETS_TITLE,
     FIRST_CONNECTION_TITLE,
+    REVIEW_SYSTEM_TITLE,
+    FEEDBACK_SYSTEM_TITLE,
   };
 })(window);

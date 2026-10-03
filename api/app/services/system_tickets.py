@@ -13,6 +13,20 @@ SYSTEM_MENU_TYPE = "__system__"
 FIRST_CONNECTION_BUTTON_KEY = "__system__|first_connection"
 FIRST_CONNECTION_WORKFLOW_TYPE = "ticket"
 FIRST_CONNECTION_TITLE = "\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443"
+REVIEW_SYSTEM_BUTTONS: tuple[dict[str, str], ...] = (
+    {"key": "__system__|review|start", "text": "\u041e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0437\u044b\u0432"},
+    {"key": "__system__|review|rate_1", "text": "\u2b50"},
+    {"key": "__system__|review|rate_2", "text": "\u2b50\u2b50"},
+    {"key": "__system__|review|rate_3", "text": "\u2b50\u2b50\u2b50"},
+    {"key": "__system__|review|rate_4", "text": "\u2b50\u2b50\u2b50\u2b50"},
+    {"key": "__system__|review|rate_5", "text": "\u2b50\u2b50\u2b50\u2b50\u2b50"},
+    {"key": "__system__|review|back", "text": "\u041d\u0430\u0437\u0430\u0434"},
+    {"key": "__system__|review|finish", "text": "\u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u043e\u0442\u0437\u044b\u0432"},
+)
+FEEDBACK_SYSTEM_BUTTONS: tuple[dict[str, str], ...] = (
+    {"key": "__system__|feedback|start", "text": "\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f"},
+    {"key": "__system__|feedback|back", "text": "\u041d\u0430\u0437\u0430\u0434"},
+)
 
 
 @dataclass(frozen=True)

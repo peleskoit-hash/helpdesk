@@ -8,8 +8,9 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Client, ClientProfile, TelegramContact, TelegramUpdate, Ticket, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from ..models import BotButtonSetting, Client, ClientProfile, TelegramContact, TelegramUpdate, Ticket, TicketFeedback, TicketFeedbackInput, TicketFeedbackState, TicketReview, TicketReviewCycle, TicketReviewCycleState, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .automatic_messages import render_automatic_message_for_telegram
+from .system_tickets import FEEDBACK_SYSTEM_BUTTONS, REVIEW_SYSTEM_BUTTONS
 from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 from .ticket_reviews import (
     cancel_review_cycle,
@@ -43,6 +44,18 @@ FEEDBACK_STALE_TEXT = "Это действие больше неактуальн
 FEEDBACK_PROMPT_FALLBACK_TEXT = "Напишите предложение или замечание одним текстовым сообщением."
 FEEDBACK_THANK_YOU_FALLBACK_TEXT = "Спасибо! Ваше предложение или замечание сохранено."
 FEEDBACK_TEXT_REQUIRED_FALLBACK_TEXT = "Пожалуйста, отправьте предложение или замечание текстом."
+_SYSTEM_BUTTON_DEFS = {item["key"]: item["text"] for item in (*REVIEW_SYSTEM_BUTTONS, *FEEDBACK_SYSTEM_BUTTONS)}
+
+
+def _system_button(db: Session, key: str, callback_data: str) -> dict:
+    default_text = _SYSTEM_BUTTON_DEFS[key]
+    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
+    text = (row.label_override or "").strip() if row is not None and bool(row.label_overridden) else ""
+    button = {"text": text or default_text, "callback_data": callback_data}
+    style = str(getattr(row, "button_style", "") or "").strip().lower() if row is not None else ""
+    if style in {"primary", "success", "danger"}:
+        button["style"] = style
+    return button
 
 
 def review_start_callback_data(cycle_id: str) -> str:
@@ -82,8 +95,11 @@ def is_feedback_callback_data(data: str) -> bool:
     return data.startswith(FEEDBACK_START_PREFIX) or data.startswith(FEEDBACK_BACK_PREFIX)
 
 
-def feedback_input_markup(input_state: TicketFeedbackInput) -> dict:
-    return {"inline_keyboard": [[{"text": "Назад", "callback_data": feedback_back_callback_data(input_state.id)}]]}
+def feedback_input_markup(input_state: TicketFeedbackInput, db: Session | None = None) -> dict:
+    button = {"text": "Назад", "callback_data": feedback_back_callback_data(input_state.id)}
+    if db is not None:
+        button = _system_button(db, "__system__|feedback|back", feedback_back_callback_data(input_state.id))
+    return {"inline_keyboard": [[button]]}
 
 
 def _feedback_exists(db: Session, ticket_id: str | None) -> bool:
@@ -149,9 +165,9 @@ def post_close_actions_markup(
     )
     rows = []
     if actions["review"] and review_cycle is not None:
-        rows.append([{"text": "Оставить отзыв", "callback_data": review_start_callback_data(review_cycle.id)}])
+        rows.append([_system_button(db, "__system__|review|start", review_start_callback_data(review_cycle.id))])
     if actions["feedback"] and ticket is not None:
-        rows.append([{"text": "Предложения и замечания", "callback_data": feedback_start_callback_data(ticket.id)}])
+        rows.append([_system_button(db, "__system__|feedback|start", feedback_start_callback_data(ticket.id))])
     return {"inline_keyboard": rows} if rows else None
 
 
@@ -163,17 +179,28 @@ def _markup_has_review_action(markup: dict | None) -> bool:
     return False
 
 
-def review_rating_markup(cycle: TicketReviewCycle) -> dict:
+def review_rating_markup(cycle: TicketReviewCycle, db: Session | None = None) -> dict:
     rows = [
-        [{"text": "⭐" * rating, "callback_data": review_rate_callback_data(cycle.id, rating)}]
+        [
+            _system_button(db, f"__system__|review|rate_{rating}", review_rate_callback_data(cycle.id, rating))
+            if db is not None
+            else {"text": "⭐" * rating, "callback_data": review_rate_callback_data(cycle.id, rating)}
+        ]
         for rating in range(1, 6)
     ]
-    rows.append([{"text": "Назад", "callback_data": review_back_callback_data(cycle.id)}])
+    rows.append([
+        _system_button(db, "__system__|review|back", review_back_callback_data(cycle.id))
+        if db is not None
+        else {"text": "Назад", "callback_data": review_back_callback_data(cycle.id)}
+    ])
     return {"inline_keyboard": rows}
 
 
-def review_finish_markup(cycle: TicketReviewCycle) -> dict:
-    return {"inline_keyboard": [[{"text": "Завершить отзыв", "callback_data": review_finish_callback_data(cycle.id)}]]}
+def review_finish_markup(cycle: TicketReviewCycle, db: Session | None = None) -> dict:
+    button = {"text": "Завершить отзыв", "callback_data": review_finish_callback_data(cycle.id)}
+    if db is not None:
+        button = _system_button(db, "__system__|review|finish", review_finish_callback_data(cycle.id))
+    return {"inline_keyboard": [[button]]}
 
 
 def is_ordinary_review_ticket(ticket: Ticket | None) -> bool:
@@ -715,7 +742,7 @@ def process_feedback_incoming_message(
                     external_chat_id,
                     hint_text,
                     hint_parse_mode,
-                    reply_markup=feedback_input_markup(input_state),
+                    reply_markup=feedback_input_markup(input_state, db),
                 )
             except Exception:
                 new_message_id = None
@@ -800,13 +827,13 @@ def process_review_incoming_message(
             save_review_caption(db, cycle=cycle, caption=text)
             prompt_key = "telegram.review.attachment_caption"
             fallback = REVIEW_ATTACHMENT_CAPTION_FALLBACK_TEXT
-            markup = review_finish_markup(cycle)
+            markup = review_finish_markup(cycle, db)
             result_name = "caption_saved"
         else:
             prompt_key = "telegram.review.attachment_no_text"
             fallback = REVIEW_ATTACHMENT_NO_TEXT_FALLBACK_TEXT
             review = db.get(TicketReview, cycle.review_id) if cycle.review_id else None
-            markup = review_finish_markup(cycle) if cycle.state == TicketReviewCycleState.AWAITING_TEXT_AFTER_CAPTION.value and review and review.review_text else None
+            markup = review_finish_markup(cycle, db) if cycle.state == TicketReviewCycleState.AWAITING_TEXT_AFTER_CAPTION.value and review and review.review_text else None
             result_name = "attachment_without_caption"
 
         warning_text, warning_parse_mode = _render_review_message(
@@ -976,7 +1003,7 @@ def process_feedback_callback(
                 external_chat_id,
                 prompt_text,
                 prompt_parse_mode,
-                reply_markup=feedback_input_markup(input_state),
+                reply_markup=feedback_input_markup(input_state, db),
             )
         except Exception:
             new_message_id = None
@@ -1148,7 +1175,7 @@ def process_review_callback(
                 external_chat_id,
                 rating_text,
                 rating_parse_mode,
-                reply_markup=review_rating_markup(cycle),
+                reply_markup=review_rating_markup(cycle, db),
             )
         except Exception:
             new_message_id = None

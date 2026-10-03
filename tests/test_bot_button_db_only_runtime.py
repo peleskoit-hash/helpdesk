@@ -2126,6 +2126,84 @@ def test_first_connection_system_api_materializes_and_preserves_partial_payload(
     assert row.workflow_type == "ticket"
 
 
+def test_review_system_buttons_api_defaults_save_and_validation():
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+
+    payload = settings_bot_button_items.get_review_system_buttons(db=session, user=admin)
+    assert [item["text"] for item in payload["buttons"]] == [
+        "Оставить отзыв",
+        "⭐",
+        "⭐⭐",
+        "⭐⭐⭐",
+        "⭐⭐⭐⭐",
+        "⭐⭐⭐⭐⭐",
+        "Назад",
+        "Завершить отзыв",
+    ]
+    assert all(item["button_style"] is None for item in payload["buttons"])
+
+    saved = settings_bot_button_items.save_review_system_buttons(
+        settings_bot_button_items.SystemButtonGroupUpdate(
+            buttons=[
+                {"key": "__system__|review|start", "text": "Начать отзыв", "button_style": "primary"},
+                {"key": "__system__|review|rate_5", "text": "5 звёзд", "button_style": "success"},
+            ]
+        ),
+        db=session,
+        user=admin,
+    )
+    by_key = {item["key"]: item for item in saved["buttons"]}
+    assert by_key["__system__|review|start"]["text"] == "Начать отзыв"
+    assert by_key["__system__|review|start"]["button_style"] == "primary"
+    assert by_key["__system__|review|rate_5"]["text"] == "5 звёзд"
+    assert by_key["__system__|review|rate_5"]["button_style"] == "success"
+
+    reloaded = settings_bot_button_items.get_review_system_buttons(db=session, user=admin)
+    reloaded_by_key = {item["key"]: item for item in reloaded["buttons"]}
+    assert reloaded_by_key["__system__|review|start"]["text"] == "Начать отзыв"
+
+    with pytest.raises(HTTPException) as invalid_style:
+        settings_bot_button_items.save_review_system_buttons(
+            settings_bot_button_items.SystemButtonGroupUpdate(
+                buttons=[{"key": "__system__|review|start", "text": "Начать отзыв", "button_style": "purple"}]
+            ),
+            db=session,
+            user=admin,
+        )
+    assert invalid_style.value.status_code == 422
+
+    with pytest.raises(HTTPException) as empty_text:
+        settings_bot_button_items.save_review_system_buttons(
+            settings_bot_button_items.SystemButtonGroupUpdate(
+                buttons=[{"key": "__system__|review|start", "text": "   ", "button_style": None}]
+            ),
+            db=session,
+            user=admin,
+        )
+    assert empty_text.value.status_code == 422
+
+
+def test_feedback_system_buttons_api_defaults_save_and_reload():
+    session = _session()
+    admin = SimpleNamespace(id="admin-1", role="admin")
+
+    payload = settings_bot_button_items.get_feedback_system_buttons(db=session, user=admin)
+    assert [item["text"] for item in payload["buttons"]] == ["Предложения и замечания", "Назад"]
+
+    settings_bot_button_items.save_feedback_system_buttons(
+        settings_bot_button_items.SystemButtonGroupUpdate(
+            buttons=[{"key": "__system__|feedback|back", "text": "Вернуться", "button_style": "danger"}]
+        ),
+        db=session,
+        user=admin,
+    )
+    reloaded = settings_bot_button_items.get_feedback_system_buttons(db=session, user=admin)
+    by_key = {item["key"]: item for item in reloaded["buttons"]}
+    assert by_key["__system__|feedback|back"]["text"] == "Вернуться"
+    assert by_key["__system__|feedback|back"]["button_style"] == "danger"
+
+
 def test_menu_types_list_excludes_system_menu_after_first_connection_materialization(monkeypatch):
     session = _session()
     admin = SimpleNamespace(id="admin-1", role="admin")

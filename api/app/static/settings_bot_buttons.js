@@ -1,18 +1,32 @@
 (function () {
-const SYSTEM_FIRST_CONNECTION_SELECTOR = '[data-system-ticket-key="first-connection"]';
+const SYSTEM_TICKET_SELECTOR = '[data-system-ticket-key]';
 const SYSTEM_MENU_TYPE_PREFIX = "__system__";
 const FIRST_CONNECTION_TITLE = "\u041f\u0435\u0440\u0432\u043e\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a \u0431\u043e\u0442\u0443";
+const REVIEW_SYSTEM_TITLE = "\u041e\u0442\u0437\u044b\u0432\u044b";
+const FEEDBACK_SYSTEM_TITLE = "\u041f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f \u0438 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f";
+const SYSTEM_BUTTON_GROUPS = {
+  "review-buttons": {
+    title: REVIEW_SYSTEM_TITLE,
+    endpoint: "/api/v1/settings/bot-buttons/system/review-buttons",
+  },
+  "feedback-buttons": {
+    title: FEEDBACK_SYSTEM_TITLE,
+    endpoint: "/api/v1/settings/bot-buttons/system/feedback-buttons",
+  },
+};
 
-function bindSystemTicketOpenHandler({ content, onOpen, onError, confirmDiscard, discardEditorChanges }) {
+function bindSystemTicketOpenHandler({ content, onOpen, onOpenGroup, onError, confirmDiscard, discardEditorChanges }) {
   if (!content || content.__systemFirstConnectionClickHandler) return false;
   const handler = async (event) => {
-    const trigger = event.target?.closest?.(SYSTEM_FIRST_CONNECTION_SELECTOR);
+    const trigger = event.target?.closest?.(SYSTEM_TICKET_SELECTOR);
     if (!trigger) return;
     event.preventDefault();
     if (typeof confirmDiscard === "function" && !confirmDiscard()) return;
     if (typeof discardEditorChanges === "function") discardEditorChanges();
     try {
-      await onOpen?.();
+      const key = String(trigger.getAttribute("data-system-ticket-key") || "");
+      if (key === "first-connection") await onOpen?.();
+      else await onOpenGroup?.(key);
     } catch (error) {
       if (typeof onError === "function") onError(error);
     }
@@ -68,6 +82,33 @@ async function loadSystemFirstConnectionEditorState({ api, state, render, setSta
     setStatus?.(`\u041e\u0448\u0438\u0431\u043a\u0430: ${state.systemTicketLoadError}`);
     throw error;
   }
+}
+
+async function loadSystemButtonGroupEditorState({ api, state, render, setStatus }, groupKey) {
+  const meta = SYSTEM_BUTTON_GROUPS[groupKey];
+  if (!meta) throw new Error("\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u0433\u0440\u0443\u043f\u043f\u0430 \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0445 \u043a\u043d\u043e\u043f\u043e\u043a");
+  setStatus?.(`\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430: ${meta.title}...`);
+  state.systemTicketLoadError = "";
+  const item = await api(meta.endpoint);
+  const buttons = Array.isArray(item?.buttons)
+    ? item.buttons.map((button) => ({
+        key: String(button?.key || ""),
+        text: String(button?.text || button?.default_text || ""),
+        defaultText: String(button?.default_text || ""),
+        buttonStyle: String(button?.button_style || ""),
+      }))
+    : [];
+  state.systemButtonGroup = {
+    key: groupKey,
+    title: meta.title,
+    endpoint: meta.endpoint,
+    buttons,
+  };
+  state.savedSystemButtonGroup = JSON.parse(JSON.stringify(state.systemButtonGroup));
+  state.view = "system_button_group_editor";
+  render?.();
+  setStatus?.("\u0413\u043e\u0442\u043e\u0432\u043e");
+  return state.systemButtonGroup;
 }
 
 function isSystemMenuTypeRecord(item) {
@@ -151,6 +192,8 @@ const state = {
   savedAutomationKeyValue: "",
   availableAutomations: [],
   systemFirstConnection: null,
+  systemButtonGroup: null,
+  savedSystemButtonGroup: null,
   systemTicketLoadError: "",
   systemFirstConnectionDraft: {
     subject: "",
@@ -277,6 +320,8 @@ function menuViewCtx() {
 }
 
 function hasUnsavedChanges() {
+  if (state.view === "system_editor") return hasSystemFirstConnectionUnsavedChanges();
+  if (state.view === "system_button_group_editor") return hasSystemButtonGroupUnsavedChanges();
   return BotButtonsEditor.hasUnsavedChanges(editorCtx());
 }
 
@@ -285,6 +330,14 @@ function confirmDiscard() {
 }
 
 function discardEditorChanges() {
+  if (state.view === "system_editor") {
+    discardSystemFirstConnectionChanges();
+    return;
+  }
+  if (state.view === "system_button_group_editor") {
+    discardSystemButtonGroupChanges();
+    return;
+  }
   BotButtonsEditor.discardEditorChanges(editorCtx());
 }
 
@@ -328,6 +381,53 @@ function discardSystemFirstConnectionChanges() {
 function confirmSystemFirstConnectionDiscard() {
   if (!hasSystemFirstConnectionUnsavedChanges()) return true;
   return window.confirm("\u0415\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f. \u0423\u0439\u0442\u0438 \u0431\u0435\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f?");
+}
+
+function hasSystemButtonGroupUnsavedChanges() {
+  return JSON.stringify(state.systemButtonGroup || null) !== JSON.stringify(state.savedSystemButtonGroup || null);
+}
+
+function discardSystemButtonGroupChanges() {
+  state.systemButtonGroup = state.savedSystemButtonGroup
+    ? JSON.parse(JSON.stringify(state.savedSystemButtonGroup))
+    : null;
+}
+
+function systemButtonGroupTitle() {
+  return state.systemButtonGroup?.title || "";
+}
+
+function renderSystemButtonStylePicker(button) {
+  const selectedStyle = String(button?.buttonStyle || "");
+  const options = [
+    { value: "", label: "\u0411\u0430\u0437\u043e\u0432\u044b\u0439", title: "\u0411\u0430\u0437\u043e\u0432\u044b\u0439" },
+    { value: "primary", label: "", title: "\u0421\u0438\u043d\u0438\u0439" },
+    { value: "success", label: "", title: "\u0417\u0435\u043b\u0451\u043d\u044b\u0439" },
+    { value: "danger", label: "", title: "\u041a\u0440\u0430\u0441\u043d\u044b\u0439" },
+  ];
+  return `
+    <div class="bot-button-style-picker" role="radiogroup" aria-label="\u0426\u0432\u0435\u0442 \u043a\u043d\u043e\u043f\u043a\u0438">
+      ${options.map((option) => {
+        const active = selectedStyle === option.value;
+        const classes = [
+          "bot-button-style-option",
+          option.value ? `bot-button-style-${option.value}` : "bot-button-style-base",
+          active ? "is-selected" : "",
+        ].filter(Boolean).join(" ");
+        return `
+          <button
+            type="button"
+            class="${classes}"
+            data-system-button-style="${escapeHtml(button.key)}"
+            data-style-value="${escapeHtml(option.value)}"
+            aria-label="${escapeHtml(option.title)}"
+            title="${escapeHtml(option.title)}"
+            aria-pressed="${active ? "true" : "false"}"
+          >${option.label ? escapeHtml(option.label) : "<span aria-hidden=\"true\"></span>"}</button>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function openSystemFirstConnectionTextEditor(options) {
@@ -467,6 +567,7 @@ function levelViewCtx() {
     reloadMenuMeta,
     loadMenuTypes,
     openSystemFirstConnectionEditor,
+    openSystemButtonGroupEditor,
     saveLabelOverrideForNode,
     currentLevel,
     isLayoutEditableLevel,
@@ -480,6 +581,10 @@ function renderLevel() {
 
 async function openSystemFirstConnectionEditor() {
   return loadSystemFirstConnectionEditorState({ api, state, render, setStatus });
+}
+
+async function openSystemButtonGroupEditor(groupKey) {
+  return loadSystemButtonGroupEditorState({ api, state, render, setStatus }, groupKey);
 }
 
 function renderSystemFirstConnectionEditor() {
@@ -603,6 +708,82 @@ function renderSystemFirstConnectionEditor() {
       });
       await loadSystemFirstConnectionEditorState({ api, state, render, setStatus });
       setStatus("\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0430");
+    } catch (error) {
+      setStatus(`\u041e\u0448\u0438\u0431\u043a\u0430: ${error?.message || "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}`);
+    }
+  });
+}
+
+function renderSystemButtonGroupEditor() {
+  const group = state.systemButtonGroup;
+  if (!group) {
+    state.view = "menu_types";
+    render();
+    return;
+  }
+  el.content.innerHTML = `
+    <div class="bot-editor-shell" data-system-editor="button-group" data-system-button-group="${escapeHtml(group.key)}">
+      <div class="bot-editor-section">
+        <div class="bot-editor-title">${escapeHtml(group.title)}</div>
+      </div>
+      <div class="bot-editor-col">
+        ${(group.buttons || []).map((button) => `
+          <div class="bot-editor-section" data-system-button-row="${escapeHtml(button.key)}">
+            <label class="field-label" for="systemButtonText-${escapeHtml(button.key)}">${escapeHtml(button.defaultText || button.text || "")}</label>
+            <input id="systemButtonText-${escapeHtml(button.key)}" class="input" type="text" value="${escapeHtml(button.text || "")}" data-system-button-text="${escapeHtml(button.key)}" autocomplete="off" />
+            <label class="field-label">\u0426\u0432\u0435\u0442 \u043a\u043d\u043e\u043f\u043a\u0438</label>
+            ${renderSystemButtonStylePicker(button)}
+          </div>
+        `).join("")}
+      </div>
+      <div class="bot-info-actions">
+        <button id="backFromSystemButtonGroupBtn" type="button" class="action">\u041d\u0430\u0437\u0430\u0434</button>
+        <button id="saveSystemButtonGroupBtn" type="button" class="action action-primary">\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c</button>
+      </div>
+    </div>`;
+
+  document.querySelectorAll("[data-system-button-text]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const key = input.getAttribute("data-system-button-text") || "";
+      const target = state.systemButtonGroup?.buttons?.find((button) => button.key === key);
+      if (target) target.text = String(input.value || "");
+    });
+  });
+  document.querySelectorAll("[data-system-button-style]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-system-button-style") || "";
+      const target = state.systemButtonGroup?.buttons?.find((button) => button.key === key);
+      if (target) {
+        target.buttonStyle = btn.getAttribute("data-style-value") || "";
+        renderSystemButtonGroupEditor();
+      }
+    });
+  });
+  document.getElementById("backFromSystemButtonGroupBtn")?.addEventListener("click", () => {
+    if (!confirmDiscard()) return;
+    discardSystemButtonGroupChanges();
+    state.view = "menu_types";
+    render();
+  });
+  document.getElementById("saveSystemButtonGroupBtn")?.addEventListener("click", async () => {
+    const buttons = (state.systemButtonGroup?.buttons || []).map((button) => ({
+      key: button.key,
+      text: String(button.text || "").trim(),
+      button_style: button.buttonStyle || null,
+    }));
+    if (buttons.some((button) => !button.text)) {
+      alert("\u0422\u0435\u043a\u0441\u0442 \u043a\u043d\u043e\u043f\u043a\u0438 \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u043f\u0443\u0441\u0442\u044b\u043c");
+      return;
+    }
+    setStatus(`\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435: ${group.title}...`);
+    try {
+      await api(group.endpoint, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ buttons }),
+      });
+      await loadSystemButtonGroupEditorState({ api, state, render, setStatus }, group.key);
+      setStatus("\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u043a\u043d\u043e\u043f\u043a\u0438 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b");
     } catch (error) {
       setStatus(`\u041e\u0448\u0438\u0431\u043a\u0430: ${error?.message || "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}`);
     }
@@ -733,6 +914,7 @@ function renderBreadcrumb() {
   });
   if (state.view === "editor" && state.selectedLeaf?.label) parts.push(state.selectedLeaf.label);
   if (state.view === "system_editor") parts.push(FIRST_CONNECTION_TITLE);
+  if (state.view === "system_button_group_editor") parts.push(systemButtonGroupTitle());
   if (el.breadcrumb) {
     const pathText = parts.join(" → ");
     if (state.view === "editor") {
@@ -755,6 +937,7 @@ function render() {
   if (state.view === "menu_types") return renderMenuTypes();
   if (state.view === "level") return renderLevel();
   if (state.view === "system_editor") return renderSystemFirstConnectionEditor();
+  if (state.view === "system_button_group_editor") return renderSystemButtonGroupEditor();
   return renderEditor();
 }
 
@@ -779,6 +962,8 @@ async function loadMenuTypes() {
   state.levelStack = [];
   state.selectedLeaf = null;
   state.systemFirstConnection = null;
+  state.systemButtonGroup = null;
+  state.savedSystemButtonGroup = null;
   state.systemTicketLoadError = "";
   state.systemFirstConnectionDraft = emptySystemFirstConnectionDraft();
   state.savedSystemFirstConnectionDraft = emptySystemFirstConnectionDraft();
@@ -1102,6 +1287,13 @@ function handleBack() {
     render();
     return;
   }
+  if (state.view === "system_button_group_editor") {
+    if (!confirmDiscard()) return;
+    discardSystemButtonGroupChanges();
+    state.view = "menu_types";
+    render();
+    return;
+  }
   if (state.view === "editor") {
     if (!confirmDiscard()) return;
     discardEditorChanges();
@@ -1172,6 +1364,7 @@ window.addEventListener("beforeunload", handleBeforeUnload);
   bindSystemTicketOpenHandler({
     content: el.content,
     onOpen: openSystemFirstConnectionEditor,
+    onOpenGroup: openSystemButtonGroupEditor,
     onError: (error) => setStatus(`\u041e\u0448\u0438\u0431\u043a\u0430: ${error?.message || "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u0443\u044e \u0437\u0430\u044f\u0432\u043a\u0443"}`),
     confirmDiscard,
     discardEditorChanges,
@@ -1187,7 +1380,7 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
       if (window.BotButtonsEditor?.syncAutomationSelectionMeta) {
         window.BotButtonsEditor.syncAutomationSelectionMeta(editorCtx());
       }
-      if (state.view === "editor" || state.view === "system_editor") {
+      if (state.view === "editor" || state.view === "system_editor" || state.view === "system_button_group_editor") {
         render();
       }
       await loadMenuTypes();
@@ -1209,12 +1402,15 @@ if (window.HelpdeskAppShell?.registerPage) {
   initSettingsBotButtonsPage();
 }
 window.BotButtonsSystemTicket = {
-  selector: SYSTEM_FIRST_CONNECTION_SELECTOR,
+  selector: SYSTEM_TICKET_SELECTOR,
   labels: {
     firstConnectionTitle: FIRST_CONNECTION_TITLE,
+    reviewTitle: REVIEW_SYSTEM_TITLE,
+    feedbackTitle: FEEDBACK_SYSTEM_TITLE,
   },
   bindOpenHandler: bindSystemTicketOpenHandler,
   unbindOpenHandler: unbindSystemTicketOpenHandler,
   loadEditorState: loadSystemFirstConnectionEditorState,
+  loadButtonGroupEditorState: loadSystemButtonGroupEditorState,
 };
 })();

@@ -32,8 +32,11 @@ from ..services.button_config import (
 )
 from ..services.telegram_automation import get_automation_registry
 from ..services.system_tickets import (
+    FEEDBACK_SYSTEM_BUTTONS,
     FIRST_CONNECTION_BUTTON_KEY,
     FirstConnectionDefaults,
+    REVIEW_SYSTEM_BUTTONS,
+    SYSTEM_MENU_TYPE,
     first_connection_values,
     materialize_first_connection_row,
 )
@@ -49,6 +52,16 @@ class FirstConnectionSystemUpdate(BaseModel):
     system_text: str | None = None
     instruction_text: str | None = None
     is_enabled: bool | None = None
+
+
+class SystemButtonUpdate(BaseModel):
+    key: str
+    text: str | None = None
+    button_style: str | None = None
+
+
+class SystemButtonGroupUpdate(BaseModel):
+    buttons: list[SystemButtonUpdate] = []
 
 
 def _first_connection_defaults() -> FirstConnectionDefaults:
@@ -223,6 +236,115 @@ def _normalize_button_style(value: str | None) -> str | None:
 def _button_style_out(value: str | None) -> str | None:
     normalized = str(value or "").strip().lower()
     return normalized if normalized in ALLOWED_BUTTON_STYLES else None
+
+
+def _system_button_defs(group: str) -> tuple[dict[str, str], ...]:
+    if group == "review":
+        return REVIEW_SYSTEM_BUTTONS
+    if group == "feedback":
+        return FEEDBACK_SYSTEM_BUTTONS
+    _error(404, "system_button_group_not_found", "Группа системных кнопок не найдена")
+
+
+def _system_button_row(db: Session, button_key: str) -> BotButtonSetting | None:
+    return db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+
+
+def _system_button_text(row: BotButtonSetting | None, default_text: str) -> str:
+    override = (row.label_override or "").strip() if row is not None and bool(row.label_overridden) else ""
+    return override or default_text
+
+
+def _system_button_payload(db: Session, group: str) -> dict:
+    items = []
+    for item in _system_button_defs(group):
+        row = _system_button_row(db, item["key"])
+        default_text = item["text"]
+        items.append(
+            {
+                "key": item["key"],
+                "text": _system_button_text(row, default_text),
+                "default_text": default_text,
+                "button_style": _button_style_out(row.button_style if row is not None else None),
+            }
+        )
+    return {"group": group, "buttons": items}
+
+
+def _materialize_system_button_row(db: Session, *, button_key: str, default_text: str, group: str) -> BotButtonSetting:
+    row = _system_button_row(db, button_key)
+    if row is not None:
+        changed = False
+        if row.menu_type != SYSTEM_MENU_TYPE:
+            row.menu_type = SYSTEM_MENU_TYPE
+            changed = True
+        if row.button_kind != "system":
+            row.button_kind = "system"
+            changed = True
+        if not (row.workflow_type or "").strip():
+            row.workflow_type = group
+            changed = True
+        if not (row.button_path or "").strip():
+            row.button_path = default_text
+            changed = True
+        if not (row.button_label or "").strip():
+            row.button_label = default_text
+            changed = True
+        if changed:
+            row.updated_at = datetime.utcnow()
+        return row
+    now = datetime.utcnow()
+    row = BotButtonSetting(
+        id=str(uuid.uuid4()),
+        stable_button_id=str(uuid.uuid4()),
+        button_key=button_key,
+        legacy_button_key=None,
+        menu_type=SYSTEM_MENU_TYPE,
+        workflow_type=group,
+        button_path=default_text,
+        button_label=default_text,
+        label_override=None,
+        label_overridden=False,
+        currently_present=True,
+        is_enabled=True,
+        visibility_overridden=False,
+        is_db_created=True,
+        button_kind="system",
+        parent_path="",
+        is_archived=False,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _get_system_button_group(group: str, db: Session, user: CurrentUser) -> dict:
+    _require_admin(user)
+    return _system_button_payload(db, group)
+
+
+def _save_system_button_group(group: str, payload: SystemButtonGroupUpdate, db: Session, user: CurrentUser) -> dict:
+    _require_admin(user)
+    defs = {item["key"]: item for item in _system_button_defs(group)}
+    seen: set[str] = set()
+    for button in payload.buttons or []:
+        if button.key not in defs:
+            _error(422, "system_button_key_invalid", "Неизвестная системная кнопка")
+        if button.key in seen:
+            _error(422, "system_button_key_duplicate", "Системная кнопка указана дважды")
+        seen.add(button.key)
+        text_value = str(button.text or "").strip()
+        if not text_value:
+            _error(422, "system_button_text_required", "Текст кнопки не может быть пустым")
+        row = _materialize_system_button_row(db, button_key=button.key, default_text=defs[button.key]["text"], group=group)
+        row.label_override = text_value
+        row.label_overridden = text_value != defs[button.key]["text"]
+        row.button_style = _normalize_button_style(button.button_style)
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, **_system_button_payload(db, group)}
 
 
 def _validate_existing_button_workflow_transition(row: BotButtonSetting, requested_workflow_type: str) -> str:
@@ -620,6 +742,40 @@ def save_first_connection_system_ticket(
         "client_text_effective": values["client_text"],
         "system_text_effective": values["system_text"],
     }
+
+
+@router.get("/bot-buttons/system/review-buttons")
+def get_review_system_buttons(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _get_system_button_group("review", db, user)
+
+
+@router.put("/bot-buttons/system/review-buttons")
+def save_review_system_buttons(
+    payload: SystemButtonGroupUpdate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _save_system_button_group("review", payload, db, user)
+
+
+@router.get("/bot-buttons/system/feedback-buttons")
+def get_feedback_system_buttons(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _get_system_button_group("feedback", db, user)
+
+
+@router.put("/bot-buttons/system/feedback-buttons")
+def save_feedback_system_buttons(
+    payload: SystemButtonGroupUpdate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return _save_system_button_group("feedback", payload, db, user)
 
 
 @router.get("/bot-buttons/item")
