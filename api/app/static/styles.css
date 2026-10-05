@@ -174,20 +174,29 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .admin-agent-counts {
-  flex: 0 0 50px;
-  width: 50px;
+  flex: 0 0 52px;
+  width: 52px;
   display: grid;
-  grid-template-columns: 18px 5px 5px 18px;
+  grid-template-columns: 18px 7px 7px 18px;
   align-items: center;
-  column-gap: 1px;
+  column-gap: 0;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
+  transform: translateY(1px);
 }
 
 .admin-agent-count {
   min-width: 0;
+  transform: translateY(1px);
+}
+
+.admin-agent-count-divider {
+  font-size: 22px;
+  transform: translateY(-1px);
+  font-weight: 800;
+  line-height: 1;
 }
 
 .admin-agent-count-active,
@@ -197,10 +206,12 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .admin-agent-count-active {
   text-align: right;
+  padding-right: 2px;
 }
 
 .admin-agent-count-frozen {
   text-align: left;
+  padding-left: 2px;
 }
 
 .admin-agent-count-divider-frozen,
