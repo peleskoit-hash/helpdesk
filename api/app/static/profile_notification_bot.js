@@ -203,7 +203,7 @@
                   const checked = item.mandatory ? true : state.delivery[item.key] !== false;
                   const disabled = item.mandatory ? "disabled" : "";
                   return `
-                    <label class="status-panel-title admin-agent-header notification-enabled-row notification-delivery-row ${item.mandatory ? "notification-switch-disabled" : ""}">
+                    <label class="checkbox-label notification-enabled-row notification-delivery-row ${item.mandatory ? "notification-switch-disabled" : ""}">
                       <input type="checkbox" data-delivery-switch="${escapeHtml(item.key)}" ${checked ? "checked" : ""} ${disabled} />
                       <span>${escapeHtml(item.label)}</span>
                     </label>
@@ -221,7 +221,7 @@
       const checked = draft?.useBaseSettings !== false;
       return `
         <div class="notification-control-card notification-page-mode ${isAdminMode() ? "notification-admin-compact" : ""}">
-          <label class="status-panel-title admin-agent-header notification-enabled-row">
+          <label class="checkbox-label notification-enabled-row">
             <input type="checkbox" data-use-base-settings ${checked ? "checked" : ""} />
             <span>Использовать базовые настройки уведомлений</span>
           </label>

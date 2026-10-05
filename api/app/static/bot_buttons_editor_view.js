@@ -537,7 +537,7 @@
 
           <div class="bot-editor-section">
             <div class="bot-removed-title">Параметры подменю</div>
-            <label class="status-panel-title admin-agent-header">
+            <label class="checkbox-label">
               <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
               <span>Кнопка активна</span>
             </label>
@@ -572,18 +572,18 @@
 
           <div class="bot-editor-section">
             <div class="bot-removed-title">Параметры создания</div>
-            <label class="status-panel-title admin-agent-header">
+            <label class="checkbox-label">
               <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
               <span>Кнопка активна</span>
             </label>
-            <label class="status-panel-title admin-agent-header">
+            <label class="checkbox-label">
               <input id="fixedAssigneeEnabled" type="checkbox" ${state.fixedAssigneeEnabled ? "checked" : ""} />
               <span>Фиксированный ответственный</span>
             </label>
             <select id="fixedAssigneeUserId" class="input" ${state.fixedAssigneeEnabled ? "" : "disabled"}>
               ${renderAssigneeOptions()}
             </select>
-            <label class="status-panel-title admin-agent-header">
+            <label class="checkbox-label">
               <input id="freezeOnCreate" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
               <span>Сразу замораживать при создании</span>
             </label>
@@ -663,7 +663,7 @@
           </div>
 
           <div class="bot-editor-section">
-            <label class="status-panel-title admin-agent-header">
+            <label class="checkbox-label">
               <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
               <span>Требовать подтверждение перед созданием</span>
             </label>

@@ -481,11 +481,11 @@
   function settingsHtml(options = {}) {
     return `
       <div class="telegram-editor-flags">
-        <label class="status-panel-title admin-agent-header">
+        <label class="checkbox-label">
           <input type="checkbox" data-telegram-disable-link-preview ${options.disableLinkPreview ? "checked" : ""} />
           <span>Отключить предпросмотр ссылки</span>
         </label>
-        <label class="status-panel-title admin-agent-header">
+        <label class="checkbox-label">
           <input type="checkbox" data-telegram-send-silently ${options.sendSilently ? "checked" : ""} />
           <span>Отправить без звука</span>
         </label>

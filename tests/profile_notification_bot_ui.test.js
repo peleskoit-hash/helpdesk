@@ -77,6 +77,12 @@ test("delivery switches are page-level with explicit two-column order", () => {
   assert.match(source, /delivery: \{[\s\S]+transfer_to_agent:[\s\S]+transfer_from_agent:[\s\S]+new_message:[\s\S]+notify_internal_task_completion:/);
 });
 
+test("profile notification checkboxes do not reuse sidebar pressed header class", () => {
+  assert.doesNotMatch(source, /admin-agent-header/);
+  assert.match(source, /class="checkbox-label notification-enabled-row notification-delivery-row/);
+  assert.match(source, /class="checkbox-label notification-enabled-row"/);
+});
+
 test("admin notification page hides agent-only tabs and switches", () => {
   assert.match(source, /function isAdminMode\(\) \{\s+return state\.role === "admin";\s+\}/);
   assert.match(source, /function visibleTabConfigs\(\)/);

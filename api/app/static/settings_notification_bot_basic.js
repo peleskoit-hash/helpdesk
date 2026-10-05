@@ -150,7 +150,7 @@
       }
       return `
         <div class="notification-pane" data-notification-pane="${escapeHtml(draft.type)}">
-          <label class="status-panel-title admin-agent-header notification-enabled-row">
+          <label class="checkbox-label notification-enabled-row">
             <input type="checkbox" data-enabled ${draft.enabled ? "checked" : ""} />
             <span>Отправлять уведомление этого типа</span>
           </label>

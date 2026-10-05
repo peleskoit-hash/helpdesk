@@ -315,3 +315,14 @@ test("legacy bot button editor reuses toolbar without delivery flag controls", (
   assert.doesNotMatch(source, /data-telegram-disable-link-preview/);
   assert.doesNotMatch(source, /data-telegram-send-silently/);
 });
+
+test("notification editor checkboxes do not reuse sidebar pressed header class", () => {
+  const editorSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "telegram_text_editor.js"), "utf8");
+  const basicSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "settings_notification_bot_basic.js"), "utf8");
+
+  assert.doesNotMatch(editorSource, /admin-agent-header/);
+  assert.match(editorSource, /class="checkbox-label"[\s\S]+data-telegram-disable-link-preview/);
+  assert.match(editorSource, /class="checkbox-label"[\s\S]+data-telegram-send-silently/);
+  assert.doesNotMatch(basicSource, /admin-agent-header/);
+  assert.match(basicSource, /class="checkbox-label notification-enabled-row"[\s\S]+data-enabled/);
+});

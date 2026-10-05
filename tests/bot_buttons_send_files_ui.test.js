@@ -2330,6 +2330,16 @@ test('system button group editor has compact text and color controls without cal
   assert.doesNotMatch(source, /callback_data|callbackData|data-system-button-callback/);
 });
 
+test('bot button editor checkboxes do not reuse sidebar pressed header class', () => {
+  const source = fs.readFileSync('api/app/static/bot_buttons_editor_view.js', 'utf8');
+
+  assert.doesNotMatch(source, /admin-agent-header/);
+  assert.match(source, /class="checkbox-label"[\s\S]+id="buttonIsEnabled"/);
+  assert.match(source, /class="checkbox-label"[\s\S]+id="fixedAssigneeEnabled"/);
+  assert.match(source, /class="checkbox-label"[\s\S]+id="freezeOnCreate"/);
+  assert.match(source, /class="checkbox-label"[\s\S]+id="confirmationEnabled"/);
+});
+
 test('test file does not lock mojibake expected strings outside forbidden-marker regexes', () => {
   const source = fs.readFileSync('tests/bot_buttons_send_files_ui.test.js', 'utf8');
   const inspected = source
