@@ -1389,10 +1389,13 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
       setStatus(`Ошибка: ${e.message}`);
     });
 })();
-return () => {
-  window.removeEventListener("beforeunload", handleBeforeUnload);
-  unbindSystemTicketOpenHandler(el.content);
-  cleanupBotButtonOverlays();
+return {
+  canNavigateAway: confirmDiscard,
+  destroy() {
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+    unbindSystemTicketOpenHandler(el.content);
+    cleanupBotButtonOverlays();
+  },
 };
 }
 

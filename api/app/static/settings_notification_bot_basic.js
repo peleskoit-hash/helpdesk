@@ -6,6 +6,7 @@
       items: [],
       activeType: "",
       drafts: new Map(),
+      baselines: new Map(),
       activeTextarea: null,
     };
 
@@ -67,6 +68,37 @@
         isSaving: false,
         error: "",
       };
+    }
+
+    function snapshotDraft(draft) {
+      return {
+        enabled: draft?.enabled !== false,
+        template: String(draft?.template || ""),
+        htmlEnabled: draft?.htmlEnabled !== false,
+        disableLinkPreview: !!draft?.disableLinkPreview,
+        sendSilently: !!draft?.sendSilently,
+      };
+    }
+
+    function isDirty() {
+      syncActiveDraftFromDom();
+      for (const [type, draft] of state.drafts.entries()) {
+        const baseline = state.baselines.get(type);
+        if (!baseline) return true;
+        if (JSON.stringify(snapshotDraft(draft)) !== JSON.stringify(baseline)) return true;
+      }
+      return false;
+    }
+
+    function canNavigateAway() {
+      if (!isDirty()) return true;
+      return window.confirm("Есть несохранённые изменения. Уйти без сохранения?");
+    }
+
+    function handleBeforeUnload(event) {
+      if (!isDirty()) return;
+      event.preventDefault();
+      event.returnValue = "";
     }
 
     function getActiveDraft() {
@@ -213,7 +245,12 @@
       const payload = await api(apiBase);
       state.items = Array.isArray(payload?.items) ? payload.items : [];
       state.drafts = new Map();
-      state.items.forEach((item) => state.drafts.set(item.type, normalizeDraft(item)));
+      state.baselines = new Map();
+      state.items.forEach((item) => {
+        const draft = normalizeDraft(item);
+        state.drafts.set(item.type, draft);
+        state.baselines.set(item.type, snapshotDraft(draft));
+      });
       state.activeType = state.items[0]?.type || "";
       render();
       setStatus("Готово");
@@ -245,6 +282,7 @@
         });
         const normalized = normalizeDraft(updated);
         state.drafts.set(normalized.type, normalized);
+        state.baselines.set(normalized.type, snapshotDraft(normalized));
         state.items = state.items.map((item) => item.type === normalized.type ? { ...item, ...updated } : item);
         render();
         setStatus("Сохранено");
@@ -269,9 +307,14 @@
       .catch((error) => {
         setStatus(`Ошибка: ${error.message}`);
       });
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
-    return () => {
-      if (tg.closeEmojiPicker) tg.closeEmojiPicker();
+    return {
+      canNavigateAway,
+      destroy() {
+        window.removeEventListener("beforeunload", handleBeforeUnload);
+        if (tg.closeEmojiPicker) tg.closeEmojiPicker();
+      },
     };
   }
 

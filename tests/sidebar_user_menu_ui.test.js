@@ -460,8 +460,10 @@ function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
 
 async function loadSidebar(document, role = "agent", profileOverrides = {}, options = {}) {
   const source = fs.readFileSync("api/app/static/sidebar.js", "utf8");
+  const pathname = options.locationPathname || "/tickets";
+  const href = options.locationHref || pathname;
   const window = {
-    location: { pathname: "/tickets", href: "/tickets" },
+    location: { pathname, href },
   };
   class ImageMock {
     set src(value) {
@@ -658,6 +660,170 @@ test("admin agent filter supports click and ctrl click without empty selection",
   header.dispatchEvent({ type: "click", target: header });
   await flushSidebarAsync();
   assert.deepEqual(storedAssignees(window), ["a1", "b2", "c3"]);
+});
+
+test("admin agent filter click on tickets page keeps current location", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1", "b2", "c3"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "frozen",
+    },
+    locationPathname: "/tickets",
+    locationHref: "/tickets",
+  });
+
+  clickAgent(document, 1);
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["b2"]);
+  assert.deepEqual(storedAssignees(window), ["b2"]);
+  assert.equal(window.location.href, "/tickets");
+
+  const header = document.querySelector(".admin-agent-header");
+  header.dispatchEvent({ type: "click", target: header });
+  await flushSidebarAsync();
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2", "c3"]);
+  assert.deepEqual(storedAssignees(window), ["a1", "b2", "c3"]);
+  assert.equal(window.location.href, "/tickets");
+});
+
+test("admin agent filter click outside tickets navigates to stored tab", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1", "b2", "c3"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "frozen",
+    },
+    locationPathname: "/management",
+    locationHref: "/management",
+  });
+
+  clickAgent(document, 1);
+  await flushSidebarAsync();
+
+  assert.deepEqual(sidebarAssignees(window), ["b2"]);
+  assert.deepEqual(storedAssignees(window), ["b2"]);
+  assert.equal(window.location.href, "/tickets?tab=frozen");
+});
+
+test("admin agent filter outside tickets respects guard refusal for employee click", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "frozen",
+    },
+    locationPathname: "/management",
+    locationHref: "/management",
+  });
+  let guardCalls = 0;
+  window.HelpdeskAppShell = {
+    confirmNavigateAway() {
+      guardCalls += 1;
+      return false;
+    },
+  };
+  const callsBefore = window.__fetchCalls.length;
+
+  clickAgent(document, 1);
+  await flushSidebarAsync();
+
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(sidebarAssignees(window), ["a1"]);
+  assert.deepEqual(storedAssignees(window), ["a1"]);
+  assert.equal(window.location.href, "/management");
+  assert.equal(window.__fetchCalls.length, callsBefore);
+  assert.deepEqual(adminAgentItems(document).map((item) => item.classList.contains("active")), [true, false, false]);
+});
+
+test("admin agent filter outside tickets respects guard refusal for all click", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["b2"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "closed",
+    },
+    locationPathname: "/management",
+    locationHref: "/management",
+  });
+  let guardCalls = 0;
+  window.HelpdeskAppShell = {
+    confirmNavigateAway() {
+      guardCalls += 1;
+      return false;
+    },
+  };
+  const callsBefore = window.__fetchCalls.length;
+
+  const header = document.querySelector(".admin-agent-header");
+  header.dispatchEvent({ type: "click", target: header });
+  await flushSidebarAsync();
+
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(sidebarAssignees(window), ["b2"]);
+  assert.deepEqual(storedAssignees(window), ["b2"]);
+  assert.equal(window.location.href, "/management");
+  assert.equal(window.__fetchCalls.length, callsBefore);
+  assert.equal(header.classList.contains("pressed"), false);
+});
+
+test("admin agent filter all outside tickets selects all and navigates to closed tab", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["b2"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "closed",
+    },
+    locationPathname: "/management",
+    locationHref: "/management",
+  });
+
+  const header = document.querySelector(".admin-agent-header");
+  header.dispatchEvent({ type: "click", target: header });
+  await flushSidebarAsync();
+
+  assert.deepEqual(sidebarAssignees(window), ["a1", "b2", "c3"]);
+  assert.deepEqual(storedAssignees(window), ["a1", "b2", "c3"]);
+  assert.equal(window.location.href, "/tickets?tab=closed");
+});
+
+test("admin agent filter outside tickets proceeds when guard allows", async () => {
+  const { document } = buildSidebarDom();
+  const navigations = [];
+  const window = await loadSidebar(document, "admin", {}, {
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1", "b2", "c3"]),
+      hd_admin_assignee_login_ts: "1",
+      hd_tab: "special",
+    },
+    locationPathname: "/management",
+    locationHref: "/management",
+  });
+  window.HelpdeskAppShell = {
+    confirmNavigateAway() {
+      return true;
+    },
+    navigate(url, options) {
+      navigations.push([url, options]);
+      window.location.href = url;
+      return true;
+    },
+  };
+
+  clickAgent(document, 2);
+  await flushSidebarAsync();
+
+  assert.deepEqual(sidebarAssignees(window), ["c3"]);
+  assert.deepEqual(storedAssignees(window), ["c3"]);
+  assert.equal(navigations.length, 1);
+  assert.equal(navigations[0][0], "/tickets?tab=special");
+  assert.equal(navigations[0][1]?.skipGuard, true);
+  assert.equal(window.location.href, "/tickets?tab=special");
 });
 
 test("admin agent filter keeps reload storage, resets on new login, and preserves first-run marker migration", async () => {

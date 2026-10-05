@@ -5,6 +5,7 @@
     root: null,
     destroy: null,
     onUrlChange: null,
+    canNavigateAway: null,
     url: "",
     initialized: false,
   };
@@ -29,7 +30,7 @@
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20260708a",
-        "/static/settings_bot_buttons.js?v=20260708a",
+        "/static/settings_bot_buttons.js?v=20261005a",
       ],
     }],
     ["/settings/automatic-messages", {
@@ -44,7 +45,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20260826a",
-        "/static/settings_notification_bot_basic.js?v=20260831a",
+        "/static/settings_notification_bot_basic.js?v=20261005a",
       ],
     }],
     ["/profile/notification-bot", {
@@ -94,14 +95,20 @@
   }
 
   function normalizeLifecycle(result) {
-    if (typeof result === "function") return { destroy: result, onUrlChange: null };
+    if (typeof result === "function") return { destroy: result, onUrlChange: null, canNavigateAway: null };
     if (result && typeof result === "object") {
       return {
         destroy: typeof result.destroy === "function" ? () => result.destroy() : () => {},
         onUrlChange: typeof result.onUrlChange === "function" ? result.onUrlChange : null,
+        canNavigateAway: typeof result.canNavigateAway === "function" ? result.canNavigateAway : null,
       };
     }
-    return { destroy: () => {}, onUrlChange: null };
+    return { destroy: () => {}, onUrlChange: null, canNavigateAway: null };
+  }
+
+  function confirmNavigateAway() {
+    if (typeof current.canNavigateAway !== "function") return true;
+    return current.canNavigateAway();
   }
 
   function destroyCurrentPage() {
@@ -116,6 +123,7 @@
     current.root = null;
     current.destroy = null;
     current.onUrlChange = null;
+    current.canNavigateAway = null;
     current.url = "";
     current.initialized = false;
   }
@@ -144,10 +152,12 @@
       }));
       current.destroy = lifecycle.destroy;
       current.onUrlChange = lifecycle.onUrlChange;
+      current.canNavigateAway = lifecycle.canNavigateAway;
       current.initialized = true;
     } else {
       current.destroy = () => {};
       current.onUrlChange = null;
+      current.canNavigateAway = null;
       current.initialized = false;
     }
     return true;
@@ -264,6 +274,9 @@
       window.location.href = `${url.pathname}${url.search}${url.hash}`;
       return false;
     }
+    if (options.skipGuard !== true && typeof current.canNavigateAway === "function" && !current.canNavigateAway()) {
+      return false;
+    }
     let payload = null;
     try {
       const response = await fetch(`${url.pathname}${url.search}`, {
@@ -313,6 +326,8 @@
     navigate,
     startCurrentPage,
     destroyCurrentPage,
+    confirmNavigateAway,
+    canNavigateAway: confirmNavigateAway,
     extractShellPayload,
     mountShellPayload,
     getCurrentPage: () => ({ ...current }),
@@ -337,7 +352,13 @@
       updateSidebarActiveState(url);
       return;
     }
-    navigate(url, { replace: true });
+    const previousUrl = current.url || `${window.location.pathname}${window.location.search}`;
+    if (!confirmNavigateAway()) {
+      window.history.pushState({ shell: true, url: previousUrl }, "", previousUrl);
+      updateSidebarActiveState(new URL(previousUrl, window.location.origin));
+      return;
+    }
+    await navigate(url, { replace: true, skipGuard: true });
   });
 
   if (document.readyState === "loading") {

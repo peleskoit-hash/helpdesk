@@ -586,6 +586,32 @@
     selectAssignees(state.agents.map((agent) => agent.id));
   }
 
+  function navigateToSelectedTicketListIfNeeded() {
+    if (/^\/tickets\/?$/.test(window.location.pathname)) return;
+
+    const validTabs = new Set(["active", "unassigned", "special", "frozen", "closed"]);
+    const storedTab = localStorage.getItem("hd_tab");
+    const tab = validTabs.has(storedTab) ? storedTab : "active";
+    const href = `/tickets?tab=${tab}`;
+
+    if (window.HelpdeskAppShell?.navigate) {
+      window.HelpdeskAppShell.navigate(href, { skipGuard: true });
+    } else {
+      window.location.href = href;
+    }
+  }
+
+  function canChangeAssigneeFilter() {
+    if (/^\/tickets\/?$/.test(window.location.pathname)) return true;
+    if (window.HelpdeskAppShell?.confirmNavigateAway) {
+      return window.HelpdeskAppShell.confirmNavigateAway();
+    }
+    if (window.HelpdeskAppShell?.canNavigateAway) {
+      return window.HelpdeskAppShell.canNavigateAway();
+    }
+    return true;
+  }
+
   function formatAssigneeCount(value) {
     const count = Number(value || 0);
     return count > 0 ? String(count) : "";
@@ -710,6 +736,7 @@
       item.appendChild(countsNode);
       item.addEventListener("click", (event) => {
         event.preventDefault();
+        if (!canChangeAssigneeFilter()) return;
         const currentSet = new Set(state.adminAssigneeIds || []);
         if (event.ctrlKey && !isAllAgentsSelected()) {
           if (currentSet.has(agent.id)) {
@@ -725,6 +752,7 @@
         renderAgentFilter();
         loadCounts();
         notify();
+        navigateToSelectedTicketListIfNeeded();
       });
       listEl.appendChild(item);
     });
@@ -842,10 +870,12 @@
     if (label) label.textContent = "\u0412\u0441\u0435";
     const chooseAll = (event) => {
       event?.preventDefault?.();
+      if (!canChangeAssigneeFilter()) return;
       selectAllAssignees();
       renderAgentFilter();
       loadCounts();
       notify();
+      navigateToSelectedTicketListIfNeeded();
     };
     toggleAll.tabIndex = -1;
 	toggleAll.setAttribute("aria-hidden", "true");
