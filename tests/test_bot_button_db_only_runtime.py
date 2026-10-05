@@ -2044,6 +2044,124 @@ def test_txt_submenu_restore_restores_recursive_descendants(monkeypatch):
     assert child.is_archived is False
 
 
+def test_db_created_group_task_child_survives_rebuild_archive_and_restore(monkeypatch):
+    session = _session()
+    source_child = ButtonSpec(key="source-child", label="Source child", kind="task")
+    source_parent = ButtonSpec(key="source-parent", label="Parent", kind="group_task", subtasks=(source_child,))
+    config = ButtonConfig(
+        menus={"root": MenuSpec(key="root", title="menu-a", rows=((source_parent.key,),))},
+        buttons={source_parent.key: source_parent},
+        root_menu_key="root",
+    )
+    refs = (
+        TerminalButtonRef(
+            source_button_key=source_child.key,
+            label=source_child.label,
+            workflow_type="group_task_child",
+            full_path="Parent/Source child",
+            technical_key="menu-a|group_task_child|Parent/Source child",
+            instruction_text=None,
+        ),
+    )
+    admin = SimpleNamespace(id="admin-1", role="admin")
+
+    monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
+    monkeypatch.setattr(telegram_router, "find_button", lambda key: source_parent if key == source_parent.key else (source_child if key == source_child.key else None))
+
+    created = settings_bot_button_structure.create_bot_button_item(
+        {
+            "menu_type": "menu-a",
+            "parent_path": "Parent",
+            "label": "DB child",
+            "button_kind": "group_task_child",
+            "workflow_type": "group_task_child",
+            "is_enabled": True,
+        },
+        db=session,
+        user=admin,
+    )
+    db_key = created["button_key"]
+    db_child = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one()
+    db_child.instruction_text = "DB child instruction"
+    db_child.system_text = "DB child system"
+    db_child.system_text_overridden = True
+    db_child.automation_key = "message_only"
+    db_child.automation_overridden = True
+    db_child.fixed_assignee_enabled = True
+    db_child.fixed_assignee_user_id = "agent-db"
+    db_child.files_json = ["db/direct.txt"]
+    db_child.files_overridden = True
+    db_child.conditional_files_json = [{"conditions": [{"field": "employee_type", "operator": "eq", "value": "staff"}], "files": ["db/rule.txt"]}]
+    db_child.conditional_files_overridden = True
+    db_child.confirmation_enabled = True
+    db_child.confirmation_text = "Confirm DB child"
+    db_child.confirmation_overridden = True
+    db_child.label_override = "DB child visible"
+    db_child.label_overridden = True
+    session.commit()
+
+    structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    db_child = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one()
+    parent_node = structure.tree_rows[0]["buttons"][0]
+    child_keys = [row["buttons"][0]["technical_key"] for row in parent_node["children_rows"]]
+
+    assert db_child.currently_present is True
+    assert db_child.is_archived is False
+    assert child_keys == ["menu-a|group_task_child|Parent/Source child", db_key]
+    assert len(child_keys) == len(set(child_keys))
+    runtime_children = telegram_router._button_from_callback(session, "btn:source-parent", "menu-a").subtasks
+    assert [child.label for child in runtime_children] == ["Source child", "DB child visible"]
+    runtime_db_child = runtime_children[1]
+    assert runtime_db_child.key == db_key
+    assert runtime_db_child.kind == "task"
+    assert runtime_db_child.instruction_text == "DB child instruction"
+    assert runtime_db_child.system_text == "DB child system"
+    assert runtime_db_child.automation_key == "message_only"
+    assert runtime_db_child.forced_assignee_type == "user_id"
+    assert runtime_db_child.forced_assignee_value == "agent-db"
+    assert runtime_db_child.file_path == "db/direct.txt"
+    assert runtime_db_child.file_rules == ({"conditions": [{"field": "employee_type", "operator": "eq", "value": "staff"}], "files": ["db/rule.txt"]},)
+    assert runtime_db_child.confirmation_text == "Confirm DB child"
+
+    deleted = settings_bot_button_items.delete_bot_button_setting(
+        button_key=db_key,
+        hard=False,
+        db=session,
+        user=admin,
+    )
+    structure_after_delete = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    db_child = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one()
+    child_keys_after_delete = [row["buttons"][0]["technical_key"] for row in structure_after_delete.tree_rows[0]["buttons"][0]["children_rows"]]
+
+    assert deleted["deleted"] is True
+    assert db_child.currently_present is False
+    assert db_child.is_archived is True
+    assert child_keys_after_delete == ["menu-a|group_task_child|Parent/Source child"]
+
+    restored = settings_bot_button_items.restore_bot_button_setting(
+        button_key=db_key,
+        db=session,
+        user=admin,
+    )
+    structure_after_restore = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    db_child = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one()
+    child_nodes_after_restore = [row["buttons"][0] for row in structure_after_restore.tree_rows[0]["buttons"][0]["children_rows"]]
+    child_keys_after_restore = [node["technical_key"] for node in child_nodes_after_restore]
+
+    assert restored["restored"] is True
+    assert db_child.currently_present is True
+    assert db_child.is_archived is False
+    assert db_child.instruction_text == "DB child instruction"
+    assert child_keys_after_restore == ["menu-a|group_task_child|Parent/Source child", db_key]
+    assert len(child_keys_after_restore) == len(set(child_keys_after_restore))
+    assert child_nodes_after_restore[1]["has_instruction"] is True
+
+
 def test_first_connection_can_close_after_agent_reply_without_verified_profile():
     session = _session()
     ticket = Ticket(

@@ -418,6 +418,36 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
             "is_archived": bool(getattr(leaf, "is_archived", False)),
         }
 
+    def db_child_leaf_node(row: BotButtonSetting) -> dict:
+        current_keys.add(row.button_key)
+        enabled = True if not row.visibility_overridden else bool(row.is_enabled)
+        return {
+            "label": _effective_label(row, row.button_label),
+            "kind": "terminal",
+            "technical_key": row.button_key,
+            "level_key": None,
+            "workflow_type": row.workflow_type,
+            "full_path": row.button_path,
+            "has_instruction": bool((row.instruction_text or "").strip()),
+            "removed": False,
+            "stable_button_id": row.stable_button_id,
+            "status": "actual",
+            "is_enabled": enabled,
+            "children_rows": [],
+            "is_db_created": True,
+            "is_archived": bool(row.is_archived),
+        }
+
+    def group_child_rows(full_path: str, source_children: list[BotButtonStructureLeafOut]) -> list[dict]:
+        child_rows = [{"buttons": [leaf_node(leaf)]} for leaf in source_children]
+        for db_row in db_rows_by_parent.get(full_path, []):
+            kind = (db_row.button_kind or "").strip().lower()
+            workflow = (db_row.workflow_type or "").strip().lower()
+            if kind in {"section", "group_parent"} or workflow != "group_task_child":
+                continue
+            child_rows.append({"buttons": [db_child_leaf_node(db_row)]})
+        return child_rows
+
     def build_rows_from_menu(menu_key: str | None, parent_path: str = "") -> list[dict]:
         menu = config.menus.get(menu_key) if menu_key else None
         current_level_key = build_level_layout_key(menu_name, parent_path)
@@ -476,7 +506,8 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
                             continue
                         current_keys.add(group_key)
                         group_enabled = True if group_row is None or not group_row.visibility_overridden else bool(group_row.is_enabled)
-                        child_rows = [{"buttons": [leaf_node(leaf)]} for leaf in (group_map.get(button.label).children if group_map.get(button.label) else [])]
+                        source_children = group_map.get(button.label).children if group_map.get(button.label) else []
+                        child_rows = group_child_rows(full_path, source_children)
                         child_rows = _apply_level_layout(child_rows, layout_rows_by_level.get(build_level_layout_key(menu_name, full_path)))
                         buttons.append(
                             {
@@ -1495,5 +1526,4 @@ def sync_bot_buttons_from_txt(
     user: CurrentUser = Depends(get_current_user),
 ):
     return _sync_bot_buttons_from_txt(dry_run=dry_run, db=db, user=user)
-
 

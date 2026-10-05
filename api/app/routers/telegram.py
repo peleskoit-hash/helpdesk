@@ -1584,62 +1584,79 @@ def _handle_edited_client_message(
     refresh_ticket_auto_close_timer(db, ticket, restart_from_now=False)
     return ticket
 
+def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | None = None) -> ButtonSpec:
+    txt_button = None
+    try:
+        if menu_name:
+            for ref in list_terminal_buttons(menu_name):
+                if ref.technical_key == row.button_key:
+                    txt_button = find_button(ref.source_button_key)
+                    break
+        if txt_button is None:
+            txt_button = find_button(row.button_key)
+        if txt_button is None and menu_name and (row.workflow_type or "").strip().lower() == "group_task":
+            full_path = (row.button_path or "").strip()
+            if full_path:
+                txt_button = _find_txt_group_button_by_full_path(menu_name, full_path)
+    except Exception:
+        txt_button = None
+
+    row_kind = (row.button_kind or "").strip().lower()
+    workflow = (row.workflow_type or "ticket").strip().lower()
+    if row_kind == "group_parent" or workflow == "group_task":
+        kind = "group_task"
+    elif row_kind == "section":
+        kind = "submenu"
+    elif workflow == "group_task_child":
+        kind = "task"
+    else:
+        kind = workflow or "ticket"
+    label = (row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label
+    final_label = label or row.button_label
+    forced_type = "user_id" if bool(row.fixed_assignee_enabled) and (row.fixed_assignee_user_id or "").strip() else None
+    forced_value = (row.fixed_assignee_user_id or "").strip() if forced_type else None
+    file_path = None
+    if isinstance(row.files_json, list) and row.files_json:
+        file_path = str(row.files_json[0] or "").strip() or None
+    file_rules = tuple(rule for rule in (row.conditional_files_json or []) if isinstance(rule, dict)) if isinstance(row.conditional_files_json, list) else ()
+
+    if txt_button is not None:
+        button = ButtonSpec(
+            key=row.button_key,
+            label=final_label or txt_button.label,
+            kind=kind or txt_button.kind,
+            text=txt_button.text,
+            confirmation_text=(row.confirmation_text if bool(row.confirmation_overridden) else txt_button.confirmation_text),
+            system_text=(row.system_text if bool(row.system_text_overridden) else txt_button.system_text),
+            instruction_text=row.instruction_text or txt_button.instruction_text,
+            automation_key=(row.automation_key if bool(row.automation_overridden) else txt_button.automation_key),
+            forced_assignee_type=forced_type or txt_button.forced_assignee_type,
+            forced_assignee_value=forced_value or txt_button.forced_assignee_value,
+            file_path=file_path or txt_button.file_path,
+            file_rules=file_rules or txt_button.file_rules,
+            submenu_key=txt_button.submenu_key,
+            subtasks=txt_button.subtasks,
+        )
+        if button.kind == "group_task":
+            return _with_db_group_task_children(db, button, row.menu_type, (row.button_path or "").strip())
+        return button
+
+    return ButtonSpec(
+        key=row.button_key,
+        label=final_label or row.button_label,
+        kind=kind,
+        confirmation_text=row.confirmation_text if bool(row.confirmation_enabled) else None,
+        system_text=row.system_text,
+        instruction_text=row.instruction_text,
+        automation_key=row.automation_key,
+        forced_assignee_type=forced_type,
+        forced_assignee_value=forced_value,
+        file_path=file_path,
+        file_rules=file_rules,
+    )
 
 
 def _button_from_callback(db: Session, data: str, menu_name: str | None = None) -> ButtonSpec | None:
-    def _button_from_db_row(row: BotButtonSetting) -> ButtonSpec:
-        txt_button = None
-        try:
-            if menu_name:
-                for ref in list_terminal_buttons(menu_name):
-                    if ref.technical_key == row.button_key:
-                        txt_button = find_button(ref.source_button_key)
-                        break
-            if txt_button is None:
-                txt_button = find_button(row.button_key)
-            if txt_button is None and menu_name and (row.workflow_type or "").strip().lower() == "group_task":
-                full_path = (row.button_path or "").strip()
-                if full_path:
-                    txt_button = _find_txt_group_button_by_full_path(menu_name, full_path)
-        except Exception:
-            txt_button = None
-
-        row_kind = (row.button_kind or "").strip().lower()
-        workflow = (row.workflow_type or "ticket").strip().lower()
-        if row_kind == "group_parent" or workflow == "group_task":
-            kind = "group_task"
-        elif row_kind == "section":
-            kind = "submenu"
-        elif workflow == "group_task_child":
-            kind = "task"
-        else:
-            kind = workflow or "ticket"
-        label = (row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label
-        final_label = label or row.button_label
-
-        if txt_button is not None:
-            return ButtonSpec(
-                key=row.button_key,
-                label=final_label or txt_button.label,
-                kind=kind or txt_button.kind,
-                text=txt_button.text,
-                confirmation_text=txt_button.confirmation_text,
-                system_text=txt_button.system_text,
-                instruction_text=txt_button.instruction_text,
-                automation_key=txt_button.automation_key,
-                forced_assignee_type=txt_button.forced_assignee_type,
-                forced_assignee_value=txt_button.forced_assignee_value,
-                file_path=txt_button.file_path,
-                file_rules=txt_button.file_rules,
-                submenu_key=txt_button.submenu_key,
-                subtasks=txt_button.subtasks,
-            )
-
-        return ButtonSpec(
-            key=row.button_key,
-            label=final_label or row.button_label,
-            kind=kind,
-        )
 
     id_prefix = "btnid:"
     if data.startswith(id_prefix):
@@ -1651,7 +1668,7 @@ def _button_from_callback(db: Session, data: str, menu_name: str | None = None) 
             return None
         if menu_name and row.menu_type != menu_name:
             return None
-        return _button_from_db_row(row)
+        return _button_from_db_row(db, row, menu_name)
 
     prefix = "btn:"
     if not data.startswith(prefix):
@@ -1669,9 +1686,12 @@ def _button_from_callback(db: Session, data: str, menu_name: str | None = None) 
         ).scalar_one_or_none()
         if row is None:
             return None
-        return _button_from_db_row(row)
+        return _button_from_db_row(db, row, menu_name)
     txt_button = find_button(key)
     if txt_button is not None:
+        if txt_button.kind == "group_task" and menu_name:
+            full_path = _find_txt_group_button_path(menu_name, txt_button.key)
+            return _with_db_group_task_children(db, txt_button, menu_name, full_path or txt_button.label)
         return txt_button
     if not menu_name:
         return None
@@ -1683,19 +1703,7 @@ def _button_from_callback(db: Session, data: str, menu_name: str | None = None) 
     ).scalar_one_or_none()
     if row is None or not bool(row.currently_present):
         return None
-    row_kind = (row.button_kind or "").strip().lower()
-    if row_kind in {"section", "group_parent"}:
-        kind = "submenu"
-    elif (row.workflow_type or "").strip().lower() == "group_task_child":
-        kind = "task"
-    else:
-        kind = row.workflow_type or "ticket"
-    label = (row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label
-    return ButtonSpec(
-        key=row.button_key,
-        label=label or row.button_label,
-        kind=kind,
-    )
+    return _button_from_db_row(db, row, menu_name)
 
 
 def _is_callback_button_enabled(db: Session, *, menu_name: str, button: ButtonSpec) -> bool:
@@ -1799,6 +1807,30 @@ def _submenu_path_by_key(menu_name: str, submenu_key: str) -> str | None:
     return walk(config.root_menu_key, "")
 
 
+def _find_txt_group_button_path(menu_name: str, group_button_key: str) -> str | None:
+    config = load_button_config(menu_name)
+
+    def walk(menu_key: str, parent_path: str = "") -> str | None:
+        menu = config.menus.get(menu_key)
+        if menu is None:
+            return None
+        for row in menu.rows:
+            for button_key in row:
+                button = config.buttons.get(button_key)
+                if button is None:
+                    continue
+                current_path = f"{parent_path}/{button.label}" if parent_path else button.label
+                if button.kind == "group_task" and button.key == group_button_key:
+                    return current_path
+                if button.kind == "submenu" and button.submenu_key:
+                    found = walk(button.submenu_key, current_path)
+                    if found is not None:
+                        return found
+        return None
+
+    return walk(config.root_menu_key, "")
+
+
 def _find_txt_group_button_by_full_path(menu_name: str, full_path: str) -> ButtonSpec | None:
     config = load_button_config(menu_name)
 
@@ -1821,6 +1853,53 @@ def _find_txt_group_button_by_full_path(menu_name: str, full_path: str) -> Butto
         return None
 
     return walk(config.root_menu_key, "")
+
+
+def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str | None, parent_path: str | None) -> ButtonSpec:
+    menu = (menu_name or "").strip()
+    parent = (parent_path or "").strip()
+    if button.kind != "group_task" or not menu or not parent:
+        return button
+    rows = db.execute(
+        select(BotButtonSetting).where(
+            BotButtonSetting.menu_type == menu,
+            BotButtonSetting.parent_path == parent,
+            BotButtonSetting.workflow_type == "group_task_child",
+            BotButtonSetting.button_kind == "terminal",
+            BotButtonSetting.is_db_created.is_(True),
+            BotButtonSetting.currently_present.is_(True),
+            BotButtonSetting.is_archived.is_(False),
+        )
+    ).scalars().all()
+    if not rows:
+        return button
+    existing_keys = {child.key for child in button.subtasks}
+    db_children: list[ButtonSpec] = []
+    for row in sorted(rows, key=lambda item: ((item.updated_at or item.created_at or datetime.utcnow()), item.button_label)):
+        if row.button_key in existing_keys:
+            continue
+        child = _button_from_db_row(db, row, menu)
+        if not (child.label or "").strip():
+            continue
+        db_children.append(child)
+    if not db_children:
+        return button
+    return ButtonSpec(
+        key=button.key,
+        label=button.label,
+        kind=button.kind,
+        text=button.text,
+        confirmation_text=button.confirmation_text,
+        system_text=button.system_text,
+        instruction_text=button.instruction_text,
+        automation_key=button.automation_key,
+        forced_assignee_type=button.forced_assignee_type,
+        forced_assignee_value=button.forced_assignee_value,
+        file_path=button.file_path,
+        file_rules=button.file_rules,
+        submenu_key=button.submenu_key,
+        subtasks=(*button.subtasks, *db_children),
+    )
 
 
 def _find_parent_submenu_key(menu_name: str, submenu_key: str) -> str | None:
@@ -2285,6 +2364,19 @@ def _on_group_parent_assigned(db: Session, ticket: Ticket, agent: User) -> None:
     if not key:
         return
     button = find_button(key)
+    if button is not None and button.kind == "group_task":
+        parent_row = db.execute(
+            select(BotButtonSetting).where(
+                and_(
+                    BotButtonSetting.button_key == key,
+                    BotButtonSetting.currently_present.is_(True),
+                    BotButtonSetting.is_archived.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        menu_name = parent_row.menu_type if parent_row is not None else _menu_name_for_ticket_client(db, ticket)
+        parent_path = (parent_row.button_path or "").strip() if parent_row is not None else _find_txt_group_button_path(menu_name, button.key)
+        button = _with_db_group_task_children(db, button, menu_name, parent_path or button.label)
     if button is None or button.kind != "group_task":
         parent_row = db.execute(
             select(BotButtonSetting).where(
