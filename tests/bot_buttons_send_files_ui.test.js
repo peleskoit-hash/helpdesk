@@ -2912,6 +2912,145 @@ test('editor view prefers saved workflow_type over technical_key fallback when r
   assert.doesNotMatch(content.innerHTML, /<option value="ticket" selected>/);
 });
 
+test('group task child editor renders child-only fields and hides client button fields', () => {
+  const content = { innerHTML: '' };
+  editorViewHelpers.renderEditor({
+    state: {
+      selectedLeaf: {
+        technical_key: 'menu-a|group_task_child|Parent/Child',
+        workflow_type: 'group_task_child',
+        label: 'Child',
+        full_path: 'Parent/Child',
+        children_rows: [],
+        removed: false,
+        is_db_created: false,
+      },
+      editorWorkflowType: 'group_task_child',
+      editorBotLabel: 'Child',
+      editorText: '',
+      editorClientText: 'legacy client text',
+      editorSystemText: '',
+      confirmationEnabled: true,
+      confirmationText: 'legacy confirmation',
+      fixedAssigneeEnabled: false,
+      fixedAssigneeUserId: '',
+      freezeOnCreate: false,
+      suppressClientAnswer: true,
+      isEnabled: true,
+      automationTypeValue: 'none',
+      availableAutomations: [
+        { key: 'none', title: '\u041d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c', description: '', available: true, handler: '', workflow_types: ['group_task_child'] },
+      ],
+      automationTitle: '',
+      automationKey: 'none',
+      automationDescription: '',
+      automationStatus: 'not_applied',
+      automationAvailable: true,
+      automationHandler: '',
+      selectedFiles: [],
+      conditionalRules: [],
+    },
+    el: { content },
+    escapeHtml(value) { return String(value); },
+    renderSelectedFiles() { return ''; },
+    renderConditionalRules() { return ''; },
+    buildMoveCandidates() { return []; },
+    renderAssigneeOptions() { return ''; },
+    openFilePickerModal() {},
+    openConditionalRuleFilesModal() {},
+    fieldMeta() { return null; },
+    fieldLabel(value) { return String(value || ''); },
+    OPERATOR_OPTIONS: { text: [], select: [], number: [], bool: [] },
+    render() {},
+    saveInstruction() {},
+    archiveMenuButton() {},
+    restoreRemovedSetting() {},
+    deleteRemovedSetting() {},
+    moveRemovedSetting() {},
+    hasAnyStoredSettings() { return false; },
+  });
+
+  assert.match(content.innerHTML, /\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438/);
+  assert.match(content.innerHTML, /\u0422\u0435\u043a\u0441\u0442 \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0439/);
+  assert.match(content.innerHTML, /\u041d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0442\u044c \u043e\u0442\u0432\u0435\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443/);
+  assert.match(content.innerHTML, /id="suppressClientAnswer"[^>]*checked/);
+  assert.doesNotMatch(content.innerHTML, /\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0432 \u0431\u043e\u0442\u0435/);
+  assert.doesNotMatch(content.innerHTML, /\u0426\u0432\u0435\u0442 \u043a\u043d\u043e\u043f\u043a\u0438/);
+  assert.doesNotMatch(content.innerHTML, /\u0422\u0435\u043a\u0441\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443/);
+  assert.doesNotMatch(content.innerHTML, /\u0422\u0440\u0435\u0431\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435/);
+});
+
+test('group task child save preserves hidden field values and clears dirty state', async () => {
+  let sentBody = null;
+  const state = {
+    selectedMenu: 'menu-a',
+    selectedLeaf: {
+      technical_key: 'menu-a|group_task_child|Parent/Child',
+      workflow_type: 'group_task_child',
+      label: 'Child',
+      full_path: 'Parent/Child',
+      children_rows: [],
+    },
+    editorWorkflowType: 'group_task_child',
+    savedWorkflowType: 'group_task_child',
+    editorBotLabel: 'Child updated',
+    savedBotLabel: 'Child',
+    editorText: 'Instruction',
+    savedText: 'Instruction',
+    editorClientText: 'legacy client text',
+    savedClientText: 'legacy client text',
+    editorSystemText: 'System',
+    savedSystemText: 'System',
+    buttonStyle: 'danger',
+    savedButtonStyle: 'danger',
+    fixedAssigneeEnabled: false,
+    savedFixedAssigneeEnabled: false,
+    fixedAssigneeUserId: '',
+    savedFixedAssigneeUserId: '',
+    freezeOnCreate: false,
+    savedFreezeOnCreate: false,
+    suppressClientAnswer: true,
+    savedSuppressClientAnswer: false,
+    confirmationEnabled: true,
+    savedConfirmationEnabled: true,
+    confirmationText: 'legacy confirmation',
+    savedConfirmationText: 'legacy confirmation',
+    filesOverridden: false,
+    savedFilesOverridden: false,
+    selectedFiles: [],
+    savedSelectedFiles: [],
+    conditionalFilesOverridden: false,
+    savedConditionalFilesOverridden: false,
+    conditionalRules: [],
+    savedConditionalRules: [],
+    sendFilesProjectionError: '',
+    isEnabled: true,
+    savedIsEnabled: true,
+    automationTypeValue: 'none',
+    savedAutomationTypeValue: 'none',
+    availableAutomations: [],
+  };
+
+  assert.equal(editorHelpers.hasUnsavedChanges({ state }), true);
+  await editorHelpers.saveInstruction({
+    state,
+    api(_url, opts) {
+      sentBody = JSON.parse(opts.body);
+      return Promise.resolve({ ok: true });
+    },
+    setStatus() {},
+    refreshMenuStructure() { return Promise.resolve(); },
+    fieldMeta() { return null; },
+    fieldLabel(value) { return String(value || ''); },
+  });
+
+  assert.equal(sentBody.suppress_client_answer, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(sentBody, 'client_text'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sentBody, 'button_style'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(sentBody, 'confirmation_enabled'), false);
+  assert.equal(editorHelpers.hasUnsavedChanges({ state }), false);
+});
+
 test('frontend fallback resolves send_files when api returns none but legacy conditional files exist', () => {
   const payload = {
     automation_type: 'none',

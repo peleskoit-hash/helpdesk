@@ -1632,6 +1632,7 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
             automation_key=(row.automation_key if bool(row.automation_overridden) else txt_button.automation_key),
             forced_assignee_type=forced_type or txt_button.forced_assignee_type,
             forced_assignee_value=forced_value or txt_button.forced_assignee_value,
+            suppress_client_answer=bool(row.suppress_client_answer),
             file_path=file_path or txt_button.file_path,
             file_rules=file_rules or txt_button.file_rules,
             submenu_key=txt_button.submenu_key,
@@ -1651,6 +1652,7 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
         automation_key=row.automation_key,
         forced_assignee_type=forced_type,
         forced_assignee_value=forced_value,
+        suppress_client_answer=bool(row.suppress_client_answer),
         file_path=file_path,
         file_rules=file_rules,
     )
@@ -1895,6 +1897,7 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
         automation_key=button.automation_key,
         forced_assignee_type=button.forced_assignee_type,
         forced_assignee_value=button.forced_assignee_value,
+        suppress_client_answer=button.suppress_client_answer,
         file_path=button.file_path,
         file_rules=button.file_rules,
         submenu_key=button.submenu_key,
@@ -2260,8 +2263,18 @@ def _create_group_children_from_collecting(
         return
 
     append_system_message(db, parent, "Созданы подзадачи групповой задачи")
+    menu_name = _menu_name_for_ticket_client(db, parent)
 
     for child in button.subtasks:
+        instruction_button_key = _resolve_instruction_button_key(db, menu_name, child.key)
+        child_setting = db.execute(
+            select(BotButtonSetting).where(BotButtonSetting.button_key == instruction_button_key)
+        ).scalar_one_or_none() if instruction_button_key else None
+        suppress_client_answer = (
+            bool(child_setting.suppress_client_answer)
+            if child_setting is not None
+            else bool(child.suppress_client_answer)
+        )
         child_forced_assignee: User | None = None
         child_forced_error: str | None = None
         child_forced_candidate: User | None = None
@@ -2285,7 +2298,8 @@ def _create_group_children_from_collecting(
             agent_visible=True,
             load_counted=True,
             button_config_key=child.key,
-            instruction_button_key=_resolve_instruction_button_key(db, _menu_name_for_ticket_client(db, parent), child.key),
+            instruction_button_key=instruction_button_key,
+            suppress_client_answer=suppress_client_answer,
             status=TicketStatus.NEW.value if (child_forced_assignee is not None or assignee is not None) else TicketStatus.UNASSIGNED.value,
             is_frozen=False,
             created_at=datetime.utcnow(),

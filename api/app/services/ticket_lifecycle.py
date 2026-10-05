@@ -494,6 +494,8 @@ def _group_parent_children_payload(db: Session, parent: Ticket) -> tuple[list[st
     answers: list[str] = []
     attachments: list[TicketAttachment] = []
     for child in children:
+        if bool(child.suppress_client_answer):
+            continue
         last_agent_message = db.execute(
             select(TicketMessage)
             .where(
@@ -663,30 +665,31 @@ def _close_group_child_if_ready(
     if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
         return False
 
-    parent_agent_message = add_message_fn(db, parent, MessageType.AGENT, last_agent_message.body or "", user.id)
-    child_attachments = db.execute(
-        select(TicketAttachment)
-        .where(TicketAttachment.message_id == last_agent_message.id)
-        .order_by(asc(TicketAttachment.created_at))
-    ).scalars().all()
-    for attachment in child_attachments:
-        db.add(
-            TicketAttachment(
-                id=str(uuid.uuid4()),
-                ticket_id=parent.id,
-                message_id=parent_agent_message.id,
-                source=attachment.source,
-                telegram_file_id=attachment.telegram_file_id,
-                telegram_file_unique_id=attachment.telegram_file_unique_id,
-                telegram_file_path=attachment.telegram_file_path,
-                telegram_message_id=attachment.telegram_message_id,
-                original_filename=attachment.original_filename,
-                mime_type=attachment.mime_type,
-                file_size=attachment.file_size,
-                local_path=attachment.local_path,
-                created_at=datetime.utcnow(),
+    if not bool(child.suppress_client_answer):
+        parent_agent_message = add_message_fn(db, parent, MessageType.AGENT, last_agent_message.body or "", user.id)
+        child_attachments = db.execute(
+            select(TicketAttachment)
+            .where(TicketAttachment.message_id == last_agent_message.id)
+            .order_by(asc(TicketAttachment.created_at))
+        ).scalars().all()
+        for attachment in child_attachments:
+            db.add(
+                TicketAttachment(
+                    id=str(uuid.uuid4()),
+                    ticket_id=parent.id,
+                    message_id=parent_agent_message.id,
+                    source=attachment.source,
+                    telegram_file_id=attachment.telegram_file_id,
+                    telegram_file_unique_id=attachment.telegram_file_unique_id,
+                    telegram_file_path=attachment.telegram_file_path,
+                    telegram_message_id=attachment.telegram_message_id,
+                    original_filename=attachment.original_filename,
+                    mime_type=attachment.mime_type,
+                    file_size=attachment.file_size,
+                    local_path=attachment.local_path,
+                    created_at=datetime.utcnow(),
+                )
             )
-        )
 
     finalize_group_parent_if_ready_fn(
         db,

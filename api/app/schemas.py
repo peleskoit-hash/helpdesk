@@ -966,6 +966,7 @@ class BotButtonInstructionUpdate(BaseModel):
     fixed_assignee_enabled: bool | None = None
     fixed_assignee_user_id: str | None = None
     freeze_on_create: bool | None = None
+    suppress_client_answer: bool | None = None
     confirmation_enabled: bool | None = None
     confirmation_text: str | None = None
     confirmation_overridden: bool | None = None

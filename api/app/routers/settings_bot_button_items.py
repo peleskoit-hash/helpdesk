@@ -831,6 +831,7 @@ def get_bot_button_item(
             "fixed_assignee_enabled": False,
             "fixed_assignee_user_id": None,
             "freeze_on_create": False,
+            "suppress_client_answer": False,
             "confirmation_enabled": False,
             "confirmation_text": None,
             "confirmation_overridden": False,
@@ -903,6 +904,7 @@ def get_bot_button_item(
         "fixed_assignee_enabled": bool(row.fixed_assignee_enabled),
         "fixed_assignee_user_id": row.fixed_assignee_user_id,
         "freeze_on_create": bool(row.freeze_on_create),
+        "suppress_client_answer": bool(row.suppress_client_answer),
         "confirmation_enabled": bool(row.confirmation_enabled),
         "confirmation_text": row.confirmation_text,
         "confirmation_overridden": bool(row.confirmation_overridden),
@@ -1076,6 +1078,7 @@ def save_bot_button_instruction(
             fixed_assignee_enabled=fixed_enabled,
             fixed_assignee_user_id=fixed_user_id,
             freeze_on_create=bool(payload.freeze_on_create),
+            suppress_client_answer=bool(payload.suppress_client_answer),
             confirmation_enabled=bool(payload.confirmation_enabled),
             confirmation_text=confirmation_text_value,
             confirmation_overridden=bool(payload.confirmation_overridden),
@@ -1140,6 +1143,8 @@ def save_bot_button_instruction(
             row.fixed_assignee_user_id = fixed_user_id
         if payload.freeze_on_create is not None:
             row.freeze_on_create = bool(payload.freeze_on_create)
+        if payload.suppress_client_answer is not None:
+            row.suppress_client_answer = bool(payload.suppress_client_answer)
         if payload.confirmation_enabled is not None:
             row.confirmation_enabled = bool(payload.confirmation_enabled)
         if payload.confirmation_text is not None:
@@ -1196,6 +1201,7 @@ def save_bot_button_instruction(
         "fixed_assignee_enabled": bool(row.fixed_assignee_enabled),
         "fixed_assignee_user_id": row.fixed_assignee_user_id,
         "freeze_on_create": bool(row.freeze_on_create),
+        "suppress_client_answer": bool(row.suppress_client_answer),
         "confirmation_enabled": bool(row.confirmation_enabled),
         "confirmation_text": row.confirmation_text,
         "confirmation_overridden": bool(row.confirmation_overridden),

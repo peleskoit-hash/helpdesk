@@ -944,6 +944,7 @@ def ensure_ticket_columns() -> None:
         "distribution_notice_sent_at": "TIMESTAMP",
         "task_kind": "VARCHAR(30)",
         "parent_ticket_id": "VARCHAR(36)",
+        "suppress_client_answer": "BOOLEAN",
         "agent_visible": "BOOLEAN",
         "load_counted": "BOOLEAN",
         "button_config_key": "VARCHAR(100)",
@@ -992,6 +993,7 @@ def ensure_ticket_columns() -> None:
         conn.execute(text("UPDATE tickets SET workflow_type = 'ticket' WHERE workflow_type IS NULL"))
         conn.execute(text("UPDATE tickets SET intake_state = 'ready' WHERE intake_state IS NULL"))
         conn.execute(text("UPDATE tickets SET task_kind = 'normal' WHERE task_kind IS NULL"))
+        conn.execute(text("UPDATE tickets SET suppress_client_answer = FALSE WHERE suppress_client_answer IS NULL"))
         conn.execute(text("UPDATE tickets SET agent_visible = TRUE WHERE agent_visible IS NULL"))
         conn.execute(text("UPDATE tickets SET load_counted = TRUE WHERE load_counted IS NULL"))
         conn.execute(text("UPDATE tickets SET is_special = FALSE WHERE is_special IS NULL"))
@@ -1059,6 +1061,7 @@ def ensure_bot_button_settings_table() -> None:
                         fixed_assignee_enabled BOOLEAN,
                         fixed_assignee_user_id VARCHAR(36),
                         freeze_on_create BOOLEAN,
+                        suppress_client_answer BOOLEAN,
                         confirmation_enabled BOOLEAN,
                         confirmation_text TEXT,
                         confirmation_overridden BOOLEAN,
@@ -1104,6 +1107,8 @@ def ensure_bot_button_settings_table() -> None:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN client_text_overridden BOOLEAN"))
             if "system_text_overridden" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN system_text_overridden BOOLEAN"))
+            if "suppress_client_answer" not in existing:
+                conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN suppress_client_answer BOOLEAN"))
             if "files_overridden" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN files_overridden BOOLEAN"))
             if "files_json" not in existing:
@@ -1145,6 +1150,7 @@ def ensure_bot_button_settings_table() -> None:
             conn.execute(text("UPDATE bot_button_settings SET is_archived = FALSE WHERE is_archived IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET label_overridden = FALSE WHERE label_overridden IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET client_text_overridden = FALSE WHERE client_text_overridden IS NULL"))
+            conn.execute(text("UPDATE bot_button_settings SET suppress_client_answer = FALSE WHERE suppress_client_answer IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET stable_button_id = id WHERE stable_button_id IS NULL"))
             return
 
@@ -1172,6 +1178,7 @@ def ensure_bot_button_settings_table() -> None:
                     fixed_assignee_enabled BOOLEAN,
                     fixed_assignee_user_id VARCHAR(36),
                     freeze_on_create BOOLEAN,
+                    suppress_client_answer BOOLEAN,
                     confirmation_enabled BOOLEAN,
                     confirmation_text TEXT,
                     confirmation_overridden BOOLEAN,
@@ -1231,6 +1238,8 @@ def ensure_bot_button_settings_table() -> None:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN fixed_assignee_user_id VARCHAR(36)"))
         if "freeze_on_create" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN freeze_on_create BOOLEAN"))
+        if "suppress_client_answer" not in existing:
+            conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN suppress_client_answer BOOLEAN"))
         if "confirmation_enabled" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN confirmation_enabled BOOLEAN"))
         if "confirmation_text" not in existing:
@@ -1282,6 +1291,7 @@ def ensure_bot_button_settings_table() -> None:
         conn.execute(text("UPDATE bot_button_settings SET is_archived = FALSE WHERE is_archived IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET label_overridden = FALSE WHERE label_overridden IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET client_text_overridden = FALSE WHERE client_text_overridden IS NULL"))
+        conn.execute(text("UPDATE bot_button_settings SET suppress_client_answer = FALSE WHERE suppress_client_answer IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET stable_button_id = id WHERE stable_button_id IS NULL"))
 
 

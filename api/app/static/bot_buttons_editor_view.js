@@ -485,6 +485,7 @@
       : String(leaf.workflow_type || "").trim().toLowerCase();
     const editorWorkflowType = String(state.editorWorkflowType || resolvedLeafWorkflowType || "").trim().toLowerCase();
     const isSubmenuEditor = editorWorkflowType === "submenu";
+    const isGroupTaskChildEditor = editorWorkflowType === "group_task_child";
     const workflowTypeOptions = typeof editorHelpers.getWorkflowTypeOptions === "function"
       ? editorHelpers.getWorkflowTypeOptions(leaf)
       : [];
@@ -517,6 +518,8 @@
     });
     const selectedAutomationKnown = visibleAutomations.some((item) => String(item?.key || "") === String(state.automationTypeValue || "none"));
     const showSendFilesSettings = String(state.automationTypeValue || "none") === "send_files";
+    const nameLabel = isGroupTaskChildEditor ? "Название задачи" : "Название в боте";
+    const namePlaceholder = isGroupTaskChildEditor ? "Введите название задачи" : "Введите название кнопки/раздела в боте";
 
     const leftColumnHtml = isSubmenuEditor
       ? `
@@ -561,14 +564,16 @@
           </div>
 
           <div class="bot-editor-section">
-            <label class="field-label">Название в боте</label>
-            <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="Введите название кнопки/раздела в боте" />
+            <label class="field-label">${escapeHtml(nameLabel)}</label>
+            <input id="botLabelInput" class="input" type="text" maxlength="255" value="${escapeHtml(state.editorBotLabel || "")}" placeholder="${escapeHtml(namePlaceholder)}" />
           </div>
 
-          <div class="bot-editor-section">
-            <label class="field-label">Цвет кнопки</label>
-            ${renderButtonStylePicker(ctx)}
-          </div>
+          ${isGroupTaskChildEditor ? "" : `
+            <div class="bot-editor-section">
+              <label class="field-label">Цвет кнопки</label>
+              ${renderButtonStylePicker(ctx)}
+            </div>
+          `}
 
           <div class="bot-editor-section">
             <div class="bot-removed-title">Параметры создания</div>
@@ -587,6 +592,12 @@
               <input id="freezeOnCreate" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
               <span>Сразу замораживать при создании</span>
             </label>
+            ${isGroupTaskChildEditor ? `
+              <label class="checkbox-label">
+                <input id="suppressClientAnswer" type="checkbox" ${state.suppressClientAnswer ? "checked" : ""} />
+                <span>Не отправлять ответ клиенту</span>
+              </label>
+            ` : ""}
           </div>
 
           <div class="bot-editor-section">
@@ -646,13 +657,15 @@
             <div class="status">Статус: ${escapeHtml(textStatus(state.editorText))}</div>
           </div>
 
-          <div class="bot-editor-section">
-            <div class="bot-editor-text-row">
-              <label class="field-label">Текст клиенту</label>
-              <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
+          ${isGroupTaskChildEditor ? "" : `
+            <div class="bot-editor-section">
+              <div class="bot-editor-text-row">
+                <label class="field-label">Текст клиенту</label>
+                <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
             </div>
-            <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
-          </div>
+          `}
 
           <div class="bot-editor-section">
             <div class="bot-editor-text-row">
@@ -662,18 +675,20 @@
             <div class="status">Статус: ${escapeHtml(textStatus(state.editorSystemText))}</div>
           </div>
 
-          <div class="bot-editor-section">
-            <label class="checkbox-label">
-              <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
-              <span>Требовать подтверждение перед созданием</span>
-            </label>
-            <div class="bot-editor-text-row">
-              <label class="field-label">Подтверждение перед созданием</label>
-              <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
+          ${isGroupTaskChildEditor ? "" : `
+            <div class="bot-editor-section">
+              <label class="checkbox-label">
+                <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
+                <span>Требовать подтверждение перед созданием</span>
+              </label>
+              <div class="bot-editor-text-row">
+                <label class="field-label">Подтверждение перед созданием</label>
+                <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
+              </div>
+              <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
+              ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
             </div>
-            <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
-            ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
-          </div>
+          `}
         `;
 
     el.content.innerHTML = `
@@ -720,6 +735,7 @@
     const workflowTypeSelectEl = document.getElementById("editorWorkflowTypeSelect");
     const fixedUserEl = document.getElementById("fixedAssigneeUserId");
     const freezeOnCreateEl = document.getElementById("freezeOnCreate");
+    const suppressClientAnswerEl = document.getElementById("suppressClientAnswer");
     const automationKeySelectEl = document.getElementById("automationKeySelect");
     const confirmationEnabledEl = document.getElementById("confirmationEnabled");
     const addBotFileBtn = document.getElementById("addBotFileBtn");
@@ -809,6 +825,9 @@
     });
     freezeOnCreateEl?.addEventListener("change", () => {
       state.freezeOnCreate = !!freezeOnCreateEl.checked;
+    });
+    suppressClientAnswerEl?.addEventListener("change", () => {
+      state.suppressClientAnswer = !!suppressClientAnswerEl.checked;
     });
     automationKeySelectEl?.addEventListener("change", () => {
       state.automationTypeValue = String(automationKeySelectEl.value || "none");

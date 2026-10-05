@@ -32,17 +32,17 @@ def _session():
 
 
 def _add_message(db, ticket, message_type, body, author_user_id, **kwargs):
-    db.add(
-        TicketMessage(
-            id=str(uuid.uuid4()),
-            ticket_id=ticket.id,
-            message_type=message_type.value if hasattr(message_type, "value") else message_type,
-            body=body,
-            author_user_id=author_user_id,
-            agent_visible=kwargs.get("agent_visible", True),
-            created_at=datetime.utcnow(),
-        )
+    message = TicketMessage(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        message_type=message_type.value if hasattr(message_type, "value") else message_type,
+        body=body,
+        author_user_id=author_user_id,
+        agent_visible=kwargs.get("agent_visible", True),
+        created_at=datetime.utcnow(),
     )
+    db.add(message)
+    return message
 
 
 def _seed_ticket(session, **overrides) -> Ticket:
@@ -175,6 +175,35 @@ def _system_messages(session, ticket: Ticket) -> list[str]:
     ]
 
 
+def _close_group_child_for_test(session, child: Ticket, parent_client_message: TicketMessage, sent_texts: list[str], sent_attachments: list[str]) -> str:
+    child_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=child.id, message_type=MessageType.CLIENT.value, body="Child request", created_at=datetime.utcnow())
+    session.add(child_client_message)
+    session.commit()
+    agent_message = _seed_agent_message(session, child, "agent-1", body=f"Answer {child.subject}")
+    _seed_attachment(session, child, agent_message)
+    return close_ticket_by_actor(
+        session,
+        child,
+        SimpleNamespace(id="agent-1", role="agent"),
+        force_without_agent_reply_for_task=False,
+        is_admin_fn=lambda actor: False,
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: agent_message,
+        first_client_message_fn=lambda _db, ticket: (
+            parent_client_message
+            if ticket.id == parent_client_message.ticket_id
+            else (child_client_message if ticket.id == child.id else None)
+        ),
+        send_to_telegram_client_fn=lambda _db, _ticket, text, **_kwargs: sent_texts.append(text) or {"ok": True},
+        actor_display_name_fn=lambda *_: "Agent",
+        add_message_fn=_add_message,
+        message_attachments_fn=_message_attachments,
+        send_attachment_to_telegram_client_fn=lambda _db, _ticket, item, **_kwargs: sent_attachments.append(item.original_filename),
+        onsite_close_reminder_text="onsite",
+        ticket_closed_client_text="closed",
+    )
+
+
 def test_admin_normal_task_close_without_agent_result_is_rejected():
     session = _session()
     ticket = _seed_ticket(
@@ -206,6 +235,144 @@ def test_admin_normal_task_close_without_agent_result_is_rejected():
     assert raised.value.detail["error"]["code"] == "close_not_allowed"
     session.refresh(ticket)
     assert ticket.status == TicketStatus.PENDING.value
+
+
+def test_group_child_without_suppression_copies_answer_and_attachment_to_parent():
+    session = _session()
+    parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    child = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Allowed",
+        suppress_client_answer=False,
+    )
+    parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
+    session.add(parent_client_message)
+    session.commit()
+    sent_texts: list[str] = []
+    sent_attachments: list[str] = []
+
+    result = _close_group_child_for_test(session, child, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(child)
+    session.refresh(parent)
+    parent_agent_messages = session.execute(select(TicketMessage).where(TicketMessage.ticket_id == parent.id, TicketMessage.message_type == MessageType.AGENT.value)).scalars().all()
+
+    assert result == "closed"
+    assert child.status == TicketStatus.CLOSED.value
+    assert parent.status == TicketStatus.CLOSED.value
+    assert [message.body for message in parent_agent_messages] == ["Answer Allowed"]
+    assert sent_attachments == ["result.pdf"]
+    assert "Answer Allowed" in sent_texts[0]
+
+
+def test_group_child_with_suppression_does_not_copy_answer_or_attachment_but_completes_parent():
+    session = _session()
+    parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    child = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Suppressed",
+        suppress_client_answer=True,
+    )
+    parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
+    session.add(parent_client_message)
+    session.commit()
+    sent_texts: list[str] = []
+    sent_attachments: list[str] = []
+
+    result = _close_group_child_for_test(session, child, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(child)
+    session.refresh(parent)
+    parent_agent_messages = session.execute(select(TicketMessage).where(TicketMessage.ticket_id == parent.id, TicketMessage.message_type == MessageType.AGENT.value)).scalars().all()
+    child_agent_messages = session.execute(select(TicketMessage).where(TicketMessage.ticket_id == child.id, TicketMessage.message_type == MessageType.AGENT.value)).scalars().all()
+
+    assert result == "closed"
+    assert child.status == TicketStatus.CLOSED.value
+    assert parent.status == TicketStatus.CLOSED.value
+    assert [message.body for message in child_agent_messages] == ["Answer Suppressed"]
+    assert parent_agent_messages == []
+    assert sent_attachments == []
+    assert "Answer Suppressed" not in sent_texts[0]
+
+
+def test_mixed_group_parent_sends_only_unsuppressed_child_answers():
+    session = _session()
+    parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    allowed = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Allowed",
+        suppress_client_answer=False,
+    )
+    suppressed = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Suppressed",
+        suppress_client_answer=True,
+    )
+    parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
+    session.add(parent_client_message)
+    session.commit()
+    sent_texts: list[str] = []
+    sent_attachments: list[str] = []
+
+    _close_group_child_for_test(session, allowed, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(parent)
+    assert parent.status != TicketStatus.CLOSED.value
+
+    _close_group_child_for_test(session, suppressed, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(parent)
+
+    assert parent.status == TicketStatus.CLOSED.value
+    assert sent_attachments == ["result.pdf"]
+    assert "Answer Allowed" in sent_texts[-1]
+    assert "Answer Suppressed" not in sent_texts[-1]
+
+
+def test_all_suppressed_group_children_still_complete_parent_without_answers():
+    session = _session()
+    parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
+    first = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Suppressed one",
+        suppress_client_answer=True,
+    )
+    second = _seed_ticket(
+        session,
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_CHILD.value,
+        parent_ticket_id=parent.id,
+        subject="Suppressed two",
+        suppress_client_answer=True,
+    )
+    parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
+    session.add(parent_client_message)
+    session.commit()
+    sent_texts: list[str] = []
+    sent_attachments: list[str] = []
+
+    _close_group_child_for_test(session, first, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(parent)
+    assert parent.status != TicketStatus.CLOSED.value
+
+    _close_group_child_for_test(session, second, parent_client_message, sent_texts, sent_attachments)
+    session.refresh(parent)
+
+    assert parent.status == TicketStatus.CLOSED.value
+    assert sent_attachments == []
+    assert "Answer Suppressed one" not in sent_texts[-1]
+    assert "Answer Suppressed two" not in sent_texts[-1]
 
 
 def test_admin_normal_task_close_with_only_internal_comment_attachment_is_rejected():

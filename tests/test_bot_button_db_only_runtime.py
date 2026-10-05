@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, Ticket, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
 from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
@@ -1651,6 +1651,53 @@ def test_group_task_child_save_with_same_workflow_keeps_terminal_child_button_ki
     assert row.button_kind == "terminal"
 
 
+def test_group_task_child_suppress_client_answer_get_put_default(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|group_task_child|A", workflow_type="group_task_child", button_kind="terminal")
+    admin = SimpleNamespace(id="admin-1", role="admin")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    item = settings_bot_button_items.get_bot_button_item("menu-a|group_task_child|A", menu_type="menu-a", db=session, user=admin)
+    assert item["suppress_client_answer"] is False
+
+    payload = settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+            instruction_text="Child instruction",
+            suppress_client_answer=True,
+        ),
+        button_key="menu-a|group_task_child|A",
+        menu_type="menu-a",
+        workflow_type="group_task_child",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=admin,
+    )
+    assert payload["suppress_client_answer"] is True
+    item = settings_bot_button_items.get_bot_button_item("menu-a|group_task_child|A", menu_type="menu-a", db=session, user=admin)
+    assert item["suppress_client_answer"] is True
+
+    payload = settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+            suppress_client_answer=False,
+        ),
+        button_key="menu-a|group_task_child|A",
+        menu_type="menu-a",
+        workflow_type="group_task_child",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=admin,
+    )
+    assert payload["suppress_client_answer"] is False
+
+
 def test_type_change_clears_incompatible_existing_automation_when_frontend_does_not_send_replacement(monkeypatch):
     session = _session()
     _seed_row(
@@ -2190,6 +2237,72 @@ def test_db_created_group_task_child_survives_rebuild_archive_and_restore(monkey
     assert child_keys_after_restore == ["menu-a|group_task_child|Parent/Source child", db_key]
     assert len(child_keys_after_restore) == len(set(child_keys_after_restore))
     assert child_nodes_after_restore[1]["has_instruction"] is True
+
+
+def test_group_task_child_creation_snapshots_suppress_client_answer_for_source_and_db_children(monkeypatch):
+    session = _session()
+    source_key = "menu-a|group_task_child|Parent/Source child"
+    db_key = "menu-a|group_task_child|Parent/DB child"
+    _seed_row(
+        session,
+        button_key=source_key,
+        workflow_type="group_task_child",
+        button_kind="terminal",
+        button_path="Parent/Source child",
+        button_label="Source child",
+        suppress_client_answer=False,
+    )
+    _seed_row(
+        session,
+        button_key=db_key,
+        workflow_type="group_task_child",
+        button_kind="terminal",
+        button_path="Parent/DB child",
+        button_label="DB child",
+        is_db_created=True,
+        suppress_client_answer=True,
+    )
+    parent = Ticket(
+        id="parent-ticket",
+        company_id="company-1",
+        client_id="client-1",
+        subject="Parent",
+        workflow_type=TicketWorkflowType.TASK.value,
+        task_kind=TicketTaskKind.GROUP_PARENT.value,
+        status=TicketStatus.PENDING.value,
+    )
+    session.add(parent)
+    session.commit()
+    monkeypatch.setattr(telegram_router, "_menu_name_for_ticket_client", lambda db, ticket: "menu-a")
+    monkeypatch.setattr(
+        telegram_router,
+        "list_terminal_buttons",
+        lambda menu_name: (
+            TerminalButtonRef(
+                source_button_key="source-child",
+                label="Source child",
+                workflow_type="group_task_child",
+                full_path="Parent/Source child",
+                technical_key=source_key,
+                instruction_text=None,
+            ),
+        ),
+    )
+
+    source_child = ButtonSpec(key="source-child", label="Source child", kind="task")
+    db_child = telegram_router._button_from_db_row(session, session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one(), "menu-a")
+    group = ButtonSpec(key="parent", label="Parent", kind="group_task", subtasks=(source_child, db_child))
+
+    telegram_router._create_group_children_from_collecting(session, parent, group, "client body", None)
+    created_children = session.query(Ticket).filter(Ticket.parent_ticket_id == parent.id).order_by(Ticket.subject).all()
+    snapshot_by_subject = {child.subject: child.suppress_client_answer for child in created_children}
+    assert snapshot_by_subject == {"DB child": True, "Source child": False}
+
+    session.query(BotButtonSetting).filter(BotButtonSetting.button_key == source_key).one().suppress_client_answer = True
+    session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one().suppress_client_answer = False
+    session.commit()
+    created_children = session.query(Ticket).filter(Ticket.parent_ticket_id == parent.id).order_by(Ticket.subject).all()
+    assert {child.subject: child.suppress_client_answer for child in created_children} == snapshot_by_subject
 
 
 def test_first_connection_can_close_after_agent_reply_without_verified_profile():

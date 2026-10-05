@@ -86,6 +86,10 @@
     return Editor.resolveLeafWorkflowType(leaf) === "submenu";
   };
 
+  Editor.isGroupTaskChildWorkflow = function isGroupTaskChildWorkflow(value) {
+    return Editor.normalizeWorkflowType(value) === "group_task_child";
+  };
+
   Editor.syncAutomationSelectionMeta = function syncAutomationSelectionMeta(ctx) {
     const { state } = ctx;
     const selectedType = String(state.automationTypeValue || "none").trim() || "none";
@@ -117,16 +121,19 @@
 
   Editor.hasUnsavedChanges = function hasUnsavedChanges(ctx) {
     const { state } = ctx;
+    const workflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || state.savedWorkflowType || Editor.resolveLeafWorkflowType(state.selectedLeaf));
+    const isGroupTaskChild = Editor.isGroupTaskChildWorkflow(workflowType);
     return (state.editorText || "") !== (state.savedText || "")
       || (state.editorBotLabel || "") !== (state.savedBotLabel || "")
-      || (state.buttonStyle || "") !== (state.savedButtonStyle || "")
-      || (state.editorClientText || "") !== (state.savedClientText || "")
+      || (!isGroupTaskChild && (state.buttonStyle || "") !== (state.savedButtonStyle || ""))
+      || (!isGroupTaskChild && (state.editorClientText || "") !== (state.savedClientText || ""))
       || (state.editorSystemText || "") !== (state.savedSystemText || "")
       || state.fixedAssigneeEnabled !== state.savedFixedAssigneeEnabled
       || (state.fixedAssigneeUserId || "") !== (state.savedFixedAssigneeUserId || "")
       || state.freezeOnCreate !== state.savedFreezeOnCreate
-      || state.confirmationEnabled !== state.savedConfirmationEnabled
-      || (state.confirmationText || "") !== (state.savedConfirmationText || "")
+      || (isGroupTaskChild && state.suppressClientAnswer !== state.savedSuppressClientAnswer)
+      || (!isGroupTaskChild && state.confirmationEnabled !== state.savedConfirmationEnabled)
+      || (!isGroupTaskChild && (state.confirmationText || "") !== (state.savedConfirmationText || ""))
       || state.filesOverridden !== state.savedFilesOverridden
       || JSON.stringify(state.selectedFiles || []) !== JSON.stringify(state.savedSelectedFiles || [])
       || state.conditionalFilesOverridden !== state.savedConditionalFilesOverridden
@@ -151,6 +158,7 @@
     state.fixedAssigneeEnabled = !!state.savedFixedAssigneeEnabled;
     state.fixedAssigneeUserId = state.savedFixedAssigneeUserId || "";
     state.freezeOnCreate = !!state.savedFreezeOnCreate;
+    state.suppressClientAnswer = !!state.savedSuppressClientAnswer;
     state.confirmationEnabled = !!state.savedConfirmationEnabled;
     state.confirmationText = state.savedConfirmationText || "";
     state.filesOverridden = !!state.savedFilesOverridden;
@@ -219,6 +227,8 @@
     state.fixedAssigneeUserId = state.savedFixedAssigneeUserId;
     state.savedFreezeOnCreate = !!payload?.freeze_on_create;
     state.freezeOnCreate = state.savedFreezeOnCreate;
+    state.savedSuppressClientAnswer = !!payload?.suppress_client_answer;
+    state.suppressClientAnswer = state.savedSuppressClientAnswer;
 
     state.savedConfirmationEnabled = !!payload?.confirmation_enabled;
     state.confirmationEnabled = state.savedConfirmationEnabled;
@@ -272,6 +282,7 @@
     if (!leaf || !state.selectedMenu) return;
     const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || Editor.resolveLeafWorkflowType(leaf));
     const isSubmenu = requestWorkflowType === "submenu";
+    const isGroupTaskChild = Editor.isGroupTaskChildWorkflow(requestWorkflowType);
     if (!String(state.editorBotLabel || "").trim()) {
       alert("Название в боте не может быть пустым.");
       return;
@@ -358,19 +369,14 @@
         }
       : {
           instruction_text: state.editorText,
-          client_text_overridden: true,
-          client_text: state.editorClientText,
           label_overridden: true,
           label_override: state.editorBotLabel,
-          button_style: state.buttonStyle || null,
           system_text: state.editorSystemText,
           system_text_overridden: true,
           fixed_assignee_enabled: state.fixedAssigneeEnabled,
           fixed_assignee_user_id: state.fixedAssigneeUserId || null,
           freeze_on_create: state.freezeOnCreate,
-          confirmation_enabled: state.confirmationEnabled,
-          confirmation_text: state.confirmationText,
-          confirmation_overridden: true,
+          suppress_client_answer: isGroupTaskChild ? state.suppressClientAnswer : undefined,
           files_overridden: state.filesOverridden,
           files: state.filesOverridden ? (sendFilesPayload.files || []) : null,
           conditional_files_overridden: state.conditionalFilesOverridden,
@@ -380,6 +386,14 @@
           is_enabled: state.isEnabled,
           visibility_overridden: true,
         };
+    if (!isSubmenu && !isGroupTaskChild) {
+      requestBody.client_text_overridden = true;
+      requestBody.client_text = state.editorClientText;
+      requestBody.button_style = state.buttonStyle || null;
+      requestBody.confirmation_enabled = state.confirmationEnabled;
+      requestBody.confirmation_text = state.confirmationText;
+      requestBody.confirmation_overridden = true;
+    }
 
     await api(
       `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(requestWorkflowType)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
@@ -399,6 +413,7 @@
     state.savedFixedAssigneeEnabled = state.fixedAssigneeEnabled;
     state.savedFixedAssigneeUserId = state.fixedAssigneeUserId;
     state.savedFreezeOnCreate = state.freezeOnCreate;
+    state.savedSuppressClientAnswer = state.suppressClientAnswer;
     state.savedConfirmationEnabled = state.confirmationEnabled;
     state.savedConfirmationText = state.confirmationText;
     state.savedFilesOverridden = state.filesOverridden;

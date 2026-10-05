@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import os
@@ -39,6 +39,7 @@ class ButtonSpec:
     automation_key: str | None = None
     forced_assignee_type: str | None = None
     forced_assignee_value: str | None = None
+    suppress_client_answer: bool = False
     file_path: str | None = None
     file_rules: tuple[dict[str, str], ...] = ()
     submenu_key: str | None = None
