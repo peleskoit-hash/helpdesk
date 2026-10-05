@@ -876,6 +876,19 @@ function renderEditor() {
   return BotButtonsEditorView.renderEditor(editorViewCtx());
 }
 
+function bindBreadcrumbSaveButton() {
+  const saveBtn = document.getElementById("saveInstructionBtn");
+  if (!saveBtn || saveBtn.__botButtonsSaveBound) return;
+  saveBtn.__botButtonsSaveBound = true;
+  saveBtn.addEventListener("click", async () => {
+    try {
+      await saveInstruction();
+    } catch (error) {
+      setStatus(`Ошибка: ${error?.message || "Не удалось сохранить"}`);
+    }
+  });
+}
+
 function renderBreadcrumb() {
   const parts = ["Кнопки бота"];
   if (state.selectedMenu) parts.push(state.selectedMenu);
@@ -894,6 +907,7 @@ function renderBreadcrumb() {
         <span class="bot-buttons-breadcrumb-path">${escapeHtml(pathText)}</span>
         <button id="saveInstructionBtn" type="button" class="action action-primary bot-breadcrumb-save-btn">Сохранить</button>
       `;
+      bindBreadcrumbSaveButton();
     } else {
       el.breadcrumb.classList.remove("bot-buttons-breadcrumb--with-action");
       el.breadcrumb.textContent = pathText;

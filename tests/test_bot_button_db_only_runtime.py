@@ -1594,6 +1594,36 @@ def test_group_parent_save_with_same_workflow_keeps_group_parent_button_kind(mon
     assert row.button_kind == "group_parent"
 
 
+def test_group_parent_save_allows_legacy_section_button_kind(monkeypatch):
+    session = _session()
+    _seed_row(session, button_key="menu-a|group_task|A", workflow_type="group_task", button_kind="section")
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
+
+    payload = settings_bot_button_items.save_bot_button_instruction(
+        BotButtonInstructionUpdate(
+            label_override="A",
+            label_overridden=True,
+            client_text="Текст",
+            client_text_overridden=True,
+        ),
+        button_key="menu-a|group_task|A",
+        menu_type="menu-a",
+        workflow_type="group_task",
+        button_path="A",
+        button_label="A",
+        db=session,
+        user=SimpleNamespace(id="admin-1"),
+    )
+
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|group_task|A").one()
+    assert payload["ok"] is True
+    assert row.workflow_type == "group_task"
+    assert row.button_kind == "section"
+    assert row.client_text == "Текст"
+
+
 def test_group_task_child_save_with_same_workflow_keeps_terminal_child_button_kind(monkeypatch):
     session = _session()
     _seed_row(session, button_key="menu-a|group_task_child|A", workflow_type="group_task_child", button_kind="terminal")

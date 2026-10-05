@@ -2210,6 +2210,152 @@ test('first connection editor does not render or save duplicated client text', (
   assert.doesNotMatch(source, /clientText: String\(item\?\.client_text_effective/);
 });
 
+test('bot buttons breadcrumb save button invokes editor save once after rerender', async () => {
+  class MockElement {
+    constructor(id = '') {
+      this.id = id;
+      this.textContent = '';
+      this._innerHTML = '';
+      this.listeners = {};
+      this.classList = {
+        values: new Set(),
+        add: (...items) => items.forEach((item) => this.classList.values.add(item)),
+        remove: (...items) => items.forEach((item) => this.classList.values.delete(item)),
+      };
+    }
+    set innerHTML(value) {
+      this._innerHTML = String(value || '');
+      if (this.id === 'botButtonsBreadcrumb' && this._innerHTML.includes('saveInstructionBtn')) {
+        documentElements.saveInstructionBtn = new MockElement('saveInstructionBtn');
+      }
+    }
+    get innerHTML() { return this._innerHTML; }
+    addEventListener(type, handler) {
+      this.listeners[type] = this.listeners[type] || [];
+      this.listeners[type].push(handler);
+    }
+    removeEventListener(type, handler) {
+      this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler);
+    }
+    async click() {
+      for (const handler of this.listeners.click || []) {
+        await handler({ preventDefault() {} });
+      }
+    }
+    closest() { return null; }
+    querySelectorAll() { return []; }
+  }
+
+  const documentElements = {
+    statusText: new MockElement('statusText'),
+    backToSettingsBtn: new MockElement('backToSettingsBtn'),
+    botButtonsPageTitle: new MockElement('botButtonsPageTitle'),
+    botButtonsBreadcrumb: new MockElement('botButtonsBreadcrumb'),
+    botButtonsContent: new MockElement('botButtonsContent'),
+  };
+  let menuCtx = null;
+  let levelCtx = null;
+  const registerCalls = [];
+  const saveCalls = [];
+  const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
+  const window = {
+    BotButtonsApi: {
+      api(url) {
+        const path = String(url || '');
+        if (path.includes('/assignees')) return Promise.resolve([]);
+        if (path.includes('/files')) return Promise.resolve({ items: [] });
+        if (path.includes('/automations')) return Promise.resolve({ items: [] });
+        if (path.includes('/menu-types/archived')) return Promise.resolve([]);
+        if (path.includes('/destination-options')) return Promise.resolve({ items: [], free: [] });
+        if (path.endsWith('/menu-types')) return Promise.resolve([{ menu_name: 'menu-a', display_name: 'Menu A' }]);
+        if (path.includes('/menu-types/menu-a/structure')) {
+          return Promise.resolve({ root_level_key: 'menu-a|level|__root__', tree_rows: [] });
+        }
+        return Promise.resolve({});
+      },
+      escapeHtml(value) { return String(value); },
+      safeText(value) { return String(value || ''); },
+      yesNo(value) { return value ? 'Да' : 'Нет'; },
+      nodeKindLabel(value) { return String(value || ''); },
+      renderInfoRow() { return ''; },
+      hasAnyStoredSettings() { return false; },
+    },
+    BotButtonsFiles: {},
+    BotButtonsLevelView: {
+      renderLevel(ctx) {
+        levelCtx = ctx;
+        return '';
+      },
+    },
+    BotButtonsEditor: {
+      openEditor(ctx, leaf) {
+        ctx.state.selectedLeaf = leaf;
+        ctx.state.view = 'editor';
+        ctx.render();
+        return Promise.resolve();
+      },
+      saveInstruction() {
+        saveCalls.push('save');
+        return Promise.resolve();
+      },
+      hasUnsavedChanges() { return false; },
+      confirmDiscard() { return true; },
+      discardEditorChanges() {},
+      syncAutomationSelectionMeta() {},
+    },
+    BotButtonsMenuView: {
+      renderMenuTypes(ctx) {
+        menuCtx = ctx;
+        return '';
+      },
+      renderRightPanel() { return ''; },
+      selectedMenuInfo() { return { display_name: 'Menu A' }; },
+    },
+    BotButtonsEditorView: {
+      renderEditor() {
+        documentElements.botButtonsContent.innerHTML = '<div data-editor="1"></div>';
+      },
+      cleanup() {},
+    },
+    HelpdeskSidebar: { init: () => Promise.resolve() },
+    HelpdeskAppShell: {
+      registerPage(name, fn) { registerCalls.push({ name, fn }); },
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    location: { href: '/settings' },
+  };
+  const document = {
+    getElementById(id) { return documentElements[id] || null; },
+    querySelectorAll() { return []; },
+    createElement() { return new MockElement(); },
+    body: { appendChild() {} },
+  };
+  const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object });
+  vm.runInContext(source, context);
+
+  assert.equal(registerCalls.length, 1);
+  const page = registerCalls[0].fn();
+  await new Promise((resolve) => setImmediate(resolve));
+  await menuCtx.openMenu('menu-a', 'Menu A');
+  await levelCtx.openEditor({
+    technical_key: 'menu-a|group_task|Parent',
+    workflow_type: 'group_task',
+    label: 'Parent',
+    full_path: 'Parent',
+  });
+  levelCtx.render();
+  assert.ok(documentElements.saveInstructionBtn, 'breadcrumb save button should be rendered');
+
+  await documentElements.saveInstructionBtn.click();
+  assert.deepEqual(saveCalls, ['save']);
+
+  levelCtx.render();
+  await documentElements.saveInstructionBtn.click();
+  assert.deepEqual(saveCalls, ['save', 'save']);
+  page.destroy();
+});
+
 test('system event click handler opens review button group api load path', async () => {
   const calls = [];
   const state = { view: 'menu_types', systemTicketLoadError: '', systemButtonGroup: null };

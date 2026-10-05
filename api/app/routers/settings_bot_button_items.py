@@ -355,14 +355,14 @@ def _validate_existing_button_workflow_transition(row: BotButtonSetting, request
         if requested_workflow and requested_workflow != current_workflow:
             _error(422, "system_button_type_change_forbidden", ERROR_SYSTEM_BUTTON_TYPE_CHANGE_FORBIDDEN)
         return current_workflow
-    if current_workflow == "submenu" or row_kind == "section":
-        if requested_workflow and requested_workflow != "submenu":
-            _error(422, "button_type_change_forbidden", ERROR_SUBMENU_TYPE_CHANGE_FORBIDDEN)
-        return "submenu"
     if current_workflow == "group_task" or row_kind == "group_parent":
         if requested_workflow and requested_workflow != current_workflow:
             _error(422, "button_type_change_forbidden", ERROR_GROUP_TASK_TYPE_CHANGE_FORBIDDEN)
         return current_workflow
+    if current_workflow == "submenu" or row_kind == "section":
+        if requested_workflow and requested_workflow != "submenu":
+            _error(422, "button_type_change_forbidden", ERROR_SUBMENU_TYPE_CHANGE_FORBIDDEN)
+        return "submenu"
     if current_workflow == "group_task_child":
         if requested_workflow and requested_workflow != current_workflow:
             _error(422, "button_type_change_forbidden", ERROR_GROUP_TASK_CHILD_TYPE_CHANGE_FORBIDDEN)
