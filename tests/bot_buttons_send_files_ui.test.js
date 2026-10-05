@@ -2197,7 +2197,17 @@ test('system ticket click handler triggers system api load path', async () => {
   assert.equal(calls[0], 'discard');
   assert.equal(calls[1], '/api/v1/settings/bot-buttons/system/first-connection');
   assert.equal(state.view, 'system_editor');
+  assert.equal(Object.hasOwn(state.systemFirstConnectionDraft, 'clientText'), false);
   assert.equal(statuses.at(-1), '\u0413\u043e\u0442\u043e\u0432\u043e');
+});
+
+test('first connection editor does not render or save duplicated client text', () => {
+  const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
+
+  assert.doesNotMatch(source, /editSystemFirstConnectionClientTextBtn/);
+  assert.doesNotMatch(source, /systemFirstConnectionDraft\.clientText/);
+  assert.doesNotMatch(source, /client_text: draft\.clientText/);
+  assert.doesNotMatch(source, /clientText: String\(item\?\.client_text_effective/);
 });
 
 test('system event click handler opens review button group api load path', async () => {
@@ -2527,6 +2537,8 @@ test('editor view renders workflow type select for ticket key fallback without e
   assert.match(content.innerHTML, /\u0417\u0430\u044f\u0432\u043a\u0430/);
   assert.match(content.innerHTML, /\u0417\u0430\u0434\u0430\u0447\u0430/);
   assert.match(content.innerHTML, /\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430/);
+  assert.match(content.innerHTML, /\u0422\u0435\u043a\u0441\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443/);
+  assert.match(content.innerHTML, /id="editClientTextBtn"/);
 });
 
 test('editor view renders compact button color picker without visual color labels', () => {

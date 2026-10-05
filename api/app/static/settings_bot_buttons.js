@@ -51,7 +51,6 @@ async function loadSystemFirstConnectionEditorState({ api, state, render, setSta
     const item = await api("/api/v1/settings/bot-buttons/system/first-connection");
     const draft = {
       subject: String(item?.subject_effective || ""),
-      clientText: String(item?.client_text_effective || ""),
       systemText: String(item?.system_text_effective || ""),
       instructionText: String(item?.instruction_text || ""),
     };
@@ -66,13 +65,11 @@ async function loadSystemFirstConnectionEditorState({ api, state, render, setSta
     state.systemFirstConnection = null;
     state.systemFirstConnectionDraft = {
       subject: "",
-      clientText: "",
       systemText: "",
       instructionText: "",
     };
     state.savedSystemFirstConnectionDraft = {
       subject: "",
-      clientText: "",
       systemText: "",
       instructionText: "",
     };
@@ -197,13 +194,11 @@ const state = {
   systemTicketLoadError: "",
   systemFirstConnectionDraft: {
     subject: "",
-    clientText: "",
     systemText: "",
     instructionText: "",
   },
   savedSystemFirstConnectionDraft: {
     subject: "",
-    clientText: "",
     systemText: "",
     instructionText: "",
   },
@@ -344,7 +339,6 @@ function discardEditorChanges() {
 function emptySystemFirstConnectionDraft() {
   return {
     subject: "",
-    clientText: "",
     systemText: "",
     instructionText: "",
   };
@@ -357,7 +351,6 @@ function textStatus(value) {
 function hydrateSystemFirstConnectionState(item) {
   const draft = {
     subject: String(item?.subject_effective || ""),
-    clientText: String(item?.client_text_effective || ""),
     systemText: String(item?.system_text_effective || ""),
     instructionText: String(item?.instruction_text || ""),
   };
@@ -607,13 +600,6 @@ function renderSystemFirstConnectionEditor() {
             <label class="field-label" for="systemFirstConnectionSubject">\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438</label>
             <input id="systemFirstConnectionSubject" class="input" type="text" value="${escapeHtml(draft.subject || "")}" autocomplete="off" />
           </div>
-          <div class="bot-editor-section">
-            <div class="bot-editor-text-row">
-              <label class="field-label">\u0422\u0435\u043a\u0441\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443</label>
-              <button id="editSystemFirstConnectionClientTextBtn" type="button" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c</button>
-            </div>
-            <div class="status">\u0421\u0442\u0430\u0442\u0443\u0441: ${escapeHtml(textStatus(draft.clientText))}</div>
-          </div>
         </div>
         <div class="bot-editor-col bot-editor-col-right">
           <div class="bot-editor-section">
@@ -640,20 +626,6 @@ function renderSystemFirstConnectionEditor() {
 
   document.getElementById("systemFirstConnectionSubject")?.addEventListener("input", (event) => {
     state.systemFirstConnectionDraft.subject = String(event.target?.value || "");
-  });
-
-  document.getElementById("editSystemFirstConnectionClientTextBtn")?.addEventListener("click", () => {
-    openSystemFirstConnectionTextEditor({
-      title: "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0442\u0435\u043a\u0441\u0442\u0430 \u043a\u043b\u0438\u0435\u043d\u0442\u0443",
-      value: draft.clientText || "",
-      placeholder: "\u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435, \u043a\u043e\u0442\u043e\u0440\u043e\u0435 \u0431\u043e\u0442 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443",
-      withTelegramPreview: true,
-      withTelegramToolbar: true,
-      onApply: (nextValue) => {
-        state.systemFirstConnectionDraft.clientText = nextValue;
-        renderSystemFirstConnectionEditor();
-      },
-    });
   });
 
   document.getElementById("editSystemFirstConnectionSystemTextBtn")?.addEventListener("click", () => {
@@ -691,7 +663,6 @@ function renderSystemFirstConnectionEditor() {
     const previous = state.savedSystemFirstConnectionDraft || emptySystemFirstConnectionDraft();
     const payload = {
       ...(draft.subject.trim() && draft.subject.trim() !== previous.subject.trim() ? { subject: draft.subject.trim() } : {}),
-      ...(draft.clientText.trim() && draft.clientText.trim() !== previous.clientText.trim() ? { client_text: draft.clientText.trim() } : {}),
       ...(draft.systemText.trim() && draft.systemText.trim() !== previous.systemText.trim() ? { system_text: draft.systemText.trim() } : {}),
       ...(draft.instructionText.trim() && draft.instructionText.trim() !== previous.instructionText.trim() ? { instruction_text: draft.instructionText.trim() } : {}),
     };

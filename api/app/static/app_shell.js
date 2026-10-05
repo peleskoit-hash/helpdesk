@@ -30,7 +30,7 @@
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20260708a",
-        "/static/settings_bot_buttons.js?v=20261005a",
+        "/static/settings_bot_buttons.js?v=20261005b",
       ],
     }],
     ["/settings/automatic-messages", {

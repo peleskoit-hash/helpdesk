@@ -102,10 +102,9 @@ def materialize_first_connection_row(db: Session, defaults: FirstConnectionDefau
 def first_connection_values(db: Session, defaults: FirstConnectionDefaults) -> dict[str, str]:
     row = first_connection_row(db)
     subject = (row.label_override or "").strip() if row is not None and row.label_overridden else ""
-    client_text = (row.client_text or "").strip() if row is not None and row.client_text_overridden else ""
     system_text = (row.system_text or "").strip() if row is not None and row.system_text_overridden else ""
     return {
         "subject": subject or defaults.subject,
-        "client_text": client_text or defaults.client_text,
+        "client_text": defaults.client_text,
         "system_text": system_text or defaults.system_text,
     }

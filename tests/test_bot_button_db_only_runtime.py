@@ -20,7 +20,7 @@ from api.app.services import bot_button_materialization as materialization
 from api.app.services import button_automation_types
 from api.app.services import saved_files
 from api.app.services import telegram_automation
-from api.app.services.system_tickets import FIRST_CONNECTION_BUTTON_KEY, FIRST_CONNECTION_TITLE, SYSTEM_MENU_TYPE
+from api.app.services.system_tickets import FIRST_CONNECTION_BUTTON_KEY, FIRST_CONNECTION_TITLE, SYSTEM_MENU_TYPE, FirstConnectionDefaults, first_connection_values
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.button_config import ButtonConfig, ButtonSpec, MenuSpec, TerminalButtonRef
 
@@ -2124,6 +2124,37 @@ def test_first_connection_system_api_materializes_and_preserves_partial_payload(
     assert row.client_text == "Custom client"
     assert row.system_text == "Custom system"
     assert row.workflow_type == "ticket"
+
+
+def test_first_connection_values_ignore_legacy_client_text_override():
+    session = _session()
+    _seed_row(
+        session,
+        button_key=FIRST_CONNECTION_BUTTON_KEY,
+        menu_type=SYSTEM_MENU_TYPE,
+        button_kind="system",
+        label_override="Custom subject",
+        label_overridden=True,
+        client_text="Старый override",
+        client_text_overridden=True,
+        system_text="Custom system",
+        system_text_overridden=True,
+    )
+
+    values = first_connection_values(
+        session,
+        FirstConnectionDefaults(
+            subject="Default subject",
+            client_text="Текст из автоматических сообщений",
+            system_text="Default system",
+        ),
+    )
+
+    assert values == {
+        "subject": "Custom subject",
+        "client_text": "Текст из автоматических сообщений",
+        "system_text": "Custom system",
+    }
 
 
 def test_review_system_buttons_api_defaults_save_and_validation():
