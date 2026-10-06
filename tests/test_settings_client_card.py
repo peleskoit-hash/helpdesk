@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 from types import SimpleNamespace
 import uuid
@@ -2177,20 +2178,188 @@ def test_seeded_department_meta_rules_match_legacy_behavior(monkeypatch):
 
         tickets.update_client_profile(
             ticket.id,
-            ClientProfileUpdate(destination="\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436", sales_group="\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430"),
+            ClientProfileUpdate(destination="\u041e\u0442\u0434\u0435\u043b \u041f\u0440\u043e\u0434\u0430\u0436", sales_group="\u0433\u0440\u0443\u043f\u043f\u0430 \u0421\u043a\u0440\u044b\u043b\u0451\u0432\u043e\u0439"),
             db=session,
             user=_admin(),
         )
         session.refresh(profile)
         assert profile.department == "\u041e\u0442\u0434\u0435\u043b \u043f\u0440\u043e\u0434\u0430\u0436"
         assert profile.first_department == "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442"
-        assert profile.group_name == "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430"
+        assert profile.group_name == "\u0433\u0440\u0443\u043f\u043f\u0430 \u0421\u043a\u0440\u044b\u043b\u0451\u0432\u043e\u0439"
 
         tickets.update_client_profile(ticket.id, ClientProfileUpdate(destination="\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"), db=session, user=_admin())
         session.refresh(profile)
         assert profile.department == "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"
         assert profile.first_department is None
         assert profile.group_name is None
+
+
+def _migration_field(key: str, options: list[str] | None) -> ClientCardFieldConfig:
+    field = _field(key, key, "department", 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = options
+    return field
+
+
+def _migration_rule() -> ClientCardRuleConfig:
+    return ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="sales map",
+        is_active=True,
+        is_system=True,
+        sort_order=10,
+        condition_field_key="sales_group",
+        condition_operator="equals",
+        condition_value="группа Шабурова",
+        actions_json=[
+            {"target_type": "field", "target_key": "sales_group", "action": "set_value", "scope": "save", "value_type": "literal", "value": "группа Москвиченко"},
+            {
+                "target_type": "field",
+                "target_key": "first_department",
+                "action": "set_value",
+                "scope": "save",
+                "value_type": "map",
+                "source_key": "sales_group",
+                "map": {
+                    "группа Шабурова": "Первый департамент",
+                    "группа Москвиченко": "Третий отдел",
+                    "unrelated": "Keep",
+                },
+            },
+        ],
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+
+def test_client_card_group_rename_migration_updates_old_state():
+    session = _session()
+    block = _block("department", "Department", 10)
+    sales = _migration_field("sales_group", ["группа Власова", "группа Шабурова", "группа Москвиченко", "unrelated"])
+    sand = _migration_field("sand_owner", ["песок Власова", "песок Шабурова", "песок Москвиченко", "unrelated"])
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=str(uuid.uuid4()),
+        sales_group="группа Шабурова",
+        sand_owner="песок Москвиченко",
+        group_name="группа Москвиченко",
+        department="unrelated",
+    )
+    rule = _migration_rule()
+    session.add_all([block, sales, sand, profile, rule])
+    session.commit()
+
+    seed_data.migrate_client_card_group_renames(session)
+    session.commit()
+
+    assert session.get(ClientCardFieldConfig, sales.id).options_json == ["группа Власова", "группа Скрылёвой", "группа Калинина", "unrelated"]
+    assert session.get(ClientCardFieldConfig, sand.id).options_json == ["песок Власова", "песок Скрылёвой", "песок Калинина", "unrelated"]
+    stored_profile = session.get(ClientProfile, profile.id)
+    assert stored_profile.sales_group == "группа Скрылёвой"
+    assert stored_profile.sand_owner == "песок Калинина"
+    assert stored_profile.group_name == "группа Калинина"
+    assert stored_profile.department == "unrelated"
+    stored_rule = session.get(ClientCardRuleConfig, rule.id)
+    assert stored_rule.condition_value == "группа Скрылёвой"
+    assert stored_rule.actions_json[0]["value"] == "группа Калинина"
+    assert stored_rule.actions_json[1]["map"] == {
+        "группа Скрылёвой": "Первый департамент",
+        "группа Калинина": "Третий отдел",
+        "unrelated": "Keep",
+    }
+
+
+def test_client_card_group_rename_migration_updates_condition_without_actions():
+    session = _session()
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="condition only",
+        is_active=True,
+        is_system=True,
+        sort_order=10,
+        condition_field_key="sales_group",
+        condition_operator="equals",
+        condition_value="группа Шабурова",
+        actions_json=[],
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    session.add(rule)
+    session.commit()
+
+    seed_data.migrate_client_card_group_renames(session)
+
+    assert session.get(ClientCardRuleConfig, rule.id).condition_value == "группа Скрылёвой"
+
+
+def test_client_card_group_rename_migration_does_not_cross_profile_field_types():
+    session = _session()
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=str(uuid.uuid4()),
+        sales_group="песок Шабурова",
+        sand_owner="группа Шабурова",
+        group_name="песок Шабурова",
+    )
+    session.add(profile)
+    session.commit()
+
+    seed_data.migrate_client_card_group_renames(session)
+
+    stored = session.get(ClientProfile, profile.id)
+    assert stored.sales_group == "песок Шабурова"
+    assert stored.sand_owner == "группа Шабурова"
+    assert stored.group_name == "песок Скрылёвой"
+
+
+def test_client_card_group_rename_migration_repairs_partial_dev_state_and_is_idempotent():
+    session = _session()
+    block = _block("department", "Department", 10)
+    sales = _migration_field("sales_group", ["группа Власова", "группа Скрылёвой", "группа Калинина"])
+    sand = _migration_field("sand_owner", ["песок Власова", "песок Скрылёвой", "песок Калинина"])
+    rule = _migration_rule()
+    session.add_all([block, sales, sand, rule])
+    session.commit()
+
+    seed_data.migrate_client_card_group_renames(session)
+    first_snapshot = (
+        list(session.get(ClientCardFieldConfig, sales.id).options_json),
+        list(session.get(ClientCardFieldConfig, sand.id).options_json),
+        copy.deepcopy(session.get(ClientCardRuleConfig, rule.id).actions_json),
+    )
+    seed_data.migrate_client_card_group_renames(session)
+    second_snapshot = (
+        list(session.get(ClientCardFieldConfig, sales.id).options_json),
+        list(session.get(ClientCardFieldConfig, sand.id).options_json),
+        copy.deepcopy(session.get(ClientCardRuleConfig, rule.id).actions_json),
+    )
+
+    assert first_snapshot == second_snapshot
+    assert first_snapshot[2][1]["map"]["группа Скрылёвой"] == "Первый департамент"
+    assert first_snapshot[2][1]["map"]["группа Калинина"] == "Третий отдел"
+    assert "группа Шабурова" not in first_snapshot[2][1]["map"]
+    assert "группа Москвиченко" not in first_snapshot[2][1]["map"]
+
+
+def test_client_card_group_rename_migration_populates_null_options_from_current_defaults_without_duplicates():
+    session = _session()
+    block = _block("department", "Department", 10)
+    sales = _migration_field("sales_group", None)
+    sand = _migration_field("sand_owner", None)
+    session.add_all([block, sales, sand])
+    session.commit()
+
+    seed_data.migrate_client_card_group_renames(session)
+
+    sales_options = session.get(ClientCardFieldConfig, sales.id).options_json
+    sand_options = session.get(ClientCardFieldConfig, sand.id).options_json
+    assert len(sales_options) == len(set(sales_options))
+    assert len(sand_options) == len(set(sand_options))
+    assert "группа Скрылёвой" in sales_options
+    assert "группа Калинина" in sales_options
+    assert "песок Скрылёвой" in sand_options
+    assert "песок Калинина" in sand_options
+    assert all("Шабурова" not in value and "Москвиченко" not in value for value in sales_options + sand_options)
 
 
 def test_ticket_profile_custom_fields_patch_preserves_omitted_and_clears_explicit_null():

@@ -7,11 +7,115 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ..db import SessionLocal
-from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, Company, Ticket, TicketStatus, User
+from ..models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile, Company, Ticket, TicketStatus, User
 from .call_center_employee_resolver import SYSTEM_SOURCE_KEY as CALL_CENTER_EMPLOYEE_SOURCE_KEY
+from .client_card import SYSTEM_SELECT_FIELD_OPTIONS
 from .client_card_sources import ensure_system_source_mapping_json
 
 SORT_STEP = 10
+CLIENT_CARD_GROUP_RENAMES = {
+    "sales_group": {
+        "группа Шабурова": "группа Скрылёвой",
+        "группа Москвиченко": "группа Калинина",
+    },
+    "sand_owner": {
+        "песок Шабурова": "песок Скрылёвой",
+        "песок Москвиченко": "песок Калинина",
+    },
+}
+CLIENT_CARD_PROFILE_GROUP_RENAMES = {
+    **CLIENT_CARD_GROUP_RENAMES["sales_group"],
+    **CLIENT_CARD_GROUP_RENAMES["sand_owner"],
+}
+CLIENT_CARD_PROFILE_COLUMN_RENAMES = {
+    "sales_group": CLIENT_CARD_GROUP_RENAMES["sales_group"],
+    "sand_owner": CLIENT_CARD_GROUP_RENAMES["sand_owner"],
+    "group_name": CLIENT_CARD_PROFILE_GROUP_RENAMES,
+}
+
+
+def _renamed_options(options: list[str], renames: dict[str, str]) -> list[str]:
+    result = []
+    seen = set()
+    for option in options:
+        value = renames.get(option, option)
+        if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _rename_rule_action_map(action: dict, field_key: str, old_value: str, new_value: str) -> bool:
+    if action.get("value_type") != "map" or action.get("source_key") != field_key:
+        return False
+    mapping = action.get("map")
+    if not isinstance(mapping, dict) or old_value not in mapping:
+        return False
+    if new_value in mapping and mapping.get(new_value) != mapping.get(old_value):
+        raise ValueError(f"Rule map rename conflict for {field_key}: {old_value} -> {new_value}")
+    next_mapping = dict(mapping)
+    next_mapping[new_value] = next_mapping.pop(old_value)
+    action["map"] = next_mapping
+    return True
+
+
+def migrate_client_card_group_renames(db) -> None:
+    now = datetime.utcnow()
+    fields_by_key = {
+        field.key: field
+        for field in db.execute(
+            select(ClientCardFieldConfig).where(ClientCardFieldConfig.key.in_(tuple(CLIENT_CARD_GROUP_RENAMES)))
+        ).scalars().all()
+    }
+    for field_key, renames in CLIENT_CARD_GROUP_RENAMES.items():
+        field = fields_by_key.get(field_key)
+        if field is None:
+            continue
+        current_options = field.options_json if isinstance(field.options_json, list) and field.options_json else SYSTEM_SELECT_FIELD_OPTIONS.get(field_key, [])
+        next_options = _renamed_options(list(current_options), renames)
+        if field.options_json != next_options:
+            field.options_json = next_options
+            field.updated_at = now
+
+    for profile in db.execute(select(ClientProfile)).scalars().all():
+        changed = False
+        for column, renames in CLIENT_CARD_PROFILE_COLUMN_RENAMES.items():
+            current = getattr(profile, column, None)
+            if current in renames:
+                setattr(profile, column, renames[current])
+                changed = True
+        if changed:
+            profile.updated_at = now
+
+    for rule in db.execute(select(ClientCardRuleConfig)).scalars().all():
+        changed = False
+        condition_renames = CLIENT_CARD_GROUP_RENAMES.get(rule.condition_field_key)
+        if condition_renames and rule.condition_value in condition_renames:
+            rule.condition_value = condition_renames[rule.condition_value]
+            changed = True
+        actions = []
+        for action in rule.actions_json or []:
+            next_action = dict(action)
+            for field_key, renames in CLIENT_CARD_GROUP_RENAMES.items():
+                for old_value, new_value in renames.items():
+                    if (
+                        next_action.get("target_key") == field_key
+                        and next_action.get("value_type") == "literal"
+                        and next_action.get("value") == old_value
+                    ):
+                        next_action["value"] = new_value
+                        changed = True
+                    if _rename_rule_action_map(next_action, field_key, old_value, new_value):
+                        changed = True
+            actions.append(next_action)
+        if changed:
+            rule.actions_json = actions
+            rule.updated_at = now
+
+
+def ensure_client_card_group_renames_migrated() -> None:
+    with SessionLocal.begin() as db:
+        migrate_client_card_group_renames(db)
 
 def ensure_test_agents() -> None:
     agent_specs = [
@@ -181,12 +285,12 @@ def ensure_client_card_defaults() -> None:
                     "source_key": "sales_group",
                     "map": {
                         "\u0433\u0440\u0443\u043f\u043f\u0430 \u0412\u043b\u0430\u0441\u043e\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
-                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0431\u0443\u0440\u043e\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u0421\u043a\u0440\u044b\u043b\u0451\u0432\u043e\u0439": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
                         "\u0433\u0440\u0443\u043f\u043f\u0430 \u0421\u0430\u0439\u0434\u0430\u0440\u0430\u043b\u0438\u0435\u0432\u0430": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
                         "\u0433\u0440\u0443\u043f\u043f\u0430 \u041c\u0430\u043a\u0430\u0440\u0435\u043d\u043a\u043e": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0434\u0435\u043f\u0430\u0440\u0442\u0430\u043c\u0435\u043d\u0442",
                         "\u0433\u0440\u0443\u043f\u043f\u0430 \u0428\u0430\u0445\u0430\u043b\u0438\u0435\u0432\u043e\u0439": "\u0412\u0442\u043e\u0440\u043e\u0439 \u043e\u0442\u0434\u0435\u043b",
                         "\u0433\u0440\u0443\u043f\u043f\u0430 \u041a\u043e\u0447\u0443\u0440\u044b": "\u0412\u0442\u043e\u0440\u043e\u0439 \u043e\u0442\u0434\u0435\u043b",
-                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u041c\u043e\u0441\u043a\u0432\u0438\u0447\u0435\u043d\u043a\u043e": "\u0422\u0440\u0435\u0442\u0438\u0439 \u043e\u0442\u0434\u0435\u043b",
+                        "\u0433\u0440\u0443\u043f\u043f\u0430 \u041a\u0430\u043b\u0438\u043d\u0438\u043d\u0430": "\u0422\u0440\u0435\u0442\u0438\u0439 \u043e\u0442\u0434\u0435\u043b",
                     },
                 },
                 {"target_type": "field", "target_key": "group_name", "action": "set_value", "scope": "save", "value_type": "field", "source_key": "sales_group"},
@@ -357,6 +461,7 @@ def ensure_client_card_defaults() -> None:
 
 def ensure_system_seed_data() -> None:
     ensure_client_card_defaults()
+    ensure_client_card_group_renames_migrated()
 
 
 def ensure_demo_seed_data() -> None:
