@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
+from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
 from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
@@ -19,7 +19,9 @@ from api.app.schemas import BotButtonInstructionUpdate
 from api.app.services import bot_button_materialization as materialization
 from api.app.services import button_automation_types
 from api.app.services import saved_files
+from api.app.services import telegram_menu_flow
 from api.app.services import telegram_automation
+from api.app.services.telegram_bot import TelegramApiError
 from api.app.services.system_tickets import FIRST_CONNECTION_BUTTON_KEY, FIRST_CONNECTION_TITLE, SYSTEM_MENU_TYPE, FirstConnectionDefaults, first_connection_values
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
 from api.app.services.button_config import ButtonConfig, ButtonSpec, MenuSpec, TerminalButtonRef
@@ -89,6 +91,238 @@ def _button(**overrides):
 
 def _fail_fallback(*args, **kwargs):
     raise AssertionError("TXT fallback should not be used")
+
+
+def test_safe_delete_message_not_found_does_not_remove_inline_keyboard(monkeypatch):
+    calls = []
+
+    def fake_delete(chat_id, message_id):
+        calls.append(("delete", chat_id, message_id))
+        raise TelegramApiError("Bad Request: message to delete not found")
+
+    def fake_remove(chat_id, message_id):
+        calls.append(("remove_inline", chat_id, message_id))
+
+    monkeypatch.setattr(telegram_menu_flow, "delete_message", fake_delete)
+    monkeypatch.setattr(telegram_menu_flow, "remove_inline_keyboard", fake_remove)
+
+    assert telegram_menu_flow._safe_delete_message("chat-1", 42) is True
+    assert calls == [("delete", "chat-1", 42)]
+
+
+def test_clear_client_menu_keyboards_clears_successful_contact_and_ticket_tracking(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id="102",
+        menu_message_ids_json=[101, 102],
+    )
+    ticket = Ticket(
+        id="ticket-1",
+        company_id="company-1",
+        client_id="client-1",
+        subject="Ticket",
+        menu_message_id="102",
+    )
+    session.add_all([contact, ticket])
+    session.commit()
+    deleted = []
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: deleted.append(message_id) or True)
+
+    telegram_router._clear_client_menu_keyboards(session, contact, [101, 102], keep_message_id=200)
+    session.flush()
+    session.refresh(ticket)
+
+    assert deleted == [101, 102]
+    assert contact.menu_message_ids_json == [200]
+    assert contact.active_menu_message_id == "200"
+    assert ticket.menu_message_id is None
+
+
+def test_clear_client_menu_keyboards_keeps_tracking_when_delete_fails(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id="201",
+        menu_message_ids_json=[201],
+    )
+    ticket = Ticket(
+        id="ticket-1",
+        company_id="company-1",
+        client_id="client-1",
+        subject="Ticket",
+        menu_message_id="201",
+    )
+    session.add_all([contact, ticket])
+    session.commit()
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: False)
+
+    telegram_router._clear_client_menu_keyboards(session, contact, [201, 202], keep_message_id=300)
+    session.flush()
+    session.refresh(ticket)
+
+    assert contact.menu_message_ids_json == [201, 300]
+    assert contact.active_menu_message_id == "300"
+    assert ticket.menu_message_id == "201"
+
+
+def _start_payload(chat_id: str = "chat-1", user_id: str = "user-1") -> dict:
+    return {
+        "update_id": 123,
+        "message": {
+            "message_id": 1,
+            "chat": {"id": chat_id, "type": "private"},
+            "from": {"id": user_id, "first_name": "User"},
+            "text": "/start",
+        },
+    }
+
+
+def _patch_start_flow(monkeypatch, session, contact, collecting_ticket):
+    monkeypatch.setattr(telegram_router, "_first_company", lambda db: SimpleNamespace(id=contact.company_id))
+    monkeypatch.setattr(telegram_router, "evaluate_incoming_telegram_access", lambda *args, **kwargs: SimpleNamespace(blocked=False))
+    monkeypatch.setattr(telegram_router, "telegram_contact_by_chat_id", lambda db, chat_id: contact)
+    monkeypatch.setattr(telegram_router, "get_or_create_contact_from_user", lambda db, company_id, external_chat_id, from_user: contact)
+    monkeypatch.setattr(telegram_router, "cleanup_feedback_flow_for_contact", lambda *args, **kwargs: None)
+    monkeypatch.setattr(telegram_router, "cleanup_review_flow_for_contact", lambda *args, **kwargs: None)
+    monkeypatch.setattr(telegram_router, "_active_ticket_for_client", lambda *args, **kwargs: None)
+    monkeypatch.setattr(telegram_router, "_client_profile", lambda db, client_id: SimpleNamespace(is_verified=True, destination="Office"))
+    monkeypatch.setattr(telegram_router, "_collecting_ticket_for_client", lambda *args, **kwargs: collecting_ticket)
+
+
+def test_start_sends_new_menu_before_deleting_old_and_never_deletes_new(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id="20",
+        menu_message_ids_json=[10, 20],
+    )
+    ticket = Ticket(id="ticket-1", company_id="company-1", client_id="client-1", subject="Ticket", menu_message_id="10")
+    session.add_all([contact, ticket])
+    session.commit()
+    events = []
+    _patch_start_flow(monkeypatch, session, contact, ticket)
+
+    def fake_send(db, send_contact, send_ticket):
+        events.append(("send", 20))
+        response = {"ok": True, "result": {"message_id": 20}}
+        telegram_router._store_menu_message_id(send_ticket, response)
+        telegram_router._remember_contact_menu_message(send_contact, response)
+        return response
+
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_for_contact", fake_send)
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: events.append(("delete", message_id)) or True)
+
+    telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
+
+    assert events == [("send", 20), ("delete", 10)]
+    assert contact.menu_message_ids_json == [20]
+
+
+def test_start_send_failure_does_not_delete_old_menu(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id="10",
+        menu_message_ids_json=[10],
+    )
+    ticket = Ticket(id="ticket-1", company_id="company-1", client_id="client-1", subject="Ticket", menu_message_id="10")
+    session.add_all([contact, ticket])
+    session.commit()
+    deleted = []
+    _patch_start_flow(monkeypatch, session, contact, ticket)
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_for_contact", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("send failed")))
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: deleted.append(message_id) or True)
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
+
+    assert deleted == []
+    assert contact.menu_message_ids_json == [10]
+
+
+def test_start_cleanup_does_not_delete_historical_ticket_menu_ids(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id=None,
+        menu_message_ids_json=[],
+    )
+    current = Ticket(id="ticket-current", company_id="company-1", client_id="client-1", subject="Current", menu_message_id="10")
+    historical = Ticket(id="ticket-old", company_id="company-1", client_id="client-1", subject="Old", menu_message_id="99")
+    session.add_all([contact, current, historical])
+    session.commit()
+    deleted = []
+    _patch_start_flow(monkeypatch, session, contact, current)
+
+    def fake_send(db, send_contact, send_ticket):
+        response = {"ok": True, "result": {"message_id": 20}}
+        telegram_router._store_menu_message_id(send_ticket, response)
+        telegram_router._remember_contact_menu_message(send_contact, response)
+        return response
+
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_for_contact", fake_send)
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: deleted.append(message_id) or True)
+
+    telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
+    session.refresh(historical)
+
+    assert deleted == [10]
+    assert historical.menu_message_id == "99"
+
+
+def test_start_active_ticket_sends_response_before_deleting_old_menu(monkeypatch):
+    session = _session()
+    contact = TelegramContact(
+        id="contact-1",
+        company_id="company-1",
+        client_id="client-1",
+        external_user_id="user-1",
+        external_chat_id="chat-1",
+        active_menu_message_id="20",
+        menu_message_ids_json=[10, 20],
+    )
+    ticket = Ticket(id="ticket-1", company_id="company-1", client_id="client-1", subject="Ticket", menu_message_id="10")
+    session.add_all([contact, ticket])
+    session.commit()
+    events = []
+    _patch_start_flow(monkeypatch, session, contact, None)
+    monkeypatch.setattr(telegram_router, "_active_ticket_for_client", lambda *args, **kwargs: ticket)
+    monkeypatch.setattr(telegram_router, "client_can_close_ticket", lambda *args, **kwargs: False)
+    monkeypatch.setattr(telegram_router, "_automatic_telegram_text", lambda *args, **kwargs: ("Active ticket", None))
+    monkeypatch.setattr(
+        telegram_router,
+        "send_message",
+        lambda *args, **kwargs: events.append(("send", 30)) or {"ok": True, "result": {"message_id": 30}},
+    )
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: events.append(("delete", message_id)) or True)
+
+    telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
+    session.refresh(ticket)
+
+    assert events == [("send", 30), ("delete", 10), ("delete", 20)]
+    assert contact.menu_message_ids_json == []
+    assert ticket.menu_message_id is None
 
 
 def _save_button_instruction(session, payload, *, button_key="menu-a|ticket|A", workflow_type="ticket", user=None):

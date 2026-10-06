@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,13 +45,17 @@ def _safe_remove_inline_keyboard(chat_id: str, message_id: int | None):
         pass
 
 
-def _safe_delete_message(chat_id: str, message_id: int | None):
+def _safe_delete_message(chat_id: str, message_id: int | None) -> bool:
     if message_id is None:
-        return
+        return False
     try:
         delete_message(chat_id, message_id)
-    except Exception:
+        return True
+    except Exception as exc:
+        if str(exc).strip() == "Bad Request: message to delete not found":
+            return True
         _safe_remove_inline_keyboard(chat_id, message_id)
+        return False
 
 
 def _confirm_callback_data(button_ref: str, decision: str) -> str:

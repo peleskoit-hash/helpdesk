@@ -127,7 +127,6 @@ from ..services.ticket_call_center_snapshot import (
     start_call_center_employee_refresh_if_needed,
 )
 
-
 router = APIRouter(prefix="/api/v1/messenger", tags=["messenger"])
 MAX_LAYOUT_ROW_BUTTONS = 3
 
@@ -552,34 +551,60 @@ def _remember_contact_menu_message(contact: TelegramContact, response: dict) -> 
     _set_contact_menu_message_ids(contact, ids)
 
 
-def _clear_client_menu_keyboards(db: Session, contact: TelegramContact) -> None:
-    """Remove all tracked menu copies for this contact before sending a new /start menu."""
+def _start_menu_cleanup_ids(contact: TelegramContact, *tickets: Ticket | None) -> list[int]:
     ids = _contact_menu_message_ids(contact)
-    # Also include currently tracked per-ticket menu ids as fallback source.
-    ticket_ids = db.execute(
-        select(Ticket.menu_message_id).where(
-            and_(
-                Ticket.client_id == contact.client_id,
-                Ticket.menu_message_id.is_not(None),
-            )
-        )
-    ).all()
-    for row in ticket_ids:
-        try:
-            if row and row[0]:
-                ids.append(int(row[0]))
-        except Exception:
-            continue
+    if not ids:
+        for ticket in tickets:
+            try:
+                if ticket is not None and ticket.menu_message_id:
+                    ids.append(int(ticket.menu_message_id))
+            except Exception:
+                continue
+    return ids
+
+
+def _clear_client_menu_keyboards(
+    db: Session,
+    contact: TelegramContact,
+    old_message_ids: list[int] | None = None,
+    *,
+    keep_message_id: int | None = None,
+) -> None:
+    """Remove old tracked menu copies after a replacement /start response was sent."""
+    ids = list(old_message_ids) if old_message_ids is not None else _contact_menu_message_ids(contact)
     dedup = []
     seen: set[int] = set()
     for mid in ids:
-        if mid in seen:
+        if mid in seen or (keep_message_id is not None and mid == keep_message_id):
             continue
         seen.add(mid)
         dedup.append(mid)
+    cleared_ids: set[int] = set()
+    failed_ids: list[int] = []
     for mid in dedup:
-        _safe_delete_message(contact.external_chat_id, mid)
-    _set_contact_menu_message_ids(contact, [])
+        cleared = _safe_delete_message(contact.external_chat_id, mid)
+        if cleared:
+            cleared_ids.add(mid)
+        else:
+            failed_ids.append(mid)
+    if cleared_ids:
+        cleared_id_strings = {str(mid) for mid in cleared_ids}
+        tickets = db.execute(
+            select(Ticket).where(
+                and_(
+                    Ticket.client_id == contact.client_id,
+                    Ticket.menu_message_id.in_(cleared_id_strings),
+                )
+            )
+        ).scalars().all()
+        for ticket in tickets:
+            ticket.menu_message_id = None
+    next_ids = failed_ids[:1]
+    if keep_message_id is not None:
+        next_ids.append(keep_message_id)
+    else:
+        next_ids.extend(mid for mid in _contact_menu_message_ids(contact) if mid not in cleared_ids and mid not in next_ids)
+    _set_contact_menu_message_ids(contact, next_ids[-2:])
 
 
 def _button_visibility_enabled(row: BotButtonSetting | None) -> bool:
@@ -3185,15 +3210,25 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             append_system_message(db, draft, "Клиент нажал /start")
             collecting_ticket = draft
 
-        # Always remove all tracked old menus before sending a fresh one.
-        _clear_client_menu_keyboards(db, contact)
-        db.commit()
         if notify_client:
             if ticket is None:
                 if collecting_ticket is not None:
-                    _send_problem_menu_for_contact(db, contact, collecting_ticket)
+                    old_menu_message_ids = _start_menu_cleanup_ids(contact, collecting_ticket)
+                    response = _send_problem_menu_for_contact(db, contact, collecting_ticket)
+                    new_message_id_raw = _response_message_id(response)
+                    try:
+                        new_message_id = int(new_message_id_raw) if new_message_id_raw is not None else None
+                    except Exception:
+                        new_message_id = None
+                    _clear_client_menu_keyboards(
+                        db,
+                        contact,
+                        old_menu_message_ids,
+                        keep_message_id=new_message_id,
+                    )
                     db.commit()
             else:
+                old_menu_message_ids = _start_menu_cleanup_ids(contact, ticket)
                 markup = client_close_markup() if client_can_close_ticket(db, ticket) else None
                 active_ticket_text, active_ticket_parse_mode = _automatic_telegram_text(
                     db,
@@ -3208,9 +3243,14 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                     parse_mode=active_ticket_parse_mode,
                     reply_markup=markup,
                 )
+                _clear_client_menu_keyboards(
+                    db,
+                    contact,
+                    old_menu_message_ids,
+                )
                 if markup is not None:
                     store_client_close_button(ticket, response, response_message_id_fn=_response_message_id)
-                    db.commit()
+                db.commit()
         return {"ok": True, "command": "start", "ticket_id": ticket.id if ticket else None}
 
     collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
