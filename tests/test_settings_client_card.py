@@ -190,6 +190,98 @@ def test_select_option_rename_updates_system_profiles_and_rule_literals():
     assert stored_rule.actions_json[0]["value"] == "Контакт-центр"
 
 
+def test_select_option_rename_updates_rule_map_source_key_entry():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("sales_group", "Sales group", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["группа Шабурова", "группа Кочуры"]
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="sales group map",
+        is_active=True,
+        sort_order=10,
+        condition_field_key="sales_group",
+        condition_operator="is_not_empty",
+        condition_value=None,
+        actions_json=[
+            {
+                "target_type": "field",
+                "target_key": "first_department",
+                "action": "set_value",
+                "scope": "save",
+                "value_type": "map",
+                "source_key": "sales_group",
+                "map": {"группа Шабурова": "Первый департамент", "группа Кочуры": "Второй департамент"},
+            }
+        ],
+    )
+    session.add_all([block, field, rule])
+    session.commit()
+
+    settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(
+            options=["группа Скрылёвой", "группа Кочуры"],
+            option_renames=[{"old_value": "группа Шабурова", "new_value": "группа Скрылёвой"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    stored_map = session.get(ClientCardRuleConfig, rule.id).actions_json[0]["map"]
+    assert stored_map["группа Скрылёвой"] == "Первый департамент"
+    assert "группа Шабурова" not in stored_map
+    assert stored_map["группа Кочуры"] == "Второй департамент"
+
+
+def test_select_option_rename_rejects_rule_map_target_conflict():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("sales_group", "Sales group", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["группа Шабурова"]
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="sales group map",
+        is_active=True,
+        sort_order=10,
+        condition_field_key="sales_group",
+        condition_operator="is_not_empty",
+        condition_value=None,
+        actions_json=[
+            {
+                "target_type": "field",
+                "target_key": "first_department",
+                "action": "set_value",
+                "scope": "save",
+                "value_type": "map",
+                "source_key": "sales_group",
+                "map": {"группа Шабурова": "Первый департамент", "группа Скрылёвой": "Другой департамент"},
+            }
+        ],
+    )
+    session.add_all([block, field, rule])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(
+                options=["группа Скрылёвой"],
+                option_renames=[{"old_value": "группа Шабурова", "new_value": "группа Скрылёвой"}],
+            ),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"]["code"] == "option_rename_rule_map_conflict"
+    stored_map = session.get(ClientCardRuleConfig, rule.id).actions_json[0]["map"]
+    assert stored_map["группа Шабурова"] == "Первый департамент"
+    assert stored_map["группа Скрылёвой"] == "Другой департамент"
+
+
 def test_select_option_rename_updates_custom_profile_fields():
     session = _session()
     block = _block("custom", "Custom", 10)

@@ -219,7 +219,18 @@ def _cascade_profile_option_rename(db: Session, field: ClientCardFieldConfig, ol
 
 
 def _cascade_rule_option_rename(db: Session, field: ClientCardFieldConfig, old_value: str, new_value: str) -> None:
-    for rule in db.execute(select(ClientCardRuleConfig)).scalars().all():
+    rules = db.execute(select(ClientCardRuleConfig)).scalars().all()
+    for rule in rules:
+        for action in rule.actions_json or []:
+            if action.get("value_type") != "map" or action.get("source_key") != field.key:
+                continue
+            mapping = action.get("map")
+            if not isinstance(mapping, dict) or old_value not in mapping:
+                continue
+            if new_value in mapping and mapping.get(new_value) != mapping.get(old_value):
+                _error(409, "option_rename_rule_map_conflict", f"Rule map already contains '{new_value}' with a different value")
+
+    for rule in rules:
         changed = False
         if rule.condition_field_key == field.key and rule.condition_value == old_value:
             rule.condition_value = new_value
@@ -234,6 +245,13 @@ def _cascade_rule_option_rename(db: Session, field: ClientCardFieldConfig, old_v
             ):
                 next_action["value"] = new_value
                 changed = True
+            if next_action.get("value_type") == "map" and next_action.get("source_key") == field.key:
+                mapping = next_action.get("map")
+                if isinstance(mapping, dict) and old_value in mapping:
+                    next_mapping = dict(mapping)
+                    next_mapping[new_value] = next_mapping.pop(old_value)
+                    next_action["map"] = next_mapping
+                    changed = True
             actions.append(next_action)
         if changed:
             rule.actions_json = actions
