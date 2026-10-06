@@ -107,6 +107,203 @@ def test_cannot_delete_system_field():
     assert session.get(ClientCardFieldConfig, system_field.id) is not None
 
 
+def test_system_select_options_can_be_saved_without_unlocking_key_or_type():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    session.add_all([block, field])
+    session.commit()
+
+    result = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(label="Отдел", options=["Продажи", "КЦ"]),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.label == "Отдел"
+    assert result.options == ["Продажи", "КЦ"]
+    assert session.get(ClientCardFieldConfig, field.id).options_json == ["Продажи", "КЦ"]
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(field_type="text"),
+            db=session,
+            user=_admin(),
+        )
+    assert exc.value.status_code == 403
+
+
+def test_select_option_addition_does_not_change_existing_profiles_and_runtime_uses_saved_options():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["Продажи"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), department="Продажи")
+    session.add_all([block, field, profile])
+    session.commit()
+
+    settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(options=["Продажи", "КЦ"]),
+        db=session,
+        user=_admin(),
+    )
+
+    assert session.get(ClientProfile, profile.id).department == "Продажи"
+    runtime_field = client_card._client_card_view_config(session).blocks[0].fields[0]
+    assert runtime_field.options == ["Продажи", "КЦ"]
+
+
+def test_select_option_rename_updates_system_profiles_and_rule_literals():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["Продажи", "КЦ"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), department="КЦ")
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="department rule",
+        is_active=True,
+        sort_order=10,
+        condition_field_key="department",
+        condition_operator="equals",
+        condition_value="КЦ",
+        actions_json=[{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "КЦ"}],
+    )
+    session.add_all([block, field, profile, rule])
+    session.commit()
+
+    settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(options=["Продажи", "Контакт-центр"], option_renames=[{"old_value": "КЦ", "new_value": "Контакт-центр"}]),
+        db=session,
+        user=_admin(),
+    )
+
+    assert session.get(ClientProfile, profile.id).department == "Контакт-центр"
+    stored_rule = session.get(ClientCardRuleConfig, rule.id)
+    assert stored_rule.condition_value == "Контакт-центр"
+    assert stored_rule.actions_json[0]["value"] == "Контакт-центр"
+
+
+def test_select_option_rename_updates_custom_profile_fields():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    field = _field("custom_department", "Custom department", block.key, 10, is_system=False)
+    field.field_type = "select"
+    field.options_json = ["Продажи", "КЦ"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), custom_fields={"custom_department": "КЦ"})
+    session.add_all([block, field, profile])
+    session.commit()
+
+    settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(options=["Продажи", "Контакт-центр"], option_renames=[{"old_value": "КЦ", "new_value": "Контакт-центр"}]),
+        db=session,
+        user=_admin(),
+    )
+
+    assert session.get(ClientProfile, profile.id).custom_fields == {"custom_department": "Контакт-центр"}
+
+
+def test_select_option_rename_rejects_old_value_still_present_in_next_options():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["A", "B"]
+    session.add_all([block, field])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(options=["A", "B", "C"], option_renames=[{"old_value": "B", "new_value": "C"}]),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "option_rename_old_still_present"
+
+
+def test_select_option_rename_rejects_merge_into_existing_option():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["A", "B"]
+    session.add_all([block, field])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(options=["A"], option_renames=[{"old_value": "B", "new_value": "A"}]),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "option_rename_target_exists"
+
+
+def test_select_option_rename_rejects_multiple_old_values_to_same_target():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["A", "B", "C"]
+    session.add_all([block, field])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(
+                options=["D"],
+                option_renames=[{"old_value": "A", "new_value": "D"}, {"old_value": "B", "new_value": "D"}],
+            ),
+            db=session,
+            user=_admin(),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error"]["code"] == "option_rename_target_conflict"
+
+
+def test_select_option_delete_used_value_without_rename_is_forbidden_but_unused_delete_is_allowed():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["Продажи", "КЦ", "Резерв"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), department="КЦ")
+    session.add_all([block, field, profile])
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        settings_client_card.update_client_card_field(
+            field.id,
+            ClientCardFieldUpdate(options=["Продажи", "Резерв"]),
+            db=session,
+            user=_admin(),
+        )
+    assert exc.value.status_code == 409
+
+    result = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(options=["Продажи", "КЦ"]),
+        db=session,
+        user=_admin(),
+    )
+    assert result.options == ["Продажи", "КЦ"]
+
+
 def test_delete_custom_field_keeps_profile_data_contract_to_config_only():
     session = _session()
     block = _block("custom_block_123", "123", 10)

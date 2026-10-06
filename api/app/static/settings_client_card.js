@@ -4,6 +4,7 @@ const state = {
   clientCard: { blocks: [], sources: [] },
   expandedBlocks: new Set(),
   editingFieldId: null,
+  editingFieldOriginalOptions: [],
   editingRuleId: null,
   editingSourceId: null,
   createFieldBlockKey: null,
@@ -1280,7 +1281,7 @@ function openEditFieldModal(fieldId) {
     el.editFieldType.disabled = true;
     el.editFieldEditable.disabled = true;
     el.editFieldRequired.disabled = true;
-    el.editFieldOptions.disabled = true;
+    el.editFieldOptions.disabled = (field.field_type || "") !== "select";
   } else {
     el.editFieldType.disabled = false;
     el.editFieldEditable.disabled = false;
@@ -1289,6 +1290,7 @@ function openEditFieldModal(fieldId) {
   }
 
   const options = Array.isArray(field.options) ? field.options : [];
+  state.editingFieldOriginalOptions = options.slice();
   el.editFieldOptions.value = options.join("\n");
   el.editFieldOptionsWrap.classList.toggle("hidden", (field.field_type || "") !== "select");
 
@@ -1302,7 +1304,23 @@ function openEditFieldModal(fieldId) {
 
 function closeEditFieldModal() {
   state.editingFieldId = null;
+  state.editingFieldOriginalOptions = [];
   el.editClientCardFieldModal.classList.add("hidden");
+}
+
+function fieldOptionsFromTextarea(textarea) {
+  return String(textarea?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function explicitOptionRenames(originalOptions, nextOptions) {
+  const originalSet = new Set((Array.isArray(originalOptions) ? originalOptions : []).map((item) => String(item || "").trim()).filter(Boolean));
+  const nextSet = new Set((Array.isArray(nextOptions) ? nextOptions : []).map((item) => String(item || "").trim()).filter(Boolean));
+  const removed = Array.from(originalSet).filter((value) => !nextSet.has(value));
+  const added = Array.from(nextSet).filter((value) => !originalSet.has(value));
+  if (removed.length === 1 && added.length === 1) {
+    return [{ old_value: removed[0], new_value: added[0] }];
+  }
+  return [];
 }
 
 async function saveFieldFromModal() {
@@ -1320,16 +1338,18 @@ async function saveFieldFromModal() {
     payload.is_editable = Boolean(el.editFieldEditable.checked);
     payload.is_required = Boolean(el.editFieldRequired.checked);
     payload.field_type = selectedType;
-    if (selectedType === "select") {
-      const options = el.editFieldOptions.value.split("\n").map((item) => item.trim()).filter(Boolean);
-      if (!options.length) {
-        showError("Для поля select нужно указать хотя бы один вариант");
-        return;
-      }
-      payload.options = options;
-    } else {
+    if (selectedType !== "select") {
       payload.options = null;
     }
+  }
+  if (selectedType === "select") {
+    const options = fieldOptionsFromTextarea(el.editFieldOptions);
+    if (!options.length) {
+      showError("Для поля select нужно указать хотя бы один вариант");
+      return;
+    }
+    payload.options = options;
+    payload.option_renames = explicitOptionRenames(state.editingFieldOriginalOptions, options);
   }
 
   try {

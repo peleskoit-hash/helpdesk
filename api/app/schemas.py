@@ -830,6 +830,7 @@ class ClientCardFieldUpdate(BaseModel):
     is_editable: bool | None = None
     is_required: bool | None = None
     options: list[str] | None = None
+    option_renames: list[dict[str, str]] | None = None
 
 
 class ClientCardMovePayload(BaseModel):

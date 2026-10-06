@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig
+from ..models import ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig
 from ..schemas import (
     ClientCardBlockConfigOut,
     ClientCardBlockCreate,
@@ -159,6 +159,117 @@ def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
         is_system=bool(field.is_system),
         options=_field_options_out(field),
     )
+
+
+def _normalize_field_options(options: list[str] | None) -> list[str]:
+    result = []
+    seen = set()
+    for item in options or []:
+        value = item.strip() if isinstance(item, str) else str(item or "").strip()
+        if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _normalize_option_renames(raw_items: list[dict[str, str]] | None) -> dict[str, str]:
+    result: dict[str, str] = {}
+    targets: set[str] = set()
+    for item in raw_items or []:
+        old_value = str(item.get("old_value") or "").strip()
+        new_value = str(item.get("new_value") or "").strip()
+        if not old_value or not new_value or old_value == new_value:
+            continue
+        if old_value in result and result[old_value] != new_value:
+            _error(422, "option_rename_conflict", f"Для варианта '{old_value}' указан неоднозначный rename")
+        if new_value in targets and result.get(old_value) != new_value:
+            _error(422, "option_rename_target_conflict", f"Вариант '{new_value}' указан целью нескольких rename")
+        result[old_value] = new_value
+        targets.add(new_value)
+    for old_value, new_value in result.items():
+        if new_value in result:
+            _error(422, "option_rename_cycle", f"Rename '{old_value}' -> '{new_value}' пересекается с другим rename")
+    return result
+
+
+def _count_profiles_using_option(db: Session, field: ClientCardFieldConfig, value: str) -> int:
+    count = 0
+    for profile in db.execute(select(ClientProfile)).scalars().all():
+        if field.key in SYSTEM_PROFILE_FIELDS:
+            current = getattr(profile, field.key, None)
+        else:
+            current = dict(profile.custom_fields or {}).get(field.key)
+        if current == value:
+            count += 1
+    return count
+
+
+def _cascade_profile_option_rename(db: Session, field: ClientCardFieldConfig, old_value: str, new_value: str) -> None:
+    for profile in db.execute(select(ClientProfile)).scalars().all():
+        if field.key in SYSTEM_PROFILE_FIELDS:
+            if getattr(profile, field.key, None) == old_value:
+                setattr(profile, field.key, new_value)
+                profile.updated_at = datetime.utcnow()
+            continue
+        custom_fields = dict(profile.custom_fields or {})
+        if custom_fields.get(field.key) == old_value:
+            custom_fields[field.key] = new_value
+            profile.custom_fields = custom_fields
+            profile.updated_at = datetime.utcnow()
+
+
+def _cascade_rule_option_rename(db: Session, field: ClientCardFieldConfig, old_value: str, new_value: str) -> None:
+    for rule in db.execute(select(ClientCardRuleConfig)).scalars().all():
+        changed = False
+        if rule.condition_field_key == field.key and rule.condition_value == old_value:
+            rule.condition_value = new_value
+            changed = True
+        actions = []
+        for action in rule.actions_json or []:
+            next_action = dict(action)
+            if (
+                next_action.get("target_key") == field.key
+                and next_action.get("value_type") == "literal"
+                and next_action.get("value") == old_value
+            ):
+                next_action["value"] = new_value
+                changed = True
+            actions.append(next_action)
+        if changed:
+            rule.actions_json = actions
+            rule.updated_at = datetime.utcnow()
+
+
+def _apply_select_option_changes(
+    db: Session,
+    field: ClientCardFieldConfig,
+    next_options: list[str],
+    option_renames: dict[str, str],
+) -> None:
+    previous_options = _field_options_out(field) or []
+    previous_set = set(previous_options)
+    next_set = set(next_options)
+    for old_value, new_value in option_renames.items():
+        if old_value not in previous_set:
+            _error(422, "option_rename_old_not_found", f"Вариант '{old_value}' не найден в текущем списке")
+        if old_value in next_set:
+            _error(422, "option_rename_old_still_present", f"Вариант '{old_value}' всё ещё есть в новом списке")
+        if new_value not in next_set:
+            _error(422, "option_rename_new_not_found", f"Новый вариант '{new_value}' отсутствует в списке")
+        if new_value in previous_set and new_value != old_value:
+            _error(422, "option_rename_target_exists", f"Вариант '{new_value}' уже существует")
+    renamed_old_values = set(option_renames)
+    deleted_values = [value for value in previous_options if value not in next_set and value not in renamed_old_values]
+    for value in deleted_values:
+        used_count = _count_profiles_using_option(db, field, value)
+        if used_count:
+            _error(409, "select_option_in_use", f"Вариант '{value}' используется у клиентов: {used_count}")
+    for old_value, new_value in option_renames.items():
+        if old_value == new_value:
+            continue
+        _cascade_profile_option_rename(db, field, old_value, new_value)
+        _cascade_rule_option_rename(db, field, old_value, new_value)
+    field.options_json = next_options or None
 
 
 def _rule_out(rule: ClientCardRuleConfig) -> ClientCardRuleConfigOut:
@@ -1027,10 +1138,13 @@ def update_client_card_field(
     if payload.is_required is not None:
         field.is_required = payload.is_required
     if payload.options is not None:
-        options = [item.strip() for item in payload.options if item and item.strip()]
+        options = _normalize_field_options(payload.options)
         if field.field_type == "select" and not options:
             _error(422, "select_options_required", "Для поля select укажите варианты")
-        field.options_json = options or None
+        if field.field_type == "select":
+            _apply_select_option_changes(db, field, options, _normalize_option_renames(payload.option_renames))
+        else:
+            field.options_json = options or None
     field.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(field)
