@@ -136,6 +136,73 @@ def test_system_select_options_can_be_saved_without_unlocking_key_or_type():
     assert exc.value.status_code == 403
 
 
+def test_checkbox_show_when_false_defaults_to_visible_in_runtime_config():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    field = _field("custom_flag", "Flag", block.key, 10, is_system=False)
+    field.field_type = "checkbox"
+    session.add_all([block, field])
+    session.commit()
+
+    payload = client_card._client_card_view_config(session)
+
+    assert payload.blocks[0].fields[0].show_when_false is True
+
+
+def test_settings_api_saves_checkbox_show_when_false():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    field = _field("custom_flag", "Flag", block.key, 10, is_system=False)
+    field.field_type = "checkbox"
+    session.add_all([block, field])
+    session.commit()
+
+    result = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(show_when_false=False),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.show_when_false is False
+    assert session.get(ClientCardFieldConfig, field.id).show_when_false is False
+
+
+def test_create_checkbox_field_defaults_show_when_false_true():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    session.add(block)
+    session.commit()
+
+    result = settings_client_card.create_client_card_field(
+        ClientCardFieldCreate(label="Flag", field_type="checkbox", block_key=block.key),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.show_when_false is True
+    stored = session.execute(select(ClientCardFieldConfig).where(ClientCardFieldConfig.key == result.key)).scalar_one()
+    assert stored.show_when_false is True
+
+
+def test_text_field_accepts_show_when_false_without_changing_type_behavior():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    field = _field("custom_note", "Note", block.key, 10, is_system=False)
+    session.add_all([block, field])
+    session.commit()
+
+    result = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(show_when_false=False),
+        db=session,
+        user=_admin(),
+    )
+
+    assert result.field_type == "text"
+    assert result.show_when_false is False
+
+
 def test_client_card_field_admin_only_defaults_false_and_round_trips():
     session = _session()
     block = _block("custom", "Custom", 10)

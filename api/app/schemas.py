@@ -658,6 +658,7 @@ class ClientCardFieldConfigOut(BaseModel):
     sort_order: int
     is_visible: bool
     is_visible_in_editor: bool = True
+    show_when_false: bool = True
     is_editable: bool
     admin_only_edit: bool = False
     is_required: bool = False
@@ -830,6 +831,7 @@ class ClientCardFieldUpdate(BaseModel):
     sort_order: int | None = None
     is_visible: bool | None = None
     is_visible_in_editor: bool | None = None
+    show_when_false: bool | None = None
     is_editable: bool | None = None
     admin_only_edit: bool | None = None
     is_required: bool | None = None
@@ -858,6 +860,7 @@ class ClientCardFieldCreate(BaseModel):
     block_key: str = Field(min_length=1)
     is_visible: bool = True
     is_visible_in_editor: bool = True
+    show_when_false: bool = True
     is_editable: bool = True
     admin_only_edit: bool = False
     is_required: bool = False

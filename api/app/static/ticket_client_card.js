@@ -807,9 +807,8 @@
     const key = field?.key || "";
     const fieldType = String(field?.field_type || "").toLowerCase();
     if (key === "bitrix_password") return !ctx.isBlank(value);
-    if (key === "is_verified") return true;
     if (key === "telegram_username" || key === "telegram_display_name") return true;
-    if (fieldType === "checkbox") return true;
+    if (fieldType === "checkbox") return value || field.show_when_false !== false;
     return !ctx.isBlank(value);
   }
 

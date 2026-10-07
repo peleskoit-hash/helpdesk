@@ -695,6 +695,7 @@ class ClientCardFieldConfig(Base):
     sort_order: Mapped[int] = mapped_column(default=0)
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
     is_visible_in_editor: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_when_false: Mapped[bool] = mapped_column(Boolean, default=True)
     is_editable: Mapped[bool] = mapped_column(Boolean, default=True)
     admin_only_edit: Mapped[bool] = mapped_column(Boolean, default=False)
     is_required: Mapped[bool] = mapped_column(Boolean, default=False)

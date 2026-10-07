@@ -217,6 +217,7 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
                 sort_order=field.sort_order,
                 is_visible=bool(field.is_visible),
                 is_visible_in_editor=bool(field_visible_in_editor),
+                show_when_false=getattr(field, "show_when_false", None) is not False,
                 is_editable=bool(field.is_editable),
                 admin_only_edit=bool(getattr(field, "admin_only_edit", False)),
                 is_required=bool(field.is_required),

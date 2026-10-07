@@ -385,6 +385,23 @@ test('settings client card supports separate card and editor visibility flags', 
   assert.match(settingsClientCardSource, /is_visible_in_editor: Boolean\(el\.newClientCardFieldVisibleInEditor\.checked\)/);
 });
 
+test('settings client card supports checkbox show-when-false flag', () => {
+  assert.match(settingsClientCardTemplate, /id="newClientCardFieldShowWhenFalse"/);
+  assert.match(settingsClientCardTemplate, /id="editFieldShowWhenFalse"/);
+  const editFieldModal = sourceBetween(settingsClientCardTemplate, '<div id="editClientCardFieldModal"', '<button id="deleteEditClientCardFieldBtn"');
+  const typeIndex = editFieldModal.indexOf('id="editFieldType"');
+  const showWhenFalseIndex = editFieldModal.indexOf('id="editFieldShowWhenFalseWrap"');
+  const optionsIndex = editFieldModal.indexOf('id="editFieldOptionsWrap"');
+  assert.ok(typeIndex !== -1 && showWhenFalseIndex > typeIndex, 'edit show_when_false must be directly below field type');
+  assert.ok(optionsIndex === -1 || showWhenFalseIndex < optionsIndex, 'edit show_when_false must stay before select options');
+  assert.match(settingsClientCardSource, /editFieldShowWhenFalse\.checked = field\.show_when_false !== false/);
+  assert.match(settingsClientCardSource, /show_when_false: selectedType === "checkbox" \? Boolean\(el\.editFieldShowWhenFalse\.checked\) : true/);
+  assert.match(settingsClientCardSource, /show_when_false: fieldType === "checkbox" \? Boolean\(el\.newClientCardFieldShowWhenFalse\.checked\) : true/);
+  assert.match(settingsClientCardSource, /newClientCardFieldShowWhenFalseWrap\.classList\.toggle\("hidden", el\.newClientCardFieldType\.value !== "checkbox"\)/);
+  assert.match(settingsClientCardSource, /editFieldShowWhenFalseWrap\.classList\.toggle\("hidden", el\.editFieldType\.value !== "checkbox"\)/);
+  assert.match(settingsClientCardSource, /el\.editFieldType\.addEventListener\("change", syncEditFieldOptionsVisibility\)/);
+});
+
 test('settings client card block save sends separate display mode flags', () => {
   const blockPayloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'async function saveBlock');
   assert.match(settingsClientCardSource, /data-prop="show_in_card"/);
@@ -404,6 +421,91 @@ test('ticket client card renderer separates card and editor visibility modes', (
   assert.match(ticketClientCardSource, /field\.is_visible !== false/);
   assert.match(ticketClientCardSource, /function fieldShownInEditor/);
   assert.match(ticketClientCardSource, /field\.is_visible_in_editor !== false/);
+});
+
+test('ticket client card hides false checkbox only when configured', () => {
+  assert.match(ticketClientCardSource, /fieldType === "checkbox"[\s\S]*return value \|\| field\.show_when_false !== false/);
+  assert.match(ticketClientCardSource, /function renderEditableCustomField/);
+  assert.doesNotMatch(sourceBetween(ticketClientCardSource, 'function renderEditableCustomField', 'function renderConfiguredSystemEditorField'), /show_when_false/);
+});
+
+test('ticket client card applies show_when_false to system verification checkbox', () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.dataset = {};
+      this.textContent = '';
+      this.style = { setProperty() {} };
+      this._className = '';
+      this.classList = {
+        values: new Set(),
+        add: (...items) => items.forEach((item) => this.classList.values.add(item)),
+        remove: (...items) => items.forEach((item) => this.classList.values.delete(item)),
+        contains: (item) => this.classList.values.has(item),
+      };
+    }
+    set className(value) {
+      this._className = String(value || '');
+      this.classList.values = new Set(this._className.split(/\s+/).filter(Boolean));
+    }
+    get className() {
+      return this._className;
+    }
+    set innerHTML(value) {
+      this.children = [];
+      this.textContent = value;
+    }
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    }
+    querySelectorAll(selector) {
+      if (!selector.startsWith('.')) return [];
+      const className = selector.slice(1);
+      const result = [];
+      const queue = [...this.children];
+      while (queue.length) {
+        const item = queue.shift();
+        if (item.classList?.contains(className)) result.push(item);
+        queue.push(...(item.children || []));
+      }
+      return result;
+    }
+  }
+
+  const document = { createElement: (tagName) => new FakeElement(tagName) };
+  const window = {};
+  const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object, Number, Math, Uint8Array });
+  vm.runInContext(ticketClientCardSource, context);
+
+  const renderRows = (isVerified, showWhenFalse) => {
+    const root = new FakeElement('div');
+    const ctx = {
+      state: {},
+      el: { clientDynamicCard: root },
+      isBlank: (value) => value === null || value === undefined || String(value).trim() === '',
+    };
+    window.TicketClientCard.renderClientDynamicCard(
+      ctx,
+      { is_verified: isVerified },
+      {
+        blocks: [{
+          key: 'verification',
+          title: 'Verification',
+          is_active: true,
+          show_in_card: true,
+          fields: [{ key: 'is_verified', label: 'Верификация', field_type: 'checkbox', is_visible: true, show_when_false: showWhenFalse }],
+        }],
+        rules: [],
+      },
+    );
+    return root.querySelectorAll('.client-card-field');
+  };
+
+  assert.equal(renderRows(false, true).length, 1);
+  assert.equal(renderRows(false, false).length, 0);
+  assert.equal(renderRows(true, false).length, 1);
 });
 
 test('ticket client card editor renders readonly copyable fields without payload dataset', () => {

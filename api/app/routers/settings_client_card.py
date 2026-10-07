@@ -154,6 +154,7 @@ def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
         sort_order=field.sort_order,
         is_visible=bool(field.is_visible),
         is_visible_in_editor=_field_visible_in_editor(field),
+        show_when_false=getattr(field, "show_when_false", None) is not False,
         is_editable=bool(field.is_editable),
         admin_only_edit=bool(getattr(field, "admin_only_edit", False)),
         is_required=bool(field.is_required),
@@ -1173,6 +1174,8 @@ def update_client_card_field(
         field.is_visible = payload.is_visible
     if payload.is_visible_in_editor is not None:
         field.is_visible_in_editor = payload.is_visible_in_editor
+    if payload.show_when_false is not None:
+        field.show_when_false = payload.show_when_false
     if payload.is_editable is not None:
         field.is_editable = payload.is_editable
     if payload.admin_only_edit is not None:
@@ -1338,6 +1341,7 @@ def create_client_card_field(
         sort_order=sort_order,
         is_visible=payload.is_visible,
         is_visible_in_editor=payload.is_visible_in_editor,
+        show_when_false=payload.show_when_false,
         is_editable=payload.is_editable,
         admin_only_edit=payload.admin_only_edit,
         is_required=payload.is_required,

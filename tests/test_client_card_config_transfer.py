@@ -452,6 +452,26 @@ def test_round_trip_export_import_export_is_byte_and_structure_equal_for_dev_onl
     assert second_import["conflicts"] == []
 
 
+def test_field_show_when_false_round_trips_through_export_import():
+    dev = _session()
+    dev.add_all(
+        [
+            _block("profile"),
+            _field("custom_flag", is_system=False, field_type="checkbox", show_when_false=False),
+        ]
+    )
+    dev.commit()
+
+    exported = export_client_card_config(dev)
+    prod = _session()
+    result = import_client_card_config(prod, exported, apply=True)
+    copied = prod.execute(select(ClientCardFieldConfig).where(ClientCardFieldConfig.key == "custom_flag")).scalar_one()
+
+    assert exported["fields"][0]["show_when_false"] is False
+    assert result["conflicts"] == []
+    assert copied.show_when_false is False
+
+
 def json_dumps(value):
     import json
 

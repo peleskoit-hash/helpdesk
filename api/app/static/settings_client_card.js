@@ -196,6 +196,8 @@ const el = {
   newClientCardFieldBlock: document.getElementById("newClientCardFieldBlock"),
   newClientCardFieldVisible: document.getElementById("newClientCardFieldVisible"),
   newClientCardFieldVisibleInEditor: document.getElementById("newClientCardFieldVisibleInEditor"),
+  newClientCardFieldShowWhenFalseWrap: document.getElementById("newClientCardFieldShowWhenFalseWrap"),
+  newClientCardFieldShowWhenFalse: document.getElementById("newClientCardFieldShowWhenFalse"),
   newClientCardFieldEditable: document.getElementById("newClientCardFieldEditable"),
   newClientCardFieldAdminOnlyEdit: document.getElementById("newClientCardFieldAdminOnlyEdit"),
   newClientCardFieldRequired: document.getElementById("newClientCardFieldRequired"),
@@ -208,6 +210,8 @@ const el = {
   editFieldLabel: document.getElementById("editFieldLabel"),
   editFieldVisible: document.getElementById("editFieldVisible"),
   editFieldVisibleInEditor: document.getElementById("editFieldVisibleInEditor"),
+  editFieldShowWhenFalseWrap: document.getElementById("editFieldShowWhenFalseWrap"),
+  editFieldShowWhenFalse: document.getElementById("editFieldShowWhenFalse"),
   editFieldEditable: document.getElementById("editFieldEditable"),
   editFieldAdminOnlyEdit: document.getElementById("editFieldAdminOnlyEdit"),
   editFieldRequired: document.getElementById("editFieldRequired"),
@@ -1270,6 +1274,7 @@ function openEditFieldModal(fieldId) {
   el.editFieldLabel.readOnly = false;
   el.editFieldVisible.checked = Boolean(field.is_visible);
   el.editFieldVisibleInEditor.checked = field.is_visible_in_editor !== false;
+  el.editFieldShowWhenFalse.checked = field.show_when_false !== false;
   el.editFieldEditable.checked = Boolean(field.is_editable);
   el.editFieldAdminOnlyEdit.checked = Boolean(field.admin_only_edit);
   el.editFieldRequired.checked = Boolean(field.is_required);
@@ -1301,6 +1306,7 @@ function openEditFieldModal(fieldId) {
   el.editFieldOptions.value = options.join("\n");
   renderAdminOnlyOptionFlags(el.editFieldAdminOnlyValues, options, field.admin_only_values || []);
   el.editFieldOptionsWrap.classList.toggle("hidden", (field.field_type || "") !== "select");
+  el.editFieldShowWhenFalseWrap.classList.toggle("hidden", (field.field_type || "") !== "checkbox");
 
   el.editFieldBlockKey.innerHTML = (state.clientCard.blocks || []).map((b) => `<option value="${escapeHtml(b.key)}">${escapeHtml(b.title)}</option>`).join("");
   el.editFieldBlockKey.value = field.block_key;
@@ -1379,6 +1385,7 @@ async function saveFieldFromModal() {
     label: el.editFieldLabel.value.trim(),
     is_visible: Boolean(el.editFieldVisible.checked),
     is_visible_in_editor: Boolean(el.editFieldVisibleInEditor.checked),
+    show_when_false: selectedType === "checkbox" ? Boolean(el.editFieldShowWhenFalse.checked) : true,
     admin_only_edit: Boolean(el.editFieldAdminOnlyEdit.checked),
   };
 
@@ -1419,11 +1426,13 @@ async function saveFieldFromModal() {
 
 function syncCreateFieldOptionsVisibility() {
   el.newClientCardFieldOptionsWrap.classList.toggle("hidden", el.newClientCardFieldType.value !== "select");
+  el.newClientCardFieldShowWhenFalseWrap.classList.toggle("hidden", el.newClientCardFieldType.value !== "checkbox");
   syncAdminOnlyOptionFlags(el.newClientCardFieldOptions, el.newClientCardFieldAdminOnlyValues);
 }
 
 function syncEditFieldOptionsVisibility() {
   el.editFieldOptionsWrap.classList.toggle("hidden", el.editFieldType.value !== "select");
+  el.editFieldShowWhenFalseWrap.classList.toggle("hidden", el.editFieldType.value !== "checkbox");
   syncAdminOnlyOptionFlags(el.editFieldOptions, el.editFieldAdminOnlyValues, state.editingFieldOriginalOptions);
 }
 
@@ -1895,6 +1904,7 @@ function openCreateFieldModal(blockKey = null) {
   el.newClientCardFieldType.value = "text";
   el.newClientCardFieldVisible.checked = true;
   el.newClientCardFieldVisibleInEditor.checked = true;
+  el.newClientCardFieldShowWhenFalse.checked = true;
   el.newClientCardFieldEditable.checked = true;
   el.newClientCardFieldAdminOnlyEdit.checked = false;
   el.newClientCardFieldRequired.checked = false;
@@ -1937,6 +1947,7 @@ async function createField() {
         block_key: targetBlockKey,
         is_visible: Boolean(el.newClientCardFieldVisible.checked),
         is_visible_in_editor: Boolean(el.newClientCardFieldVisibleInEditor.checked),
+        show_when_false: fieldType === "checkbox" ? Boolean(el.newClientCardFieldShowWhenFalse.checked) : true,
         is_editable: Boolean(el.newClientCardFieldEditable.checked),
         admin_only_edit: Boolean(el.newClientCardFieldAdminOnlyEdit.checked),
         is_required: Boolean(el.newClientCardFieldRequired.checked),
