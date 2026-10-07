@@ -354,9 +354,11 @@ def export_client_card_config(db: Session) -> dict[str, Any]:
                 "is_visible": bool(item.is_visible),
                 "is_visible_in_editor": item.is_visible_in_editor is not False,
                 "is_editable": bool(item.is_editable),
+                "admin_only_edit": bool(getattr(item, "admin_only_edit", False)),
                 "is_required": bool(item.is_required),
                 "is_system": bool(item.is_system),
                 "options_json": copy.deepcopy(item.options_json),
+                "admin_only_values_json": copy.deepcopy(getattr(item, "admin_only_values_json", None)),
             }
             for item in fields
         ],
@@ -522,10 +524,20 @@ def _import_fields(db: Session, fields: list[dict[str, Any]], *, stats: Transfer
             "is_visible": bool(item.get("is_visible")),
             "is_visible_in_editor": item.get("is_visible_in_editor") is not False,
             "is_editable": bool(item.get("is_editable")),
+            "admin_only_edit": bool(item.get("admin_only_edit")),
             "is_required": bool(item.get("is_required")),
             "is_system": bool(item.get("is_system")),
             "options_json": copy.deepcopy(item.get("options_json")),
         }
+        if values["field_type"] == "select":
+            options = {str(value).strip() for value in values["options_json"] or []}
+            values["admin_only_values_json"] = [
+                value
+                for value in (str(raw).strip() for raw in item.get("admin_only_values_json") or item.get("admin_only_values") or [])
+                if value and value in options
+            ] or None
+        else:
+            values["admin_only_values_json"] = None
         field = existing.get(key)
         if field is None:
             created_at = base_created_at + timedelta(seconds=1, microseconds=index)

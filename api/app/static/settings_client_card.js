@@ -197,9 +197,11 @@ const el = {
   newClientCardFieldVisible: document.getElementById("newClientCardFieldVisible"),
   newClientCardFieldVisibleInEditor: document.getElementById("newClientCardFieldVisibleInEditor"),
   newClientCardFieldEditable: document.getElementById("newClientCardFieldEditable"),
+  newClientCardFieldAdminOnlyEdit: document.getElementById("newClientCardFieldAdminOnlyEdit"),
   newClientCardFieldRequired: document.getElementById("newClientCardFieldRequired"),
   newClientCardFieldOptionsWrap: document.getElementById("newClientCardFieldOptionsWrap"),
   newClientCardFieldOptions: document.getElementById("newClientCardFieldOptions"),
+  newClientCardFieldAdminOnlyValues: document.getElementById("newClientCardFieldAdminOnlyValues"),
   editClientCardFieldModal: document.getElementById("editClientCardFieldModal"),
   closeEditClientCardFieldModalBtn: document.getElementById("closeEditClientCardFieldModalBtn"),
   saveEditClientCardFieldBtn: document.getElementById("saveEditClientCardFieldBtn"),
@@ -207,6 +209,7 @@ const el = {
   editFieldVisible: document.getElementById("editFieldVisible"),
   editFieldVisibleInEditor: document.getElementById("editFieldVisibleInEditor"),
   editFieldEditable: document.getElementById("editFieldEditable"),
+  editFieldAdminOnlyEdit: document.getElementById("editFieldAdminOnlyEdit"),
   editFieldRequired: document.getElementById("editFieldRequired"),
   editFieldSystemNote: document.getElementById("editFieldSystemNote"),
   editFieldBlockKey: document.getElementById("editFieldBlockKey"),
@@ -214,6 +217,7 @@ const el = {
   editFieldType: document.getElementById("editFieldType"),
   editFieldOptionsWrap: document.getElementById("editFieldOptionsWrap"),
   editFieldOptions: document.getElementById("editFieldOptions"),
+  editFieldAdminOnlyValues: document.getElementById("editFieldAdminOnlyValues"),
   deleteEditClientCardFieldBtn: document.getElementById("deleteEditClientCardFieldBtn"),
   errorModal: document.getElementById("errorModal"),
   errorText: document.getElementById("errorText"),
@@ -1267,6 +1271,7 @@ function openEditFieldModal(fieldId) {
   el.editFieldVisible.checked = Boolean(field.is_visible);
   el.editFieldVisibleInEditor.checked = field.is_visible_in_editor !== false;
   el.editFieldEditable.checked = Boolean(field.is_editable);
+  el.editFieldAdminOnlyEdit.checked = Boolean(field.admin_only_edit);
   el.editFieldRequired.checked = Boolean(field.is_required);
   el.editFieldKey.value = field.key || "";
   el.editFieldKey.disabled = true;
@@ -1280,11 +1285,13 @@ function openEditFieldModal(fieldId) {
   if (isSystem) {
     el.editFieldType.disabled = true;
     el.editFieldEditable.disabled = true;
+    el.editFieldAdminOnlyEdit.disabled = false;
     el.editFieldRequired.disabled = true;
     el.editFieldOptions.disabled = (field.field_type || "") !== "select";
   } else {
     el.editFieldType.disabled = false;
     el.editFieldEditable.disabled = false;
+    el.editFieldAdminOnlyEdit.disabled = false;
     el.editFieldRequired.disabled = false;
     el.editFieldOptions.disabled = false;
   }
@@ -1292,6 +1299,7 @@ function openEditFieldModal(fieldId) {
   const options = Array.isArray(field.options) ? field.options : [];
   state.editingFieldOriginalOptions = options.slice();
   el.editFieldOptions.value = options.join("\n");
+  renderAdminOnlyOptionFlags(el.editFieldAdminOnlyValues, options, field.admin_only_values || []);
   el.editFieldOptionsWrap.classList.toggle("hidden", (field.field_type || "") !== "select");
 
   el.editFieldBlockKey.innerHTML = (state.clientCard.blocks || []).map((b) => `<option value="${escapeHtml(b.key)}">${escapeHtml(b.title)}</option>`).join("");
@@ -1310,6 +1318,45 @@ function closeEditFieldModal() {
 
 function fieldOptionsFromTextarea(textarea) {
   return String(textarea?.value || "").split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function adminOnlyValuesFromFlags(container) {
+  return Array.from(container?.querySelectorAll("[data-admin-only-value]:checked") || [])
+    .map((item) => item.dataset.adminOnlyValue)
+    .filter(Boolean);
+}
+
+function renderAdminOnlyOptionFlags(container, options, selectedValues = []) {
+  if (!container) return;
+  const selected = new Set(selectedValues || []);
+  container.innerHTML = "";
+  for (const value of options || []) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label client-card-option-flag";
+    const text = document.createElement("span");
+    text.textContent = value;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.adminOnlyValue = value;
+    checkbox.checked = selected.has(value);
+    label.appendChild(text);
+    label.appendChild(document.createTextNode(" Только админ "));
+    label.appendChild(checkbox);
+    container.appendChild(label);
+  }
+}
+
+function syncAdminOnlyOptionFlags(textarea, container, previousOptions = null) {
+  const selected = new Set(adminOnlyValuesFromFlags(container));
+  const options = fieldOptionsFromTextarea(textarea);
+  const previous = Array.isArray(previousOptions) ? previousOptions : options;
+  const nextSelected = options.filter((option) => selected.has(option));
+  const removedSelected = previous.filter((option) => selected.has(option) && !options.includes(option));
+  const added = options.filter((option) => !previous.includes(option));
+  if (removedSelected.length === 1 && added.length === 1 && !nextSelected.includes(added[0])) {
+    nextSelected.push(added[0]);
+  }
+  renderAdminOnlyOptionFlags(container, options, nextSelected);
 }
 
 function explicitOptionRenames(originalOptions, nextOptions) {
@@ -1332,6 +1379,7 @@ async function saveFieldFromModal() {
     label: el.editFieldLabel.value.trim(),
     is_visible: Boolean(el.editFieldVisible.checked),
     is_visible_in_editor: Boolean(el.editFieldVisibleInEditor.checked),
+    admin_only_edit: Boolean(el.editFieldAdminOnlyEdit.checked),
   };
 
   if (!isSystem) {
@@ -1349,7 +1397,10 @@ async function saveFieldFromModal() {
       return;
     }
     payload.options = options;
+    payload.admin_only_values = adminOnlyValuesFromFlags(el.editFieldAdminOnlyValues);
     payload.option_renames = explicitOptionRenames(state.editingFieldOriginalOptions, options);
+  } else {
+    payload.admin_only_values = null;
   }
 
   try {
@@ -1368,10 +1419,12 @@ async function saveFieldFromModal() {
 
 function syncCreateFieldOptionsVisibility() {
   el.newClientCardFieldOptionsWrap.classList.toggle("hidden", el.newClientCardFieldType.value !== "select");
+  syncAdminOnlyOptionFlags(el.newClientCardFieldOptions, el.newClientCardFieldAdminOnlyValues);
 }
 
 function syncEditFieldOptionsVisibility() {
   el.editFieldOptionsWrap.classList.toggle("hidden", el.editFieldType.value !== "select");
+  syncAdminOnlyOptionFlags(el.editFieldOptions, el.editFieldAdminOnlyValues, state.editingFieldOriginalOptions);
 }
 
 function blockPayloadFromDom(blockId) {
@@ -1843,8 +1896,10 @@ function openCreateFieldModal(blockKey = null) {
   el.newClientCardFieldVisible.checked = true;
   el.newClientCardFieldVisibleInEditor.checked = true;
   el.newClientCardFieldEditable.checked = true;
+  el.newClientCardFieldAdminOnlyEdit.checked = false;
   el.newClientCardFieldRequired.checked = false;
   el.newClientCardFieldOptions.value = "";
+  renderAdminOnlyOptionFlags(el.newClientCardFieldAdminOnlyValues, [], []);
   el.newClientCardFieldBlock.innerHTML = (state.clientCard.blocks || []).map((block) => `<option value="${escapeHtml(block.key)}">${escapeHtml(block.title)}</option>`).join("");
   if (contextBlock) {
     el.newClientCardFieldBlock.value = state.createFieldBlockKey;
@@ -1866,7 +1921,7 @@ async function createField() {
     const label = el.newClientCardFieldLabel.value.trim();
     if (!label) throw new Error("Название поля обязательно");
     const fieldType = el.newClientCardFieldType.value;
-    const options = fieldType === "select" ? el.newClientCardFieldOptions.value.split("\n").map((item) => item.trim()).filter(Boolean) : null;
+    const options = fieldType === "select" ? fieldOptionsFromTextarea(el.newClientCardFieldOptions) : null;
     if (fieldType === "select" && (!options || !options.length)) {
       throw new Error("Для поля select нужно указать хотя бы один вариант");
     }
@@ -1883,8 +1938,10 @@ async function createField() {
         is_visible: Boolean(el.newClientCardFieldVisible.checked),
         is_visible_in_editor: Boolean(el.newClientCardFieldVisibleInEditor.checked),
         is_editable: Boolean(el.newClientCardFieldEditable.checked),
+        admin_only_edit: Boolean(el.newClientCardFieldAdminOnlyEdit.checked),
         is_required: Boolean(el.newClientCardFieldRequired.checked),
         options,
+        admin_only_values: fieldType === "select" ? adminOnlyValuesFromFlags(el.newClientCardFieldAdminOnlyValues) : null,
       }),
     });
     closeCreateFieldModal();
@@ -1948,6 +2005,8 @@ const handlePageKeydown = (e) => {
   el.saveCreateClientCardFieldBtn.addEventListener("click", createField);
   el.newClientCardFieldType.addEventListener("change", syncCreateFieldOptionsVisibility);
   el.editFieldType.addEventListener("change", syncEditFieldOptionsVisibility);
+  el.newClientCardFieldOptions.addEventListener("input", () => syncAdminOnlyOptionFlags(el.newClientCardFieldOptions, el.newClientCardFieldAdminOnlyValues));
+  el.editFieldOptions.addEventListener("input", () => syncAdminOnlyOptionFlags(el.editFieldOptions, el.editFieldAdminOnlyValues, state.editingFieldOriginalOptions));
   el.closeEditClientCardFieldModalBtn.addEventListener("click", closeEditFieldModal);
   el.saveEditClientCardFieldBtn.addEventListener("click", saveFieldFromModal);
   el.closeClientCardRuleModalBtn.addEventListener("click", closeRuleModal);

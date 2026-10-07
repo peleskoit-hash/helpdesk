@@ -110,6 +110,23 @@ def _field_options_out(field: ClientCardFieldConfig) -> list[str] | None:
     return None
 
 
+def _field_admin_only_values_out(field: ClientCardFieldConfig) -> list[str] | None:
+    if field.field_type != "select":
+        return None
+    raw_values = getattr(field, "admin_only_values_json", None)
+    if not isinstance(raw_values, list):
+        return None
+    options = set(_field_options_out(field) or [])
+    values = []
+    seen = set()
+    for item in raw_values:
+        value = str(item or "").strip()
+        if value and value in options and value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values or None
+
+
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
@@ -194,9 +211,11 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
                 is_visible=bool(field.is_visible),
                 is_visible_in_editor=bool(field_visible_in_editor),
                 is_editable=bool(field.is_editable),
+                admin_only_edit=bool(getattr(field, "admin_only_edit", False)),
                 is_required=bool(field.is_required),
                 is_system=bool(field.is_system),
                 options=_field_options_out(field),
+                admin_only_values=_field_admin_only_values_out(field),
             )
         )
     sources = db.execute(

@@ -175,6 +175,8 @@ def ensure_client_card_field_config_columns() -> None:
         "is_required": "BOOLEAN",
         "is_visible_in_editor": "BOOLEAN",
         "options_json": "JSONB",
+        "admin_only_edit": "BOOLEAN",
+        "admin_only_values_json": "JSONB",
     }
     block_required_columns = {
         "show_in_card": "BOOLEAN",
@@ -189,6 +191,7 @@ def ensure_client_card_field_config_columns() -> None:
             rows = conn.execute(text("PRAGMA table_info(client_card_block_configs)")).mappings().all()
             block_existing = {row["name"] for row in rows}
             field_required_columns["options_json"] = "TEXT"
+            field_required_columns["admin_only_values_json"] = "TEXT"
         else:
             rows = conn.execute(
                 text(
@@ -217,6 +220,7 @@ def ensure_client_card_field_config_columns() -> None:
             if column_name not in block_existing:
                 conn.execute(text(f"ALTER TABLE client_card_block_configs ADD COLUMN {column_name} {column_type}"))
         conn.execute(text("UPDATE client_card_field_configs SET is_required = FALSE WHERE is_required IS NULL"))
+        conn.execute(text("UPDATE client_card_field_configs SET admin_only_edit = FALSE WHERE admin_only_edit IS NULL"))
         conn.execute(
             text(
                 """

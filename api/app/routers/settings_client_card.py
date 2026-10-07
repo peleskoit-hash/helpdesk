@@ -155,9 +155,15 @@ def _field_out(field: ClientCardFieldConfig) -> ClientCardFieldConfigOut:
         is_visible=bool(field.is_visible),
         is_visible_in_editor=_field_visible_in_editor(field),
         is_editable=bool(field.is_editable),
+        admin_only_edit=bool(getattr(field, "admin_only_edit", False)),
         is_required=bool(field.is_required),
         is_system=bool(field.is_system),
         options=_field_options_out(field),
+        admin_only_values=(
+            _normalize_admin_only_values(getattr(field, "admin_only_values_json", None), _field_options_out(field) or [])
+            if field.field_type == "select"
+            else None
+        ),
     )
 
 
@@ -167,6 +173,18 @@ def _normalize_field_options(options: list[str] | None) -> list[str]:
     for item in options or []:
         value = item.strip() if isinstance(item, str) else str(item or "").strip()
         if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _normalize_admin_only_values(values: list[str] | None, options: list[str]) -> list[str]:
+    option_set = set(options or [])
+    result = []
+    seen = set()
+    for item in values or []:
+        value = item.strip() if isinstance(item, str) else str(item or "").strip()
+        if value and value in option_set and value not in seen:
             result.append(value)
             seen.add(value)
     return result
@@ -263,6 +281,7 @@ def _apply_select_option_changes(
     field: ClientCardFieldConfig,
     next_options: list[str],
     option_renames: dict[str, str],
+    admin_only_values: list[str] | None = None,
 ) -> None:
     previous_options = _field_options_out(field) or []
     previous_set = set(previous_options)
@@ -288,6 +307,9 @@ def _apply_select_option_changes(
         _cascade_profile_option_rename(db, field, old_value, new_value)
         _cascade_rule_option_rename(db, field, old_value, new_value)
     field.options_json = next_options or None
+    source_admin_values = list(field.admin_only_values_json or []) if admin_only_values is None else list(admin_only_values)
+    renamed_admin_values = [option_renames.get(value, value) for value in source_admin_values]
+    field.admin_only_values_json = _normalize_admin_only_values(renamed_admin_values, next_options) or None
 
 
 def _rule_out(rule: ClientCardRuleConfig) -> ClientCardRuleConfigOut:
@@ -1153,6 +1175,8 @@ def update_client_card_field(
         field.is_visible_in_editor = payload.is_visible_in_editor
     if payload.is_editable is not None:
         field.is_editable = payload.is_editable
+    if payload.admin_only_edit is not None:
+        field.admin_only_edit = payload.admin_only_edit
     if payload.is_required is not None:
         field.is_required = payload.is_required
     if payload.options is not None:
@@ -1160,9 +1184,18 @@ def update_client_card_field(
         if field.field_type == "select" and not options:
             _error(422, "select_options_required", "Для поля select укажите варианты")
         if field.field_type == "select":
-            _apply_select_option_changes(db, field, options, _normalize_option_renames(payload.option_renames))
+            option_renames = _normalize_option_renames(payload.option_renames)
+            if options == (_field_options_out(field) or []) and not option_renames:
+                if payload.admin_only_values is not None:
+                    field.admin_only_values_json = _normalize_admin_only_values(payload.admin_only_values, options) or None
+            else:
+                _apply_select_option_changes(db, field, options, option_renames, payload.admin_only_values)
         else:
             field.options_json = options or None
+            field.admin_only_values_json = None
+    elif payload.admin_only_values is not None:
+        options = _field_options_out(field) or []
+        field.admin_only_values_json = _normalize_admin_only_values(payload.admin_only_values, options) or None
     field.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(field)
@@ -1283,7 +1316,7 @@ def create_client_card_field(
     label = payload.label.strip()
     if not label:
         _error(422, "label_required", "Название поля обязательно")
-    options = [item.strip() for item in (payload.options or []) if item and item.strip()]
+    options = _normalize_field_options(payload.options)
     if payload.field_type == "select" and not options:
         _error(422, "select_options_required", "Для поля select укажите варианты")
 
@@ -1306,9 +1339,11 @@ def create_client_card_field(
         is_visible=payload.is_visible,
         is_visible_in_editor=payload.is_visible_in_editor,
         is_editable=payload.is_editable,
+        admin_only_edit=payload.admin_only_edit,
         is_required=payload.is_required,
         is_system=False,
         options_json=options or None,
+        admin_only_values_json=_normalize_admin_only_values(payload.admin_only_values, options) or None,
         created_at=now,
         updated_at=now,
     )

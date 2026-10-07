@@ -22,6 +22,18 @@ test("system select options stay editable and send explicit rename mapping", () 
   assert.match(source, /payload\.option_renames = explicitOptionRenames/);
 });
 
+test("admin-only select values are checkboxes tied to existing options", () => {
+  assert.match(source, /function renderAdminOnlyOptionFlags/);
+  assert.match(source, /function adminOnlyValuesFromFlags/);
+  assert.match(source, /function syncAdminOnlyOptionFlags/);
+  assert.match(source, /checkbox\.dataset\.adminOnlyValue = value/);
+  assert.match(source, /payload\.admin_only_values = adminOnlyValuesFromFlags\(el\.editFieldAdminOnlyValues\)/);
+  assert.match(source, /admin_only_values: fieldType === "select" \? adminOnlyValuesFromFlags\(el\.newClientCardFieldAdminOnlyValues\) : null/);
+  assert.match(source, /syncAdminOnlyOptionFlags\(el\.editFieldOptions, el\.editFieldAdminOnlyValues, state\.editingFieldOriginalOptions\)/);
+  assert.doesNotMatch(source, /editFieldAdminOnlyValues\.value/);
+  assert.doesNotMatch(source, /newClientCardFieldAdminOnlyValues\.value/);
+});
+
 test("explicitOptionRenames is conservative set-diff logic", () => {
   const explicitOptionRenames = loadExplicitOptionRenames();
   const renames = (originalOptions, nextOptions) => JSON.parse(JSON.stringify(explicitOptionRenames(originalOptions, nextOptions)));

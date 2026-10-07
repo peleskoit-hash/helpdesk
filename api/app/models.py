@@ -696,9 +696,11 @@ class ClientCardFieldConfig(Base):
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
     is_visible_in_editor: Mapped[bool] = mapped_column(Boolean, default=True)
     is_editable: Mapped[bool] = mapped_column(Boolean, default=True)
+    admin_only_edit: Mapped[bool] = mapped_column(Boolean, default=False)
     is_required: Mapped[bool] = mapped_column(Boolean, default=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=True)
     options_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    admin_only_values_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

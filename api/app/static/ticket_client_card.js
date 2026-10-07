@@ -510,6 +510,10 @@
     return fieldValueForEditor(ctx.state.clientCardRuleProfile || ctx.state.card?.client_profile || {}, { key });
   }
 
+  function isAdminRole(ctx) {
+    return ctx.state?.role === "admin";
+  }
+
   function normalizeRuleValue(value) {
     return String(value ?? "").trim();
   }
@@ -523,6 +527,22 @@
     if (rule.condition_operator === "is_empty") return current === "";
     if (rule.condition_operator === "is_not_empty") return current !== "";
     return false;
+  }
+
+  function fieldBaseReadonly(ctx, key) {
+    const { control } = fieldEditorNodes(ctx, key);
+    return control?.dataset?.clientCardBaseReadonly === "1";
+  }
+
+  function setControlReadonly(control, readonly) {
+    if (!control) return;
+    if (control.type === "checkbox" || control.tagName === "SELECT") {
+      control.disabled = Boolean(readonly);
+      control.readOnly = false;
+    } else {
+      control.disabled = false;
+      control.readOnly = Boolean(readonly);
+    }
   }
 
   function resetClientCardRuleOverlay(ctx) {
@@ -550,13 +570,8 @@
       }
       if (control) {
         const baseReadonly = control.dataset.clientCardBaseReadonly === "1";
-        if (control.type === "checkbox" || control.tagName === "SELECT") {
-          control.disabled = baseReadonly;
-          control.readOnly = false;
-        } else {
-          control.disabled = false;
-          control.readOnly = baseReadonly;
-        }
+        setControlReadonly(control, baseReadonly);
+        if (wrap) wrap.classList.toggle("client-card-field-readonly-rule", baseReadonly);
         control.required = false;
       }
     }
@@ -623,17 +638,12 @@
     } else if (action.action === "readonly") {
       state.readonly.add(key);
       if (wrap) wrap.classList.add("client-card-field-readonly-rule");
-      if (control) {
-        if (control.type === "checkbox" || control.tagName === "SELECT") control.disabled = true;
-        else control.readOnly = true;
-      }
+      setControlReadonly(control, true);
     } else if (action.action === "editable") {
       state.readonly.delete(key);
-      if (wrap) wrap.classList.remove("client-card-field-readonly-rule");
-      if (control) {
-        control.disabled = false;
-        control.readOnly = false;
-      }
+      const baseReadonly = fieldBaseReadonly(ctx, key);
+      if (wrap) wrap.classList.toggle("client-card-field-readonly-rule", baseReadonly);
+      setControlReadonly(control, baseReadonly);
     } else if (action.action === "required") {
       state.required.add(key);
       if (control) control.required = true;
@@ -699,7 +709,7 @@
   }
 
   function isRuntimeFieldReadonly(ctx, key) {
-    return ensureRuleState(ctx).readonly.has(key);
+    return fieldBaseReadonly(ctx, key) || ensureRuleState(ctx).readonly.has(key);
   }
 
   function validateClientCardRuleRequirements(ctx) {
@@ -1200,7 +1210,7 @@
     return wrap;
   }
 
-  function renderEditableCustomField(field, currentValue) {
+  function renderEditableCustomField(ctx, field, currentValue) {
     const wrap = document.createElement("label");
     wrap.className = "custom-field-editor";
     wrap.dataset.clientCardFieldKey = field.key;
@@ -1220,13 +1230,16 @@
       emptyOption.textContent = "\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e";
       inputEl.appendChild(emptyOption);
       const options = Array.isArray(field.options) ? field.options : [];
+      const adminOnlyValues = new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []);
       for (const optionValue of options) {
         const option = document.createElement("option");
         option.value = optionValue;
         option.textContent = optionValue;
+        if (!isAdminRole(ctx) && adminOnlyValues.has(optionValue)) option.disabled = true;
         inputEl.appendChild(option);
       }
       inputEl.value = currentValue ?? "";
+      if (!isAdminRole(ctx) && adminOnlyValues.has(inputEl.value)) inputEl.disabled = true;
     } else if (fieldType === "checkbox") {
       inputEl = document.createElement("input");
       inputEl.type = "checkbox";
@@ -1243,7 +1256,14 @@
     }
     inputEl.dataset.customFieldKey = field.key;
     inputEl.dataset.customFieldType = fieldType;
-    inputEl.dataset.clientCardBaseReadonly = field.is_editable === false ? "1" : "0";
+    const baseReadonly = field.is_editable === false
+      || (!isAdminRole(ctx) && field.admin_only_edit)
+      || (!isAdminRole(ctx) && fieldType === "select" && new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []).has(String(currentValue ?? "")));
+    inputEl.dataset.clientCardBaseReadonly = baseReadonly ? "1" : "0";
+    if (inputEl.dataset.clientCardBaseReadonly === "1") {
+      setControlReadonly(inputEl, true);
+      wrap.classList.add("client-card-field-readonly-rule");
+    }
     wrap.appendChild(inputEl);
     return wrap;
   }
@@ -1258,10 +1278,17 @@
     title.textContent = field.label || field.key;
     wrap.appendChild(title);
     wrap.appendChild(control);
-    control.dataset.clientCardBaseReadonly = field.is_editable === false ? "1" : "0";
-    if (field.is_editable === false) {
-      if (control.type === "checkbox" || control.tagName === "SELECT") control.disabled = true;
-      else control.readOnly = true;
+    const fieldType = String(field.field_type || "text").toLowerCase();
+    const adminOnlyValues = new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []);
+    if (control.tagName === "SELECT") {
+      Array.from(control.options || []).forEach((option) => {
+        option.disabled = !isAdminRole(ctx) && adminOnlyValues.has(option.value);
+      });
+    }
+    const adminOnlySelectCurrent = !isAdminRole(ctx) && fieldType === "select" && adminOnlyValues.has(String(currentValue ?? control.value ?? ""));
+    control.dataset.clientCardBaseReadonly = field.is_editable === false || (!isAdminRole(ctx) && field.admin_only_edit) || adminOnlySelectCurrent ? "1" : "0";
+    if (control.dataset.clientCardBaseReadonly === "1") {
+      setControlReadonly(control, true);
       wrap.classList.add("client-card-field-readonly-rule");
     }
     return wrap;
@@ -1313,7 +1340,7 @@
         if (field.is_system) {
           fieldEl = renderConfiguredSystemEditorField(ctx, field, currentValue);
         } else if (field.is_editable !== false) {
-          fieldEl = renderEditableCustomField(field, currentValue);
+          fieldEl = renderEditableCustomField(ctx, field, currentValue);
         } else {
           fieldEl = renderReadonlyEditorField(field, currentValue);
         }

@@ -72,9 +72,11 @@ def _field_configs(db: Session) -> dict[str, Any]:
             label=field.label,
             field_type=field.field_type,
             is_editable=bool(field.is_editable),
+            admin_only_edit=bool(getattr(field, "admin_only_edit", False)),
             is_required=bool(field.is_required),
             is_system=bool(field.is_system),
             options_json=list(field.options_json or []),
+            admin_only_values_json=list(getattr(field, "admin_only_values_json", None) or []),
         )
         for field in db.execute(select(ClientCardFieldConfig)).scalars().all()
     }
@@ -371,6 +373,56 @@ def _missing_source_template_value(field_key: str, field_configs: dict[str, Any]
             }
         },
     )
+
+
+def _protected_field_error(field: Any) -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "error": {
+                "code": "client_card_admin_only_field",
+                "message": f"Поле '{getattr(field, 'label', None) or getattr(field, 'key', '')}' доступно для изменения только администратору",
+                "details": {"field_key": getattr(field, "key", None), "field_label": getattr(field, "label", None)},
+            }
+        },
+    )
+
+
+def _profile_value(profile: ClientProfile | None, key: str) -> Any:
+    if profile is None:
+        return None
+    if key in SYSTEM_PROFILE_FIELDS:
+        return getattr(profile, key, None)
+    return dict(profile.custom_fields or {}).get(key)
+
+
+def validate_client_card_direct_user_changes(
+    db: Session,
+    profile: ClientProfile | None,
+    incoming: dict[str, Any],
+    merged_custom_fields: dict[str, Any],
+) -> None:
+    field_configs = _field_configs(db)
+    custom_keys = {key for key, field in field_configs.items() if not getattr(field, "is_system", False)}
+    incoming_keys = _incoming_changed_keys(incoming)
+    for key in incoming_keys:
+        field = field_configs.get(key)
+        if field is None:
+            continue
+        old_value = normalize_client_card_derived_value(key, _profile_value(profile, key), field_configs, custom_keys)
+        raw_new_value = merged_custom_fields.get(key) if key not in SYSTEM_PROFILE_FIELDS else incoming.get(key)
+        new_value = normalize_client_card_derived_value(key, raw_new_value, field_configs, custom_keys)
+        if old_value == new_value:
+            continue
+        if getattr(field, "admin_only_edit", False):
+            raise _protected_field_error(field)
+        if field.field_type != "select":
+            continue
+        admin_only_values = set(getattr(field, "admin_only_values_json", None) or [])
+        if not admin_only_values:
+            continue
+        if old_value in admin_only_values or new_value in admin_only_values:
+            raise _protected_field_error(field)
 
 
 def _apply_value_to_maps(

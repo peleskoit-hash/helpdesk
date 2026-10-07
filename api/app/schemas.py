@@ -658,9 +658,11 @@ class ClientCardFieldConfigOut(BaseModel):
     is_visible: bool
     is_visible_in_editor: bool = True
     is_editable: bool
+    admin_only_edit: bool = False
     is_required: bool = False
     is_system: bool
     options: list[str] | None = None
+    admin_only_values: list[str] | None = None
 
 
 class ClientCardBlockConfigOut(BaseModel):
@@ -828,8 +830,10 @@ class ClientCardFieldUpdate(BaseModel):
     is_visible: bool | None = None
     is_visible_in_editor: bool | None = None
     is_editable: bool | None = None
+    admin_only_edit: bool | None = None
     is_required: bool | None = None
     options: list[str] | None = None
+    admin_only_values: list[str] | None = None
     option_renames: list[dict[str, str]] | None = None
 
 
@@ -854,8 +858,10 @@ class ClientCardFieldCreate(BaseModel):
     is_visible: bool = True
     is_visible_in_editor: bool = True
     is_editable: bool = True
+    admin_only_edit: bool = False
     is_required: bool = False
     options: list[str] | None = None
+    admin_only_values: list[str] | None = None
     sort_order: int | None = None
 
 

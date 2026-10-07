@@ -790,6 +790,26 @@ test('ticket client card base-hidden block plus base-visible field becomes visib
   assert.match(hiddenSource, /return state\.hidden\.has\(key\) \|\| \(blockKey \? state\.hiddenBlocks\.has\(blockKey\) : false\)/);
 });
 
+test('ticket client card admin-only base readonly cannot be removed by editable rules', () => {
+  const resetSource = sourceBetween(ticketClientCardSource, 'function resetClientCardRuleOverlay', 'function fieldBlockKey');
+  const readonlySource = sourceBetween(ticketClientCardSource, 'function isRuntimeFieldReadonly', 'function validateClientCardRuleRequirements');
+  const editableSource = sourceBetween(ticketClientCardSource, '} else if (action.action === "editable")', '} else if (action.action === "required")');
+  const customEditorSource = sourceBetween(ticketClientCardSource, 'function renderEditableCustomField', 'function renderConfiguredSystemEditorField');
+  const systemEditorSource = sourceBetween(ticketClientCardSource, 'function renderConfiguredSystemEditorField', 'function renderCustomFieldsEditor');
+  const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
+
+  assert.match(ticketClientCardSource, /function fieldBaseReadonly\(ctx, key\)/);
+  assert.match(ticketClientCardSource, /function setControlReadonly\(control, readonly\)/);
+  assert.match(ticketClientCardSource, /function renderEditableCustomField\(ctx, field, currentValue\)/);
+  assert.match(resetSource, /setControlReadonly\(control, baseReadonly\)/);
+  assert.match(readonlySource, /return fieldBaseReadonly\(ctx, key\) \|\| ensureRuleState\(ctx\)\.readonly\.has\(key\)/);
+  assert.match(editableSource, /const baseReadonly = fieldBaseReadonly\(ctx, key\)/);
+  assert.match(editableSource, /setControlReadonly\(control, baseReadonly\)/);
+  assert.match(customEditorSource, /!isAdminRole\(ctx\) && field\.admin_only_edit/);
+  assert.match(systemEditorSource, /!isAdminRole\(ctx\) && field\.admin_only_edit/);
+  assert.match(editorSource, /renderEditableCustomField\(ctx, field, currentValue\)/);
+});
+
 test('ticket client card modal payload omits system fields that are not edited by the modal', () => {
   const payloadSource = sourceBetween(ticketClientCardSource, 'function getModalPayload', 'function openClientModal');
   for (const key of ['email', 'phone', 'verification_status', 'employee_type', 'external_user_id']) {

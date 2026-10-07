@@ -136,6 +136,130 @@ def test_system_select_options_can_be_saved_without_unlocking_key_or_type():
     assert exc.value.status_code == 403
 
 
+def test_client_card_field_admin_only_defaults_false_and_round_trips():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    session.add(block)
+    session.commit()
+
+    created = settings_client_card.create_client_card_field(
+        ClientCardFieldCreate(
+            label="Department",
+            field_type="select",
+            block_key=block.key,
+            options=["Sales", "Management"],
+            admin_only_values=["Management"],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    assert created.admin_only_edit is False
+    assert created.admin_only_values == ["Management"]
+    stored = session.get(ClientCardFieldConfig, created.id)
+    assert stored.admin_only_edit is False
+    assert stored.admin_only_values_json == ["Management"]
+
+
+def test_client_card_field_update_prunes_stale_admin_only_values():
+    session = _session()
+    block = _block("custom", "Custom", 10)
+    field = _field("department", "Department", block.key, 10, is_system=False)
+    field.field_type = "select"
+    field.options_json = ["Sales", "Support", "Management"]
+    field.admin_only_values_json = ["Management", "Support"]
+    session.add_all([block, field])
+    session.commit()
+
+    updated = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(options=["Sales", "Support"], admin_only_values=["Management", "Support"]),
+        db=session,
+        user=_admin(),
+    )
+
+    assert updated.admin_only_values == ["Support"]
+    assert session.get(ClientCardFieldConfig, field.id).admin_only_values_json == ["Support"]
+
+
+def test_non_admin_direct_change_admin_only_field_is_forbidden_but_same_value_allowed():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    field = _field("contact_name", "Name", block.key, 10, is_system=True)
+    field.is_editable = True
+    field.admin_only_edit = True
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), contact_name="Alice")
+    session.add_all([block, field, profile])
+    session.commit()
+
+    client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"contact_name": "Alice"}, {})
+    with pytest.raises(HTTPException) as exc:
+        client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"contact_name": "Bob"}, {})
+
+    assert exc.value.status_code == 403
+
+
+def test_non_admin_select_protected_value_blocks_enter_and_exit_for_system_and_custom_fields():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    department = _field("department", "Department", block.key, 10, is_system=True)
+    department.field_type = "select"
+    department.is_editable = True
+    department.options_json = ["Sales", "Management"]
+    department.admin_only_values_json = ["Management"]
+    custom = _field("custom_department", "Custom department", block.key, 20, is_system=False)
+    custom.field_type = "select"
+    custom.options_json = ["Sales", "Management"]
+    custom.admin_only_values_json = ["Management"]
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=str(uuid.uuid4()),
+        department="Sales",
+        custom_fields={"custom_department": "Management"},
+    )
+    session.add_all([block, department, custom, profile])
+    session.commit()
+
+    client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"department": "Sales", "custom_fields": {"custom_department": "Management"}}, {"custom_department": "Management"})
+    with pytest.raises(HTTPException):
+        client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"department": " Management "}, {"custom_department": "Management"})
+    with pytest.raises(HTTPException):
+        client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"department": "Sales", "custom_fields": {"custom_department": "Sales"}}, {"custom_department": "Sales"})
+
+    profile.department = "Management"
+    profile.custom_fields = {"custom_department": "Sales"}
+    session.commit()
+    with pytest.raises(HTTPException):
+        client_card_derivation.validate_client_card_direct_user_changes(session, profile, {"department": "Sales"}, {"custom_department": "Sales"})
+
+
+def test_save_pipeline_rule_can_change_admin_only_protected_field():
+    session = _session()
+    block = _block("profile", "Profile", 10)
+    source = _field("contact_name", "Name", block.key, 10, is_system=True)
+    target = _field("department", "Department", block.key, 20, is_system=True)
+    target.field_type = "select"
+    target.is_editable = True
+    target.options_json = ["Sales", "Management"]
+    target.admin_only_values_json = ["Management"]
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="derive department",
+        is_active=True,
+        sort_order=10,
+        condition_field_key="contact_name",
+        condition_operator="is_not_empty",
+        actions_json=[{"action": "set_value", "target_key": "department", "scope": "save", "value_type": "literal", "value": "Management"}],
+    )
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), contact_name=None, department="Sales")
+    session.add_all([block, source, target, rule, profile])
+    session.commit()
+
+    result = client_card_derivation.apply_client_card_profile_save_pipeline(session, profile, {"contact_name": "Alice"}, {}, client_id=profile.client_id)
+
+    assert result.profile.department == "Management"
+
+
 def test_select_option_addition_does_not_change_existing_profiles_and_runtime_uses_saved_options():
     session = _session()
     block = _block("department", "Department", 10)
@@ -189,6 +313,46 @@ def test_select_option_rename_updates_system_profiles_and_rule_literals():
     stored_rule = session.get(ClientCardRuleConfig, rule.id)
     assert stored_rule.condition_value == "Контакт-центр"
     assert stored_rule.actions_json[0]["value"] == "Контакт-центр"
+
+
+def test_select_option_rename_keeps_admin_only_value_on_new_option():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("department", "Department", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["Продажи", "КЦ", "Удалить"]
+    field.admin_only_values_json = ["КЦ"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), department="КЦ")
+    rule = ClientCardRuleConfig(
+        id=str(uuid.uuid4()),
+        name="department rule",
+        is_active=True,
+        sort_order=10,
+        condition_field_key="department",
+        condition_operator="equals",
+        condition_value="КЦ",
+        actions_json=[{"target_type": "field", "target_key": "department", "action": "set_value", "scope": "save", "value_type": "literal", "value": "КЦ"}],
+    )
+    session.add_all([block, field, profile, rule])
+    session.commit()
+
+    updated = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(
+            options=["Продажи", "Контакт-центр"],
+            option_renames=[{"old_value": "КЦ", "new_value": "Контакт-центр"}],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    stored_field = session.get(ClientCardFieldConfig, field.id)
+    stored_rule = session.get(ClientCardRuleConfig, rule.id)
+    assert session.get(ClientProfile, profile.id).department == "Контакт-центр"
+    assert stored_rule.condition_value == "Контакт-центр"
+    assert stored_rule.actions_json[0]["value"] == "Контакт-центр"
+    assert updated.admin_only_values == ["Контакт-центр"]
+    assert stored_field.admin_only_values_json == ["Контакт-центр"]
 
 
 def test_select_option_rename_updates_rule_map_source_key_entry():
@@ -395,6 +559,34 @@ def test_select_option_delete_used_value_without_rename_is_forbidden_but_unused_
         user=_admin(),
     )
     assert result.options == ["Продажи", "КЦ"]
+
+
+def test_select_option_mark_used_value_admin_only_does_not_count_as_delete():
+    session = _session()
+    block = _block("department", "Department", 10)
+    field = _field("destination", "Destination", block.key, 10, is_system=True)
+    field.field_type = "select"
+    field.options_json = ["Sales", "Management"]
+    profile = ClientProfile(id=str(uuid.uuid4()), client_id=str(uuid.uuid4()), destination="Management")
+    session.add_all([block, field, profile])
+    session.commit()
+
+    updated = settings_client_card.update_client_card_field(
+        field.id,
+        ClientCardFieldUpdate(
+            options=["Sales", "Management"],
+            admin_only_values=["Management"],
+        ),
+        db=session,
+        user=_admin(),
+    )
+
+    stored_field = session.get(ClientCardFieldConfig, field.id)
+    assert session.get(ClientProfile, profile.id).destination == "Management"
+    assert stored_field.options_json == ["Sales", "Management"]
+    assert stored_field.admin_only_values_json == ["Management"]
+    assert updated.options == ["Sales", "Management"]
+    assert updated.admin_only_values == ["Management"]
 
 
 def test_delete_custom_field_keeps_profile_data_contract_to_config_only():
