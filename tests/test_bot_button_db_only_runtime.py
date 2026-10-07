@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import BotButtonSetting, BotMenuLevelLayout, MessageType, SavedFile, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
+from api.app.models import BotButtonSetting, BotMenuDestinationBinding, BotMenuLevelLayout, Client, ClientProfile, Company, MessageType, SavedFile, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType
 from api.app.routers import settings_bot_button_items
 from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
@@ -87,6 +87,91 @@ def _button(**overrides):
     }
     payload.update(overrides)
     return SimpleNamespace(**payload)
+
+
+def _seed_menu_client(session, *, destination="Отдел Продаж", temporary_rop=False):
+    company = Company(id=str(uuid.uuid4()), name="Company")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Иванов Иван")
+    profile = ClientProfile(
+        id=str(uuid.uuid4()),
+        client_id=client.id,
+        contact_name="Иван",
+        last_name="Иванов",
+        is_verified=True,
+        destination=destination,
+        custom_fields={"custom_vremennyy_rop": temporary_rop} if temporary_rop else {},
+    )
+    contact = TelegramContact(
+        id=str(uuid.uuid4()),
+        company_id=company.id,
+        client_id=client.id,
+        external_user_id=str(uuid.uuid4()),
+        external_chat_id=str(uuid.uuid4()),
+    )
+    ticket = Ticket(id=str(uuid.uuid4()), company_id=company.id, client_id=client.id, subject="Ticket")
+    session.add_all(
+        [
+            company,
+            client,
+            profile,
+            contact,
+            ticket,
+            BotMenuDestinationBinding(id=str(uuid.uuid4()), destination_value="Отдел Продаж", menu_type="Отдел Продаж"),
+            BotMenuDestinationBinding(id=str(uuid.uuid4()), destination_value="Руководство", menu_type="Руководство"),
+        ]
+    )
+    session.commit()
+    return profile, contact, ticket
+
+
+def test_menu_name_for_contact_uses_real_destination_without_temporary_rop(monkeypatch):
+    session = _session()
+    profile, contact, _ticket = _seed_menu_client(session, temporary_rop=False)
+    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
+
+    assert telegram_router._menu_name_for_contact(session, contact) == "Отдел Продаж"
+    assert profile.destination == "Отдел Продаж"
+
+
+def test_menu_name_for_contact_uses_management_menu_for_temporary_rop(monkeypatch):
+    session = _session()
+    profile, contact, _ticket = _seed_menu_client(session, temporary_rop=True)
+    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
+
+    assert telegram_router._menu_name_for_contact(session, contact) == "Руководство"
+    assert profile.destination == "Отдел Продаж"
+    assert profile.contact_name == "Иван"
+    assert profile.last_name == "Иванов"
+
+
+def test_menu_name_for_contact_ignores_non_boolean_temporary_rop(monkeypatch):
+    session = _session()
+    profile, contact, _ticket = _seed_menu_client(session, temporary_rop=False)
+    profile.custom_fields = {"custom_vremennyy_rop": "true"}
+    session.commit()
+    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
+
+    assert telegram_router._menu_name_for_contact(session, contact) == "Отдел Продаж"
+
+
+def test_menu_name_for_contact_keeps_real_management_destination(monkeypatch):
+    session = _session()
+    profile, contact, _ticket = _seed_menu_client(session, destination="Руководство", temporary_rop=False)
+    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
+
+    assert telegram_router._menu_name_for_contact(session, contact) == "Руководство"
+    assert profile.custom_fields == {}
+
+
+def test_menu_name_for_ticket_client_uses_management_menu_for_temporary_rop_without_contact(monkeypatch):
+    session = _session()
+    profile, contact, ticket = _seed_menu_client(session, temporary_rop=True)
+    session.delete(contact)
+    session.commit()
+    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
+
+    assert telegram_router._menu_name_for_ticket_client(session, ticket) == "Руководство"
+    assert profile.destination == "Отдел Продаж"
 
 
 def _fail_fallback(*args, **kwargs):

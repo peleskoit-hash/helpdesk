@@ -3,6 +3,7 @@
 
   function clientDisplayName(state, card) {
     const profile = card?.client_profile || {};
+    if (profile.display_name) return profile.display_name;
     const fullName = `${profile.last_name || ""} ${profile.contact_name || ""}`.trim();
     if (fullName) return fullName;
     if (profile.telegram_display_name) return profile.telegram_display_name;

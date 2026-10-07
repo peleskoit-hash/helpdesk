@@ -775,7 +775,7 @@ function messageAuthorLabel(message) {
   const card = state.card || {};
   const profile = card.client_profile || {};
   const fullName = `${profile.last_name || ""} ${profile.contact_name || ""}`.trim();
-  const clientName = fullName || profile.telegram_display_name || card.client_name || "Клиент";
+  const clientName = profile.display_name || fullName || profile.telegram_display_name || card.client_name || "Клиент";
   if (typeof message === "object" && message) {
     if (messageType === "client") return clientName;
     if (messageType === "agent" || messageType === "internal") return message.author_name || "Агент";

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
 from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
+from .temporary_rop import with_temporary_rop_suffix
 
 SYSTEM_PROFILE_FIELD_KEYS = {
     "contact_name",
@@ -161,6 +162,12 @@ def _profile_out(
     return ClientProfileOut(
         telegram_username=telegram_username,
         telegram_display_name=telegram_display_name,
+        display_name=with_temporary_rop_suffix(
+            " ".join(part for part in (value("last_name"), value("contact_name")) if part).strip()
+            or telegram_display_name
+            or "",
+            profile,
+        ) or None,
         contact_name=value("contact_name"),
         last_name=value("last_name"),
         email=profile.email,

@@ -14,16 +14,6 @@ from .client_card_derivation import SYSTEM_PROFILE_FIELDS, apply_client_card_pro
 
 CALL_CENTER_EMPLOYEE_SOURCE_KEY = "call_center_employee_by_internal_number"
 CALL_CENTER_DESTINATION_VALUE = "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"
-RESOLVER_OWNED_PROFILE_FIELDS = (
-    "contact_name",
-    "last_name",
-    "bitrix_id",
-    "external_user_id",
-    "bitrix_login",
-    "internal_number",
-)
-RESOLVER_OWNED_CUSTOM_FIELD_KEYS = ("custom_fio",)
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -109,18 +99,6 @@ def _empty_resolver_profile_delta(internal_number: str) -> dict[str, Any]:
     }
 
 
-def _clear_profile_resolver_owned_fields(profile: ClientProfile) -> None:
-    profile.contact_name = None
-    profile.last_name = None
-    profile.bitrix_id = None
-    profile.external_user_id = None
-    profile.bitrix_login = None
-    current = dict(profile.custom_fields or {})
-    for key in RESOLVER_OWNED_CUSTOM_FIELD_KEYS:
-        current.pop(key, None)
-    profile.custom_fields = current
-
-
 def _build_ticket_profile_delta(
     *,
     internal_number: str,
@@ -203,11 +181,6 @@ def apply_call_center_employee_snapshot_on_ticket_create(db: Session, ticket: Ti
         "profile_delta": _empty_resolver_profile_delta(internal_number),
     }
     if not result.found:
-        if result.status in {
-            call_center_employee_resolver.STATUS_NOT_FOUND,
-            call_center_employee_resolver.STATUS_AMBIGUOUS,
-        }:
-            _clear_profile_resolver_owned_fields(profile)
         _LOGGER.info(
             "Call-center employee resolver returned status %s for ticket %s",
             result.status,

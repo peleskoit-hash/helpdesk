@@ -160,41 +160,54 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
 
 
 def _call_center_profile_overrides(ticket: Ticket) -> dict:
+    def meaningful(value) -> bool:
+        return value is not None and str(value).strip() != ""
+
+    def put(overrides: dict, key: str, value) -> None:
+        if meaningful(value):
+            overrides[key] = value
+
+    def meaningful_custom_fields(value) -> dict:
+        if not isinstance(value, dict):
+            return {}
+        return {key: item for key, item in value.items() if meaningful(item)}
+
     snapshot = ticket.call_center_profile_snapshot_json or {}
     if not isinstance(snapshot, dict):
         snapshot = {}
     profile_delta = snapshot.get("profile_delta")
     if isinstance(profile_delta, dict):
-        overrides = dict(profile_delta)
-        custom_fields = profile_delta.get("custom_fields")
-        if isinstance(custom_fields, dict):
-            overrides["custom_fields"] = dict(custom_fields)
+        overrides = {}
+        for key in ("contact_name", "last_name", "bitrix_id", "external_user_id", "bitrix_login", "internal_number"):
+            put(overrides, key, profile_delta.get(key))
+        custom_fields = meaningful_custom_fields(profile_delta.get("custom_fields"))
+        if custom_fields:
+            overrides["custom_fields"] = custom_fields
         return overrides
 
     overrides = {}
-    custom_fields = snapshot.get("custom_fields")
-    if isinstance(custom_fields, dict):
-        overrides["custom_fields"] = dict(custom_fields)
-    if "internal_number" in snapshot:
-        overrides["internal_number"] = snapshot.get("internal_number")
+    custom_fields = meaningful_custom_fields(snapshot.get("custom_fields"))
+    if custom_fields:
+        overrides["custom_fields"] = custom_fields
+    put(overrides, "internal_number", snapshot.get("internal_number"))
     if ticket.call_center_employee_first_name is not None:
-        overrides["contact_name"] = ticket.call_center_employee_first_name
+        put(overrides, "contact_name", ticket.call_center_employee_first_name)
     elif "first_name" in snapshot:
-        overrides["contact_name"] = snapshot.get("first_name") or ""
+        put(overrides, "contact_name", snapshot.get("first_name"))
     if ticket.call_center_employee_last_name is not None:
-        overrides["last_name"] = ticket.call_center_employee_last_name
+        put(overrides, "last_name", ticket.call_center_employee_last_name)
     elif "last_name" in snapshot:
-        overrides["last_name"] = snapshot.get("last_name") or ""
+        put(overrides, "last_name", snapshot.get("last_name"))
     if ticket.call_center_employee_id is not None:
-        overrides["bitrix_id"] = ticket.call_center_employee_id
-        overrides["external_user_id"] = ticket.call_center_employee_id
+        put(overrides, "bitrix_id", ticket.call_center_employee_id)
+        put(overrides, "external_user_id", ticket.call_center_employee_id)
     elif "bitrix_id" in snapshot:
-        overrides["bitrix_id"] = snapshot.get("bitrix_id") or ""
-        overrides["external_user_id"] = snapshot.get("bitrix_id") or ""
+        put(overrides, "bitrix_id", snapshot.get("bitrix_id"))
+        put(overrides, "external_user_id", snapshot.get("bitrix_id"))
     if ticket.call_center_employee_bitrix_login is not None:
-        overrides["bitrix_login"] = ticket.call_center_employee_bitrix_login
+        put(overrides, "bitrix_login", ticket.call_center_employee_bitrix_login)
     elif "bitrix_login" in snapshot:
-        overrides["bitrix_login"] = snapshot.get("bitrix_login") or ""
+        put(overrides, "bitrix_login", snapshot.get("bitrix_login"))
     return overrides
 
 

@@ -34,6 +34,7 @@ from api.app.routers import telegram, tickets
 from api.app.schemas import ClientCardSourceRunRequest, ClientProfileUpdate
 from api.app.services import call_center_employee_resolver, client_card_sources
 from api.app.services.call_center_employee_resolver import CallCenterEmployee, ResolveResult
+from api.app.services.client_card import _profile_out
 from api.app.services.ticket_list import _display_author_enabled, list_special_tickets, list_tickets_paginated, requester_display_name
 from api.app.services.ticket_call_center_snapshot import (
     CALL_CENTER_EMPLOYEE_SOURCE_KEY,
@@ -1177,6 +1178,47 @@ def test_ticket_list_requester_display_name_fallback_prefers_profile_fio_then_te
     assert payload.items[0].requester_display_name == "Telegram Анна"
     assert payload.items[0].requester_display_name != "Мария"
 
+
+def test_temporary_rop_requester_display_name_adds_suffix_without_mutating_profile():
+    session = _session()
+    _client, profile, ticket = _seed_case(session)
+    profile.last_name = "Иванов"
+    profile.contact_name = "Иван"
+    profile.destination = "Отдел Продаж"
+    profile.custom_fields = {"custom_fio": "Иванов Иван", "custom_vremennyy_rop": True}
+    session.commit()
+
+    assert requester_display_name(session, ticket) == "Иванов Иван ВРиО РОПа"
+    assert profile.destination == "Отдел Продаж"
+    assert profile.last_name == "Иванов"
+    assert profile.contact_name == "Иван"
+
+
+def test_temporary_rop_requester_display_name_omits_suffix_when_disabled():
+    session = _session()
+    _client, profile, ticket = _seed_case(session)
+    profile.last_name = "Иванов"
+    profile.contact_name = "Иван"
+    profile.custom_fields = {"custom_fio": "Иванов Иван", "custom_vremennyy_rop": False}
+    session.commit()
+
+    assert requester_display_name(session, ticket) == "Иванов Иван"
+
+
+def test_temporary_rop_profile_out_exposes_display_name_without_mutating_names():
+    session = _session()
+    _client, profile, _ticket = _seed_case(session)
+    profile.last_name = "Иванов"
+    profile.contact_name = "Иван"
+    profile.custom_fields = {"custom_vremennyy_rop": True}
+    session.commit()
+
+    out = _profile_out(profile, None, None)
+
+    assert out.display_name == "Иванов Иван ВРиО РОПа"
+    assert out.last_name == "Иванов"
+    assert out.contact_name == "Иван"
+
 def test_resolver_runtime_error_does_not_abort_ticket_create(monkeypatch):
     session = _session()
     _, _, ticket = _seed_case(session)
@@ -1287,12 +1329,12 @@ def test_call_center_sequence_a_empty_b_preserves_historical_snapshots(monkeypat
     assert card_a.client_profile.custom_fields["custom_fio"] == "Левшина Татьяна"
     assert card_a.client_profile.internal_number == "717"
 
-    assert card_empty.client_profile.contact_name == ""
-    assert card_empty.client_profile.last_name == ""
-    assert card_empty.client_profile.bitrix_id == ""
-    assert card_empty.client_profile.external_user_id == ""
-    assert card_empty.client_profile.bitrix_login == ""
-    assert card_empty.client_profile.custom_fields["custom_fio"] == ""
+    assert card_empty.client_profile.contact_name == "Сабрина"
+    assert card_empty.client_profile.last_name == "Минигареева"
+    assert card_empty.client_profile.bitrix_id == "72601"
+    assert card_empty.client_profile.external_user_id == "72601"
+    assert card_empty.client_profile.bitrix_login == "s.minigareeva"
+    assert card_empty.client_profile.custom_fields["custom_fio"] == "Минигареева Сабрина"
     assert card_empty.client_profile.internal_number == "000"
     assert ticket_empty.call_center_profile_snapshot_json["resolution_status"] == call_center_employee_resolver.STATUS_NOT_FOUND
 
@@ -1338,8 +1380,8 @@ def test_call_center_sequence_a_empty_b_preserves_historical_snapshots(monkeypat
     reopened_b = tickets.get_ticket(ticket_b.id, db=session, user=_admin())
 
     assert reopened_a.client_profile.custom_fields["custom_fio"] == "Левшина Татьяна"
-    assert reopened_empty.client_profile.contact_name == ""
-    assert reopened_empty.client_profile.bitrix_id == ""
+    assert reopened_empty.client_profile.contact_name == "Сабрина"
+    assert reopened_empty.client_profile.bitrix_id == "72601"
     assert reopened_b.client_profile.custom_fields["custom_fio"] == "Минигареева Сабрина"
 
     payload = list_tickets_paginated(
@@ -1436,7 +1478,7 @@ def test_editable_current_profile_stays_separate_from_historical_ticket_snapshot
     assert card_b.client_profile.custom_fields["custom_fio"] == "Минигареева Сабрина"
 
 
-def test_explicit_empty_snapshot_values_override_non_empty_profile():
+def test_explicit_empty_snapshot_values_do_not_override_non_empty_profile():
     session = _session()
     _, profile, ticket = _seed_case(session, internal_number="555")
     profile.contact_name = "Сабрина"
@@ -1462,14 +1504,122 @@ def test_explicit_empty_snapshot_values_override_non_empty_profile():
 
     card = tickets.get_ticket(ticket.id, db=session, user=_admin())
 
-    assert card.client_profile.contact_name == ""
-    assert card.client_profile.last_name == ""
-    assert card.client_profile.bitrix_id == ""
-    assert card.client_profile.external_user_id == ""
-    assert card.client_profile.bitrix_login == ""
-    assert card.client_profile.custom_fields["custom_fio"] == ""
+    assert tickets._call_center_profile_overrides(ticket) == {"internal_number": "555"}
+    assert card.client_profile.contact_name == "Сабрина"
+    assert card.client_profile.last_name == "Минигареева"
+    assert card.client_profile.bitrix_id == "72601"
+    assert card.client_profile.external_user_id == "72601"
+    assert card.client_profile.bitrix_login == "s.minigareeva"
+    assert card.client_profile.custom_fields["custom_fio"] == "Минигареева Сабрина"
     assert card.client_profile.custom_fields["favorite_color"] == "Blue"
     assert card.client_profile.internal_number == "555"
+
+
+def test_non_empty_snapshot_values_still_override_live_profile():
+    session = _session()
+    _, profile, ticket = _seed_case(session, internal_number="555")
+    profile.contact_name = "LiveFirst"
+    profile.last_name = "LiveLast"
+    profile.bitrix_id = "live-id"
+    profile.external_user_id = "live-user"
+    profile.bitrix_login = "live@example.com"
+    profile.custom_fields = {"custom_fio": "Live Name", "favorite_color": "Blue"}
+    ticket.call_center_employee_lookup_at = datetime.utcnow()
+    ticket.call_center_profile_snapshot_json = {
+        "resolution_status": call_center_employee_resolver.STATUS_FOUND,
+        "profile_delta": {
+            "contact_name": "Ivan",
+            "last_name": "Ivanov",
+            "bitrix_id": "123",
+            "external_user_id": "123",
+            "bitrix_login": "ivan@example.com",
+            "internal_number": "555",
+            "custom_fields": {"custom_fio": "Ivanov Ivan"},
+        },
+    }
+    session.commit()
+
+    card = tickets.get_ticket(ticket.id, db=session, user=_admin())
+
+    assert card.client_profile.contact_name == "Ivan"
+    assert card.client_profile.last_name == "Ivanov"
+    assert card.client_profile.bitrix_id == "123"
+    assert card.client_profile.external_user_id == "123"
+    assert card.client_profile.bitrix_login == "ivan@example.com"
+    assert card.client_profile.custom_fields["custom_fio"] == "Ivanov Ivan"
+    assert card.client_profile.custom_fields["favorite_color"] == "Blue"
+
+
+def test_drop_call_center_snapshot_payload_ignores_empty_snapshot_values():
+    session = _session()
+    _, _profile, ticket = _seed_case(session, internal_number="555")
+    ticket.call_center_profile_snapshot_json = {
+        "resolution_status": call_center_employee_resolver.STATUS_NOT_FOUND,
+        "profile_delta": {
+            "contact_name": "",
+            "last_name": " ",
+            "bitrix_id": "",
+            "external_user_id": None,
+            "bitrix_login": "",
+            "internal_number": "555",
+            "custom_fields": {"custom_fio": ""},
+        },
+    }
+    payload = {
+        "contact_name": "Edited",
+        "last_name": "User",
+        "bitrix_id": "999",
+        "external_user_id": "999",
+        "bitrix_login": "edited@example.com",
+        "internal_number": "777",
+        "custom_fields": {"custom_fio": "Edited User", "favorite_color": "Green"},
+    }
+
+    sanitized = tickets._drop_call_center_snapshot_payload(payload, ticket)
+
+    assert sanitized["contact_name"] == "Edited"
+    assert sanitized["last_name"] == "User"
+    assert sanitized["bitrix_id"] == "999"
+    assert sanitized["external_user_id"] == "999"
+    assert sanitized["bitrix_login"] == "edited@example.com"
+    assert "internal_number" not in sanitized
+    assert sanitized["custom_fields"] == {"custom_fio": "Edited User", "favorite_color": "Green"}
+
+
+def test_drop_call_center_snapshot_payload_protects_non_empty_snapshot_values():
+    session = _session()
+    _, _profile, ticket = _seed_case(session, internal_number="555")
+    ticket.call_center_profile_snapshot_json = {
+        "resolution_status": call_center_employee_resolver.STATUS_FOUND,
+        "profile_delta": {
+            "contact_name": "Ivan",
+            "last_name": "Ivanov",
+            "bitrix_id": "123",
+            "external_user_id": "123",
+            "bitrix_login": "ivan@example.com",
+            "internal_number": "555",
+            "custom_fields": {"custom_fio": "Ivanov Ivan"},
+        },
+    }
+    payload = {
+        "contact_name": "Edited",
+        "last_name": "User",
+        "bitrix_id": "999",
+        "external_user_id": "999",
+        "bitrix_login": "edited@example.com",
+        "internal_number": "777",
+        "custom_fields": {"custom_fio": "Edited User", "favorite_color": "Green"},
+    }
+
+    sanitized = tickets._drop_call_center_snapshot_payload(payload, ticket)
+
+    assert "contact_name" not in sanitized
+    assert "last_name" not in sanitized
+    assert "bitrix_id" not in sanitized
+    assert "external_user_id" not in sanitized
+    assert "bitrix_login" not in sanitized
+    assert "internal_number" not in sanitized
+    assert sanitized["custom_fields"] == {"favorite_color": "Green"}
 
 
 def test_requester_display_name_for_call_center_ticket_does_not_use_profile_fio():
@@ -1538,7 +1688,7 @@ def test_technical_error_does_not_clear_last_working_profile(monkeypatch):
     assert "bitrix_password" not in ticket.call_center_profile_snapshot_json["profile_delta"]
 
 
-def test_successful_not_found_clears_only_resolver_owned_profile_fields(monkeypatch):
+def test_successful_not_found_keeps_existing_profile_fields(monkeypatch):
     session = _session()
     _, profile, ticket = _seed_case(session, internal_number="000")
     session.add(_source())
@@ -1563,15 +1713,15 @@ def test_successful_not_found_clears_only_resolver_owned_profile_fields(monkeypa
 
     assert apply_call_center_employee_snapshot_on_ticket_create(session, ticket) is False
 
-    assert profile.contact_name is None
-    assert profile.last_name is None
-    assert profile.bitrix_id is None
-    assert profile.external_user_id is None
-    assert profile.bitrix_login is None
+    assert profile.contact_name == "Татьяна"
+    assert profile.last_name == "Левшина"
+    assert profile.bitrix_id == "71701"
+    assert profile.external_user_id == "71701"
+    assert profile.bitrix_login == "t.levshina"
     assert profile.internal_number == "000"
     assert profile.bitrix_password == "keep-secret"
     assert profile.phone == "123"
-    assert profile.custom_fields == {"favorite_color": "Blue"}
+    assert profile.custom_fields == {"custom_fio": "Левшина Татьяна", "favorite_color": "Blue"}
     assert ticket.call_center_profile_snapshot_json["profile_delta"] == {
         "contact_name": "",
         "last_name": "",
@@ -1581,3 +1731,34 @@ def test_successful_not_found_clears_only_resolver_owned_profile_fields(monkeypa
         "internal_number": "000",
         "custom_fields": {"custom_fio": ""},
     }
+
+
+def test_successful_ambiguous_keeps_existing_profile_fields(monkeypatch):
+    session = _session()
+    _, profile, ticket = _seed_case(session, internal_number="000")
+    session.add(_source())
+    profile.contact_name = "Татьяна"
+    profile.last_name = "Левшина"
+    profile.bitrix_id = "71701"
+    profile.external_user_id = "71701"
+    profile.bitrix_login = "t.levshina"
+    profile.custom_fields = {"custom_fio": "Левшина Татьяна", "favorite_color": "Blue"}
+    session.commit()
+
+    monkeypatch.setattr(
+        call_center_employee_resolver,
+        "resolve",
+        lambda *args, **kwargs: ResolveResult(
+            status=call_center_employee_resolver.STATUS_AMBIGUOUS,
+            internal_number="000",
+        ),
+    )
+
+    assert apply_call_center_employee_snapshot_on_ticket_create(session, ticket) is False
+
+    assert profile.contact_name == "Татьяна"
+    assert profile.last_name == "Левшина"
+    assert profile.bitrix_id == "71701"
+    assert profile.external_user_id == "71701"
+    assert profile.bitrix_login == "t.levshina"
+    assert profile.custom_fields == {"custom_fio": "Левшина Татьяна", "favorite_color": "Blue"}

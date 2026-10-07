@@ -143,6 +143,7 @@ class TicketMessageOut(BaseModel):
 class ClientProfileOut(BaseModel):
     telegram_username: str | None = None
     telegram_display_name: str | None = None
+    display_name: str | None = None
     contact_name: str | None = None
     last_name: str | None = None
     email: str | None = None

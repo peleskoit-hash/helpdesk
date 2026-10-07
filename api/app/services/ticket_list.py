@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
 from ..models import BotButtonSetting, Client, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
+from .temporary_rop import with_temporary_rop_suffix
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
 
@@ -226,7 +227,7 @@ def _ordinary_requester_display_name_from_profile(db: Session, ticket: Ticket, p
     )
     for value in values:
         if value:
-            return value
+            return with_temporary_rop_suffix(value, profile)
     return "Клиент"
 
 

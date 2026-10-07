@@ -59,6 +59,7 @@ from ..services.statistics_lifecycle import (
 from ..services.saved_files import SavedFileStorageError, resolve_saved_file_path
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message
+from ..services.temporary_rop import temporary_rop_destination
 from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
 from ..services.telegram_client_close import (
     CLIENT_CLOSE_MESSAGE_KEY,
@@ -442,8 +443,9 @@ def _client_profile(db: Session, client_id: str) -> ClientProfile | None:
 
 def _menu_name_for_contact(db: Session, contact: TelegramContact) -> str:
     profile = _client_profile(db, contact.client_id)
-    if profile is not None and profile.is_verified and profile.destination:
-        destination = profile.destination.strip()
+    destination_value = temporary_rop_destination(profile) if profile is not None else None
+    if profile is not None and profile.is_verified and destination_value:
+        destination = destination_value.strip()
         if destination:
             binding = db.execute(
                 select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
@@ -471,8 +473,9 @@ def _menu_name_for_ticket_client(db: Session, ticket: Ticket) -> str:
     if contact is not None:
         return _menu_name_for_contact(db, contact)
     profile = _client_profile(db, ticket.client_id)
-    if profile is not None and profile.is_verified and profile.destination:
-        destination = profile.destination.strip()
+    destination_value = temporary_rop_destination(profile) if profile is not None else None
+    if profile is not None and profile.is_verified and destination_value:
+        destination = destination_value.strip()
         if destination:
             binding = db.execute(
                 select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
