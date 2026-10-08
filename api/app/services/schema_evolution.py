@@ -948,6 +948,9 @@ def ensure_ticket_columns() -> None:
         "auto_close_due_at": "TIMESTAMP",
         "auto_closed_at": "TIMESTAMP",
         "distribution_notice_sent_at": "TIMESTAMP",
+        "draft_text": "TEXT",
+        "draft_mode": "VARCHAR(20)",
+        "draft_revision": "INTEGER",
         "task_kind": "VARCHAR(30)",
         "parent_ticket_id": "VARCHAR(36)",
         "suppress_client_answer": "BOOLEAN",
@@ -1005,6 +1008,7 @@ def ensure_ticket_columns() -> None:
         conn.execute(text("UPDATE tickets SET is_special = FALSE WHERE is_special IS NULL"))
         conn.execute(text("UPDATE tickets SET onsite_triggered = FALSE WHERE onsite_triggered IS NULL"))
         conn.execute(text("UPDATE tickets SET auto_close_disabled = FALSE WHERE auto_close_disabled IS NULL"))
+        conn.execute(text("UPDATE tickets SET draft_revision = 0 WHERE draft_revision IS NULL"))
         if "ticket_number" not in existing:
             if dialect == "sqlite":
                 conn.execute(

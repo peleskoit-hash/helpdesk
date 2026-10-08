@@ -230,6 +230,9 @@ class TicketCard(BaseModel):
     call_center_employee_last_name: str | None = None
     call_center_employee_id: str | None = None
     call_center_employee_bitrix_login: str | None = None
+    draft_text: str = ""
+    draft_mode: str = "reply"
+    draft_revision: int = 0
     client_name: str
     client_profile: ClientProfileOut
     active_attachment_preloads: list[dict] = Field(default_factory=list)
@@ -239,6 +242,17 @@ class TicketCard(BaseModel):
 class TextPayload(BaseModel):
     text: str = Field(min_length=1)
     quote_message_id: str | None = None
+
+
+class TicketDraftPayload(BaseModel):
+    text: str = ""
+    mode: str = "reply"
+
+
+class TicketDraftOut(BaseModel):
+    text: str = ""
+    mode: str = "reply"
+    revision: int = 0
 
 
 class FreezePayload(BaseModel):

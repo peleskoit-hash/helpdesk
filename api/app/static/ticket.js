@@ -56,6 +56,14 @@ const state = {
   stateActionInFlight: null,
   restoreCloseCooldownUntil: 0,
   pendingCardReloadOptions: null,
+  draftDirty: false,
+  draftSaveInFlight: false,
+  draftSaveTimer: null,
+  draftSavePromise: null,
+  draftAckRevision: 0,
+  draftLastSavedText: "",
+  draftLastSavedMode: "reply",
+  draftExitFlushSignature: "",
   taskPanelEnabled: false,
   taskPanelItems: [],
   taskPanelDropdownOpen: false,
@@ -373,6 +381,7 @@ async function loadTaskPanel(options = {}) {
 
 function cleanupTicketCardPage() {
   destroyed = true;
+  flushDraftKeepalive();
   stopRestoreCloseCooldownTimer();
   if (pollTimer !== null) {
     window.clearInterval(pollTimer);
@@ -399,6 +408,7 @@ function cleanupTicketCardPage() {
   }
   if (beforeUnloadHandler) {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
+    window.removeEventListener("pagehide", beforeUnloadHandler);
     beforeUnloadHandler = null;
   }
   TicketComposer.destroyComposerState?.(composerCtx());
@@ -467,6 +477,11 @@ function composerCtx() {
     messageAuthorLabel,
     isOnsitePhraseJs,
     updateSendByEnterPreference,
+    onComposerInput: handleComposerInput,
+    onComposerSelection: saveDraftSelection,
+    onComposeModeChanged: handleComposeModeChanged,
+    flushDraftBeforeSend,
+    clearDraftAfterSuccessfulSend,
     workflowType: () => state.card?.workflow_type || "ticket",
     canUseAttachmentPreload: () => ["reply", "comment"].includes(state.composeMode) && ["ticket", "task"].includes(state.card?.workflow_type || "ticket"),
   };
@@ -496,6 +511,232 @@ function controlsCtx() {
     closeClientModal,
     saveClientProfile,
   };
+}
+
+function currentDraftText() {
+  return el.messageInput ? String(el.messageInput.value || "") : "";
+}
+
+function draftSelectionStorageKey() {
+  const userKey = String(state.userId || state.sessionContext?.effective_user?.id || "unknown");
+  return `hd_ticket_draft_selection:${userKey}:${state.ticketId}`;
+}
+
+function saveDraftSelection() {
+  if (!el.messageInput) return;
+  try {
+    localStorage.setItem(draftSelectionStorageKey(), JSON.stringify({
+      start: Number(el.messageInput.selectionStart) || 0,
+      end: Number(el.messageInput.selectionEnd) || 0,
+    }));
+  } catch {
+    // noop
+  }
+}
+
+function restoreDraftSelection() {
+  if (!el.messageInput || document.activeElement !== el.messageInput) return;
+  try {
+    const raw = localStorage.getItem(draftSelectionStorageKey());
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const length = el.messageInput.value.length;
+    const start = Math.max(0, Math.min(length, Number(parsed?.start) || 0));
+    const end = Math.max(0, Math.min(length, Number(parsed?.end) || start));
+    el.messageInput.setSelectionRange(start, end);
+  } catch {
+    // noop
+  }
+}
+
+function clearDraftSelection() {
+  try {
+    localStorage.removeItem(draftSelectionStorageKey());
+  } catch {
+    // noop
+  }
+}
+
+function normalizeDraftMode(value) {
+  return String(value || "").trim().toLowerCase() === "comment" ? "comment" : "reply";
+}
+
+function reconcileCleanDraftState() {
+  if (!state.draftDirty || state.draftSaveInFlight || state.draftSavePromise) return;
+  if (currentDraftText() !== state.draftLastSavedText) return;
+  if (normalizeDraftMode(state.composeMode) !== state.draftLastSavedMode) return;
+  state.draftDirty = false;
+}
+
+function applyServerDraft(card) {
+  const revision = Number(card?.draft_revision || 0);
+  if (!Number.isFinite(revision) || revision < state.draftAckRevision) return;
+  const text = String(card?.draft_text || "");
+  const mode = normalizeDraftMode(card?.draft_mode);
+  const changed = revision > state.draftAckRevision
+    || text !== state.draftLastSavedText
+    || mode !== state.draftLastSavedMode;
+  reconcileCleanDraftState();
+  if (!changed || state.draftDirty || state.draftSaveInFlight) return;
+  saveDraftSelection();
+  if (el.messageInput && el.messageInput.value !== text) {
+    el.messageInput.value = text;
+  }
+  if (state.composeMode !== mode) {
+    state.composeMode = mode;
+    applyComposeModeUi();
+  }
+  restoreDraftSelection();
+  state.draftAckRevision = revision;
+  state.draftLastSavedText = text;
+  state.draftLastSavedMode = mode;
+}
+
+function markDraftCleanFromServer(payload) {
+  const revision = Number(payload?.revision || 0);
+  if (Number.isFinite(revision) && revision >= state.draftAckRevision) {
+    state.draftAckRevision = revision;
+  }
+  state.draftLastSavedText = String(payload?.text || "");
+  state.draftLastSavedMode = normalizeDraftMode(payload?.mode);
+  state.draftDirty = false;
+}
+
+function draftExitSignature() {
+  return JSON.stringify({
+    text: currentDraftText(),
+    mode: normalizeDraftMode(state.composeMode),
+  });
+}
+
+async function saveDraftNow({ keepalive = false } = {}) {
+  if (!el.messageInput || !state.ticketId) return null;
+  if (state.draftSaveTimer !== null) {
+    window.clearTimeout(state.draftSaveTimer);
+    state.draftSaveTimer = null;
+  }
+  if (!keepalive && state.draftSavePromise) {
+    return state.draftSavePromise.then(() => {
+      const latestText = currentDraftText();
+      const latestMode = normalizeDraftMode(state.composeMode);
+      if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode) {
+        return saveDraftNow();
+      }
+      return null;
+    });
+  }
+  const text = currentDraftText();
+  const mode = normalizeDraftMode(state.composeMode);
+  if (!state.draftDirty && text === state.draftLastSavedText && mode === state.draftLastSavedMode) return null;
+  const body = JSON.stringify({ text, mode });
+  if (keepalive && window.fetch) {
+    try {
+      window.fetch(`/api/v1/tickets/${state.ticketId}/draft`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body,
+        keepalive: true,
+      });
+    } catch {
+      // noop
+    }
+    return null;
+  }
+  state.draftSaveInFlight = true;
+  state.draftSavePromise = (async () => {
+    const saved = await api(`/api/v1/tickets/${state.ticketId}/draft`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    if (currentDraftText() === text && normalizeDraftMode(state.composeMode) === mode) {
+      markDraftCleanFromServer(saved);
+    } else {
+      state.draftDirty = true;
+    }
+    return saved;
+  })();
+  try {
+    return await state.draftSavePromise;
+  } catch (e) {
+    state.draftDirty = true;
+    throw e;
+  } finally {
+    state.draftSaveInFlight = false;
+    state.draftSavePromise = null;
+    if (state.draftDirty) {
+      scheduleDraftSave(400);
+    }
+  }
+}
+
+function scheduleDraftSave(delayMs = 400) {
+  if (state.draftSaveTimer !== null) {
+    window.clearTimeout(state.draftSaveTimer);
+  }
+  state.draftSaveTimer = window.setTimeout(() => {
+    void saveDraftNow().catch((e) => setStatus(`Ошибка сохранения черновика: ${e.message}`));
+  }, delayMs);
+}
+
+function handleComposerInput() {
+  state.draftDirty = true;
+  state.draftExitFlushSignature = "";
+  saveDraftSelection();
+  scheduleDraftSave(400);
+}
+
+function handleComposeModeChanged() {
+  state.draftDirty = true;
+  state.draftExitFlushSignature = "";
+  scheduleDraftSave(0);
+}
+
+async function flushDraftBeforeSend() {
+  if (state.draftSaveTimer !== null) {
+    window.clearTimeout(state.draftSaveTimer);
+    state.draftSaveTimer = null;
+  }
+  while (state.draftSavePromise || state.draftDirty) {
+    if (state.draftSavePromise) {
+      await state.draftSavePromise;
+    } else {
+      await saveDraftNow();
+    }
+  }
+}
+
+function flushDraftKeepalive() {
+  saveDraftSelection();
+  if (!state.draftDirty && state.draftSaveTimer === null) return;
+  const signature = draftExitSignature();
+  if (state.draftExitFlushSignature === signature) return;
+  state.draftExitFlushSignature = signature;
+  if (state.draftSavePromise) {
+    state.draftSavePromise
+      .then(() => {
+        const latestText = currentDraftText();
+        const latestMode = normalizeDraftMode(state.composeMode);
+        if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode) {
+          return saveDraftNow();
+        }
+        return null;
+      })
+      .catch(() => {});
+    return;
+  }
+  void saveDraftNow({ keepalive: true });
+}
+
+function clearDraftAfterSuccessfulSend() {
+  if (state.draftSaveTimer !== null) {
+    window.clearTimeout(state.draftSaveTimer);
+    state.draftSaveTimer = null;
+  }
+  state.draftDirty = false;
+  state.draftLastSavedText = "";
+  state.draftLastSavedMode = "reply";
+  clearDraftSelection();
 }
 
 function messageViewCtx() {
@@ -1067,6 +1308,7 @@ async function loadCard(options = {}) {
     }
     if (destroyed) return;
     state.card = card;
+    applyServerDraft(card);
     TicketComposer.syncRestoredPreloads?.(composerCtx(), card.active_attachment_preloads || []);
     state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
       ? cardConfig
@@ -1074,6 +1316,7 @@ async function loadCard(options = {}) {
     renderCard();
     applyComposeModeUi();
     focusMessageInputIfAvailable();
+    restoreDraftSelection();
     setStatus("Карточка загружена");
     await loadTaskPanel({ silent: true });
   } catch (e) {
@@ -1413,9 +1656,11 @@ function bindPageHandlers() {
   }
 
   beforeUnloadHandler = () => {
+    flushDraftKeepalive();
     TicketAttachments.destroyAllAttachmentResources();
   };
   window.addEventListener("beforeunload", beforeUnloadHandler);
+  window.addEventListener("pagehide", beforeUnloadHandler);
 }
 
 function initPostSidebarState() {

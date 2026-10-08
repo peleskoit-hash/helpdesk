@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import HTTPException
 from fastapi import Request, UploadFile
-from sqlalchemy import asc, select
+from sqlalchemy import asc, func, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
@@ -114,6 +114,21 @@ def add_message(
     if message_type in {MessageType.CLIENT, MessageType.AGENT, MessageType.INTERNAL}:
         schedule_new_message_notification(db, ticket=ticket, message=msg)
     return msg
+
+
+def clear_ticket_draft(db: Session, ticket: Ticket) -> None:
+    db.execute(
+        update(Ticket)
+        .where(Ticket.id == ticket.id)
+        .values(
+            draft_text="",
+            draft_mode="reply",
+            draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1,
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db.flush()
+    db.refresh(ticket)
 
 
 def record_client_delivery_failure(
@@ -303,6 +318,7 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
+        clear_ticket_draft(db, ticket)
         db.commit()
 
         for delivery_kwargs in attachments_to_schedule:
@@ -400,6 +416,7 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
+    clear_ticket_draft(db, ticket)
     db.commit()
     return {"ok": True}
 

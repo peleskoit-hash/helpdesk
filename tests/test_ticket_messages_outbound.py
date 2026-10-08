@@ -21,12 +21,13 @@ from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
 from api.app.models import Client, Company, MessageType, StatsUserStatusInterval, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType, User
-from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status, get_ticket
+from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status, get_ticket, update_ticket_draft
 from api.app.services import telegram_bot as telegram_bot_service
 from api.app.services import telegram_outbound_delivery as outbound_service
 from api.app.services import ticket_messages as ticket_messages_service
 from api.app.services.auto_close import refresh_ticket_auto_close_timer
 from api.app.services.ticket_attachments import _attachment_out, _send_attachment_to_telegram_client
+from api.app.schemas import TicketDraftPayload
 from api.app.services.ticket_messages import delete_agent_message, edit_agent_message, reply_to_ticket
 from api.app.services import schema_evolution
 
@@ -234,6 +235,248 @@ def test_attachment_out_includes_delivery_status():
     payload = _attachment_out("ticket-1", attachment)
 
     assert payload["telegram_delivery_status"] == "uploading"
+
+
+def test_ticket_draft_save_shared_revision_and_clear():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.assignee_id = "agent-1"
+    session.commit()
+
+    saved = update_ticket_draft(
+        ticket.id,
+        TicketDraftPayload(text="hello", mode="comment"),
+        db=session,
+        user=SimpleNamespace(id="agent-1", role="agent"),
+    )
+    assert saved.text == "hello"
+    assert saved.mode == "comment"
+    assert saved.revision == 1
+
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+    assert card.draft_text == "hello"
+    assert card.draft_mode == "comment"
+    assert card.draft_revision == 1
+
+    changed = update_ticket_draft(
+        ticket.id,
+        TicketDraftPayload(text="hello again", mode="reply"),
+        db=session,
+        user=SimpleNamespace(id="admin-1", role="admin"),
+    )
+    assert changed.revision == 2
+
+    cleared = update_ticket_draft(
+        ticket.id,
+        TicketDraftPayload(text="", mode="reply"),
+        db=session,
+        user=SimpleNamespace(id="agent-1", role="agent"),
+    )
+    assert cleared.text == ""
+    assert cleared.mode == "reply"
+    assert cleared.revision == 3
+
+
+def test_admin_draft_save_is_visible_to_assigned_agent_card():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.assignee_id = "agent-1"
+    session.commit()
+
+    saved = update_ticket_draft(
+        ticket.id,
+        TicketDraftPayload(text="admin edit", mode="comment"),
+        db=session,
+        user=SimpleNamespace(id="admin-1", role="admin"),
+    )
+
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="agent-1", role="agent"))
+    assert card.draft_text == "admin edit"
+    assert card.draft_mode == "comment"
+    assert card.draft_revision == saved.revision
+
+
+def test_ticket_draft_respects_ticket_access_rules():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.assignee_id = "agent-1"
+    session.commit()
+
+    with pytest.raises(HTTPException) as read_exc:
+        get_ticket(ticket.id, db=session, user=SimpleNamespace(id="agent-2", role="agent"))
+    assert read_exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as write_exc:
+        update_ticket_draft(
+            ticket.id,
+            TicketDraftPayload(text="nope", mode="reply"),
+            db=session,
+            user=SimpleNamespace(id="agent-2", role="agent"),
+        )
+    assert write_exc.value.status_code == 403
+
+
+def test_successful_reply_clears_ticket_draft_and_bumps_revision():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.draft_text = "saved draft"
+    ticket.draft_mode = "comment"
+    ticket.draft_revision = 7
+    session.commit()
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_JsonRequest({"text": "Plain answer", "quote_message_id": None}),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            send_to_telegram_client=lambda *_args, **_kwargs: {"result": {"message_id": 123}},
+            telegram_message_id_from_response=lambda response: str(response["result"]["message_id"]),
+            save_upload_attachment=lambda *_args, **_kwargs: None,
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+            claim_attachment_preload=lambda *_args, **_kwargs: None,
+            schedule_attachment_delivery=lambda **_kwargs: None,
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    session.refresh(ticket)
+    assert ticket.draft_text == ""
+    assert ticket.draft_mode == "reply"
+    assert ticket.draft_revision == 8
+
+
+def test_failed_reply_keeps_ticket_draft():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.draft_text = "keep me"
+    ticket.draft_mode = "reply"
+    ticket.draft_revision = 4
+    session.commit()
+
+    async def run():
+        with pytest.raises(HTTPException):
+            await reply_to_ticket(
+                request=_JsonRequest({"text": "Plain answer", "quote_message_id": None}),
+                db=session,
+                user=SimpleNamespace(id="agent-1", role="agent"),
+                ticket=ticket,
+                send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    HTTPException(status_code=502, detail={"error": {"code": "telegram_send_failed"}})
+                ),
+                telegram_message_id_from_response=lambda response: None,
+                save_upload_attachment=lambda *_args, **_kwargs: None,
+                send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+                claim_attachment_preload=lambda *_args, **_kwargs: None,
+                schedule_attachment_delivery=lambda **_kwargs: None,
+                unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+                remove_client_close_button=lambda *_args, **_kwargs: None,
+                refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+            )
+
+    asyncio.run(run())
+
+    session.refresh(ticket)
+    assert ticket.draft_text == "keep me"
+    assert ticket.draft_mode == "reply"
+    assert ticket.draft_revision == 4
+
+
+def test_successful_internal_comment_clears_ticket_draft_and_bumps_revision():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.draft_text = "comment draft"
+    ticket.draft_mode = "comment"
+    ticket.draft_revision = 10
+    session.commit()
+
+    async def run():
+        result = await reply_to_ticket(
+            request=_JsonRequest({"text": "Internal note", "quote_message_id": None}),
+            db=session,
+            user=SimpleNamespace(id="agent-1", role="agent"),
+            ticket=ticket,
+            message_type=MessageType.INTERNAL,
+            send_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("comment text must not be sent")),
+            telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=lambda *_args, **_kwargs: None,
+            send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+            claim_attachment_preload=lambda *_args, **_kwargs: None,
+            schedule_attachment_delivery=lambda **_kwargs: None,
+            unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+            remove_client_close_button=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+        )
+        assert result == {"ok": True}
+
+    asyncio.run(run())
+
+    session.refresh(ticket)
+    assert ticket.draft_text == ""
+    assert ticket.draft_mode == "reply"
+    assert ticket.draft_revision == 11
+
+
+def test_failed_internal_comment_keeps_ticket_draft():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.draft_text = "comment draft"
+    ticket.draft_mode = "comment"
+    ticket.draft_revision = 10
+    session.commit()
+
+    async def run():
+        with pytest.raises(HTTPException):
+            await reply_to_ticket(
+                request=_JsonRequest({"text": "Internal note", "quote_message_id": None}),
+                db=session,
+                user=SimpleNamespace(id="agent-1", role="agent"),
+                ticket=ticket,
+                message_type=MessageType.INTERNAL,
+                send_to_telegram_client=lambda *_args, **_kwargs: None,
+                telegram_message_id_from_response=lambda response: None,
+                save_upload_attachment=lambda *_args, **_kwargs: None,
+                send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
+                claim_attachment_preload=lambda *_args, **_kwargs: None,
+                schedule_attachment_delivery=lambda **_kwargs: None,
+                unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
+                remove_client_close_button=lambda *_args, **_kwargs: None,
+                refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+            )
+
+    asyncio.run(run())
+
+    session.refresh(ticket)
+    assert ticket.draft_text == "comment draft"
+    assert ticket.draft_mode == "comment"
+    assert ticket.draft_revision == 10
+
+
+def test_comment_route_uses_reply_to_ticket_internal_path_contract():
+    repo_root = Path(__file__).resolve().parents[1]
+    router_source = (repo_root / "api" / "app" / "routers" / "tickets.py").read_text(encoding="utf-8")
+    comment_route = router_source[router_source.index('@router.post("/{ticket_id}/comment")'):]
+    comment_route = comment_route[:comment_route.index('@router.post("/{ticket_id}/greeting")')]
+
+    assert "return await reply_to_ticket(" in comment_route
+    assert "message_type=MessageType.INTERNAL" in comment_route
+    assert "comment_on_ticket(" not in comment_route
+
+
+def test_ticket_draft_revision_uses_atomic_sql_update_contract():
+    repo_root = Path(__file__).resolve().parents[1]
+    router_source = (repo_root / "api" / "app" / "routers" / "tickets.py").read_text(encoding="utf-8")
+    service_source = (repo_root / "api" / "app" / "services" / "ticket_messages.py").read_text(encoding="utf-8")
+
+    assert "draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1" in router_source
+    assert "draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1" in service_source
+    assert "ticket.draft_revision = int(ticket.draft_revision or 0) + 1" not in router_source
+    assert "ticket.draft_revision = int(ticket.draft_revision or 0) + 1" not in service_source
 
 
 def test_reply_plain_ticket_attachment_saves_locally_marks_uploading_and_schedules_background(tmp_path):
@@ -835,9 +1078,10 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20260911a"
-    ticket_static_version = "20260828a"
-    ticket_page_version = "20260903a"
+    app_shell_version = "20261005a"
+    ticket_static_version = "20261008a"
+    ticket_attachments_version = "20260828a"
+    ticket_page_version = "20261008a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -860,8 +1104,8 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert all("/static/app_shell.js?v=20260826a" not in source for source in app_shell_entrypoints.values())
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in template
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
-    assert f"/static/ticket_attachments.js?v={ticket_static_version}" in template
-    assert f"/static/ticket_attachments.js?v={ticket_static_version}" in app_shell
+    assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in template
+    assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in app_shell
     assert '/static/styles.css?v=20261001b' in template
     assert '/static/styles.css?v=20261001b' in index_template
     assert f"/static/ticket.js?v={ticket_page_version}" in template

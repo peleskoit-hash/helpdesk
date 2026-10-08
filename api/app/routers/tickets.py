@@ -10,14 +10,16 @@ from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import and_, asc, desc, func, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
 from ..auth import (
     CurrentUser,
+    can_comment,
     can_edit_client_profile,
     can_manage_ticket,
+    can_reply,
     get_current_user,
     is_admin,
     is_readonly_chiki_piki,
@@ -26,7 +28,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
@@ -157,6 +159,42 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
         if not is_call_center_ticket:
             _error(403, "forbidden_ticket_access", "Нет доступа к заявке")
     return ticket
+
+
+def _normalize_draft_mode(value: str | None) -> str:
+    return "comment" if str(value or "").strip().lower() == "comment" else "reply"
+
+
+def _draft_out(ticket: Ticket) -> TicketDraftOut:
+    return TicketDraftOut(
+        text=ticket.draft_text or "",
+        mode=_normalize_draft_mode(ticket.draft_mode),
+        revision=int(ticket.draft_revision or 0),
+    )
+
+
+def _ensure_draft_write_allowed(user: CurrentUser, mode: str) -> None:
+    if mode == "comment":
+        if not can_comment(user):
+            _error(403, "readonly_role", "Нет прав на внутренний комментарий")
+    elif not can_reply(user):
+        _error(403, "readonly_role", "Нет прав на отправку ответа")
+
+
+def _save_ticket_draft(db: Session, ticket: Ticket, text_value: str, mode: str) -> TicketDraftOut:
+    db.execute(
+        update(Ticket)
+        .where(Ticket.id == ticket.id)
+        .values(
+            draft_text=text_value,
+            draft_mode=_normalize_draft_mode(mode),
+            draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1,
+            updated_at=datetime.utcnow(),
+        )
+    )
+    db.flush()
+    db.refresh(ticket)
+    return _draft_out(ticket)
 
 
 def _call_center_profile_overrides(ticket: Ticket) -> dict:
@@ -1012,6 +1050,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         call_center_employee_last_name=t.call_center_employee_last_name,
         call_center_employee_id=t.call_center_employee_id,
         call_center_employee_bitrix_login=t.call_center_employee_bitrix_login,
+        draft_text=t.draft_text or "",
+        draft_mode=_normalize_draft_mode(t.draft_mode),
+        draft_revision=int(t.draft_revision or 0),
         client_name=visible_client_name,
         client_profile=_profile_out(
             profile,
@@ -1037,6 +1078,23 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             for m in messages
         ],
     )
+
+
+@router.patch("/{ticket_id}/draft", response_model=TicketDraftOut)
+def update_ticket_draft(
+    ticket_id: str,
+    payload: TicketDraftPayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    mode = _normalize_draft_mode(payload.mode)
+    _ensure_draft_write_allowed(user, mode)
+    if ticket.status == TicketStatus.CLOSED.value:
+        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
+    result = _save_ticket_draft(db, ticket, payload.text or "", mode)
+    db.commit()
+    return result
 
 
 @router.get("/{ticket_id}/client-card-view-config", response_model=ClientCardRuntimeConfigResponse)

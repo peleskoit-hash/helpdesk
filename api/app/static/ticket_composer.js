@@ -569,6 +569,7 @@
       state.isSendingReply = true;
       state.pendingCloseAfterSend = false;
       ctx.setStatus("Отправка...");
+      await ctx.flushDraftBeforeSend?.();
       const quoteMessageId = state.quoteMessageId;
       if (hasFiles && (isTaskReply(ctx) || state.composeMode === "comment")) {
         const queue = [...state.selectedFiles];
@@ -623,6 +624,7 @@
       }
       el.messageInput.value = "";
       state.quoteMessageId = null;
+      ctx.clearDraftAfterSuccessfulSend?.();
       clearSelectedFiles(ctx);
       await ctx.loadCard();
       if (
@@ -669,11 +671,13 @@
     el.modeReplyBtn.addEventListener("click", () => {
       state.composeMode = "reply";
       applyComposeModeUi(ctx);
+      ctx.onComposeModeChanged?.();
     });
 
     el.modeCommentBtn.addEventListener("click", () => {
       state.composeMode = "comment";
       applyComposeModeUi(ctx);
+      ctx.onComposeModeChanged?.();
     });
 
     el.sendNowBtn.addEventListener("click", async () => {
@@ -686,6 +690,10 @@
       queueSelectedFiles(ctx, el.replyFilesInput.files || []);
     });
     el.clearQuoteBtn.addEventListener("click", () => clearQuote(ctx));
+    el.messageInput.addEventListener("input", () => ctx.onComposerInput?.());
+    el.messageInput.addEventListener("select", () => ctx.onComposerSelection?.());
+    el.messageInput.addEventListener("keyup", () => ctx.onComposerSelection?.());
+    el.messageInput.addEventListener("mouseup", () => ctx.onComposerSelection?.());
     if (el.sendByEnterCheckbox) {
       el.sendByEnterCheckbox.addEventListener("change", async () => {
         await ctx.updateSendByEnterPreference?.(Boolean(el.sendByEnterCheckbox.checked));

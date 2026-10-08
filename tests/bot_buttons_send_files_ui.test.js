@@ -50,6 +50,7 @@ const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_c
 const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
+const ticketComposerSource = fs.readFileSync('api/app/static/ticket_composer.js', 'utf8');
 const ticketsListSource = fs.readFileSync('api/app/static/list.js', 'utf8');
 const ticketsTemplate = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
 const managementUsersSource = fs.readFileSync('api/app/static/management_users.js', 'utf8');
@@ -208,8 +209,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261002a/);
-  assert.match(appShellSource, /ticket\.js\?v=20261002a/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261008a/);
+  assert.match(appShellSource, /ticket\.js\?v=20261008a/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -3226,6 +3227,92 @@ test('ticket reply composer textarea uses neutral credential-resistant attribute
   assert.match(textarea, /placeholder="Текст ответа\/комментария"/);
   assert.doesNotMatch(textarea, /╨|╤|Ð|Ñ|\?\?\?/);
   assert.doesNotMatch(textarea, /password|login|credential|messageInput/i);
+});
+
+test('ticket draft autosave is debounced and flushed on page exit', () => {
+  assert.match(ticketPageSource, /draftSaveTimer = window\.setTimeout\(\(\) => \{[\s\S]+saveDraftNow\(\)[\s\S]+}, delayMs\)/);
+  assert.match(ticketPageSource, /scheduleDraftSave\(400\)/);
+  assert.match(ticketComposerSource, /el\.messageInput\.addEventListener\("input", \(\) => ctx\.onComposerInput\?\.\(\)\)/);
+  assert.match(ticketPageSource, /window\.fetch\(`\/api\/v1\/tickets\/\$\{state\.ticketId\}\/draft`[\s\S]+keepalive: true/);
+  assert.match(ticketPageSource, /window\.addEventListener\("pagehide", beforeUnloadHandler\)/);
+  assert.match(ticketPageSource, /function cleanupTicketCardPage\(\) \{[\s\S]+flushDraftKeepalive\(\)/);
+});
+
+test('ticket draft autosave is single flight and resaves newer dirty text', () => {
+  const source = sourceBetween(ticketPageSource, 'async function saveDraftNow', 'function scheduleDraftSave');
+  assert.match(source, /if \(!keepalive && state\.draftSavePromise\)/);
+  assert.match(source, /return state\.draftSavePromise\.then/);
+  assert.match(source, /return saveDraftNow\(\)/);
+  assert.match(source, /state\.draftSavePromise = \(async \(\) =>/);
+  assert.match(source, /if \(state\.draftDirty\) \{[\s\S]+scheduleDraftSave\(400\)/);
+});
+
+test('ticket send flow flushes draft before reply or comment post', () => {
+  const source = sourceBetween(ticketComposerSource, 'async function sendByMode', 'function bindComposerHandlers');
+  assert.ok(source.indexOf('await ctx.flushDraftBeforeSend?.();') < source.indexOf('await api(`/api/v1/tickets/${state.ticketId}/${actionName}`'));
+  assert.match(ticketPageSource, /async function flushDraftBeforeSend\(\)[\s\S]+while \(state\.draftSavePromise \|\| state\.draftDirty\)/);
+});
+
+test('ticket successful send cannot race a local normal draft save', () => {
+  const source = sourceBetween(ticketComposerSource, 'async function sendByMode', 'function bindComposerHandlers');
+  assert.ok(source.indexOf('await ctx.flushDraftBeforeSend?.();') < source.indexOf('ctx.clearDraftAfterSuccessfulSend?.();'));
+  assert.match(ticketPageSource, /if \(state\.draftSavePromise\) \{[\s\S]+await state\.draftSavePromise/);
+});
+
+test('ticket draft exit flush is idempotent across cleanup and page exit', () => {
+  const source = sourceBetween(ticketPageSource, 'function flushDraftKeepalive()', 'function clearDraftAfterSuccessfulSend');
+  assert.match(source, /const signature = draftExitSignature\(\)/);
+  assert.match(source, /if \(state\.draftExitFlushSignature === signature\) return/);
+  assert.match(source, /state\.draftExitFlushSignature = signature/);
+  assert.match(ticketPageSource, /state\.draftExitFlushSignature = ""/);
+});
+
+test('ticket draft exit flush waits for inflight normal save before saving newer text', () => {
+  const source = sourceBetween(ticketPageSource, 'function flushDraftKeepalive()', 'function clearDraftAfterSuccessfulSend');
+  assert.match(source, /if \(state\.draftSavePromise\) \{/);
+  assert.match(source, /state\.draftSavePromise[\s\S]+\.then\(\(\) => \{/);
+  assert.match(source, /latestText !== state\.draftLastSavedText/);
+  assert.match(source, /return saveDraftNow\(\)/);
+  assert.ok(source.indexOf('if (state.draftSavePromise) {') < source.indexOf('void saveDraftNow({ keepalive: true });'));
+});
+
+test('ticket draft polling ignores stale or locally dirty draft state', () => {
+  const source = sourceBetween(ticketPageSource, 'function applyServerDraft(card)', 'function markDraftCleanFromServer');
+  assert.match(source, /revision < state\.draftAckRevision/);
+  assert.match(source, /reconcileCleanDraftState\(\)/);
+  assert.match(source, /state\.draftDirty \|\| state\.draftSaveInFlight/);
+  assert.match(source, /state\.draftAckRevision = revision/);
+  assert.ok(source.indexOf('if (!changed || state.draftDirty || state.draftSaveInFlight) return;') < source.indexOf('state.draftAckRevision = revision;'));
+  assert.match(ticketPageSource, /applyServerDraft\(card\)/);
+});
+
+test('ticket draft stale dirty flag is reconciled before newer remote revision is applied', () => {
+  const reconcileSource = sourceBetween(ticketPageSource, 'function reconcileCleanDraftState()', 'function applyServerDraft(card)');
+  const applySource = sourceBetween(ticketPageSource, 'function applyServerDraft(card)', 'function markDraftCleanFromServer');
+  assert.match(reconcileSource, /currentDraftText\(\) !== state\.draftLastSavedText/);
+  assert.match(reconcileSource, /normalizeDraftMode\(state\.composeMode\) !== state\.draftLastSavedMode/);
+  assert.match(reconcileSource, /state\.draftDirty = false/);
+  assert.ok(applySource.indexOf('reconcileCleanDraftState();') < applySource.indexOf('if (!changed || state.draftDirty || state.draftSaveInFlight) return;'));
+});
+
+test('ticket draft applies newer clean remote text and mode while preserving cursor', () => {
+  const source = sourceBetween(ticketPageSource, 'function applyServerDraft(card)', 'function markDraftCleanFromServer');
+  assert.match(source, /saveDraftSelection\(\)/);
+  assert.match(source, /el\.messageInput\.value = text/);
+  assert.match(source, /state\.composeMode = mode/);
+  assert.match(source, /restoreDraftSelection\(\)/);
+});
+
+test('ticket draft cursor is stored per user and ticket then cleared after successful send', () => {
+  assert.match(ticketPageSource, /hd_ticket_draft_selection:\$\{userKey\}:\$\{state\.ticketId\}/);
+  assert.match(ticketComposerSource, /ctx\.clearDraftAfterSuccessfulSend\?\.\(\)/);
+  assert.match(ticketPageSource, /function clearDraftSelection\(\)[\s\S]+localStorage\.removeItem\(draftSelectionStorageKey\(\)\)/);
+  assert.match(ticketComposerSource, /el\.messageInput\.addEventListener\("select", \(\) => ctx\.onComposerSelection\?\.\(\)\)/);
+});
+
+test('ticket draft changes leave attachment preload restoration untouched', () => {
+  assert.match(ticketPageSource, /TicketComposer\.syncRestoredPreloads\?\.\(composerCtx\(\), card\.active_attachment_preloads \|\| \[\]\)/);
+  assert.doesNotMatch(ticketPageSource, /draft[\s\S]{0,80}active_attachment_preloads/);
 });
 
 test('theme toggle rebinds to replaced DOM node without stacking old listeners', () => {
