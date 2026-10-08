@@ -1715,6 +1715,71 @@ th, td {
   padding: 0;
 }
 
+.quick-replies-content {
+  grid-template-columns: minmax(320px, 50%) 1fr;
+  align-content: start;
+  overflow: auto;
+}
+
+.quick-replies-list {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.quick-reply-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  text-align: left;
+}
+
+.quick-reply-card:hover {
+  border-color: #bfd9f4;
+  background: #eef6ff;
+}
+
+.quick-reply-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.quick-reply-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.quick-reply-card-actions {
+  display: inline-flex;
+  justify-content: end;
+}
+
+#quickReplyModal .quick-reply-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+}
+
+.quick-reply-dialog .modal-body input,
+.quick-reply-dialog .modal-body textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.quick-reply-dialog .modal-body textarea {
+  min-height: 220px;
+  line-height: 1.45;
+}
+
 .ticket-row-link {
   display: flex;
   align-items: center;
@@ -3950,6 +4015,7 @@ textarea.comment-mode {
 
 @media (max-width: 1200px) {
   .content { grid-template-columns: 1fr; }
+  .quick-replies-content { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 700px) {

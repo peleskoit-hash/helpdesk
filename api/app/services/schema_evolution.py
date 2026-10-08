@@ -1861,3 +1861,66 @@ def ensure_ticket_attachment_preload_table() -> None:
             )
         )
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON ticket_attachment_preloads(ticket_id, user_id)"))
+
+
+def ensure_quick_reply_tables() -> None:
+    with engine.begin() as conn:
+        dialect = conn.dialect.name
+        if dialect == "sqlite":
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS quick_replies (
+                        id VARCHAR(36) PRIMARY KEY,
+                        short_title VARCHAR(255) NOT NULL,
+                        body TEXT NOT NULL,
+                        author_user_id VARCHAR(36) NOT NULL,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS quick_reply_usage (
+                        user_id VARCHAR(36) NOT NULL,
+                        quick_reply_id VARCHAR(36) NOT NULL,
+                        last_used_at TIMESTAMP NOT NULL,
+                        PRIMARY KEY (user_id, quick_reply_id)
+                    )
+                    """
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS quick_replies (
+                        id VARCHAR(36) PRIMARY KEY,
+                        short_title VARCHAR(255) NOT NULL,
+                        body TEXT NOT NULL,
+                        author_user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS quick_reply_usage (
+                        user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                        quick_reply_id VARCHAR(36) NOT NULL REFERENCES quick_replies(id),
+                        last_used_at TIMESTAMP NOT NULL,
+                        PRIMARY KEY (user_id, quick_reply_id)
+                    )
+                    """
+                )
+            )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_replies_author_user_id ON quick_replies(author_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_replies_updated_at ON quick_replies(updated_at)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_quick_reply_usage_user_reply ON quick_reply_usage(user_id, quick_reply_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_reply_usage_user_used ON quick_reply_usage(user_id, last_used_at)"))

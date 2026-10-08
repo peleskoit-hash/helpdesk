@@ -51,8 +51,10 @@ const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
 const ticketComposerSource = fs.readFileSync('api/app/static/ticket_composer.js', 'utf8');
+const quickRepliesSource = fs.readFileSync('api/app/static/quick_replies.js', 'utf8');
 const ticketsListSource = fs.readFileSync('api/app/static/list.js', 'utf8');
 const ticketsTemplate = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
+const quickRepliesTemplate = fs.readFileSync('api/app/templates/quick_replies.html', 'utf8');
 const managementUsersSource = fs.readFileSync('api/app/static/management_users.js', 'utf8');
 const ticketTemplate = fs.readFileSync('api/app/templates/ticket.html', 'utf8');
 const managementUsersTemplate = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
@@ -3313,6 +3315,70 @@ test('ticket draft cursor is stored per user and ticket then cleared after succe
 test('ticket draft changes leave attachment preload restoration untouched', () => {
   assert.match(ticketPageSource, /TicketComposer\.syncRestoredPreloads\?\.\(composerCtx\(\), card\.active_attachment_preloads \|\| \[\]\)/);
   assert.doesNotMatch(ticketPageSource, /draft[\s\S]{0,80}active_attachment_preloads/);
+});
+
+test('quick replies editor route and static wiring exist', () => {
+  const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
+  assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008a"\] \}\]/);
+  assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
+});
+
+test('quick replies management mode renders compact cards without edit or use columns', () => {
+  assert.match(quickRepliesTemplate, /id="quickRepliesList" class="quick-replies-list"/);
+  assert.match(quickRepliesSource, /card\.className = `quick-reply-card\$\{isOwnAdminReply\(reply\) \? " ticket-type-request" : ""\}`/);
+  assert.match(quickRepliesSource, /card\.dataset\.replyId = reply\.id/);
+  assert.doesNotMatch(quickRepliesTemplate, /<table|<thead|<tbody|quickRepliesHeadRow|quickRepliesRows/);
+  assert.doesNotMatch(quickRepliesSource, /Редактировать|data-edit|const cols|renderHead/);
+  assert.doesNotMatch(quickRepliesTemplate, />Использовать</);
+  assert.doesNotMatch(quickRepliesSource, /ticketMode[\s\S]{0,80}<th>[\s\S]{0,80}Использовать/);
+});
+
+test('quick replies ticket context keeps disabled use action separate from card open', () => {
+  assert.match(quickRepliesSource, /const ticketId = \(params\.get\("ticket_id"\) \|\| ""\)\.trim\(\)/);
+  assert.match(quickRepliesSource, /ticketMode \? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="\$\{escapeHtml\(reply\.id\)\}" disabled>Использовать<\/button><\/span>` : ""/);
+  assert.match(quickRepliesSource, /if \(event\.target\?\.dataset\?\.use\) return/);
+});
+
+test('quick replies card opens any visible reply including readonly foreign replies', () => {
+  assert.match(quickRepliesSource, /const card = event\.target\?\.closest\?\.\("\[data-reply-id\]"\)/);
+  assert.match(quickRepliesSource, /const reply = state\.replies\.find\(\(item\) => item\.id === replyId\)/);
+  assert.match(quickRepliesSource, /if \(reply\) openEdit\(reply\)/);
+  assert.doesNotMatch(quickRepliesSource, /if \(!reply\.can_edit\) return/);
+});
+
+test('quick replies edit modal uses backend can_edit for readonly fields and save state', () => {
+  assert.match(quickRepliesSource, /el\.titleInput\.readOnly = !reply\.can_edit/);
+  assert.match(quickRepliesSource, /el\.bodyInput\.readOnly = !reply\.can_edit/);
+  assert.match(quickRepliesSource, /el\.save\.disabled = !reply\.can_edit/);
+  assert.match(quickRepliesSource, /if \(state\.editing && !state\.editing\.can_edit\) return/);
+  assert.match(quickRepliesSource, /role === "admin" \|\| role === "agent"/);
+  assert.match(quickRepliesSource, /el\.create\.classList\.toggle\("hidden", !canCreate\(\)\)/);
+});
+
+test('quick replies edit modal shows immutable author footer', () => {
+  assert.match(quickRepliesTemplate, /id="quickReplyAuthorFooter"/);
+  assert.match(quickRepliesSource, /el\.authorFooter\.textContent = `Создал: \$\{reply\.author_name \|\| reply\.author_user_id \|\| "-"\}`/);
+});
+
+test('quick replies admin-owned cards reuse existing orange ticket type style', () => {
+  assert.match(quickRepliesSource, /user\.role === "admin" && reply\.author_user_id === user\.id/);
+  assert.match(quickRepliesSource, /ticket-type-request/);
+  assert.doesNotMatch(quickRepliesSource, /client-card-block-yellow/);
+  assert.match(stylesSource, /\.ticket-type-request \{[\s\S]*background: rgba\(255, 202, 158, 0\.78\);/);
+});
+
+test('quick replies modal and fields use wider responsive layout', () => {
+  assert.match(stylesSource, /\.modal-dialog \{[\s\S]*width: min\(480px, 92vw\);/);
+  assert.match(stylesSource, /#quickReplyModal \.quick-reply-dialog \{[\s\S]*width: min\(960px, calc\(100vw - 32px\)\);[\s\S]*max-width: calc\(100vw - 32px\);/);
+  assert.match(stylesSource, /\.quick-reply-dialog \.modal-body input,\s*\.quick-reply-dialog \.modal-body textarea \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
+  assert.match(stylesSource, /\.quick-replies-content \{[\s\S]*grid-template-columns: minmax\(320px, 50%\) 1fr;/);
+});
+
+test('quick replies management navigation and no-file slice boundaries are present', () => {
+  assert.match(fs.readFileSync('api/app/templates/management.html', 'utf8'), /href="\/quick-replies">&#1041;&#1099;&#1089;&#1090;&#1088;&#1099;&#1077; &#1086;&#1090;&#1074;&#1077;&#1090;&#1099;/);
+  assert.doesNotMatch(quickRepliesTemplate, /type="file"|attachment|вложен|файл/i);
+  assert.doesNotMatch(quickRepliesSource, /FormData|attachment|file/i);
 });
 
 test('theme toggle rebinds to replaced DOM node without stacking old listeners', () => {

@@ -382,6 +382,33 @@ class TicketAttachmentPreload(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class QuickReply(Base):
+    __tablename__ = "quick_replies"
+    __table_args__ = (
+        Index("ix_quick_replies_author_user_id", "author_user_id"),
+        Index("ix_quick_replies_updated_at", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    short_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    author_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class QuickReplyUsage(Base):
+    __tablename__ = "quick_reply_usage"
+    __table_args__ = (
+        UniqueConstraint("user_id", "quick_reply_id", name="uq_quick_reply_usage_user_reply"),
+        Index("ix_quick_reply_usage_user_used", "user_id", "last_used_at"),
+    )
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    quick_reply_id: Mapped[str] = mapped_column(ForeignKey("quick_replies.id"), primary_key=True)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SavedFile(Base):
     __tablename__ = "saved_files"
 

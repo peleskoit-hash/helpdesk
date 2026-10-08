@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ES Helpdesk - Быстрые ответы</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261001b" />
+</head>
+<body data-sidebar-ready="0">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">ES DESK</div>
+      <h2 class="sidebar-title">Заявки</h2>
+      <div class="tab-list">
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=unassigned" data-tab="unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=active" data-tab="active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=frozen" data-tab="frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
+        <a class="tab-btn" href="/tickets?tab=closed" data-tab="closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
+        <a class="tab-btn admin-only hidden" href="/tickets?tab=special" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
+      </div>
+      <a class="settings-link admin-only hidden" href="/settings"><span>Настройки</span><img src="/static/settings-gear.svg" alt="" /></a>
+      <a class="settings-link admin-only hidden" href="/management"><span>Управление</span></a>
+      <div class="sidebar-admin-separator admin-only hidden"></div>
+      <a class="settings-link admin-only hidden" href="/statuses"><span>Статусы</span></a>
+      <a class="settings-link admin-only hidden" href="/management/tasks"><span>Задачи</span></a>
+      <div id="sidebarUserStats" class="sidebar-user-stats"><div class="sidebar-user-name-row"><div id="sidebarUserDisplayName" class="sidebar-user-name">&mdash;</div></div></div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user-actions">
+          <div class="agent-avatar" title="Текущий пользователь">A</div>
+          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
+        </div>
+      </div>
+    </aside>
+
+    <main id="appContent" class="main" data-shell-page="quick-replies">
+      <div class="toolbar">
+        <div class="settings-title">Быстрые ответы</div>
+        <button id="createQuickReplyBtn" class="action primary" type="button">Создать быстрый ответ</button>
+        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <span id="statusText" class="status">Готово</span>
+      </div>
+      <section class="content quick-replies-content">
+        <div id="quickRepliesList" class="quick-replies-list"></div>
+      </section>
+
+      <div id="quickReplyModal" class="modal hidden">
+        <div class="modal-dialog quick-reply-dialog">
+          <div class="modal-head">
+            <strong id="quickReplyModalTitle">Быстрый ответ</strong>
+            <button id="closeQuickReplyModalBtn" type="button" class="action">Закрыть</button>
+          </div>
+          <div class="modal-body">
+            <label>
+              <span class="modal-label-title">Краткое название</span>
+              <input id="quickReplyTitleInput" type="text" autocomplete="off" />
+            </label>
+            <label>
+              <span class="modal-label-title">Текст быстрого ответа</span>
+              <textarea id="quickReplyBodyInput" rows="8"></textarea>
+            </label>
+            <div id="quickReplyAuthorFooter" class="status quick-reply-author-footer hidden"></div>
+          </div>
+          <div class="modal-foot">
+            <button id="cancelQuickReplyBtn" type="button" class="action">Отмена</button>
+            <button id="saveQuickReplyBtn" type="button" class="action primary">Сохранить</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/theme.js"></script>
+  <script src="/static/sidebar.js?v=20261005a"></script>
+  <script src="/static/app_shell.js?v=20261005a"></script>
+  <script src="/static/quick_replies.js?v=20261008a"></script>
+</body>
+</html>

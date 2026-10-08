@@ -29,6 +29,7 @@ from .routers.management_saved_files import router as management_saved_files_rou
 from .routers.management_statistics import router as management_statistics_router
 from .routers.management_users import router as management_users_router
 from .routers.mass_notifications import router as mass_notifications_router
+from .routers.quick_replies import router as quick_replies_router
 from .routers.reviews import router as reviews_router
 from .routers.settings import router as settings_router
 from .routers.settings_automatic_messages import router as settings_automatic_messages_router
@@ -55,6 +56,7 @@ from .services.schema_evolution import (
     ensure_employee_notification_preferences_table,
     ensure_internal_task_tables,
     ensure_integration_logs_table,
+    ensure_quick_reply_tables,
     ensure_saved_files_table,
     ensure_stats_foundation_tables,
     ensure_telegram_contact_company_user_unique,
@@ -109,6 +111,7 @@ app.include_router(management_statistics_router)
 app.include_router(management_users_router)
 app.include_router(reviews_router)
 app.include_router(integrations_router)
+app.include_router(quick_replies_router)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 telegram_polling_task: asyncio.Task | None = None
 employee_telegram_polling_task: asyncio.Task | None = None
@@ -148,6 +151,7 @@ async def on_startup():
             ensure_integration_logs_table()
             ensure_saved_files_table()
             ensure_stats_foundation_tables()
+            ensure_quick_reply_tables()
             with SessionLocal() as db:
                 migrate_legacy_bitrix_passwords(db)
                 migrate_legacy_bot_button_pdf_saved_files(db)
@@ -401,6 +405,13 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
     if _require_page_auth(request, db) is None:
         return _redirect_login("/profile")
     return FileResponse(str(BASE_DIR / "templates" / "profile.html"))
+
+
+@app.get("/quick-replies")
+def quick_replies_page(request: Request, db: Session = Depends(get_db)):
+    if _require_page_auth(request, db) is None:
+        return _redirect_login("/quick-replies")
+    return FileResponse(str(BASE_DIR / "templates" / "quick_replies.html"))
 
 
 @app.get("/reviews")
