@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from api.app.db import Base
 from api.app.models import Client, Company, MessageType, StatsUserStatusInterval, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType, User
+from api.app.routers import tickets as tickets_router
 from api.app.routers.tickets import create_attachment_preload, delete_attachment_preload, get_attachment_preload_status, get_ticket, update_ticket_draft
 from api.app.services import telegram_bot as telegram_bot_service
 from api.app.services import telegram_outbound_delivery as outbound_service
@@ -3175,6 +3176,36 @@ def test_manual_onsite_text_triggers_onsite_without_spending_quick_button():
     session.refresh(ticket)
     assert ticket.onsite_triggered is True
     assert not ticket.quick_action_state_json
+
+
+def test_restore_resets_onsite_and_new_onsite_text_can_trigger_again(monkeypatch):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.assignee_id = "agent-1"
+    ticket.status = TicketStatus.CLOSED.value
+    ticket.closed_by_user_id = "agent-1"
+    ticket.closed_at = datetime.utcnow()
+    ticket.onsite_triggered = True
+    session.commit()
+    monkeypatch.setattr(tickets_router, "_send_to_telegram_client", lambda *_args, **_kwargs: {"ok": True})
+
+    result = tickets_router.restore(ticket.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+
+    assert result == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.onsite_triggered is False
+
+    sent_messages = []
+    reply_result = asyncio.run(_send_quick_action_reply(
+        session,
+        ticket,
+        {"text": "Иду к Вам", "quote_message_id": None},
+        sent_messages=sent_messages,
+    ))
+
+    assert reply_result == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.onsite_triggered is True
 
 
 def test_plain_ticket_file_reply_persists_card_attachment_and_starts_auto_close_timer(tmp_path):

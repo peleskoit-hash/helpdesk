@@ -1816,6 +1816,7 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
     ticket.closed_at = None
     ticket.completed_by_user_id = None
     ticket.completed_counted_at = None
+    ticket.onsite_triggered = False
     ticket.is_frozen = False
     ticket.freeze_until = None
     ticket.updated_at = reopened_at
