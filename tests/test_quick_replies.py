@@ -14,6 +14,7 @@ from api.app.models import Company, QuickReply, QuickReplyUsage, User
 from api.app.routers.quick_replies import (
     QuickReplyPayload,
     create_quick_reply,
+    delete_quick_reply,
     list_quick_replies,
     search_quick_replies,
     update_quick_reply,
@@ -150,3 +151,61 @@ def test_empty_search_returns_personal_mru_top_five_without_duplicates():
     use_quick_reply(replies[0].id, db=db, user=_user("agent-2", "agent"))
     user_b_results = search_quick_replies(q="", db=db, user=_user("agent-2", "agent"))
     assert [item.id for item in user_b_results] == [replies[0].id]
+
+
+def test_admin_deletes_own_reply():
+    db = _session()
+    _seed_users(db)
+    reply = _create(db, "admin-1", "admin", "Admin title", "Admin body")
+
+    assert delete_quick_reply(reply.id, db=db, user=_user("admin-1", "admin")) == {"ok": True}
+
+    assert db.get(QuickReply, reply.id) is None
+
+
+def test_admin_deletes_other_agent_reply():
+    db = _session()
+    _seed_users(db)
+    reply = _create(db, "agent-1", "agent", "Agent title", "Agent body")
+
+    assert delete_quick_reply(reply.id, db=db, user=_user("admin-1", "admin")) == {"ok": True}
+
+    assert db.get(QuickReply, reply.id) is None
+
+
+def test_agent_cannot_delete_own_reply():
+    db = _session()
+    _seed_users(db)
+    reply = _create(db, "agent-1", "agent", "Agent title", "Agent body")
+
+    with pytest.raises(HTTPException) as exc:
+        delete_quick_reply(reply.id, db=db, user=_user("agent-1", "agent"))
+
+    assert exc.value.status_code == 403
+    assert db.get(QuickReply, reply.id) is not None
+
+
+def test_delete_missing_reply_returns_404():
+    db = _session()
+    _seed_users(db)
+
+    with pytest.raises(HTTPException) as exc:
+        delete_quick_reply("missing", db=db, user=_user("admin-1", "admin"))
+
+    assert exc.value.status_code == 404
+
+
+def test_delete_cleans_usage_and_keeps_other_replies():
+    db = _session()
+    _seed_users(db)
+    deleted = _create(db, "agent-1", "agent", "Delete me", "Body")
+    kept = _create(db, "agent-1", "agent", "Keep me", "Body")
+    use_quick_reply(deleted.id, db=db, user=_user("agent-1", "agent"))
+    use_quick_reply(kept.id, db=db, user=_user("agent-1", "agent"))
+
+    delete_quick_reply(deleted.id, db=db, user=_user("admin-1", "admin"))
+
+    assert db.get(QuickReply, deleted.id) is None
+    assert db.get(QuickReply, kept.id) is not None
+    assert db.execute(select(QuickReplyUsage).where(QuickReplyUsage.quick_reply_id == deleted.id)).scalars().all() == []
+    assert db.execute(select(QuickReplyUsage).where(QuickReplyUsage.quick_reply_id == kept.id)).scalars().all()

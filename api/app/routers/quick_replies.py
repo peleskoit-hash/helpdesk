@@ -129,6 +129,23 @@ def update_quick_reply(
     return _out(reply, user, _authors_by_id(db, {reply.author_user_id}))
 
 
+@router.delete("/{reply_id}")
+def delete_quick_reply(
+    reply_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    if not is_admin(user):
+        _error(403, "quick_reply_delete_forbidden", "Нет прав на удаление быстрого ответа")
+    reply = db.get(QuickReply, reply_id)
+    if reply is None:
+        _error(404, "quick_reply_not_found", "Быстрый ответ не найден")
+    db.query(QuickReplyUsage).filter(QuickReplyUsage.quick_reply_id == reply.id).delete(synchronize_session=False)
+    db.delete(reply)
+    db.commit()
+    return {"ok": True}
+
+
 def _search_replies(db: Session, query: str) -> list[QuickReply]:
     normalized = query.strip().lower()
     pattern = f"%{normalized}%"

@@ -1734,6 +1734,13 @@ th, td {
   align-content: start;
 }
 
+.quick-reply-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .quick-reply-card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1746,6 +1753,10 @@ th, td {
   align-items: center;
   cursor: pointer;
   text-align: left;
+}
+
+.quick-reply-delete {
+  white-space: nowrap;
 }
 
 .quick-reply-card:hover {

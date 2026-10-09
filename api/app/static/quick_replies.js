@@ -30,7 +30,7 @@
     const params = new URLSearchParams(window.location.search);
     const ticketId = (params.get("ticket_id") || "").trim();
     const ticketMode = Boolean(ticketId);
-    const state = { replies: [], session: null, editing: null, useInFlight: false };
+    const state = { replies: [], session: null, editing: null, useInFlight: false, deletingIds: new Set() };
     const el = {
       status: document.getElementById("statusText"),
       create: document.getElementById("createQuickReplyBtn"),
@@ -59,6 +59,10 @@
       return user.role === "admin" && reply.author_user_id === user.id;
     }
 
+    function canDelete() {
+      return state.session?.effective_user?.role === "admin";
+    }
+
     function pendingQuickReplyStorageKey() {
       return `hd_quick_reply_pending_use:${ticketId}`;
     }
@@ -70,6 +74,9 @@
     function renderReplies() {
       el.list.innerHTML = "";
       for (const reply of state.replies) {
+        const row = document.createElement("div");
+        row.className = "quick-reply-row";
+
         const card = document.createElement("div");
         card.tabIndex = 0;
         card.setAttribute("role", "button");
@@ -79,7 +86,19 @@
           <span class="quick-reply-card-title">${escapeHtml(reply.short_title)}</span>
           ${ticketMode ? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="${escapeHtml(reply.id)}">Использовать</button></span>` : ""}
         `;
-        el.list.appendChild(card);
+        row.appendChild(card);
+
+        if (canDelete()) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "action danger quick-reply-delete";
+          button.dataset.delete = reply.id;
+          button.textContent = "Удалить";
+          button.disabled = state.deletingIds.has(String(reply.id));
+          row.appendChild(button);
+        }
+
+        el.list.appendChild(row);
       }
     }
 
@@ -169,11 +188,35 @@
       }
     }
 
+    async function deleteReply(reply) {
+      if (!canDelete() || !reply?.id) return;
+      const replyId = String(reply.id);
+      if (state.deletingIds.has(replyId)) return;
+      if (!window.confirm(`Удалить быстрый ответ «${reply.short_title || reply.id}»?`)) return;
+      state.deletingIds.add(replyId);
+      renderReplies();
+      try {
+        await api(`/api/v1/quick-replies/${encodeURIComponent(reply.id)}`, { method: "DELETE" });
+        await load();
+      } catch (e) {
+        state.deletingIds.delete(replyId);
+        renderReplies();
+        setStatus(e.message);
+      }
+    }
+
     el.create.addEventListener("click", openCreate);
     el.closeModal.addEventListener("click", closeModal);
     el.cancel.addEventListener("click", closeModal);
     el.save.addEventListener("click", save);
     el.list.addEventListener("click", (event) => {
+      const deleteId = event.target?.dataset?.delete;
+      if (deleteId) {
+        event.stopPropagation();
+        const reply = state.replies.find((item) => String(item.id) === String(deleteId));
+        if (reply) void deleteReply(reply).catch((e) => setStatus(e.message));
+        return;
+      }
       const useId = event.target?.dataset?.use;
       if (useId) {
         event.stopPropagation();
