@@ -1312,6 +1312,7 @@ def _dispatch_builtin_button_automation(
                         "ok": True,
                         "ticket_id": ticket.id,
                         "workflow_type": TicketWorkflowType.TICKET.value,
+                        "status": ticket.status,
                         "automation_handoff": True,
                     }
             direct_file_ok, direct_file_error = _send_button_direct_file(db, ticket, button, external_chat_id)
@@ -1329,6 +1330,7 @@ def _dispatch_builtin_button_automation(
                     "ok": True,
                     "ticket_id": ticket.id,
                     "workflow_type": TicketWorkflowType.TICKET.value,
+                    "status": ticket.status,
                     "auto_file_error": True,
                 }
             _complete_auto_ticket(db, ticket, external_chat_id, False)
@@ -1387,6 +1389,7 @@ def _dispatch_builtin_button_automation(
                     "ok": True,
                     "ticket_id": ticket.id,
                     "workflow_type": TicketWorkflowType.TICKET.value,
+                    "status": ticket.status,
                     "automation_handoff": True,
                 }
         _complete_auto_ticket(db, ticket, external_chat_id, False)
@@ -1413,6 +1416,7 @@ def _dispatch_builtin_button_automation(
             "ok": True,
             "ticket_id": ticket.id,
             "workflow_type": TicketWorkflowType.TICKET.value,
+            "status": ticket.status,
             "automation_handoff": True,
         }
 
@@ -2694,7 +2698,13 @@ def _process_problem_type_callback(
                 notify_client,
             )
             db.commit()
-            return {"ok": True, "ticket_id": collecting_ticket.id, "workflow_type": TicketWorkflowType.TICKET.value, "auto_file_error": True}
+            return {
+                "ok": True,
+                "ticket_id": collecting_ticket.id,
+                "workflow_type": TicketWorkflowType.TICKET.value,
+                "status": collecting_ticket.status,
+                "auto_file_error": True,
+            }
         _complete_auto_ticket(db, collecting_ticket, external_chat_id, False)
         db.commit()
         return {"ok": True, "ticket_id": collecting_ticket.id, "workflow_type": TicketWorkflowType.AUTO.value}
@@ -2948,7 +2958,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                         notify_client,
                     )
                     db.commit()
-                    return {"ok": True, "ticket_id": collecting_ticket.id, "workflow_type": TicketWorkflowType.TICKET.value, "auto_file_error": True}
+                    return {
+                        "ok": True,
+                        "ticket_id": collecting_ticket.id,
+                        "workflow_type": TicketWorkflowType.TICKET.value,
+                        "status": collecting_ticket.status,
+                        "auto_file_error": True,
+                    }
                 _complete_auto_ticket(db, collecting_ticket, external_chat_id, False)
                 db.commit()
                 return {"ok": True, "ticket_id": collecting_ticket.id, "workflow_type": TicketWorkflowType.AUTO.value}

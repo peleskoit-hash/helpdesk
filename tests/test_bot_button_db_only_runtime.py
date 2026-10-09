@@ -1263,7 +1263,12 @@ def test_auto_send_files_direct_error_handoffs(monkeypatch):
     monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: (False, "file error"))
     monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: None)
-    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", lambda *args, **kwargs: fallback_calls.append((args, kwargs)) or None)
+    def fake_fallback(_db, current_ticket, *args, **kwargs):
+        current_ticket.status = TicketStatus.UNASSIGNED.value
+        fallback_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", fake_fallback)
     monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not complete")))
 
     result = telegram_router._dispatch_builtin_button_automation(
@@ -1276,6 +1281,7 @@ def test_auto_send_files_direct_error_handoffs(monkeypatch):
 
     assert result["auto_file_error"] is True
     assert result["workflow_type"] == "ticket"
+    assert result["status"] == TicketStatus.UNASSIGNED.value
     assert len(fallback_calls) == 1
 
 
@@ -1313,7 +1319,12 @@ def test_auto_message_only_send_failure_handoffs(monkeypatch):
 
     monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("fallback", None))
     monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
-    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", lambda *args, **kwargs: fallback_calls.append((args, kwargs)) or None)
+    def fake_fallback(_db, current_ticket, *args, **kwargs):
+        current_ticket.status = TicketStatus.UNASSIGNED.value
+        fallback_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(telegram_router, "_fallback_auto_to_support", fake_fallback)
     monkeypatch.setattr(telegram_router, "_complete_auto_ticket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not complete")))
 
     result = telegram_router._dispatch_builtin_button_automation(
@@ -1327,6 +1338,7 @@ def test_auto_message_only_send_failure_handoffs(monkeypatch):
 
     assert result["automation_handoff"] is True
     assert result["workflow_type"] == "ticket"
+    assert result["status"] == TicketStatus.UNASSIGNED.value
     assert len(fallback_calls) == 1
 
 
