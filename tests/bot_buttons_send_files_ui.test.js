@@ -211,8 +211,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261008a/);
-  assert.match(appShellSource, /ticket\.js\?v=20261008a/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261008b/);
+  assert.match(appShellSource, /ticket\.js\?v=20261008b/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -3320,7 +3320,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008a"\] \}\]/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008b"\] \}\]/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261008b/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261008b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
@@ -3336,13 +3338,26 @@ test('quick replies management mode renders compact cards without edit or use co
 
 test('quick replies ticket context keeps disabled use action separate from card open', () => {
   assert.match(quickRepliesSource, /const ticketId = \(params\.get\("ticket_id"\) \|\| ""\)\.trim\(\)/);
-  assert.match(quickRepliesSource, /ticketMode \? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="\$\{escapeHtml\(reply\.id\)\}" disabled>Использовать<\/button><\/span>` : ""/);
-  assert.match(quickRepliesSource, /if \(event\.target\?\.dataset\?\.use\) return/);
+  assert.match(quickRepliesSource, /ticketMode \? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="\$\{escapeHtml\(reply\.id\)\}">Использовать<\/button><\/span>` : ""/);
+  assert.match(quickRepliesSource, /event\.stopPropagation\(\)/);
+  assert.match(quickRepliesSource, /await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`, \{ method: "POST" \}\)/);
+  assert.match(quickRepliesSource, /window\.location\.href = ticketUrl\(\)/);
+});
+
+test('quick replies ticket context use button is single-flight and keyboard-isolated', () => {
+  assert.match(quickRepliesSource, /const state = \{ replies: \[\], session: null, editing: null, useInFlight: false \}/);
+  const useSource = sourceBetween(quickRepliesSource, 'async function useReply(reply)', 'el.create.addEventListener');
+  assert.match(useSource, /if \(state\.useInFlight\) return/);
+  assert.match(useSource, /state\.useInFlight = true;[\s\S]*try \{[\s\S]*await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`/);
+  assert.match(useSource, /finally \{[\s\S]*state\.useInFlight = false;[\s\S]*\}/);
+  const keydownSource = sourceBetween(quickRepliesSource, 'el.list.addEventListener("keydown"', 'await load();');
+  assert.match(keydownSource, /if \(event\.target\?\.closest\?\.\("\[data-use\]"\)\) return/);
+  assert.match(keydownSource, /if \(reply\) openEdit\(reply\)/);
 });
 
 test('quick replies card opens any visible reply including readonly foreign replies', () => {
   assert.match(quickRepliesSource, /const card = event\.target\?\.closest\?\.\("\[data-reply-id\]"\)/);
-  assert.match(quickRepliesSource, /const reply = state\.replies\.find\(\(item\) => item\.id === replyId\)/);
+  assert.match(quickRepliesSource, /const reply = state\.replies\.find\(\(item\) => String\(item\.id\) === String\(replyId\)\)/);
   assert.match(quickRepliesSource, /if \(reply\) openEdit\(reply\)/);
   assert.doesNotMatch(quickRepliesSource, /if \(!reply\.can_edit\) return/);
 });
@@ -3379,6 +3394,189 @@ test('quick replies management navigation and no-file slice boundaries are prese
   assert.match(fs.readFileSync('api/app/templates/management.html', 'utf8'), /href="\/quick-replies">&#1041;&#1099;&#1089;&#1090;&#1088;&#1099;&#1077; &#1086;&#1090;&#1074;&#1077;&#1090;&#1099;/);
   assert.doesNotMatch(quickRepliesTemplate, /type="file"|attachment|вложен|файл/i);
   assert.doesNotMatch(quickRepliesSource, /FormData|attachment|file/i);
+});
+
+test('ticket quick reply button sits between add files and send', () => {
+  assert.match(ticketTemplate, /styles\.css\?v=20261008b/);
+  assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
+  assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
+  assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);
+  const composerActions = sourceBetween(ticketTemplate, '<div class="composer-send-actions">', '<button id="sendNowBtn"');
+  assert.doesNotMatch(composerActions, /title="Быстрые ответы"/);
+  assert.match(composerActions, /aria-label="Быстрые ответы"/);
+  assert.match(composerActions, /<img src="\/static\/quick_reply_book_icon\.png" alt="" class="quick-replies-icon" \/>/);
+  assert.ok(fs.existsSync('api/app/static/quick_reply_book_icon.png'));
+});
+
+test('ticket quick reply button shows visual Ctrl+Q tooltip on hover and focus', () => {
+  const toggleStyle = sourceBetween(stylesSource, '.quick-replies-toggle {', '.quick-replies-panel {');
+  assert.match(toggleStyle, /\.quick-replies-icon \{[\s\S]*width: 24px;[\s\S]*height: 24px;[\s\S]*object-fit: contain;/);
+  assert.match(toggleStyle, /\.quick-replies-toggle::after \{[\s\S]*content: "CTRL\+Q";[\s\S]*top: calc\(100% \+ 6px\);[\s\S]*opacity: 0;/);
+  assert.match(toggleStyle, /\.quick-replies-toggle:hover::after,\s*\.quick-replies-toggle:focus-visible::after \{[\s\S]*opacity: 1;/);
+  assert.match(toggleStyle, /position: absolute;/);
+  assert.match(toggleStyle, /pointer-events: none;/);
+});
+
+test('ticket quick replies panel is fixed height overlay with five result slots plus editor row', () => {
+  const panelStyle = sourceBetween(stylesSource, '.quick-replies-panel {', '.quick-replies-search {');
+  assert.match(ticketTemplate, /id="quickRepliesPanel" class="quick-replies-panel hidden"/);
+  assert.match(ticketTemplate, /id="quickRepliesSearchInput"/);
+  assert.match(ticketTemplate, /id="quickRepliesEditorRow"[\s\S]*Редактор быстрых ответов/);
+  assert.doesNotMatch(stylesSource, /quick-replies-anchor/);
+  assert.match(panelStyle, /position: fixed;/);
+  assert.match(panelStyle, /left: 0;[\s\S]*bottom: 0;[\s\S]*transform: translateX\(-50%\);/);
+  assert.match(panelStyle, /width: min\(460px, calc\(100vw - 28px\)\);/);
+  assert.match(panelStyle, /height: 306px;/);
+  assert.match(panelStyle, /grid-template-rows: auto 1fr auto;/);
+  assert.match(stylesSource, /\.quick-replies-panel-rows \{[\s\S]*grid-template-rows: repeat\(5, 1fr\);/);
+  assert.doesNotMatch(panelStyle, /overflow-y: auto/);
+});
+
+test('ticket quick replies fixed overlay is positioned from the book button rect', () => {
+  const positionSource = sourceBetween(ticketPageSource, 'function positionQuickRepliesPanel()', 'function closeQuickRepliesPanel');
+  assert.match(positionSource, /el\.quickRepliesBtn\.getBoundingClientRect\(\)/);
+  assert.match(positionSource, /const buttonCenterX = rect\.left \+ rect\.width \/ 2/);
+  assert.match(positionSource, /const panelBottom = window\.innerHeight - rect\.top \+ 14/);
+  assert.match(positionSource, /style\.right = ""[\s\S]*style\.top = ""[\s\S]*style\.inset = ""/);
+  assert.match(positionSource, /el\.quickRepliesPanel\.style\.left = `\$\{buttonCenterX\}px`/);
+  assert.match(positionSource, /el\.quickRepliesPanel\.style\.bottom = `\$\{panelBottom\}px`/);
+  assert.match(ticketPageSource, /if \(el\.quickRepliesBtn\) el\.quickRepliesBtn\.classList\.add\("primary"\);\s*positionQuickRepliesPanel\(\);/);
+  assert.match(ticketPageSource, /resizeHandler = \(\) => \{[\s\S]*if \(state\.quickRepliesOpen\) positionQuickRepliesPanel\(\);[\s\S]*\};/);
+});
+
+test('ticket quick replies panel is portaled to body and cleaned up on ticket teardown', () => {
+  const mountSource = sourceBetween(ticketPageSource, 'function mountQuickRepliesPanelOverlay()', 'function positionQuickRepliesPanel');
+  assert.doesNotMatch(ticketPageSource, /quickRepliesPanelOriginalParent|quickRepliesPanelOriginalNextSibling/);
+  assert.match(mountSource, /el\.quickRepliesPanel\.parentElement === document\.body/);
+  assert.match(mountSource, /document\.body\.appendChild\(el\.quickRepliesPanel\)/);
+  assert.match(ticketPageSource, /mountQuickRepliesPanelOverlay\(\);[\s\S]*if \(el\.quickRepliesPanel\) el\.quickRepliesPanel\.classList\.remove\("hidden"\)/);
+  const cleanupSource = sourceBetween(ticketPageSource, 'function cleanupTicketCardPage()', 'function attachmentsCtx');
+  assert.match(cleanupSource, /if \(el\.quickRepliesPanel\?\.parentElement === document\.body\) \{[\s\S]*el\.quickRepliesPanel\.remove\(\);[\s\S]*\}/);
+});
+
+test('ticket quick replies outside click keeps button and panel clicks inside', () => {
+  const insideSource = sourceBetween(ticketPageSource, 'function isQuickRepliesClickInside(target)', 'function quickReplyEditorUrl');
+  assert.match(insideSource, /el\.quickRepliesBtn && el\.quickRepliesBtn\.contains\(target\)/);
+  assert.match(insideSource, /el\.quickRepliesPanel && el\.quickRepliesPanel\.contains\(target\)/);
+  const bindSource = sourceBetween(ticketPageSource, 'if (el.quickRepliesBtn) {', 'if (el.quickRepliesSearchInput) {');
+  assert.match(bindSource, /el\.quickRepliesBtn\.addEventListener\("click", \(event\) => \{[\s\S]*toggleQuickRepliesPanel\(\{ focusSearch: false \}\)/);
+  assert.doesNotMatch(bindSource, /stopPropagation\(\)/);
+  assert.match(ticketPageSource, /documentClickHandler = \(event\) => \{[\s\S]*if \(state\.quickRepliesOpen && !isQuickRepliesClickInside\(event\.target\)\) \{[\s\S]*closeQuickRepliesPanel\(\);/);
+});
+
+test('ticket quick replies use is single-flight to avoid double insertion', () => {
+  assert.match(ticketPageSource, /quickReplyUseInFlight: false/);
+  const useSource = sourceBetween(ticketPageSource, 'async function useQuickReply(reply)', 'async function openQuickRepliesEditorFromPanel');
+  assert.match(useSource, /if \(state\.quickReplyUseInFlight\) return/);
+  assert.match(useSource, /state\.quickReplyUseInFlight = true;[\s\S]*try \{[\s\S]*await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`/);
+  assert.match(useSource, /insertTextIntoComposer\(payload\?\.body \|\| reply\.body \|\| ""\)/);
+  assert.match(useSource, /finally \{[\s\S]*state\.quickReplyUseInFlight = false;[\s\S]*\}/);
+});
+
+test('ticket quick replies active highlight and editor row are visually distinct', () => {
+  assert.match(stylesSource, /\.quick-replies-search\.highlighted \{[\s\S]*outline: 3px solid rgba\(34, 113, 179, 0\.42\);[\s\S]*outline-offset: 3px;/);
+  assert.match(stylesSource, /\.quick-replies-panel-row:hover,\s*\.quick-replies-panel-row\.highlighted \{[\s\S]*box-shadow: 0 0 0 3px rgba\(34, 113, 179, 0\.34\);[\s\S]*font-weight: 700;/);
+  assert.match(stylesSource, /\.quick-replies-editor-row \{[\s\S]*border: 1px solid var\(--border\);[\s\S]*background: rgba\(255, 202, 158, 0\.78\);[\s\S]*text-align: center;[\s\S]*justify-content: center;/);
+  assert.match(stylesSource, /\.quick-replies-editor-row:hover,\s*\.quick-replies-editor-row\.highlighted \{[\s\S]*background: rgba\(255, 202, 158, 0\.78\);[\s\S]*box-shadow: 0 0 0 3px rgba\(34, 113, 179, 0\.34\), 0 4px 12px rgba\(15, 23, 42, 0\.12\);/);
+});
+
+test('ticket quick replies search uses backend MRU, allows one char, and ignores stale responses', () => {
+  assert.match(ticketPageSource, /await searchQuickReplies\(""\)/);
+  assert.match(ticketPageSource, /\/api\/v1\/quick-replies\/search\?q=\$\{encodeURIComponent\(query \|\| ""\)\}/);
+  assert.match(ticketPageSource, /state\.quickRepliesSearchTimer = window\.setTimeout\(\(\) => \{[\s\S]*}, 150\)/);
+  assert.doesNotMatch(ticketPageSource, /query\.length\s*[<>=]/);
+  assert.match(ticketPageSource, /const seq = \+\+state\.quickRepliesSearchSeq/);
+  assert.match(ticketPageSource, /if \(seq !== state\.quickRepliesSearchSeq\) return/);
+  assert.match(ticketPageSource, /payload\.slice\(0, 5\)/);
+});
+
+test('ticket quick replies keyboard uses physical Ctrl+Q only and cycles through search and rows', () => {
+  assert.match(ticketPageSource, /function isQuickRepliesHotkey\(event\) \{[\s\S]*event\.ctrlKey && !event\.metaKey && !event\.altKey && event\.code === "KeyQ"/);
+  assert.doesNotMatch(ticketPageSource, /key\.toLowerCase\(\) === "q"/);
+  assert.match(ticketPageSource, /if \(isQuickRepliesHotkey\(e\)\) \{/);
+  assert.doesNotMatch(ticketPageSource, /e\.metaKey &&[\s\S]{0,80}quickReplies/);
+  assert.match(ticketPageSource, /toggleQuickRepliesPanel\(\{ focusSearch: true \}\)/);
+  assert.match(ticketPageSource, /if \(el\.quickRepliesSearchInput\) rows\.push\(el\.quickRepliesSearchInput\)/);
+  assert.match(ticketPageSource, /event\.key === "ArrowDown"[\s\S]*event\.stopPropagation\(\);[\s\S]*setQuickReplyHighlight\(state\.quickRepliesHighlightedIndex \+ 1, \{ focusSearch: true \}\)/);
+  assert.match(ticketPageSource, /event\.key === "ArrowUp"[\s\S]*event\.stopPropagation\(\);[\s\S]*setQuickReplyHighlight\(state\.quickRepliesHighlightedIndex - 1, \{ focusSearch: true \}\)/);
+  assert.match(ticketPageSource, /const next = \(\(index % rows\.length\) \+ rows\.length\) % rows\.length/);
+  assert.match(ticketPageSource, /if \(focusSearch && rows\[next\] === el\.quickRepliesSearchInput\) \{[\s\S]*el\.quickRepliesSearchInput\.focus\(\);/);
+  assert.match(ticketPageSource, /if \(row === el\.quickRepliesSearchInput\) return/);
+  assert.match(ticketPageSource, /event\.key === "Escape"[\s\S]*closeQuickRepliesPanel\(\{ focusComposer: true \}\)/);
+});
+
+test('ticket quick replies mouse open preserves composer focus and selection without focusing search', () => {
+  const openSource = sourceBetween(ticketPageSource, 'async function openQuickRepliesPanel', 'async function toggleQuickRepliesPanel');
+  const bindSource = sourceBetween(ticketPageSource, 'if (el.quickRepliesBtn) {', 'if (el.quickRepliesSearchInput) {');
+  assert.match(openSource, /\{ focusSearch = false \} = \{\}/);
+  assert.match(openSource, /saveDraftSelection\(\)/);
+  assert.doesNotMatch(openSource, /quickRepliesSearchInput\.focus\(\)/);
+  assert.match(openSource, /setQuickReplyHighlight\(0, \{ focusSearch \}\)/);
+  assert.match(bindSource, /el\.quickRepliesBtn\.addEventListener\("mousedown", \(event\) => \{[\s\S]*event\.preventDefault\(\);[\s\S]*saveDraftSelection\(\);/);
+  assert.match(bindSource, /toggleQuickRepliesPanel\(\{ focusSearch: false \}\)/);
+  assert.doesNotMatch(bindSource, /quickRepliesSearchInput\.focus/);
+});
+
+test('ticket quick replies insert uses /use, cursor selection, and existing draft hooks', () => {
+  assert.match(ticketPageSource, /await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`, \{ method: "POST" \}\)/);
+  assert.match(ticketPageSource, /const value = String\(el\.messageInput\.value \|\| ""\)/);
+  assert.match(ticketPageSource, /el\.messageInput\.value = `\$\{value\.slice\(0, start\)\}\$\{inserted\}\$\{value\.slice\(end\)\}`/);
+  assert.match(ticketPageSource, /el\.messageInput\.setSelectionRange\(cursor, cursor\)/);
+  assert.match(ticketPageSource, /handleComposerInput\(\)/);
+  assert.match(ticketPageSource, /saveDraftSelection\(\)/);
+  assert.match(ticketPageSource, /if \(raw && document\.activeElement !== el\.messageInput\) \{[\s\S]*start = Number\(parsed\?\.start\);[\s\S]*end = Number\(parsed\?\.end\);/);
+});
+
+test('ticket quick replies cannot insert or count use when composer is readonly', () => {
+  assert.match(ticketPageSource, /function canWriteComposer\(\) \{[\s\S]*!el\.messageInput\.disabled[\s\S]*!el\.messageInput\.readOnly[\s\S]*state\.card\?\.status !== "closed"/);
+  assert.match(ticketPageSource, /if \(el\.quickRepliesBtn\) el\.quickRepliesBtn\.disabled = isClosed \|\| isReadonly/);
+  const useSource = sourceBetween(ticketPageSource, 'async function useQuickReply(reply)', 'async function openQuickRepliesEditorFromPanel');
+  assert.match(useSource, /if \(!canWriteComposer\(\)\) \{[\s\S]*closeQuickRepliesPanel\(\);[\s\S]*return;[\s\S]*\}[\s\S]*await api\(`\/api\/v1\/quick-replies/);
+  assert.match(useSource, /await api\(`\/api\/v1\/quick-replies[\s\S]*if \(!canWriteComposer\(\)\) \{/);
+  const renderSource = sourceBetween(ticketPageSource, 'function renderCard()', 'async function loadCard');
+  assert.match(renderSource, /const isReadonly = state\.role === "chiki_piki"/);
+  assert.match(renderSource, /if \(isClosed \|\| isReadonly\) closeQuickRepliesPanel\(\)/);
+});
+
+test('ticket quick replies editor row flushes draft and uses ticket context route', () => {
+  assert.match(ticketPageSource, /function quickReplyEditorUrl\(\)[\s\S]*\/quick-replies\?ticket_id=\$\{encodeURIComponent\(state\.ticketId\)\}/);
+  assert.match(ticketPageSource, /await flushDraftBeforeSend\(\)/);
+  assert.match(ticketPageSource, /window\.location\.href = quickReplyEditorUrl\(\)/);
+  assert.match(ticketPageSource, /el\.quickRepliesEditorRow\.disabled = !canUseQuickRepliesEditor\(\)/);
+  assert.match(ticketPageSource, /return state\.role === "admin" \|\| state\.role === "agent"/);
+});
+
+test('ticket quick replies panel closes outside and survives polling render', () => {
+  assert.match(ticketPageSource, /if \(state\.quickRepliesOpen && !isQuickRepliesClickInside\(event\.target\)\) \{/);
+  const renderSource = sourceBetween(ticketPageSource, 'function renderCard()', 'async function loadCard');
+  assert.doesNotMatch(renderSource, /quickRepliesPanel\.innerHTML|quickRepliesPanel\.remove|quickRepliesOpen = false/);
+});
+
+test('ticket polling reload does not steal focus after initial composer autofocus', () => {
+  const loadSource = sourceBetween(ticketPageSource, 'async function loadCard(options = {})', 'async function sendByMode');
+  assert.match(ticketPageSource, /initialComposerFocusApplied: false/);
+  assert.match(loadSource, /if \(!state\.initialComposerFocusApplied\) \{[\s\S]*state\.initialComposerFocusApplied = true;[\s\S]*focusMessageInputIfAvailable\(\);[\s\S]*restoreDraftSelection\(\);[\s\S]*\}[\s\S]*await consumePendingQuickReplyUse\(\)/);
+  assert.doesNotMatch(loadSource, /\}\s*restoreDraftSelection\(\);\s*await consumePendingQuickReplyUse\(\)/);
+  assert.match(ticketPageSource, /pollTimer = window\.setInterval\(\(\) => \{[\s\S]*loadCard\(\{ silent: true \}\)/);
+});
+
+test('ticket polling selection restore stays scoped to initial load and remote draft apply', () => {
+  const loadSource = sourceBetween(ticketPageSource, 'async function loadCard(options = {})', 'async function sendByMode');
+  const loadRestoreCalls = loadSource.match(/restoreDraftSelection\(\)/g) || [];
+  assert.strictEqual(loadRestoreCalls.length, 1);
+  assert.match(loadSource, /restoreDraftSelection\(\);[\s\S]*await consumePendingQuickReplyUse\(\)/);
+
+  const applyDraftSource = sourceBetween(ticketPageSource, 'function applyServerDraft(card)', 'function markDraftCleanFromServer');
+  assert.match(applyDraftSource, /saveDraftSelection\(\);[\s\S]*restoreDraftSelection\(\);/);
+  assert.match(ticketPageSource, /function restoreDraftSelection\(\)[\s\S]*el\.messageInput\.setSelectionRange\(start, end\)/);
+});
+
+test('ticket context quick replies use stores only pending reply body and returns to ticket', () => {
+  assert.match(quickRepliesSource, /function pendingQuickReplyStorageKey\(\)[\s\S]*hd_quick_reply_pending_use:\$\{ticketId\}/);
+  assert.match(quickRepliesSource, /sessionStorage\.setItem\(pendingQuickReplyStorageKey\(\), JSON\.stringify\(\{/);
+  assert.doesNotMatch(quickRepliesSource, /draft_text|draftText|messageInput|ticket_message_body/);
+  assert.match(ticketPageSource, /sessionStorage\.getItem\(pendingQuickReplyStorageKey\(\)\)/);
+  assert.match(ticketPageSource, /insertTextIntoComposer\(payload\?\.body \|\| ""\)/);
 });
 
 test('theme toggle rebinds to replaced DOM node without stacking old listeners', () => {

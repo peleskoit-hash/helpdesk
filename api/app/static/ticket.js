@@ -64,6 +64,13 @@ const state = {
   draftLastSavedText: "",
   draftLastSavedMode: "reply",
   draftExitFlushSignature: "",
+  initialComposerFocusApplied: false,
+  quickRepliesOpen: false,
+  quickReplies: [],
+  quickRepliesSearchSeq: 0,
+  quickRepliesHighlightedIndex: 0,
+  quickRepliesSearchTimer: null,
+  quickReplyUseInFlight: false,
   taskPanelEnabled: false,
   taskPanelItems: [],
   taskPanelDropdownOpen: false,
@@ -127,6 +134,11 @@ const el = {
   replyFilesInput: document.getElementById("replyFilesInput"),
   selectedFilesList: document.getElementById("selectedFilesList"),
   addFilesBtn: document.getElementById("addFilesBtn"),
+  quickRepliesBtn: document.getElementById("quickRepliesBtn"),
+  quickRepliesPanel: document.getElementById("quickRepliesPanel"),
+  quickRepliesSearchInput: document.getElementById("quickRepliesSearchInput"),
+  quickRepliesPanelRows: document.getElementById("quickRepliesPanelRows"),
+  quickRepliesEditorRow: document.getElementById("quickRepliesEditorRow"),
   sendNowBtn: document.getElementById("sendNowBtn"),
   modeReplyBtn: document.getElementById("modeReplyBtn"),
   modeCommentBtn: document.getElementById("modeCommentBtn"),
@@ -421,6 +433,13 @@ function cleanupTicketCardPage() {
     el.messageContextMenu.remove();
     el.messageContextMenu = null;
   }
+  if (el.quickRepliesPanel?.parentElement === document.body) {
+    el.quickRepliesPanel.remove();
+  }
+  if (state.quickRepliesSearchTimer !== null) {
+    window.clearTimeout(state.quickRepliesSearchTimer);
+    state.quickRepliesSearchTimer = null;
+  }
   if (typeof TicketMessageView.cleanupEditMessageModal === "function") {
     TicketMessageView.cleanupEditMessageModal(messageViewCtx());
   } else if (el.editMessageModal) {
@@ -552,6 +571,235 @@ function restoreDraftSelection() {
 function clearDraftSelection() {
   try {
     localStorage.removeItem(draftSelectionStorageKey());
+  } catch {
+    // noop
+  }
+}
+
+function pendingQuickReplyStorageKey() {
+  return `hd_quick_reply_pending_use:${state.ticketId}`;
+}
+
+function canWriteComposer() {
+  return Boolean(el.messageInput && !el.messageInput.disabled && !el.messageInput.readOnly && state.card?.status !== "closed");
+}
+
+function canUseQuickRepliesEditor() {
+  return state.role === "admin" || state.role === "agent";
+}
+
+function isQuickRepliesHotkey(event) {
+  return Boolean(event.ctrlKey && !event.metaKey && !event.altKey && event.code === "KeyQ");
+}
+
+function isQuickRepliesClickInside(target) {
+  return Boolean(
+    (el.quickRepliesBtn && el.quickRepliesBtn.contains(target))
+    || (el.quickRepliesPanel && el.quickRepliesPanel.contains(target))
+  );
+}
+
+function quickReplyEditorUrl() {
+  return `/quick-replies?ticket_id=${encodeURIComponent(state.ticketId)}`;
+}
+
+function quickReplyRows() {
+  return Array.from(el.quickRepliesPanelRows?.querySelectorAll("[data-quick-reply-id]") || []);
+}
+
+function quickReplyNavigableRows() {
+  const rows = [];
+  if (el.quickRepliesSearchInput) rows.push(el.quickRepliesSearchInput);
+  rows.push(...quickReplyRows());
+  if (el.quickRepliesEditorRow && !el.quickRepliesEditorRow.disabled) rows.push(el.quickRepliesEditorRow);
+  return rows;
+}
+
+function setQuickReplyHighlight(index, { focusSearch = false } = {}) {
+  const rows = quickReplyNavigableRows();
+  if (!rows.length) {
+    state.quickRepliesHighlightedIndex = -1;
+    return;
+  }
+  const next = ((index % rows.length) + rows.length) % rows.length;
+  state.quickRepliesHighlightedIndex = next;
+  rows.forEach((row, rowIndex) => row.classList.toggle("highlighted", rowIndex === next));
+  if (focusSearch && rows[next] === el.quickRepliesSearchInput) {
+    el.quickRepliesSearchInput.focus();
+  }
+}
+
+function renderQuickReplyPanelRows() {
+  if (!el.quickRepliesPanelRows) return;
+  el.quickRepliesPanelRows.innerHTML = "";
+  for (const reply of state.quickReplies.slice(0, 5)) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "quick-replies-panel-row";
+    row.dataset.quickReplyId = reply.id;
+    row.innerHTML = `
+      <span class="quick-replies-panel-title">${escapeHtml(reply.short_title || "")}</span>
+      <span class="quick-replies-panel-preview">${escapeHtml(reply.body || "")}</span>
+    `;
+    el.quickRepliesPanelRows.appendChild(row);
+  }
+  for (let index = state.quickReplies.length; index < 5; index += 1) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "quick-replies-panel-row quick-replies-panel-placeholder";
+    el.quickRepliesPanelRows.appendChild(placeholder);
+  }
+  if (el.quickRepliesEditorRow) {
+    el.quickRepliesEditorRow.disabled = !canUseQuickRepliesEditor();
+  }
+  setQuickReplyHighlight(Math.max(0, state.quickRepliesHighlightedIndex), {
+    focusSearch: document.activeElement === el.quickRepliesSearchInput,
+  });
+}
+
+async function searchQuickReplies(query) {
+  const seq = ++state.quickRepliesSearchSeq;
+  const payload = await api(`/api/v1/quick-replies/search?q=${encodeURIComponent(query || "")}`);
+  if (seq !== state.quickRepliesSearchSeq) return;
+  state.quickReplies = Array.isArray(payload) ? payload.slice(0, 5) : [];
+  state.quickRepliesHighlightedIndex = 0;
+  renderQuickReplyPanelRows();
+}
+
+function scheduleQuickReplySearch() {
+  if (state.quickRepliesSearchTimer !== null) {
+    window.clearTimeout(state.quickRepliesSearchTimer);
+  }
+  state.quickRepliesSearchTimer = window.setTimeout(() => {
+    state.quickRepliesSearchTimer = null;
+    void searchQuickReplies(el.quickRepliesSearchInput?.value || "").catch((e) => setStatus(`Ошибка поиска быстрых ответов: ${e.message}`));
+  }, 150);
+}
+
+function mountQuickRepliesPanelOverlay() {
+  if (!el.quickRepliesPanel || el.quickRepliesPanel.parentElement === document.body) return;
+  document.body.appendChild(el.quickRepliesPanel);
+}
+
+function positionQuickRepliesPanel() {
+  if (!el.quickRepliesPanel || !el.quickRepliesBtn) return;
+  const rect = el.quickRepliesBtn.getBoundingClientRect();
+  const buttonCenterX = rect.left + rect.width / 2;
+  const panelBottom = window.innerHeight - rect.top + 14;
+  el.quickRepliesPanel.style.right = "";
+  el.quickRepliesPanel.style.top = "";
+  el.quickRepliesPanel.style.inset = "";
+  el.quickRepliesPanel.style.left = `${buttonCenterX}px`;
+  el.quickRepliesPanel.style.bottom = `${panelBottom}px`;
+}
+
+function closeQuickRepliesPanel({ focusComposer = false } = {}) {
+  state.quickRepliesOpen = false;
+  if (state.quickRepliesSearchTimer !== null) {
+    window.clearTimeout(state.quickRepliesSearchTimer);
+    state.quickRepliesSearchTimer = null;
+  }
+  if (el.quickRepliesPanel) el.quickRepliesPanel.classList.add("hidden");
+  if (el.quickRepliesBtn) el.quickRepliesBtn.classList.remove("primary");
+  if (focusComposer && el.messageInput && !el.messageInput.disabled) {
+    el.messageInput.focus();
+  }
+}
+
+async function openQuickRepliesPanel({ focusSearch = false } = {}) {
+  if (!canWriteComposer()) return;
+  saveDraftSelection();
+  state.quickRepliesOpen = true;
+  state.quickReplies = [];
+  state.quickRepliesHighlightedIndex = 0;
+  mountQuickRepliesPanelOverlay();
+  if (el.quickRepliesPanel) el.quickRepliesPanel.classList.remove("hidden");
+  if (el.quickRepliesBtn) el.quickRepliesBtn.classList.add("primary");
+  positionQuickRepliesPanel();
+  if (el.quickRepliesSearchInput) {
+    el.quickRepliesSearchInput.value = "";
+  }
+  renderQuickReplyPanelRows();
+  setQuickReplyHighlight(0, { focusSearch });
+  await searchQuickReplies("");
+}
+
+async function toggleQuickRepliesPanel({ focusSearch = false } = {}) {
+  if (state.quickRepliesOpen) {
+    closeQuickRepliesPanel({ focusComposer: true });
+    return;
+  }
+  await openQuickRepliesPanel({ focusSearch });
+}
+
+function insertTextIntoComposer(text) {
+  if (!canWriteComposer()) return false;
+  const value = String(el.messageInput.value || "");
+  let start = Number(el.messageInput.selectionStart);
+  let end = Number(el.messageInput.selectionEnd);
+  try {
+    const raw = localStorage.getItem(draftSelectionStorageKey());
+    if (raw && document.activeElement !== el.messageInput) {
+      const parsed = JSON.parse(raw);
+      start = Number(parsed?.start);
+      end = Number(parsed?.end);
+    }
+  } catch {
+    // noop
+  }
+  if (!Number.isFinite(start)) start = value.length;
+  if (!Number.isFinite(end)) end = start;
+  start = Math.max(0, Math.min(value.length, start));
+  end = Math.max(0, Math.min(value.length, end));
+  if (end < start) [start, end] = [end, start];
+  const inserted = String(text || "");
+  el.messageInput.value = `${value.slice(0, start)}${inserted}${value.slice(end)}`;
+  const cursor = start + inserted.length;
+  el.messageInput.focus();
+  el.messageInput.setSelectionRange(cursor, cursor);
+  handleComposerInput();
+  return true;
+}
+
+async function useQuickReply(reply) {
+  if (!reply?.id) return;
+  if (state.quickReplyUseInFlight) return;
+  if (!canWriteComposer()) {
+    closeQuickRepliesPanel();
+    return;
+  }
+  state.quickReplyUseInFlight = true;
+  try {
+    const payload = await api(`/api/v1/quick-replies/${encodeURIComponent(reply.id)}/use`, { method: "POST" });
+    if (!canWriteComposer()) {
+      closeQuickRepliesPanel();
+      return;
+    }
+    insertTextIntoComposer(payload?.body || reply.body || "");
+    closeQuickRepliesPanel({ focusComposer: true });
+  } finally {
+    state.quickReplyUseInFlight = false;
+  }
+}
+
+async function openQuickRepliesEditorFromPanel() {
+  if (!canUseQuickRepliesEditor()) return;
+  saveDraftSelection();
+  await flushDraftBeforeSend();
+  window.location.href = quickReplyEditorUrl();
+}
+
+async function consumePendingQuickReplyUse() {
+  let raw = "";
+  try {
+    raw = sessionStorage.getItem(pendingQuickReplyStorageKey()) || "";
+    if (raw) sessionStorage.removeItem(pendingQuickReplyStorageKey());
+  } catch {
+    raw = "";
+  }
+  if (!raw) return;
+  try {
+    const payload = JSON.parse(raw);
+    insertTextIntoComposer(payload?.body || "");
   } catch {
     // noop
   }
@@ -1271,6 +1519,8 @@ function renderCard() {
   el.messageInput.placeholder = isReadonly ? "Режим только для чтения" : "Текст ответа/комментария";
   el.sendNowBtn.disabled = isClosed || isReadonly;
   if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed || isReadonly;
+  if (el.quickRepliesBtn) el.quickRepliesBtn.disabled = isClosed || isReadonly;
+  if (isClosed || isReadonly) closeQuickRepliesPanel();
 
   TicketControls.renderTicketControlsView(controlsCtx());
   if (renderResult.wasNearBottom) {
@@ -1315,8 +1565,12 @@ async function loadCard(options = {}) {
       : defaultClientCardViewConfig();
     renderCard();
     applyComposeModeUi();
-    focusMessageInputIfAvailable();
-    restoreDraftSelection();
+    if (!state.initialComposerFocusApplied) {
+      state.initialComposerFocusApplied = true;
+      focusMessageInputIfAvailable();
+      restoreDraftSelection();
+    }
+    await consumePendingQuickReplyUse();
     setStatus("Карточка загружена");
     await loadTaskPanel({ silent: true });
   } catch (e) {
@@ -1576,6 +1830,68 @@ function bindPageHandlers() {
     TicketComposer.bindComposerHandlers(composerCtx());
   }
 
+  mountQuickRepliesPanelOverlay();
+
+  if (el.quickRepliesBtn) {
+    el.quickRepliesBtn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      saveDraftSelection();
+    });
+    el.quickRepliesBtn.addEventListener("click", (event) => {
+      void toggleQuickRepliesPanel({ focusSearch: false }).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+    });
+  }
+  if (el.quickRepliesSearchInput) {
+    el.quickRepliesSearchInput.addEventListener("input", scheduleQuickReplySearch);
+    el.quickRepliesSearchInput.addEventListener("keydown", (event) => {
+      if (!state.quickRepliesOpen) return;
+      const rows = quickReplyNavigableRows();
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        setQuickReplyHighlight(state.quickRepliesHighlightedIndex + 1, { focusSearch: true });
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        setQuickReplyHighlight(state.quickRepliesHighlightedIndex - 1, { focusSearch: true });
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        const row = rows[state.quickRepliesHighlightedIndex];
+        if (row === el.quickRepliesSearchInput) return;
+        if (row === el.quickRepliesEditorRow) {
+          void openQuickRepliesEditorFromPanel().catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+          return;
+        }
+        const reply = state.quickReplies.find((item) => String(item.id) === String(row?.dataset?.quickReplyId));
+        if (reply) void useQuickReply(reply).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeQuickRepliesPanel({ focusComposer: true });
+      }
+    });
+  }
+  if (el.quickRepliesPanelRows) {
+    el.quickRepliesPanelRows.addEventListener("click", (event) => {
+      const row = event.target?.closest?.("[data-quick-reply-id]");
+      const reply = state.quickReplies.find((item) => String(item.id) === String(row?.dataset?.quickReplyId));
+      if (reply) void useQuickReply(reply).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+    });
+    el.quickRepliesPanelRows.addEventListener("mouseover", (event) => {
+      const row = event.target?.closest?.("[data-quick-reply-id]");
+      const rows = quickReplyNavigableRows();
+      const index = rows.indexOf(row);
+      if (index >= 0) setQuickReplyHighlight(index);
+    });
+  }
+  if (el.quickRepliesEditorRow) {
+    el.quickRepliesEditorRow.addEventListener("click", () => {
+      if (el.quickRepliesEditorRow.disabled) return;
+      void openQuickRepliesEditorFromPanel().catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+    });
+  }
+
   if (typeof TicketControls.bindTicketControlHandlers === "function") {
     TicketControls.bindTicketControlHandlers(controlsCtx());
   }
@@ -1606,7 +1922,20 @@ function bindPageHandlers() {
   el.fLocationType.addEventListener("change", syncDynamicModalFields);
 
   keydownHandler = (e) => {
+    if (isQuickRepliesHotkey(e)) {
+      const tag = String(document.activeElement?.tagName || "").toLowerCase();
+      const inModal = Boolean(document.activeElement?.closest?.(".modal"));
+      if (!inModal && (document.activeElement === el.messageInput || tag === "body" || document.activeElement === el.quickRepliesSearchInput)) {
+        e.preventDefault();
+        void toggleQuickRepliesPanel({ focusSearch: true }).catch((err) => setStatus(`Ошибка быстрых ответов: ${err.message}`));
+        return;
+      }
+    }
     if (e.key === "Escape") {
+      if (state.quickRepliesOpen) {
+        closeQuickRepliesPanel({ focusComposer: true });
+        return;
+      }
       hideMessageContextMenu();
       closeImagePreview();
       closeTaskPanelDropdown();
@@ -1632,12 +1961,18 @@ function bindPageHandlers() {
   document.addEventListener("keydown", keydownHandler);
 
   documentClickHandler = (event) => {
+    if (state.quickRepliesOpen && !isQuickRepliesClickInside(event.target)) {
+      closeQuickRepliesPanel();
+    }
     hideMessageContextMenu();
     if (!state.taskPanelDropdownOpen) return;
     if (event.target.closest("#taskPanel")) return;
     closeTaskPanelDropdown();
   };
-  resizeHandler = hideMessageContextMenu;
+  resizeHandler = () => {
+    hideMessageContextMenu();
+    if (state.quickRepliesOpen) positionQuickRepliesPanel();
+  };
   document.addEventListener("click", documentClickHandler);
   window.addEventListener("resize", resizeHandler);
   el.messages.addEventListener("scroll", hideMessageContextMenu);

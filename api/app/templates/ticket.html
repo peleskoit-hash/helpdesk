@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Карточка заявки</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261001b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261008b" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -157,7 +157,13 @@
                 <span id="sendHotkeyHint" class="status composer-hotkey-hint">Отправка: Ctrl+Enter</span>
                 <div class="composer-send-actions">
                   <button id="addFilesBtn" type="button" class="action add-files-btn">Добавить файлы</button>
+                  <button id="quickRepliesBtn" type="button" class="action quick-replies-toggle" aria-label="Быстрые ответы"><img src="/static/quick_reply_book_icon.png" alt="" class="quick-replies-icon" /></button>
                   <button id="sendNowBtn" class="action send-now">Отправка</button>
+                </div>
+                <div id="quickRepliesPanel" class="quick-replies-panel hidden">
+                  <input id="quickRepliesSearchInput" class="quick-replies-search" type="search" placeholder="Поиск быстрых ответов" autocomplete="off" />
+                  <div id="quickRepliesPanelRows" class="quick-replies-panel-rows"></div>
+                  <button id="quickRepliesEditorRow" type="button" class="quick-replies-panel-row quick-replies-editor-row">Редактор быстрых ответов</button>
                 </div>
               </div>
             </div>
@@ -379,6 +385,6 @@
   <script src="/static/ticket_composer.js?v=20261008a"></script>
   <script src="/static/ticket_controls.js?v=20260810a"></script>
   <script src="/static/ticket_message_view.js?v=20260810b"></script>
-  <script src="/static/ticket.js?v=20261008a"></script>
+  <script src="/static/ticket.js?v=20261008b"></script>
 </body>
 </html>

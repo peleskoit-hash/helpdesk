@@ -30,7 +30,7 @@
     const params = new URLSearchParams(window.location.search);
     const ticketId = (params.get("ticket_id") || "").trim();
     const ticketMode = Boolean(ticketId);
-    const state = { replies: [], session: null, editing: null };
+    const state = { replies: [], session: null, editing: null, useInFlight: false };
     const el = {
       status: document.getElementById("statusText"),
       create: document.getElementById("createQuickReplyBtn"),
@@ -59,6 +59,14 @@
       return user.role === "admin" && reply.author_user_id === user.id;
     }
 
+    function pendingQuickReplyStorageKey() {
+      return `hd_quick_reply_pending_use:${ticketId}`;
+    }
+
+    function ticketUrl() {
+      return `/tickets/${encodeURIComponent(ticketId)}`;
+    }
+
     function renderReplies() {
       el.list.innerHTML = "";
       for (const reply of state.replies) {
@@ -69,7 +77,7 @@
         card.dataset.replyId = reply.id;
         card.innerHTML = `
           <span class="quick-reply-card-title">${escapeHtml(reply.short_title)}</span>
-          ${ticketMode ? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="${escapeHtml(reply.id)}" disabled>Использовать</button></span>` : ""}
+          ${ticketMode ? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="${escapeHtml(reply.id)}">Использовать</button></span>` : ""}
         `;
         el.list.appendChild(card);
       }
@@ -141,25 +149,52 @@
       }
     }
 
+    async function useReply(reply) {
+      if (!ticketMode || !reply?.id) return;
+      if (state.useInFlight) return;
+      state.useInFlight = true;
+      try {
+        const payload = await api(`/api/v1/quick-replies/${encodeURIComponent(reply.id)}/use`, { method: "POST" });
+        try {
+          sessionStorage.setItem(pendingQuickReplyStorageKey(), JSON.stringify({
+            id: payload?.id || reply.id,
+            body: payload?.body || reply.body || "",
+          }));
+        } catch {
+          // noop
+        }
+        window.location.href = ticketUrl();
+      } finally {
+        state.useInFlight = false;
+      }
+    }
+
     el.create.addEventListener("click", openCreate);
     el.closeModal.addEventListener("click", closeModal);
     el.cancel.addEventListener("click", closeModal);
     el.save.addEventListener("click", save);
     el.list.addEventListener("click", (event) => {
-      if (event.target?.dataset?.use) return;
+      const useId = event.target?.dataset?.use;
+      if (useId) {
+        event.stopPropagation();
+        const reply = state.replies.find((item) => String(item.id) === String(useId));
+        if (reply) void useReply(reply).catch((e) => setStatus(e.message));
+        return;
+      }
       const card = event.target?.closest?.("[data-reply-id]");
       const replyId = card?.dataset?.replyId;
       if (!replyId) return;
-      const reply = state.replies.find((item) => item.id === replyId);
+      const reply = state.replies.find((item) => String(item.id) === String(replyId));
       if (reply) openEdit(reply);
     });
     el.list.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.target?.closest?.("[data-use]")) return;
       const card = event.target?.closest?.("[data-reply-id]");
       const replyId = card?.dataset?.replyId;
       if (!replyId) return;
       event.preventDefault();
-      const reply = state.replies.find((item) => item.id === replyId);
+      const reply = state.replies.find((item) => String(item.id) === String(replyId));
       if (reply) openEdit(reply);
     });
 
