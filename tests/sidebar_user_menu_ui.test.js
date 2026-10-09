@@ -1100,7 +1100,7 @@ test("sidebar rehydrates missing status panel on repeated init without extra ses
   assert.equal(panel.classList.contains("hidden"), false);
   assert.deepEqual(
     panel.querySelectorAll("[data-availability-status]").map((button) => button.dataset.availabilityStatus),
-    ["offline", "online", "on_ticket", "waiting", "lunch"],
+    ["online", "on_ticket", "waiting", "lunch", "offline"],
   );
   assert.equal(panel.querySelector("[data-availability-status='waiting']").classList.contains("active"), true);
   const callsAfterFirstInit = window.__fetchCalls.length;

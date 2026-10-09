@@ -57,7 +57,7 @@
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20260911a"] }],
-    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20260604a"] }],
+    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261009a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261008b"] }],
     ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],

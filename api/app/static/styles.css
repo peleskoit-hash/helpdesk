@@ -1021,11 +1021,11 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .agent-status-btn {
   border: 1px solid transparent;
   border-radius: 8px;
-  min-height: 34px;
-  padding: 9px 10px;
+  min-height: 40px;
+  padding: 11px 12px;
   cursor: pointer;
   text-align: left;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.15;
   color: #1f2937;
   transition: box-shadow 0.12s ease, transform 0.12s ease, border-color 0.12s ease;
@@ -1041,11 +1041,11 @@ body[data-sidebar-ready="0"] .admin-select-col {
   font-weight: 700;
 }
 
-.status-offline { background: #eceff3; }
+.status-offline { background: #ffe4e6; }
 .status-online { background: #dcfce7; }
-.status-on-ticket { background: #dbeafe; }
+.status-on-ticket { background: #ede9fe; }
 .status-waiting { background: #fef3c7; }
-.status-lunch { background: #ffe4e6; }
+.status-lunch { background: #dbeafe; }
 
 .agent-avatar {
   width: 54px;
@@ -4501,7 +4501,7 @@ button.action.primary,
 }
 
 .status-offline {
-  background: rgba(226, 232, 240, 0.78);
+  background: rgba(255, 185, 196, 0.84);
 }
 
 .status-online {
@@ -4509,7 +4509,7 @@ button.action.primary,
 }
 
 .status-on-ticket {
-  background: rgba(173, 216, 255, 0.84);
+  background: rgba(221, 214, 254, 0.86);
 }
 
 .status-waiting {
@@ -4517,7 +4517,7 @@ button.action.primary,
 }
 
 .status-lunch {
-  background: rgba(255, 185, 196, 0.84);
+  background: rgba(173, 216, 255, 0.84);
 }
 
 .agent-status-btn.active {
@@ -4978,8 +4978,8 @@ body[data-theme="dark"].ticket-colors-disabled tr.ticket-color-closed {
 }
 
 body[data-theme="dark"] .status-offline {
-  background: rgba(84, 96, 114, 0.82);
-  color: #eef2f8;
+  background: rgba(190, 78, 98, 0.84);
+  color: #fff0f3;
 }
 
 body[data-theme="dark"] .status-online {
@@ -4988,8 +4988,8 @@ body[data-theme="dark"] .status-online {
 }
 
 body[data-theme="dark"] .status-on-ticket {
-  background: rgba(48, 120, 186, 0.84);
-  color: #eef7ff;
+  background: rgba(109, 79, 166, 0.84);
+  color: #f4efff;
 }
 
 body[data-theme="dark"] .status-waiting {
@@ -4998,8 +4998,8 @@ body[data-theme="dark"] .status-waiting {
 }
 
 body[data-theme="dark"] .status-lunch {
-  background: rgba(190, 78, 98, 0.84);
-  color: #fff0f3;
+  background: rgba(48, 120, 186, 0.84);
+  color: #eef7ff;
 }
 
 body[data-theme="dark"] .agent-status-btn.active {

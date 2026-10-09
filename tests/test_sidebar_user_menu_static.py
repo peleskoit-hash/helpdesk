@@ -55,9 +55,9 @@ def test_sidebar_status_buttons_are_large_and_selected_state_is_clear() -> None:
     styles_css = STYLES_CSS.read_text(encoding="utf-8")
 
     assert ".agent-status-btn {" in styles_css
-    assert "min-height: 34px;" in styles_css
-    assert "padding: 9px 10px;" in styles_css
-    assert "font-size: 14px;" in styles_css
+    assert "min-height: 40px;" in styles_css
+    assert "padding: 11px 12px;" in styles_css
+    assert "font-size: 16px;" in styles_css
     assert ".agent-status-btn.active {" in styles_css
     assert "font-weight: 700;" in styles_css
     assert "0 0 0 2px rgba(15, 23, 42, 0.28)" in styles_css
@@ -71,7 +71,7 @@ def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
         if "/static/sidebar.js" not in content:
             continue
         sidebar_entrypoints.append(template.name)
-        assert '/static/sidebar.js?v=20261009a' in content
+        assert '/static/sidebar.js?v=20261009b' in content
         assert '<script src="/static/sidebar.js"></script>' not in content
 
     assert sidebar_entrypoints

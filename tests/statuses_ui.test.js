@@ -19,7 +19,11 @@ function sourceBetween(source, start, end) {
 test("statuses page keeps existing shell and status board mount", () => {
   assert.match(template, /data-shell-page="statuses"/);
   assert.match(template, /id="statusBoardGrid"/);
-  assert.match(template, /\/static\/statuses\.js\?v=20260604a/);
+  assert.match(template, /\/static\/statuses\.js\?v=20261009a/);
+});
+
+test("status board uses the shared visual status order", () => {
+  assert.match(script, /const statusOrder = \["online", "on_ticket", "waiting", "lunch", "offline"\];/);
 });
 
 test("status cards render avatar before employee name and keep duration inside active status", () => {

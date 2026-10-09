@@ -6,7 +6,7 @@ const state = {
   pollTimer: null,
 };
 
-const statusOrder = ["offline", "online", "on_ticket", "waiting", "lunch"];
+const statusOrder = ["online", "on_ticket", "waiting", "lunch", "offline"];
 const statusLabels = {
   offline: "Не в сети",
   online: "В сети",

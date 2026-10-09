@@ -427,11 +427,11 @@
     }
 
     [
-      ["offline", "status-offline", "\u041d\u0435 \u0432 \u0441\u0435\u0442\u0438"],
       ["online", "status-online", "\u0412 \u0441\u0435\u0442\u0438"],
       ["on_ticket", "status-on-ticket", "\u041d\u0430 \u0437\u0430\u044f\u0432\u043a\u0435"],
       ["waiting", "status-waiting", "\u0412 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0438"],
       ["lunch", "status-lunch", "\u041e\u0431\u0435\u0434"],
+      ["offline", "status-offline", "\u041d\u0435 \u0432 \u0441\u0435\u0442\u0438"],
     ].forEach(([status, className, label]) => {
       if (panel.querySelector(`[data-availability-status='${status}']`)) return;
       const button = document.createElement("button");
