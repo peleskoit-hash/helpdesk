@@ -296,6 +296,7 @@ test('ticket page task panel mirrors list behavior and preserves return url', ()
 test('task panel layout stays compact and dropdown is opaque in light and dark themes', () => {
   assert.match(stylesSource, /\.main\[data-shell-page="tickets-list"\],\s*\.main\[data-shell-page="ticket-card"\] \{[\s\S]*grid-template-rows: auto auto minmax\(0, 1fr\);/);
   assert.match(stylesSource, /\.main\[data-shell-page="ticket-card"\] > \.content\.ticket-layout \{[\s\S]*grid-row: 3;[\s\S]*min-height: 0;/);
+  assert.match(stylesSource, /\.main\[data-shell-page="tickets-list"\] > \.content \{[\s\S]*grid-row: 3;[\s\S]*min-height: 0;/);
   assert.match(stylesSource, /\.task-panel \{[\s\S]*align-self: start;[\s\S]*background: #fff;/);
   assert.match(stylesSource, /\.task-panel-dropdown \{[\s\S]*z-index: 80;[\s\S]*background: #fff;/);
   assert.match(stylesSource, /\.task-panel-chip,\s*\.task-panel-menu-item \{[\s\S]*background: #f1f7ff;/);
@@ -3321,7 +3322,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008b"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261009e/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261009f/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261008b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3397,7 +3398,7 @@ test('quick replies management navigation and no-file slice boundaries are prese
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261009e/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261009f/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

@@ -1397,6 +1397,11 @@ body[data-sidebar-ready="0"] .admin-select-col {
   min-height: 0;
 }
 
+.main[data-shell-page="tickets-list"] > .content {
+  grid-row: 3;
+  min-height: 0;
+}
+
 .toolbar {
   position: relative;
   z-index: 30;
