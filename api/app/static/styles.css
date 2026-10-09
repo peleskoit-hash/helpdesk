@@ -129,10 +129,10 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .status-panel {
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 8px;
+  padding: 9px;
   background: #f8fafc;
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 
 .admin-agent-filter {
@@ -1021,10 +1021,12 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .agent-status-btn {
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 7px 8px;
+  min-height: 34px;
+  padding: 9px 10px;
   cursor: pointer;
   text-align: left;
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.15;
   color: #1f2937;
   transition: box-shadow 0.12s ease, transform 0.12s ease, border-color 0.12s ease;
 }
@@ -1034,8 +1036,8 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .agent-status-btn.active {
-  border-color: #111827;
-  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.12);
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.28);
   font-weight: 700;
 }
 
@@ -4519,11 +4521,12 @@ button.action.primary,
 }
 
 .agent-status-btn.active {
-  border-color: rgba(15, 23, 42, 0.55);
+  border-color: rgba(15, 23, 42, 0.82);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.76),
-    0 0 0 2px rgba(15, 23, 42, 0.12),
+    0 0 0 2px rgba(15, 23, 42, 0.28),
     0 12px 26px rgba(28, 52, 68, 0.18);
+  font-weight: 700;
 }
 
 .message-context-menu {
@@ -5000,11 +5003,12 @@ body[data-theme="dark"] .status-lunch {
 }
 
 body[data-theme="dark"] .agent-status-btn.active {
-  border-color: rgba(232, 242, 255, 0.72);
+  border-color: rgba(232, 242, 255, 0.92);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 0 0 2px rgba(104, 228, 242, 0.2),
+    0 0 0 2px rgba(104, 228, 242, 0.34),
     0 12px 28px rgba(0, 0, 0, 0.28);
+  font-weight: 700;
 }
 
 body[data-theme="dark"] .send-now {

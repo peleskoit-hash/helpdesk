@@ -2022,7 +2022,6 @@ function startPolling() {
     if (document.hidden) return;
     if (!el.clientModal.classList.contains("hidden")) return;
     loadCard({ silent: true });
-    loadTabCounts({ silent: true });
     loadCompletionStats({ silent: true });
   }, 3000);
 }

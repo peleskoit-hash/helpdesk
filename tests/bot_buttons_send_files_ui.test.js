@@ -211,8 +211,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261008b/);
-  assert.match(appShellSource, /ticket\.js\?v=20261008b/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261009b/);
+  assert.match(appShellSource, /ticket\.js\?v=20261009b/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -1849,7 +1849,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261001b/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261009a/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
@@ -3321,7 +3321,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008b"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261008b/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261009d/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261008b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3397,7 +3397,7 @@ test('quick replies management navigation and no-file slice boundaries are prese
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261008b/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261009d/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

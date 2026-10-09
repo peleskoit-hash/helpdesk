@@ -1799,7 +1799,6 @@ function init() {
   pollTimer = window.setInterval(() => {
     if (document.hidden) return;
     loadTickets({ silent: true });
-    loadCounts({ silent: true });
     loadCompletionStats({ silent: true });
   }, 5000);
 

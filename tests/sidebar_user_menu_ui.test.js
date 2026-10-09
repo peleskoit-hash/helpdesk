@@ -413,6 +413,9 @@ const DEFAULT_AGENTS = [
 function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
   const calls = [];
   const agents = options.agents || DEFAULT_AGENTS;
+  const sessionResponses = [...(options.sessionResponses || [])];
+  const agentResponses = [...(options.agentResponses || [])];
+  const countResponses = [...(options.countResponses || [])];
   const sessionLoginTs = options.sessionLoginTs ?? 1;
   const byAssignee = options.byAssignee || {
     a1: { active: 5, frozen: 2 },
@@ -423,7 +426,7 @@ function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
     calls.push({ path: String(path), method: options.method || "GET", body: options.body || "" });
     let payload = {};
     if (path === "/api/v1/auth/session") {
-      payload = {
+      payload = sessionResponses.length ? sessionResponses.shift() : {
         real_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
         effective_user: { id: "u1", role, login: "ivan", full_name: "Ivan Petrov", availability_status: "waiting" },
         is_real_admin: role === "admin",
@@ -431,7 +434,7 @@ function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
         app_timezone: "Asia/Tokyo",
       };
     } else if (path === "/api/v1/users/agents") {
-      payload = agents;
+      payload = agentResponses.length ? agentResponses.shift() : agents;
     } else if (path === "/api/v1/users/me/profile") {
       payload = {
         id: "u1",
@@ -442,9 +445,9 @@ function createFetchMock(role = "agent", profileOverrides = {}, options = {}) {
         ...profileOverrides,
       };
     } else if (String(path).startsWith("/api/v1/tickets/counts")) {
-      payload = { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0 };
+      payload = countResponses.length ? countResponses.shift() : { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0 };
       if (role === "admin") {
-        payload.by_assignee = byAssignee;
+        payload.by_assignee ||= byAssignee;
       }
     } else if (path === "/api/v1/users/me/status") {
       payload = { availability_status: JSON.parse(options.body || "{}").availability_status || "offline" };
@@ -462,9 +465,29 @@ async function loadSidebar(document, role = "agent", profileOverrides = {}, opti
   const source = fs.readFileSync("api/app/static/sidebar.js", "utf8");
   const pathname = options.locationPathname || "/tickets";
   const href = options.locationHref || pathname;
-  const window = {
-    location: { pathname, href },
+  const window = new EventTargetLike();
+  window.location = { pathname, href };
+  window.__intervals = [];
+  window.setInterval = (handler, delay) => {
+    const id = window.__intervals.length + 1;
+    window.__intervals.push({
+      id,
+      handler: async () => {
+        handler();
+        for (let index = 0; index < 10; index += 1) {
+          await Promise.resolve();
+        }
+      },
+      delay,
+      cleared: false,
+    });
+    return id;
   };
+  window.clearInterval = (id) => {
+    const timer = window.__intervals.find((item) => item.id === id);
+    if (timer) timer.cleared = true;
+  };
+  document.hidden = Boolean(options.hidden);
   class ImageMock {
     set src(value) {
       this._src = String(value || "");
@@ -500,6 +523,8 @@ async function loadSidebar(document, role = "agent", profileOverrides = {}, opti
     console: { info() {}, error() {}, log() {} },
     localStorage: storageApi,
     fetch: fetchMock,
+    setInterval: window.setInterval,
+    clearInterval: window.clearInterval,
     URLSearchParams,
     JSON,
     Array,
@@ -883,6 +908,7 @@ test("admin agent counts render from loadCounts by_assignee without extra fetche
 
   assert.equal(items[0].querySelector("[data-agent-count-active]").textContent, "5");
   assert.equal(items[0].querySelector("[data-agent-count-frozen]").textContent, "2");
+  assert.equal(items[0].querySelector("[data-agent-availability-status]"), null);
   assert.equal(items[1].querySelector("[data-agent-count-active]").textContent, "");
   assert.equal(items[1].querySelector("[data-agent-count-frozen]").textContent, "7");
   assert.equal(items[2].querySelector("[data-agent-count-active]").textContent, "4");
@@ -891,6 +917,94 @@ test("admin agent counts render from loadCounts by_assignee without extra fetche
   assert.equal(window.__fetchCalls.length, callsAfterInit);
   assert.equal(window.__fetchCalls.filter((call) => String(call.path).startsWith("/api/v1/tickets/counts")).length, 1);
   assert.equal(window.__fetchCalls.filter((call) => call.path === "/api/v1/users/agents").length, 1);
+});
+
+test("sidebar owns one shared poller and refreshes counts without rendering employee statuses in admin filter", async () => {
+  const { document } = buildSidebarDom();
+  const initialAgents = [
+    { id: "a1", full_name: "Anna Agent", availability_status: "online" },
+    { id: "b2", full_name: "Boris Trainee", availability_status: "waiting" },
+  ];
+  const refreshedAgents = [
+    { id: "a1", full_name: "Anna Agent", availability_status: "on_ticket" },
+    { id: "b2", full_name: "Boris Trainee", availability_status: "lunch" },
+  ];
+  const window = await loadSidebar(document, "admin", {}, {
+    agents: initialAgents,
+    agentResponses: [initialAgents, refreshedAgents],
+    countResponses: [
+      { unassigned: 1, active: 2, special: 3, frozen: 4, closed: 5, by_assignee: { a1: { active: 2, frozen: 0 }, b2: { active: 0, frozen: 4 } } },
+      { unassigned: 6, active: 7, special: 8, frozen: 9, closed: 10, by_assignee: { a1: { active: 7, frozen: 1 }, b2: { active: 0, frozen: 9 } } },
+    ],
+    storage: {
+      hd_admin_assignee_ids: JSON.stringify(["a1", "b2"]),
+      hd_admin_assignee_login_ts: "1",
+    },
+  });
+
+  assert.equal(window.__intervals.length, 1);
+  assert.equal(window.__intervals[0].delay, 5000);
+  assert.equal(window.HelpdeskSidebar.getState().counts.active, 2);
+  assert.deepEqual(window.HelpdeskSidebar.getState().agents.map((agent) => agent.availability_status), ["online", "waiting"]);
+  const firstItem = adminAgentItems(document)[0];
+
+  await window.HelpdeskSidebar.refresh();
+
+  assert.equal(window.__intervals.length, 1);
+  assert.equal(window.HelpdeskSidebar.getState().counts.active, 7);
+  assert.deepEqual(window.HelpdeskSidebar.getState().agents.map((agent) => agent.availability_status), ["on_ticket", "lunch"]);
+  assert.equal(document.querySelector("[data-agent-count-active]").textContent, "7");
+  assert.equal(document.querySelector("[data-agent-availability-status]"), null);
+  assert.equal(adminAgentItems(document)[0], firstItem);
+});
+
+test("sidebar refresh moves active marker between existing employee status buttons", async () => {
+  const { document } = buildSidebarDom({ statusPanel: "standard" });
+  const baseSession = {
+    real_user: { id: "u1", role: "agent", login: "ivan", full_name: "Ivan Petrov", availability_status: "online" },
+    effective_user: { id: "u1", role: "agent", login: "ivan", full_name: "Ivan Petrov", availability_status: "online" },
+    is_real_admin: false,
+    session_login_ts: 1,
+    app_timezone: "Asia/Tokyo",
+  };
+  const nextSession = {
+    ...baseSession,
+    real_user: { ...baseSession.real_user, availability_status: "on_ticket" },
+    effective_user: { ...baseSession.effective_user, availability_status: "on_ticket" },
+  };
+  const window = await loadSidebar(document, "agent", {}, {
+    sessionResponses: [baseSession, nextSession],
+  });
+  const onlineButton = document.querySelector("[data-availability-status='online']");
+  const onTicketButton = document.querySelector("[data-availability-status='on_ticket']");
+
+  assert.equal(onlineButton.classList.contains("active"), true);
+  assert.equal(onTicketButton.classList.contains("active"), false);
+
+  await window.HelpdeskSidebar.refresh();
+
+  assert.equal(onlineButton.classList.contains("active"), false);
+  assert.equal(onTicketButton.classList.contains("active"), true);
+  assert.equal(document.querySelectorAll("[data-availability-status].active").length, 1);
+});
+
+test("sidebar repeated init and focus refresh do not create duplicate timers", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "admin", {}, {
+    countResponses: [
+      { unassigned: 0, active: 1, special: 0, frozen: 0, closed: 0, by_assignee: {} },
+      { unassigned: 0, active: 11, special: 0, frozen: 0, closed: 0, by_assignee: {} },
+    ],
+  });
+
+  await window.HelpdeskSidebar.init();
+  await window.HelpdeskSidebar.init();
+  assert.equal(window.__intervals.length, 1);
+
+  await window.HelpdeskSidebar.refresh();
+
+  assert.equal(window.__intervals.length, 1);
+  assert.equal(window.HelpdeskSidebar.getState().counts.active, 11);
 });
 
 test("regular non-admin sidebar does not show employee filter", async () => {

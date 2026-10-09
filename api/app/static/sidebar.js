@@ -1,4 +1,5 @@
 (function () {
+  const SIDEBAR_POLL_INTERVAL_MS = 5000;
   const TAB_COUNTS_STORAGE_KEY = "hd_tab_counts";
   const AGENTS_CACHE_STORAGE_KEY = "hd_agents_cache";
   const ASSIGNEES_STORAGE_KEY = "hd_admin_assignee_ids";
@@ -53,7 +54,11 @@
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((item) => item && item.id && item.full_name)
-      .map((item) => ({ id: String(item.id), full_name: String(item.full_name) }));
+      .map((item) => ({
+        id: String(item.id),
+        full_name: String(item.full_name),
+        availability_status: String(item.availability_status || "offline"),
+      }));
   }
 
   const state = {
@@ -83,6 +88,8 @@
   let initPromise = null;
   let userMenuCleanup = null;
   let avatarLoadToken = 0;
+  let pollTimer = null;
+  let refreshPromise = null;
 
   function setSidebarReady(value) {
     if (!rootBody) return;
@@ -103,7 +110,7 @@
       availabilityStatus: state.availabilityStatus || "",
       counts: { ...state.counts },
       byAssigneeCounts: { ...state.byAssigneeCounts },
-      agents: [...state.agents],
+      agents: state.agents.map((agent) => ({ ...agent })),
       adminAssigneeIds: [...state.adminAssigneeIds],
     };
     listeners.forEach((fn) => {
@@ -175,7 +182,10 @@
     qsa("[data-tab-count]").forEach((node) => {
       const key = node.dataset.tabCount;
       if (!(key in map)) return;
-      node.textContent = String(map[key]);
+      const nextText = String(map[key]);
+      if (node.textContent !== nextText) {
+        node.textContent = nextText;
+      }
     });
     if (state.countsLoaded) {
       try {
@@ -622,7 +632,10 @@
       state.availabilityStatus = status;
     }
     qsa("[data-availability-status]").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.availabilityStatus === status);
+      const isActive = btn.dataset.availabilityStatus === status;
+      if (btn.classList.contains("active") !== isActive) {
+        btn.classList.toggle("active", isActive);
+      }
     });
   }
 
@@ -680,21 +693,29 @@
 
     const selectedSet = new Set(state.adminAssigneeIds || []);
     const allSelected = isAllAgentsSelected();
-    const countsSignature = Object.entries(state.byAssigneeCounts || {})
-      .map(([id, counts]) => `${id}:${counts.active || 0}:${counts.frozen || 0}`)
-      .join("|");
-    const signature = `${(state.agents || []).map((a) => `${a.id}:${a.full_name}`).join("|")}::${countsSignature}`;
+    const signature = (state.agents || []).map((a) => `${a.id}:${a.full_name}`).join("|");
     if (listEl.dataset.signature === signature) {
       listEl.querySelectorAll(".admin-agent-item").forEach((item) => {
         const id = item.dataset.agentId;
         const isSelected = selectedSet.has(id);
-        item.classList.toggle("active", isSelected);
-        item.setAttribute("aria-pressed", isSelected ? "true" : "false");
+        if (item.classList.contains("active") !== isSelected) {
+          item.classList.toggle("active", isSelected);
+        }
+        const nextPressed = isSelected ? "true" : "false";
+        if (item.getAttribute("aria-pressed") !== nextPressed) {
+          item.setAttribute("aria-pressed", nextPressed);
+        }
         const counts = state.byAssigneeCounts?.[id] || {};
         const activeNode = item.querySelector("[data-agent-count-active]");
         const frozenNode = item.querySelector("[data-agent-count-frozen]");
-        if (activeNode) activeNode.textContent = formatAssigneeCount(counts.active);
-        if (frozenNode) frozenNode.textContent = formatAssigneeCount(counts.frozen);
+        if (activeNode) {
+          const nextActiveText = formatAssigneeCount(counts.active);
+          if (activeNode.textContent !== nextActiveText) activeNode.textContent = nextActiveText;
+        }
+        if (frozenNode) {
+          const nextFrozenText = formatAssigneeCount(counts.frozen);
+          if (frozenNode.textContent !== nextFrozenText) frozenNode.textContent = nextFrozenText;
+        }
       });
       syncToggleAll(toggleAll, listEl);
       return;
@@ -805,7 +826,11 @@
   async function loadAgents() {
     const agents = await api("/api/v1/users/agents");
     state.agents = Array.isArray(agents)
-      ? agents.filter((item) => item && item.id && item.full_name).map((item) => ({ id: String(item.id), full_name: String(item.full_name) }))
+      ? agents.filter((item) => item && item.id && item.full_name).map((item) => ({
+        id: String(item.id),
+        full_name: String(item.full_name),
+        availability_status: String(item.availability_status || "offline"),
+      }))
       : [];
     if (state.role === "admin") {
       const loginTs = String(state.sessionLoginTs || "");
@@ -854,6 +879,35 @@
     state.countsLoaded = true;
     renderCounts();
     renderAgentFilter();
+  }
+
+  async function refreshDynamicData() {
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      await loadSession();
+      await loadAgents();
+      await loadCounts();
+      renderAvailabilityStatus(state.availabilityStatus);
+      notify();
+    })();
+    try {
+      return await refreshPromise;
+    } catch (error) {
+      if (error?.status === 401) {
+        window.location.href = "/login";
+      }
+      throw error;
+    } finally {
+      refreshPromise = null;
+    }
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      refreshDynamicData().catch(() => {});
+    }, SIDEBAR_POLL_INTERVAL_MS);
   }
 
   function bindToggleAll() {
@@ -920,6 +974,7 @@
         renderFromCurrentState();
         setSidebarReady(true);
         initialized = true;
+        startPolling();
         notify();
         initPromise = null;
         return { ...state };
@@ -940,8 +995,9 @@
   window.HelpdeskSidebar = {
     init,
     onChange,
-    getState: () => ({ ...state, counts: { ...state.counts }, byAssigneeCounts: { ...state.byAssigneeCounts }, agents: [...state.agents], adminAssigneeIds: [...state.adminAssigneeIds] }),
+    getState: () => ({ ...state, counts: { ...state.counts }, byAssigneeCounts: { ...state.byAssigneeCounts }, agents: state.agents.map((agent) => ({ ...agent })), adminAssigneeIds: [...state.adminAssigneeIds] }),
     refreshCounts: () => loadCounts().then(() => { renderFromCurrentState(); notify(); }),
+    refresh: () => refreshDynamicData(),
     setCurrentUserAvatar: (avatarState = {}) => {
       const nextUrl = avatarState.avatar_display_url || avatarState.avatar_url || null;
       state.avatarPresent = Boolean(avatarState.avatar_present && avatarState.avatar_url);
@@ -965,4 +1021,12 @@
   } else {
     bootstrapUserPanel();
   }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !initialized) return;
+    refreshDynamicData().catch(() => {});
+  });
+  window.addEventListener("focus", () => {
+    if (!initialized) return;
+    refreshDynamicData().catch(() => {});
+  });
 })();

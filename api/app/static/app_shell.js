@@ -72,7 +72,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20260904a"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261001b"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261009a"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -85,7 +85,7 @@
         "/static/ticket_composer.js?v=20261008a",
         "/static/ticket_controls.js?v=20261009d",
         "/static/ticket_message_view.js?v=20260810b",
-        "/static/ticket.js?v=20261009a",
+        "/static/ticket.js?v=20261009b",
       ],
     },
   ];
