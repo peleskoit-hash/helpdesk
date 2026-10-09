@@ -18,6 +18,12 @@ from ..services.telegram_text_format import strip_telegram_html
 
 
 TELEGRAM_CAPTION_LIMIT = 1024
+QUICK_ACTION_CLARIFICATION_TEXT = "Могли бы Вы, пожалуйста, уточнить, что именно произошло?"
+QUICK_ACTION_ONSITE_TEXT = "Иду к Вам"
+QUICK_ACTION_TEXTS = {
+    "clarification": QUICK_ACTION_CLARIFICATION_TEXT,
+    "onsite": QUICK_ACTION_ONSITE_TEXT,
+}
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +36,44 @@ def _is_onsite_phrase(text: str | None) -> bool:
     if normalized.endswith("."):
         normalized = normalized[:-1].strip()
     return normalized == "иду к вам"
+
+
+def _quick_action_used(ticket: Ticket, action: str) -> bool:
+    return bool((ticket.quick_action_state_json or {}).get(action))
+
+
+def _mark_quick_action_used(ticket: Ticket, action: str) -> None:
+    state = dict(ticket.quick_action_state_json or {})
+    state[action] = True
+    ticket.quick_action_state_json = state
+
+
+def _lock_ticket_for_quick_action(db: Session, ticket: Ticket) -> Ticket:
+    return db.execute(
+        select(Ticket)
+        .where(Ticket.id == ticket.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+
+
+def _prepare_quick_action(ticket: Ticket, action: str | None, text: str | None, *, is_internal_comment: bool) -> str | None:
+    if not action:
+        return text
+    if action not in QUICK_ACTION_TEXTS:
+        _error(400, "quick_action_unknown", "Неизвестное быстрое действие")
+    if is_internal_comment:
+        _error(400, "quick_action_reply_only", "Быстрое действие доступно только для ответа клиенту")
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
+        _error(409, "quick_action_ticket_only", "Быстрое действие доступно только для обычной заявки")
+    if _quick_action_used(ticket, action):
+        _error(409, "quick_action_already_used", "Быстрое действие уже использовано")
+    if not _quick_action_used(ticket, "greeting"):
+        _error(409, "quick_action_greeting_required", "Сначала отправьте приветствие")
+    expected_text = QUICK_ACTION_TEXTS[action]
+    if str(text or "").strip() != expected_text:
+        _error(400, "quick_action_text_mismatch", "Текст быстрого действия не совпадает с серверным шаблоном")
+    return expected_text
 
 
 def _http_error_code(exc: HTTPException) -> str | None:
@@ -197,10 +241,12 @@ async def reply_to_ticket(
     preloaded_attachment_ids: list[str] = []
     single_attachment_marker = False
     uploaded_files: list[UploadFile] = []
+    quick_action: str | None = None
     if "multipart/form-data" in content_type:
         form = await request.form()
         text = (form.get("text") or "").strip() or None
         quote_message_id = (form.get("quote_message_id") or "").strip() or None
+        quick_action = (form.get("quick_action") or "").strip() or None
         for value in form.getlist("preloaded_attachment_id"):
             normalized_preload_id = str(value or "").strip()
             if normalized_preload_id:
@@ -218,8 +264,17 @@ async def reply_to_ticket(
         payload = TextPayload.model_validate(payload_raw)
         text = payload.text.strip()
         quote_message_id = payload.quote_message_id
+        quick_action = (payload.quick_action or "").strip() or None
         if not text:
             _error(400, "reply_payload_empty", "Текст сообщения не может быть пустым")
+
+    if quick_action:
+        ticket = _lock_ticket_for_quick_action(db, ticket)
+    text = _prepare_quick_action(ticket, quick_action, text, is_internal_comment=is_internal_comment)
+    if quick_action and (uploaded_files or preloaded_attachment_ids or quote_message_id):
+        _error(400, "quick_action_plain_text_only", "Быстрое действие отправляется только обычным текстом")
+    if quick_action:
+        _mark_quick_action_used(ticket, quick_action)
 
     quote_telegram_message_id = None
     if quote_message_id:
@@ -318,7 +373,8 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
-        clear_ticket_draft(db, ticket)
+        if not quick_action:
+            clear_ticket_draft(db, ticket)
         db.commit()
 
         for delivery_kwargs in attachments_to_schedule:
@@ -416,7 +472,8 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
-    clear_ticket_draft(db, ticket)
+    if not quick_action:
+        clear_ticket_draft(db, ticket)
     db.commit()
     return {"ok": True}
 

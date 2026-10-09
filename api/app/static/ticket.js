@@ -149,6 +149,8 @@ const el = {
   autoCloseDueText: document.getElementById("autoCloseDueText"),
   autoCloseDisabledCheckbox: document.getElementById("autoCloseDisabledCheckbox"),
   greetingBtn: document.getElementById("greetingBtn"),
+  clarificationBtn: document.getElementById("clarificationBtn"),
+  onsiteBtn: document.getElementById("onsiteBtn"),
   wrongProblemBtn: document.getElementById("wrongProblemBtn"),
   markSpecialBtn: document.getElementById("markSpecialBtn"),
   specialConfirmModal: document.getElementById("specialConfirmModal"),
@@ -1535,6 +1537,7 @@ async function loadCard(options = {}) {
       silent: state.pendingCardReloadOptions
         ? Boolean(state.pendingCardReloadOptions.silent) && Boolean(options.silent)
         : Boolean(options.silent),
+      preserveComposerDraft: Boolean(state.pendingCardReloadOptions?.preserveComposerDraft) || Boolean(options.preserveComposerDraft),
     };
     return;
   }
@@ -1558,7 +1561,9 @@ async function loadCard(options = {}) {
     }
     if (destroyed) return;
     state.card = card;
-    applyServerDraft(card);
+    if (!options.preserveComposerDraft) {
+      applyServerDraft(card);
+    }
     TicketComposer.syncRestoredPreloads?.(composerCtx(), card.active_attachment_preloads || []);
     state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
       ? cardConfig

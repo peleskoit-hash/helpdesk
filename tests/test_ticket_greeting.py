@@ -178,6 +178,26 @@ def test_greeting_uses_client_name_first(monkeypatch):
     ticket = _seed_ticket(session, contact_name="Илья", telegram_username="belfiss")
 
     assert _send_greeting(monkeypatch, session, ticket) == "Добрый день, Илья!"
+    session.refresh(ticket)
+    assert ticket.quick_action_state_json == {"greeting": True}
+
+
+def test_greeting_rechecks_quick_state_from_database_before_sending(monkeypatch):
+    session = _session()
+    ticket = _seed_ticket(session, contact_name="Илья", telegram_username="belfiss")
+    Session = sessionmaker(bind=session.get_bind(), autoflush=False, autocommit=False)
+    session2 = Session()
+    session2_ticket = session2.get(Ticket, ticket.id)
+    session2_ticket.quick_action_state_json = {"greeting": True}
+    session2.commit()
+    sent_texts = []
+    monkeypatch.setattr(tickets, "send_message", lambda *_args, **_kwargs: sent_texts.append("sent"))
+
+    with pytest.raises(HTTPException) as exc:
+        tickets.greeting(ticket.id, db=session, user=_admin())
+
+    assert exc.value.detail["error"]["code"] == "greeting_already_sent"
+    assert sent_texts == []
 
 
 def test_greeting_falls_back_to_telegram_username(monkeypatch):

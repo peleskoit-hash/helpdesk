@@ -1038,6 +1038,11 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         wrong_problem_used=bool(t.wrong_problem_used_at),
         wrong_problem_used_at=t.wrong_problem_used_at,
         wrong_problem_label=t.wrong_problem_label,
+        quick_actions_used={
+            "greeting": bool((t.quick_action_state_json or {}).get("greeting")),
+            "clarification": bool((t.quick_action_state_json or {}).get("clarification")),
+            "onsite": bool((t.quick_action_state_json or {}).get("onsite")),
+        },
         auto_close_disabled=bool(t.auto_close_disabled),
         auto_close_started_at=t.auto_close_started_at,
         auto_close_due_at=t.auto_close_due_at,
@@ -1476,10 +1481,18 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     ticket = _get_ticket_or_404(db, ticket_id, user)
     if not can_manage_ticket(user):
         _error(403, "readonly_role", "Нет прав на управление заявкой")
+    ticket = db.execute(
+        select(Ticket)
+        .where(Ticket.id == ticket.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
     if (ticket.workflow_type or TicketWorkflowType.TICKET.value) in {TicketWorkflowType.TASK.value, TicketWorkflowType.AUTO.value}:
         _error(409, "greeting_not_allowed", "Приветствие доступно только для обычной заявки")
+    if bool((ticket.quick_action_state_json or {}).get("greeting")):
+        _error(409, "greeting_already_sent", "Приветствие уже отправлялось по этой заявке")
 
     # Greeting can be sent only once per ticket.
     existing_greeting_stmt = select(TicketMessage.id).where(
@@ -1503,6 +1516,9 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     profile = _get_or_create_client_profile(db, ticket.client_id)
     contact = _telegram_contact_for_client(db, ticket.client_id)
     text = _format_greeting_text(greet, profile.contact_name, contact.external_username if contact else None)
+    quick_state = dict(ticket.quick_action_state_json or {})
+    quick_state["greeting"] = True
+    ticket.quick_action_state_json = quick_state
 
     try:
         response = _send_to_telegram_client(db, ticket, text)

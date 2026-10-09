@@ -964,6 +964,7 @@ def ensure_ticket_columns() -> None:
         "wrong_problem_used_at": "TIMESTAMP",
         "wrong_problem_button_key": "VARCHAR(100)",
         "wrong_problem_label": "VARCHAR(255)",
+        "quick_action_state_json": "JSON",
         "onsite_triggered": "BOOLEAN",
         "closed_by_user_id": "VARCHAR(36)",
         "completed_by_user_id": "VARCHAR(36)",

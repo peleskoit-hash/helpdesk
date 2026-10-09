@@ -190,6 +190,7 @@ class Ticket(Base):
     wrong_problem_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     wrong_problem_button_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     wrong_problem_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    quick_action_state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     onsite_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
     client_close_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     menu_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

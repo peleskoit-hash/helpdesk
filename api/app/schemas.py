@@ -218,6 +218,7 @@ class TicketCard(BaseModel):
     wrong_problem_used: bool = False
     wrong_problem_used_at: datetime | None = None
     wrong_problem_label: str | None = None
+    quick_actions_used: dict[str, bool] = Field(default_factory=dict)
     auto_close_disabled: bool = False
     auto_close_started_at: datetime | None = None
     auto_close_due_at: datetime | None = None
@@ -242,6 +243,7 @@ class TicketCard(BaseModel):
 class TextPayload(BaseModel):
     text: str = Field(min_length=1)
     quote_message_id: str | None = None
+    quick_action: str | None = None
 
 
 class TicketDraftPayload(BaseModel):

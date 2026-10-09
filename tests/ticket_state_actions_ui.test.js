@@ -42,14 +42,22 @@ function controlsRenderCtx({ now = 0, restoreCloseCooldownUntil = 0 } = {}) {
   const closeBtn = buttonStub();
   const restoreBtn = buttonStub();
   const freezeToggleBtn = buttonStub();
+  const greetingBtn = buttonStub();
+  const clarificationBtn = buttonStub();
+  const onsiteBtn = buttonStub();
   return {
     controls: loadTicketControls(now),
     closeBtn,
     restoreBtn,
     freezeToggleBtn,
+    greetingBtn,
+    clarificationBtn,
+    onsiteBtn,
     ctx: {
       el: {
-        greetingBtn: buttonStub(),
+        greetingBtn,
+        clarificationBtn,
+        onsiteBtn,
         wrongProblemBtn: buttonStub(),
         closeBtn,
         adminForceCloseBtn: buttonStub(),
@@ -76,6 +84,7 @@ function controlsRenderCtx({ now = 0, restoreCloseCooldownUntil = 0 } = {}) {
           status: "pending",
           messages: [{ message_type: "agent", body: "done" }],
           greeting_used: false,
+          quick_actions_used: {},
           wrong_problem_used: false,
           task_kind: "normal",
           parent_ticket_id: null,
@@ -196,4 +205,137 @@ test("expired restore cooldown returns close button to normal active state", () 
 
   assert.equal(closeBtn.disabled, false);
   assert.equal(closeBtn.textContent, "Закрыть заявку");
+});
+
+test("close button stays visible but disabled when agent cannot close yet", () => {
+  const visible = [];
+  const { controls, closeBtn, ctx } = controlsRenderCtx();
+  ctx.state.card.messages = [];
+  ctx.setVisible = (node, value) => {
+    if (node === closeBtn) visible.push(value);
+  };
+
+  controls.renderTicketControlsView(ctx);
+
+  assert.deepEqual(visible, [true]);
+  assert.equal(closeBtn.disabled, true);
+});
+
+test("quick action sequence unlocks clarification and onsite after greeting button use", () => {
+  const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
+  ctx.greetingAllowed = () => true;
+
+  controls.renderTicketControlsView(ctx);
+
+  assert.equal(greetingBtn.disabled, false);
+  assert.equal(clarificationBtn.disabled, true);
+  assert.equal(onsiteBtn.disabled, true);
+
+  ctx.state.card.quick_actions_used = { greeting: true };
+  ctx.state.card.greeting_used = true;
+  ctx.state.card.messages = [{ message_type: "agent", body: "Добрый день" }];
+  controls.renderTicketControlsView(ctx);
+
+  assert.equal(greetingBtn.disabled, true);
+  assert.equal(clarificationBtn.disabled, false);
+  assert.equal(onsiteBtn.disabled, false);
+});
+
+test("internal task keeps all quick actions visible but disabled", () => {
+  const visible = [];
+  const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
+  ctx.state.card.workflow_type = "task";
+  ctx.greetingAllowed = () => true;
+  ctx.setVisible = (node, value) => {
+    if ([greetingBtn, clarificationBtn, onsiteBtn].includes(node)) visible.push(value);
+  };
+
+  controls.renderTicketControlsView(ctx);
+
+  assert.deepEqual(visible, [true, true, true]);
+  assert.equal(greetingBtn.disabled, true);
+  assert.equal(clarificationBtn.disabled, true);
+  assert.equal(onsiteBtn.disabled, true);
+});
+
+test("quick action reload preserves current composer draft", () => {
+  assert.match(ticketPageSource, /preserveComposerDraft/);
+  assert.match(ticketControlsSource, /loadCard\(\{ preserveComposerDraft: true \}\)/);
+});
+
+test("quick message send error reload preserves composer draft", async () => {
+  const { controls, clarificationBtn, ctx } = controlsRenderCtx();
+  const loadCardCalls = [];
+  const errors = [];
+  ctx.apiPost = async () => {
+    throw new Error("send failed");
+  };
+  ctx.apiPatch = async () => {};
+  ctx.loadCard = async (options) => loadCardCalls.push(options || {});
+  ctx.setStatus = () => {};
+  ctx.showError = (message) => errors.push(message);
+  ctx.action = () => {};
+  ctx.openInstructionModal = () => {};
+  ctx.closeInstructionModal = () => {};
+  ctx.closeOnBackdropClick = () => {};
+  ctx.assignCurrentTicket = async () => {};
+  ctx.saveClientProfile = async () => {};
+  ctx.openClientModal = () => {};
+  ctx.closeClientModal = () => {};
+
+  controls.bindTicketControlHandlers(ctx);
+  await clarificationBtn.handlers.click();
+
+  assert.deepEqual(errors, ["send failed"]);
+  assert.equal(loadCardCalls.length, 1);
+  assert.equal(loadCardCalls[0].silent, true);
+  assert.equal(loadCardCalls[0].preserveComposerDraft, true);
+});
+
+test("successful greeting unlocks next quick actions before card reload finishes", async () => {
+  const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
+  const apiCalls = [];
+  let loadStarted = false;
+  let loadFinished = false;
+  ctx.greetingAllowed = () => true;
+  ctx.state.ticketId = "ticket-1";
+  ctx.apiPost = async (url, body) => {
+    apiCalls.push({ url, body });
+    return { ok: true };
+  };
+  ctx.apiPatch = async () => {};
+  ctx.loadCard = async () => {
+    loadStarted = true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    loadFinished = true;
+  };
+  ctx.setStatus = () => {};
+  ctx.showError = () => {};
+  ctx.action = () => {};
+  ctx.openInstructionModal = () => {};
+  ctx.closeInstructionModal = () => {};
+  ctx.closeOnBackdropClick = () => {};
+  ctx.assignCurrentTicket = async () => {};
+  ctx.saveClientProfile = async () => {};
+  ctx.openClientModal = () => {};
+  ctx.closeClientModal = () => {};
+
+  controls.bindTicketControlHandlers(ctx);
+  await greetingBtn.handlers.click();
+
+  assert.equal(loadStarted, true);
+  assert.equal(loadFinished, false);
+  assert.equal(greetingBtn.disabled, true);
+  assert.equal(clarificationBtn.disabled, false);
+  assert.equal(onsiteBtn.disabled, false);
+
+  const clarificationRun = clarificationBtn.handlers.click();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(apiCalls.length, 2);
+  assert.equal(apiCalls[1].url, "/api/v1/tickets/ticket-1/reply");
+  assert.equal(apiCalls[1].body.quick_action, "clarification");
+
+  await clarificationRun;
 });

@@ -1,5 +1,11 @@
 (function initTicketControls(global) {
   let pendingAdminAction = null;
+  let quickActionInFlight = null;
+
+  const QUICK_ACTION_TEXTS = {
+    clarification: "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
+    onsite: "Иду к Вам",
+  };
 
   function isFinalProblemButton(item) {
     return item && item.kind !== "submenu";
@@ -191,6 +197,8 @@
     const hasAgentMessage = card.messages.some((m) => m.message_type === "agent");
     const hasAnyMessage = card.messages.length > 0;
     const greetedByMessage = card.messages.some((m) => m.message_type === "agent" && /^добр/i.test((m.body || "").trim()));
+    const quickActionsUsed = card.quick_actions_used || {};
+    const greetingButtonUsed = Boolean(quickActionsUsed.greeting);
     const greeted = greetedByMessage || Boolean(card.greeting_used);
     const workflowType = card.workflow_type || "ticket";
     const stateActionInFlight = ["close", "restore", "freeze", "unfreeze"].includes(state.stateActionInFlight)
@@ -203,8 +211,12 @@
     );
     const restoreCloseCooldownActive = restoreCloseCooldownSeconds > 0;
     const isGreetingFlow = workflowType !== "task" && workflowType !== "auto";
-    const showGreeting = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed() && !greeted;
-    const showClose = !isReadonly && !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
+    const canSendQuickAction = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed();
+    const canUseGreeting = canSendQuickAction && !greeted && !greetingButtonUsed;
+    const canUseClarification = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.clarification;
+    const canUseOnsite = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.onsite;
+    const showClose = !isReadonly && (state.role === "admin" || state.role === "agent");
+    const canClose = !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
     const showFreezeToggle = !isReadonly && !isClosed;
     const canRestore = state.role === "admin" || (card.closed_by_user_id && card.closed_by_user_id === state.userId);
     const canRestoreFlow = workflowType !== "task" && workflowType !== "auto";
@@ -217,7 +229,9 @@
     const isCollecting = (card.intake_state || "ready") === "collecting";
     const showAutoCloseBox = !isReadonly && !isClosed && !card.is_special && workflowType === "ticket" && !isCollecting;
 
-    setVisible(el.greetingBtn, showGreeting);
+    setVisible(el.greetingBtn, showClose);
+    setVisible(el.clarificationBtn, showClose);
+    setVisible(el.onsiteBtn, showClose);
     setVisible(el.wrongProblemBtn, showWrongProblem);
     setVisible(el.closeBtn, showClose);
     if (el.adminForceCloseBtn) setVisible(el.adminForceCloseBtn, showAdminForceClose);
@@ -241,7 +255,22 @@
       el.adminForceCloseBtn.textContent = "Принудительно закрыть";
     }
     if (el.freezeToggleBtn) el.freezeToggleBtn.textContent = card.is_frozen ? "Разморозить" : "Заморозить";
-    if (el.closeBtn) el.closeBtn.disabled = !showClose || stateActionLocked || restoreCloseCooldownActive;
+    if (el.greetingBtn) {
+      el.greetingBtn.disabled = !canUseGreeting || quickActionInFlight === "greeting";
+      el.greetingBtn.classList.toggle("quick-action-ready", canUseGreeting && quickActionInFlight !== "greeting");
+    }
+    if (el.clarificationBtn) {
+      el.clarificationBtn.disabled = !canUseClarification || quickActionInFlight === "clarification";
+      el.clarificationBtn.classList.toggle("quick-action-ready", canUseClarification && quickActionInFlight !== "clarification");
+    }
+    if (el.onsiteBtn) {
+      el.onsiteBtn.disabled = !canUseOnsite || quickActionInFlight === "onsite";
+      el.onsiteBtn.classList.toggle("quick-action-ready", canUseOnsite && quickActionInFlight !== "onsite");
+    }
+    if (el.closeBtn) {
+      el.closeBtn.disabled = !canClose || stateActionLocked || restoreCloseCooldownActive;
+      el.closeBtn.classList.toggle("close-action-ready", canClose && !stateActionLocked && !restoreCloseCooldownActive);
+    }
     if (el.restoreBtn) el.restoreBtn.disabled = !showRestore || stateActionLocked;
     if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || stateActionLocked;
     if (el.autoCloseDisabledCheckbox) {
@@ -262,19 +291,55 @@
 
     if (el.greetingBtn) {
       el.greetingBtn.addEventListener("click", async (event) => {
+        if (quickActionInFlight) return;
         try {
+          quickActionInFlight = "greeting";
+          renderTicketControlsView(ctx);
           setStatus("Отправляю приветствие...");
           await apiPost(`/api/v1/tickets/${state.ticketId}/greeting`);
-          if (state.card) state.card.greeting_used = true;
-          setVisible(el.greetingBtn, false);
-          await loadCard();
+          if (state.card) {
+            state.card.greeting_used = true;
+            state.card.quick_actions_used = {
+              ...(state.card.quick_actions_used || {}),
+              greeting: true,
+            };
+          }
+          quickActionInFlight = null;
+          renderTicketControlsView(ctx);
+          loadCard({ preserveComposerDraft: true }).catch((loadError) => showError(loadError.message));
           setStatus("Приветствие отправлено");
         } catch (e) {
           showError(e.message);
-          await loadCard({ silent: true });
+          await loadCard({ silent: true, preserveComposerDraft: true });
+        } finally {
+          quickActionInFlight = null;
+          renderTicketControlsView(ctx);
         }
       });
     }
+
+    async function sendQuickMessage(actionName) {
+      if (quickActionInFlight) return;
+      const text = QUICK_ACTION_TEXTS[actionName];
+      if (!text) return;
+      try {
+        quickActionInFlight = actionName;
+        renderTicketControlsView(ctx);
+        setStatus("Отправляю быстрое сообщение...");
+        await apiPost(`/api/v1/tickets/${state.ticketId}/reply`, { text, quick_action: actionName });
+        await loadCard({ preserveComposerDraft: true });
+        setStatus("Сообщение отправлено");
+      } catch (e) {
+        showError(e.message);
+        await loadCard({ silent: true, preserveComposerDraft: true });
+      } finally {
+        quickActionInFlight = null;
+        renderTicketControlsView(ctx);
+      }
+    }
+
+    if (el.clarificationBtn) el.clarificationBtn.addEventListener("click", () => sendQuickMessage("clarification"));
+    if (el.onsiteBtn) el.onsiteBtn.addEventListener("click", () => sendQuickMessage("onsite"));
 
     if (el.freezeToggleBtn) {
       el.freezeToggleBtn.addEventListener("click", () => {

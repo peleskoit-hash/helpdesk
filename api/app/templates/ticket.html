@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Карточка заявки</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261008b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261009c" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -196,11 +196,13 @@
               <button id="adminDeleteBtn" class="action danger">Удалить заявку</button>
               <button id="markSpecialBtn" class="action">Перенести в особые</button>
             </div>
-            <div class="ticket-right-actions greeting-wrap">
-              <button id="greetingBtn" class="action">Приветствие</button>
-            </div>
             <div class="ticket-right-actions wrong-problem-wrap">
               <button id="wrongProblemBtn" class="action">Неверная проблема</button>
+            </div>
+            <div class="ticket-quick-actions">
+              <button id="greetingBtn" class="action quick-action-btn">Приветствие</button>
+              <button id="clarificationBtn" class="action quick-action-btn">Уточнение проблемы</button>
+              <button id="onsiteBtn" class="action quick-action-btn">Иду к Вам</button>
             </div>
             <div class="ticket-right-actions close-wrap">
               <button id="restoreBtn" class="action">Вернуть в работу</button>
@@ -383,8 +385,8 @@
   <script src="/static/ticket_attachments.js?v=20260828a"></script>
   <script src="/static/ticket_client_card.js?v=20260903e"></script>
   <script src="/static/ticket_composer.js?v=20261008a"></script>
-  <script src="/static/ticket_controls.js?v=20260810a"></script>
+  <script src="/static/ticket_controls.js?v=20261009d"></script>
   <script src="/static/ticket_message_view.js?v=20260810b"></script>
-  <script src="/static/ticket.js?v=20261008b"></script>
+  <script src="/static/ticket.js?v=20261009a"></script>
 </body>
 </html>

@@ -1081,7 +1081,9 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     app_shell_version = "20261005a"
     ticket_static_version = "20261008a"
     ticket_attachments_version = "20260828a"
-    ticket_page_version = "20261008a"
+    ticket_controls_version = "20261009d"
+    ticket_page_version = "20261009a"
+    ticket_styles_version = "20261009c"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1106,7 +1108,9 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
     assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in template
     assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in app_shell
-    assert '/static/styles.css?v=20261001b' in template
+    assert f"/static/ticket_controls.js?v={ticket_controls_version}" in template
+    assert f"/static/ticket_controls.js?v={ticket_controls_version}" in app_shell
+    assert f'/static/styles.css?v={ticket_styles_version}' in template
     assert '/static/styles.css?v=20261001b' in index_template
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
@@ -3031,6 +3035,146 @@ def test_plain_ticket_text_reply_persists_card_message_and_starts_auto_close_tim
     assert messages[0].telegram_message_id == "901"
     assert len(agent_messages) == 1
     assert agent_messages[0].body == "Plain answer"
+
+
+async def _send_quick_action_reply(session, ticket, payload, *, sent_messages):
+    return await reply_to_ticket(
+        request=_JsonRequest(payload),
+        db=session,
+        user=SimpleNamespace(id="agent-1", role="agent"),
+        ticket=ticket,
+        send_to_telegram_client=lambda *_args, **_kwargs: sent_messages.append((_args, _kwargs)) or {"result": {"message_id": 901}},
+        telegram_message_id_from_response=lambda response: str(response["result"]["message_id"]),
+        save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("upload should not be used")),
+        send_attachment_to_telegram_client=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("file send should not be used")),
+        claim_attachment_preload=lambda *_args, **_kwargs: None,
+        schedule_attachment_delivery=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("background delivery should not be used")),
+        unfreeze_ticket_on_message=lambda current_ticket: setattr(current_ticket, "is_frozen", False),
+        remove_client_close_button=lambda *_args, **_kwargs: None,
+        refresh_ticket_auto_close=lambda db, current_ticket, restart_from_now: refresh_ticket_auto_close_timer(db, current_ticket, restart_from_now),
+    )
+
+
+def test_quick_clarification_requires_greeting_and_does_not_send_on_failure():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    sent_messages = []
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_send_quick_action_reply(
+            session,
+            ticket,
+            {
+                "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
+                "quick_action": "clarification",
+            },
+            sent_messages=sent_messages,
+        ))
+
+    assert exc.value.detail["error"]["code"] == "quick_action_greeting_required"
+    assert sent_messages == []
+    assert _messages(session, ticket.id) == []
+    session.refresh(ticket)
+    assert not ticket.quick_action_state_json
+
+
+def test_quick_clarification_marks_action_only_after_success_and_repeat_is_rejected():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.quick_action_state_json = {"greeting": True}
+    session.commit()
+    sent_messages = []
+    payload = {
+        "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
+        "quick_action": "clarification",
+    }
+
+    result = asyncio.run(_send_quick_action_reply(session, ticket, payload, sent_messages=sent_messages))
+
+    assert result == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.quick_action_state_json == {"greeting": True, "clarification": True}
+    assert [message.body for message in _messages(session, ticket.id)] == [payload["text"]]
+    assert len(sent_messages) == 1
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_send_quick_action_reply(session, ticket, payload, sent_messages=sent_messages))
+
+    assert exc.value.detail["error"]["code"] == "quick_action_already_used"
+    assert len(sent_messages) == 1
+    assert len(_messages(session, ticket.id)) == 1
+
+
+def test_quick_clarification_preserves_saved_draft():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.quick_action_state_json = {"greeting": True}
+    ticket.draft_text = "Набранный черновик"
+    ticket.draft_mode = "comment"
+    ticket.draft_revision = 7
+    session.commit()
+    sent_messages = []
+
+    result = asyncio.run(_send_quick_action_reply(
+        session,
+        ticket,
+        {
+            "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
+            "quick_action": "clarification",
+        },
+        sent_messages=sent_messages,
+    ))
+
+    assert result == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.draft_text == "Набранный черновик"
+    assert ticket.draft_mode == "comment"
+    assert ticket.draft_revision == 7
+
+
+def test_quick_clarification_rechecks_used_state_from_database_before_sending():
+    _engine, Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.quick_action_state_json = {"greeting": True}
+    session.commit()
+    session2 = Session()
+    session2_ticket = session2.get(Ticket, ticket.id)
+    session2_ticket.quick_action_state_json = {"greeting": True, "clarification": True}
+    session2.commit()
+    sent_messages = []
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_send_quick_action_reply(
+            session,
+            ticket,
+            {
+                "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
+                "quick_action": "clarification",
+            },
+            sent_messages=sent_messages,
+        ))
+
+    assert exc.value.detail["error"]["code"] == "quick_action_already_used"
+    assert sent_messages == []
+    assert _messages(session, ticket.id) == []
+
+
+def test_manual_onsite_text_triggers_onsite_without_spending_quick_button():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    sent_messages = []
+
+    result = asyncio.run(_send_quick_action_reply(
+        session,
+        ticket,
+        {"text": "иду к вам", "quote_message_id": None},
+        sent_messages=sent_messages,
+    ))
+
+    assert result == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.onsite_triggered is True
+    assert not ticket.quick_action_state_json
 
 
 def test_plain_ticket_file_reply_persists_card_attachment_and_starts_auto_close_timer(tmp_path):
