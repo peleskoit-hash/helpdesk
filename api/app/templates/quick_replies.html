@@ -18,6 +18,13 @@
         <a class="tab-btn" href="/tickets?tab=closed" data-tab="closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
         <a class="tab-btn admin-only hidden" href="/tickets?tab=special" data-tab="special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
       </div>
+      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
+        <label class="status-panel-title admin-agent-header">
+          <input id="adminAgentToggleAll" type="checkbox" />
+          <span>Все заявки</span>
+        </label>
+        <div id="adminAgentList" class="admin-agent-list"></div>
+      </div>
       <a class="settings-link admin-only hidden" href="/settings"><span>Настройки</span><img src="/static/settings-gear.svg" alt="" /></a>
       <a class="settings-link admin-only hidden" href="/management"><span>Управление</span></a>
       <div class="sidebar-admin-separator admin-only hidden"></div>
