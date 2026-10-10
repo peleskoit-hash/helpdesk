@@ -283,6 +283,7 @@
           sessionStorage.setItem(pendingQuickReplyStorageKey(), JSON.stringify({
             id: payload?.id || reply.id,
             body: payload?.body || reply.body || "",
+            saved_files: payload?.saved_files || reply.saved_files || [],
           }));
         } catch {
           // noop

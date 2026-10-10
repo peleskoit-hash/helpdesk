@@ -71,6 +71,7 @@ const state = {
   quickRepliesHighlightedIndex: 0,
   quickRepliesSearchTimer: null,
   quickReplyUseInFlight: false,
+  quickReplyUseSeq: 0,
   taskPanelEnabled: false,
   taskPanelItems: [],
   taskPanelDropdownOpen: false,
@@ -762,6 +763,47 @@ function insertTextIntoComposer(text) {
   return true;
 }
 
+async function downloadQuickReplyFiles(replyId, savedFiles) {
+  const files = Array.isArray(savedFiles) ? savedFiles : [];
+  if (!files.length) return [];
+  const downloaded = [];
+  for (const savedFile of files) {
+    const savedFileId = String(savedFile?.id || "").trim();
+    if (!savedFileId) throw new Error("Файл быстрого ответа недоступен");
+    const response = await fetch(
+      `/api/v1/quick-replies/${encodeURIComponent(replyId)}/files/${encodeURIComponent(savedFileId)}/download`,
+      { headers: { accept: savedFile?.mime_type || "application/octet-stream" } },
+    );
+    if (response.status === 401) {
+      window.location.href = "/login";
+      throw new Error("Требуется авторизация");
+    }
+    if (!response.ok) {
+      throw new Error(`Не удалось загрузить файл быстрого ответа: ${savedFile.display_filename || savedFileId}`);
+    }
+    const blob = await response.blob();
+    downloaded.push(new File(
+      [blob],
+      savedFile.display_filename || savedFileId,
+      { type: savedFile.mime_type || blob.type || "application/octet-stream" },
+    ));
+  }
+  return downloaded;
+}
+
+async function applyQuickReplyToComposer(payload, fallbackBody, token, cardId) {
+  const replyId = payload?.id;
+  const files = await downloadQuickReplyFiles(replyId, payload?.saved_files || []);
+  if (destroyed || token !== state.quickReplyUseSeq || state.card?.id !== cardId || !canWriteComposer()) {
+    return false;
+  }
+  if (files.length) {
+    TicketComposer.queueSelectedFiles(composerCtx(), files);
+  }
+  insertTextIntoComposer(payload?.body || fallbackBody || "");
+  return true;
+}
+
 async function useQuickReply(reply) {
   if (!reply?.id) return;
   if (state.quickReplyUseInFlight) return;
@@ -770,13 +812,15 @@ async function useQuickReply(reply) {
     return;
   }
   state.quickReplyUseInFlight = true;
+  const token = ++state.quickReplyUseSeq;
+  const cardId = state.card?.id;
   try {
     const payload = await api(`/api/v1/quick-replies/${encodeURIComponent(reply.id)}/use`, { method: "POST" });
-    if (!canWriteComposer()) {
+    const applied = await applyQuickReplyToComposer(payload, reply.body || "", token, cardId);
+    if (!applied) {
       closeQuickRepliesPanel();
       return;
     }
-    insertTextIntoComposer(payload?.body || reply.body || "");
     closeQuickRepliesPanel({ focusComposer: true });
   } finally {
     state.quickReplyUseInFlight = false;
@@ -801,9 +845,11 @@ async function consumePendingQuickReplyUse() {
   if (!raw) return;
   try {
     const payload = JSON.parse(raw);
-    insertTextIntoComposer(payload?.body || "");
-  } catch {
-    // noop
+    const token = ++state.quickReplyUseSeq;
+    await applyQuickReplyToComposer(payload, "", token, state.card?.id);
+  } catch (e) {
+    setStatus(`Ошибка быстрых ответов: ${e.message || "не удалось подготовить вложения"}`);
+    showError(e.message || "Не удалось подготовить вложения быстрого ответа");
   }
 }
 

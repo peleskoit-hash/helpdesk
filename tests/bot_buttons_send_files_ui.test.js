@@ -211,8 +211,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261009b/);
-  assert.match(appShellSource, /ticket\.js\?v=20261009b/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261010a/);
+  assert.match(appShellSource, /ticket\.js\?v=20261010a/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -3321,9 +3321,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010a"\] \}\]/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010b"\] \}\]/);
   assert.match(quickRepliesTemplate, /styles\.css\?v=20261010a/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010a/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
@@ -3477,7 +3477,7 @@ test('ticket quick replies use is single-flight to avoid double insertion', () =
   const useSource = sourceBetween(ticketPageSource, 'async function useQuickReply(reply)', 'async function openQuickRepliesEditorFromPanel');
   assert.match(useSource, /if \(state\.quickReplyUseInFlight\) return/);
   assert.match(useSource, /state\.quickReplyUseInFlight = true;[\s\S]*try \{[\s\S]*await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`/);
-  assert.match(useSource, /insertTextIntoComposer\(payload\?\.body \|\| reply\.body \|\| ""\)/);
+  assert.match(useSource, /const applied = await applyQuickReplyToComposer\(payload, reply\.body \|\| "", token, cardId\)/);
   assert.match(useSource, /finally \{[\s\S]*state\.quickReplyUseInFlight = false;[\s\S]*\}/);
 });
 
@@ -3535,12 +3535,22 @@ test('ticket quick replies insert uses /use, cursor selection, and existing draf
   assert.match(ticketPageSource, /if \(raw && document\.activeElement !== el\.messageInput\) \{[\s\S]*start = Number\(parsed\?\.start\);[\s\S]*end = Number\(parsed\?\.end\);/);
 });
 
+test('ticket quick replies download saved files and queue them through composer', () => {
+  assert.match(ticketPageSource, /async function downloadQuickReplyFiles\(replyId, savedFiles\)/);
+  assert.match(ticketPageSource, /\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(replyId\)\}\/files\/\$\{encodeURIComponent\(savedFileId\)\}\/download/);
+  assert.match(ticketPageSource, /downloaded\.push\(new File\(/);
+  assert.match(ticketPageSource, /const files = await downloadQuickReplyFiles\(replyId, payload\?\.saved_files \|\| \[\]\)/);
+  assert.match(ticketPageSource, /TicketComposer\.queueSelectedFiles\(composerCtx\(\), files\)/);
+  assert.doesNotMatch(ticketPageSource, /sendByMode\(composerCtx\(\)\)[\s\S]{0,200}quickReply/);
+});
+
 test('ticket quick replies cannot insert or count use when composer is readonly', () => {
   assert.match(ticketPageSource, /function canWriteComposer\(\) \{[\s\S]*!el\.messageInput\.disabled[\s\S]*!el\.messageInput\.readOnly[\s\S]*state\.card\?\.status !== "closed"/);
   assert.match(ticketPageSource, /if \(el\.quickRepliesBtn\) el\.quickRepliesBtn\.disabled = isClosed \|\| isReadonly/);
   const useSource = sourceBetween(ticketPageSource, 'async function useQuickReply(reply)', 'async function openQuickRepliesEditorFromPanel');
   assert.match(useSource, /if \(!canWriteComposer\(\)\) \{[\s\S]*closeQuickRepliesPanel\(\);[\s\S]*return;[\s\S]*\}[\s\S]*await api\(`\/api\/v1\/quick-replies/);
-  assert.match(useSource, /await api\(`\/api\/v1\/quick-replies[\s\S]*if \(!canWriteComposer\(\)\) \{/);
+  const applySource = sourceBetween(ticketPageSource, 'async function applyQuickReplyToComposer', 'async function useQuickReply');
+  assert.match(applySource, /if \(destroyed \|\| token !== state\.quickReplyUseSeq \|\| state\.card\?\.id !== cardId \|\| !canWriteComposer\(\)\) \{/);
   const renderSource = sourceBetween(ticketPageSource, 'function renderCard()', 'async function loadCard');
   assert.match(renderSource, /const isReadonly = state\.role === "chiki_piki"/);
   assert.match(renderSource, /if \(isClosed \|\| isReadonly\) closeQuickRepliesPanel\(\)/);
@@ -3582,9 +3592,10 @@ test('ticket polling selection restore stays scoped to initial load and remote d
 test('ticket context quick replies use stores only pending reply body and returns to ticket', () => {
   assert.match(quickRepliesSource, /function pendingQuickReplyStorageKey\(\)[\s\S]*hd_quick_reply_pending_use:\$\{ticketId\}/);
   assert.match(quickRepliesSource, /sessionStorage\.setItem\(pendingQuickReplyStorageKey\(\), JSON\.stringify\(\{/);
+  assert.match(quickRepliesSource, /saved_files: payload\?\.saved_files \|\| reply\.saved_files \|\| \[\]/);
   assert.doesNotMatch(quickRepliesSource, /draft_text|draftText|messageInput|ticket_message_body/);
   assert.match(ticketPageSource, /sessionStorage\.getItem\(pendingQuickReplyStorageKey\(\)\)/);
-  assert.match(ticketPageSource, /insertTextIntoComposer\(payload\?\.body \|\| ""\)/);
+  assert.match(ticketPageSource, /await applyQuickReplyToComposer\(payload, "", token, state\.card\?\.id\)/);
 });
 
 test('theme toggle rebinds to replaced DOM node without stacking old listeners', () => {

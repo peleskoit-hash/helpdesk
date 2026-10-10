@@ -1,7 +1,10 @@
 from datetime import datetime
+import re
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -9,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import QuickReply, QuickReplyUsage, SavedFile, User
-from ..services.saved_files import create_saved_file
+from ..services.saved_files import SavedFileStorageError, create_saved_file, resolve_saved_file_path
 
 
 router = APIRouter(prefix="/api/v1/quick-replies", tags=["quick-replies"])
@@ -51,6 +54,14 @@ def _can_create(user: CurrentUser) -> bool:
 
 def _can_edit(user: CurrentUser, reply: QuickReply) -> bool:
     return is_admin(user) or (user.role == "agent" and reply.author_user_id == user.id)
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    normalized = (filename or "").strip() or "file"
+    ascii_filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", normalized).strip() or "file"
+    ascii_filename = ascii_filename.replace("\\", "_").replace('"', "_")
+    encoded_filename = quote(normalized, safe="")
+    return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
 def _clean_payload(payload: QuickReplyPayload) -> tuple[str, str]:
@@ -228,6 +239,32 @@ def upload_quick_reply_file(
     db.commit()
     db.refresh(saved_file)
     return _saved_file_out(saved_file)
+
+
+@router.get("/{reply_id}/files/{saved_file_id}/download")
+def download_quick_reply_file(
+    reply_id: str,
+    saved_file_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    reply = db.get(QuickReply, reply_id)
+    if reply is None:
+        _error(404, "quick_reply_not_found", "Быстрый ответ не найден")
+    if saved_file_id not in _reply_saved_file_ids(reply):
+        _error(404, "quick_reply_file_not_found", "Файл быстрого ответа не найден")
+    saved_file = db.get(SavedFile, saved_file_id)
+    if saved_file is None:
+        _error(404, "quick_reply_file_not_found", "Файл быстрого ответа не найден")
+    try:
+        path = resolve_saved_file_path(saved_file)
+    except SavedFileStorageError:
+        _error(404, "quick_reply_file_content_not_found", "Физический файл не найден")
+    return FileResponse(
+        str(path),
+        media_type=saved_file.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": _content_disposition_attachment(saved_file.display_filename)},
+    )
 
 
 @router.delete("/{reply_id}")

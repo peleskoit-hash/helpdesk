@@ -267,6 +267,43 @@ def test_agent_upload_endpoint_does_not_grant_management_saved_files_access(monk
     assert management_response.status_code == 403
 
 
+def test_download_quick_reply_file_returns_bound_saved_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    db = _session()
+    _seed_users(db)
+    saved = _create_saved(db, display_filename="answer.pdf")
+    reply = create_quick_reply(
+        QuickReplyPayload(short_title="With file", body="Body", saved_file_ids=[saved.id]),
+        db=db,
+        user=_user("agent-1", "agent"),
+    )
+
+    response = _client(db, role="agent").get(f"/api/v1/quick-replies/{reply.id}/files/{saved.id}/download")
+
+    assert response.status_code == 200
+    assert response.content == b"file-bytes"
+    assert response.headers["content-type"] == "application/pdf"
+    assert "filename*=UTF-8''answer.pdf" in response.headers["content-disposition"]
+
+
+def test_download_quick_reply_file_rejects_unbound_saved_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    db = _session()
+    _seed_users(db)
+    bound = _create_saved(db, display_filename="bound.pdf")
+    other = _create_saved(db, display_filename="other.pdf")
+    reply = create_quick_reply(
+        QuickReplyPayload(short_title="With file", body="Body", saved_file_ids=[bound.id]),
+        db=db,
+        user=_user("agent-1", "agent"),
+    )
+
+    response = _client(db, role="agent").get(f"/api/v1/quick-replies/{reply.id}/files/{other.id}/download")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "quick_reply_file_not_found"
+
+
 def test_edit_permissions_and_author_is_immutable():
     db = _session()
     _seed_users(db)
