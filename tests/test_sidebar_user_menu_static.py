@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,22 @@ def test_sidebar_status_buttons_are_large_and_selected_state_is_clear() -> None:
     assert ".agent-status-btn.active {" in styles_css
     assert "font-weight: 700;" in styles_css
     assert "0 0 0 2px rgba(15, 23, 42, 0.28)" in styles_css
+
+
+def test_sidebar_status_panel_buttons_keep_employee_status_order() -> None:
+    expected_order = ["online", "on_ticket", "waiting", "lunch", "offline"]
+    templates = [
+        "management_users.html",
+        "reviews.html",
+        "ticket.html",
+        "tickets.html",
+    ]
+
+    for template_name in templates:
+        content = (TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+        panel = content.split('<div class="status-panel hidden">', 1)[1].split("</div>", 2)[1]
+        statuses = re.findall(r'data-availability-status="([^"]+)"', panel)
+        assert statuses[:5] == expected_order
 
 
 def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
