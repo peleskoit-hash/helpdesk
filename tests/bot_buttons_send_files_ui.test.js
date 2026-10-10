@@ -3321,9 +3321,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261008b"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261009f/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261008b/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010a"\] \}\]/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261010a/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010a/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
@@ -3346,7 +3346,7 @@ test('quick replies ticket context keeps disabled use action separate from card 
 });
 
 test('quick replies ticket context use button is single-flight and keyboard-isolated', () => {
-  assert.match(quickRepliesSource, /const state = \{ replies: \[\], session: null, editing: null, useInFlight: false \}/);
+  assert.match(quickRepliesSource, /const state = \{[\s\S]*replies: \[\],[\s\S]*editing: null,[\s\S]*useInFlight: false,[\s\S]*\}/);
   const useSource = sourceBetween(quickRepliesSource, 'async function useReply(reply)', 'el.create.addEventListener');
   assert.match(useSource, /if \(state\.useInFlight\) return/);
   assert.match(useSource, /state\.useInFlight = true;[\s\S]*try \{[\s\S]*await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`/);
@@ -3366,7 +3366,7 @@ test('quick replies card opens any visible reply including readonly foreign repl
 test('quick replies edit modal uses backend can_edit for readonly fields and save state', () => {
   assert.match(quickRepliesSource, /el\.titleInput\.readOnly = !reply\.can_edit/);
   assert.match(quickRepliesSource, /el\.bodyInput\.readOnly = !reply\.can_edit/);
-  assert.match(quickRepliesSource, /el\.save\.disabled = !reply\.can_edit/);
+  assert.match(quickRepliesSource, /el\.save\.disabled = !canEdit \|\| state\.uploadInFlight/);
   assert.match(quickRepliesSource, /if \(state\.editing && !state\.editing\.can_edit\) return/);
   assert.match(quickRepliesSource, /role === "admin" \|\| role === "agent"/);
   assert.match(quickRepliesSource, /el\.create\.classList\.toggle\("hidden", !canCreate\(\)\)/);
@@ -3386,15 +3386,22 @@ test('quick replies admin-owned cards reuse existing orange ticket type style', 
 
 test('quick replies modal and fields use wider responsive layout', () => {
   assert.match(stylesSource, /\.modal-dialog \{[\s\S]*width: min\(480px, 92vw\);/);
-  assert.match(stylesSource, /#quickReplyModal \.quick-reply-dialog \{[\s\S]*width: min\(960px, calc\(100vw - 32px\)\);[\s\S]*max-width: calc\(100vw - 32px\);/);
+  assert.match(stylesSource, /#quickReplyModal \.quick-reply-dialog \{[\s\S]*width: min\(1040px, calc\(100vw - 32px\)\);[\s\S]*max-width: calc\(100vw - 32px\);/);
   assert.match(stylesSource, /\.quick-reply-dialog \.modal-body input,\s*\.quick-reply-dialog \.modal-body textarea \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
   assert.match(stylesSource, /\.quick-replies-content \{[\s\S]*grid-template-columns: minmax\(320px, 50%\) 1fr;/);
 });
 
-test('quick replies management navigation and no-file slice boundaries are present', () => {
+test('quick replies management navigation and file attachment editor are present', () => {
   assert.match(fs.readFileSync('api/app/templates/management.html', 'utf8'), /href="\/quick-replies">&#1041;&#1099;&#1089;&#1090;&#1088;&#1099;&#1077; &#1086;&#1090;&#1074;&#1077;&#1090;&#1099;/);
-  assert.doesNotMatch(quickRepliesTemplate, /type="file"|attachment|вложен|файл/i);
-  assert.doesNotMatch(quickRepliesSource, /FormData|attachment|file/i);
+  assert.match(quickRepliesTemplate, /id="quickReplyFileInput" type="file" hidden/);
+  assert.doesNotMatch(quickRepliesTemplate, /id="quickReplyFileInput"[^>]*multiple/);
+  assert.match(quickRepliesTemplate, /id="attachQuickReplyFileBtn"[\s\S]*Прикрепить файл/);
+  assert.match(quickRepliesSource, /const formData = new FormData\(\)/);
+  assert.match(quickRepliesSource, /formData\.append\("file", file\)/);
+  assert.match(quickRepliesSource, /api\("\/api\/v1\/quick-replies\/files", \{\s*method: "POST",\s*body: formData,\s*\}\)/);
+  assert.doesNotMatch(quickRepliesSource, /headers: \{ "content-type": "multipart\/form-data"/i);
+  assert.match(quickRepliesSource, /state\.draftFiles\.length >= 5/);
+  assert.match(quickRepliesSource, /window\.confirm\(`Отвязать файл/);
 });
 
 test('ticket quick reply button sits between add files and send', () => {

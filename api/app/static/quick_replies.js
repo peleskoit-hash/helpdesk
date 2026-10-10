@@ -30,7 +30,16 @@
     const params = new URLSearchParams(window.location.search);
     const ticketId = (params.get("ticket_id") || "").trim();
     const ticketMode = Boolean(ticketId);
-    const state = { replies: [], session: null, editing: null, useInFlight: false, deletingIds: new Set() };
+    const state = {
+      replies: [],
+      session: null,
+      editing: null,
+      draftFiles: [],
+      uploadInFlight: false,
+      modalToken: 0,
+      useInFlight: false,
+      deletingIds: new Set(),
+    };
     const el = {
       status: document.getElementById("statusText"),
       create: document.getElementById("createQuickReplyBtn"),
@@ -43,6 +52,12 @@
       titleInput: document.getElementById("quickReplyTitleInput"),
       bodyInput: document.getElementById("quickReplyBodyInput"),
       authorFooter: document.getElementById("quickReplyAuthorFooter"),
+      fileInput: document.getElementById("quickReplyFileInput"),
+      attachFile: document.getElementById("attachQuickReplyFileBtn"),
+      fileUploadStatus: document.getElementById("quickReplyFileUploadStatus"),
+      filesBlock: document.getElementById("quickReplyFilesBlock"),
+      filesTitle: document.getElementById("quickReplyFilesTitle"),
+      filesList: document.getElementById("quickReplyFilesList"),
     };
 
     function setStatus(text) {
@@ -61,6 +76,10 @@
 
     function canDelete() {
       return state.session?.effective_user?.role === "admin";
+    }
+
+    function canEditCurrentReply() {
+      return state.editing ? Boolean(state.editing.can_edit) : canCreate();
     }
 
     function pendingQuickReplyStorageKey() {
@@ -102,12 +121,60 @@
       }
     }
 
+    function fileName(file) {
+      return file?.display_filename || file?.filename || file?.id || "Файл";
+    }
+
+    function renderDraftFiles() {
+      const canEdit = canEditCurrentReply();
+      const count = state.draftFiles.length;
+      el.filesBlock.classList.toggle("hidden", count === 0);
+      el.filesTitle.textContent = `Прикреплённые файлы (${count}/5):`;
+      el.filesList.innerHTML = "";
+      for (const file of state.draftFiles) {
+        const row = document.createElement("div");
+        row.className = "quick-reply-file-row";
+
+        const name = document.createElement("span");
+        name.className = "quick-reply-file-name";
+        name.textContent = fileName(file);
+        row.appendChild(name);
+
+        if (canEdit) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "action danger quick-reply-file-remove";
+          remove.dataset.fileId = file.id;
+          remove.title = "Отвязать файл";
+          remove.setAttribute("aria-label", `Отвязать файл ${fileName(file)}`);
+          remove.textContent = "🗑";
+          row.appendChild(remove);
+        }
+
+        el.filesList.appendChild(row);
+      }
+      el.attachFile.disabled = !canEdit || state.uploadInFlight || count >= 5;
+      el.fileUploadStatus.classList.toggle("hidden", !state.uploadInFlight);
+      el.fileUploadStatus.textContent = state.uploadInFlight ? "Загружаю файл..." : "";
+      el.save.disabled = !canEdit || state.uploadInFlight;
+    }
+
+    function setDraftFiles(files) {
+      state.draftFiles = Array.isArray(files) ? files.filter((file) => file?.id) : [];
+      renderDraftFiles();
+    }
+
     function closeModal() {
+      state.modalToken += 1;
       state.editing = null;
+      state.draftFiles = [];
+      state.uploadInFlight = false;
+      el.fileInput.value = "";
       el.modal.classList.add("hidden");
     }
 
     function openCreate() {
+      state.modalToken += 1;
       state.editing = null;
       el.modalTitle.textContent = "Создать быстрый ответ";
       el.titleInput.value = "";
@@ -116,12 +183,13 @@
       el.bodyInput.readOnly = false;
       el.authorFooter.textContent = "";
       el.authorFooter.classList.add("hidden");
-      el.save.disabled = false;
+      setDraftFiles([]);
       el.modal.classList.remove("hidden");
       el.titleInput.focus();
     }
 
     function openEdit(reply) {
+      state.modalToken += 1;
       state.editing = reply;
       el.modalTitle.textContent = "Быстрый ответ";
       el.titleInput.value = reply.short_title || "";
@@ -130,7 +198,7 @@
       el.bodyInput.readOnly = !reply.can_edit;
       el.authorFooter.textContent = `Создал: ${reply.author_name || reply.author_user_id || "-"}`;
       el.authorFooter.classList.remove("hidden");
-      el.save.disabled = !reply.can_edit;
+      setDraftFiles(reply.saved_files || []);
       el.modal.classList.remove("hidden");
       el.titleInput.focus();
     }
@@ -150,6 +218,7 @@
       const body = {
         short_title: el.titleInput.value,
         body: el.bodyInput.value,
+        saved_file_ids: state.draftFiles.map((file) => file.id),
       };
       const path = state.editing ? `/api/v1/quick-replies/${encodeURIComponent(state.editing.id)}` : "/api/v1/quick-replies";
       const method = state.editing ? "PATCH" : "POST";
@@ -164,8 +233,44 @@
         await load();
       } catch (e) {
         setStatus(e.message);
-        el.save.disabled = Boolean(state.editing && !state.editing.can_edit);
+        renderDraftFiles();
       }
+    }
+
+    async function uploadDraftFile(file) {
+      if (!file || !canEditCurrentReply() || state.uploadInFlight || state.draftFiles.length >= 5) return;
+      const token = state.modalToken;
+      const formData = new FormData();
+      formData.append("file", file);
+      state.uploadInFlight = true;
+      renderDraftFiles();
+      try {
+        const savedFile = await api("/api/v1/quick-replies/files", {
+          method: "POST",
+          body: formData,
+        });
+        if (token !== state.modalToken) return;
+        if (!savedFile?.id) throw new Error("Сервер не вернул файл");
+        state.draftFiles = [...state.draftFiles.filter((item) => item.id !== savedFile.id), savedFile];
+        setStatus("Файл прикреплён");
+      } catch (e) {
+        if (token === state.modalToken) setStatus(e.message);
+      } finally {
+        if (token === state.modalToken) {
+          state.uploadInFlight = false;
+          el.fileInput.value = "";
+          renderDraftFiles();
+        }
+      }
+    }
+
+    function detachDraftFile(fileId) {
+      if (!canEditCurrentReply()) return;
+      const file = state.draftFiles.find((item) => String(item.id) === String(fileId));
+      if (!file) return;
+      if (!window.confirm(`Отвязать файл «${fileName(file)}» от быстрого ответа?`)) return;
+      state.draftFiles = state.draftFiles.filter((item) => String(item.id) !== String(fileId));
+      renderDraftFiles();
     }
 
     async function useReply(reply) {
@@ -209,6 +314,18 @@
     el.closeModal.addEventListener("click", closeModal);
     el.cancel.addEventListener("click", closeModal);
     el.save.addEventListener("click", save);
+    el.attachFile.addEventListener("click", () => {
+      if (!el.attachFile.disabled) el.fileInput.click();
+    });
+    el.fileInput.addEventListener("change", () => {
+      const file = el.fileInput.files?.[0];
+      if (file) void uploadDraftFile(file);
+      else el.fileInput.value = "";
+    });
+    el.filesList.addEventListener("click", (event) => {
+      const fileId = event.target?.closest?.("[data-file-id]")?.dataset?.fileId;
+      if (fileId) detachDraftFile(fileId);
+    });
     el.list.addEventListener("click", (event) => {
       const deleteId = event.target?.dataset?.delete;
       if (deleteId) {

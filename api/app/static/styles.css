@@ -1783,7 +1783,7 @@ th, td {
 }
 
 #quickReplyModal .quick-reply-dialog {
-  width: min(960px, calc(100vw - 32px));
+  width: min(1040px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
 }
 
@@ -1796,6 +1796,75 @@ th, td {
 .quick-reply-dialog .modal-body textarea {
   min-height: 220px;
   line-height: 1.45;
+}
+
+.quick-reply-dialog .modal-foot {
+  justify-content: space-between;
+}
+
+.quick-reply-author-footer {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-reply-modal-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.quick-reply-files-editor {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.quick-reply-file-upload-status {
+  min-height: 18px;
+}
+
+.quick-reply-files-block {
+  display: grid;
+  gap: 6px;
+}
+
+.quick-reply-files-title {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quick-reply-files-list {
+  display: grid;
+  gap: 6px;
+}
+
+.quick-reply-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.quick-reply-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quick-reply-file-remove {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .composer-send-actions {
