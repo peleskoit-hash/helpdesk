@@ -18,6 +18,39 @@
     return state.filePreloads;
   }
 
+  function ensureDiscardedPreloadIds(state) {
+    if (!(state.discardedAttachmentPreloadIds instanceof Set)) {
+      state.discardedAttachmentPreloadIds = new Set();
+    }
+    return state.discardedAttachmentPreloadIds;
+  }
+
+  function markDiscardedPreloadId(state, preloadId) {
+    if (preloadId) ensureDiscardedPreloadIds(state).add(preloadId);
+  }
+
+  function preloadFingerprint(name, size) {
+    return `${String(name || "")}\u0000${Number(size) || 0}`;
+  }
+
+  function reportPreloadDeleteError(ctx, error) {
+    const message = error?.message || "Не удалось удалить предзагруженный файл";
+    if (typeof ctx.showError === "function") {
+      ctx.showError(message);
+    }
+  }
+
+  function discardAttachmentPreload(ctx, preloadId) {
+    if (!preloadId) return Promise.resolve();
+    const { state, api } = ctx;
+    markDiscardedPreloadId(state, preloadId);
+    return api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preloadId}`, {
+      method: "DELETE",
+    }).catch((error) => {
+      reportPreloadDeleteError(ctx, error);
+    });
+  }
+
   function getPreloadState(state, file) {
     return ensurePreloadMap(state).get(file) || null;
   }
@@ -220,12 +253,33 @@
 
   function syncRestoredPreloads(ctx, serverPreloads) {
     const { state } = ctx;
-    const activePreloads = Array.from(serverPreloads || []).filter((preload) => isRestorablePreloadStatus(preload?.status));
+    const discardedPreloadIds = ensureDiscardedPreloadIds(state);
+    const keepFiles = new Set();
+    const removedPendingCounts = new Map();
+    for (const [file, preload] of ensurePreloadMap(state).entries()) {
+      if (preload?.removed && !preload.preloadId) {
+        keepFiles.add(file);
+        const key = preloadFingerprint(file?.name, file?.size);
+        removedPendingCounts.set(key, (removedPendingCounts.get(key) || 0) + 1);
+      }
+    }
+    const activePreloads = Array.from(serverPreloads || []).filter((preload) => {
+      if (!isRestorablePreloadStatus(preload?.status) || discardedPreloadIds.has(preload?.id)) {
+        return false;
+      }
+      const key = preloadFingerprint(preload?.original_filename, preload?.file_size);
+      const removedPendingCount = removedPendingCounts.get(key) || 0;
+      if (removedPendingCount > 0) {
+        removedPendingCounts.set(key, removedPendingCount - 1);
+        return false;
+      }
+      return true;
+    });
     const nextSelectedFiles = state.selectedFiles.filter((file) => {
       const preload = getPreloadState(state, file);
       return !preload?.preloadId;
     });
-    const keepFiles = new Set(nextSelectedFiles);
+    nextSelectedFiles.forEach((file) => keepFiles.add(file));
 
     for (const serverPreload of activePreloads) {
       let file = findSelectedFileByPreloadId(state, serverPreload.id);
@@ -325,7 +379,15 @@
         signal: controller.signal,
       });
       const preload = getPreloadState(state, file);
-      if (!preload || preload.removed) return;
+      if (!preload) return;
+      if (preload.removed) {
+        const removedPreloadId = payload?.id || null;
+        if (removedPreloadId) {
+          await discardAttachmentPreload(ctx, removedPreloadId);
+        }
+        forgetPreloadState(state, file);
+        return;
+      }
       preload.preloadId = payload?.id || null;
       preload.status = payload?.status || "uploading";
       preload.stage = preload.status;
@@ -352,20 +414,23 @@
   }
 
   async function removeSelectedFile(ctx, file) {
-    const { state, api, el } = ctx;
+    const { state, el } = ctx;
     const preload = getPreloadState(state, file);
     if (preload) {
       preload.removed = true;
-      abortPreloadRequest(state, file);
       clearPreloadPoll(state, file);
       if (preload.preloadId) {
-        api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preload.preloadId}`, {
-          method: "DELETE",
-        }).catch(() => {});
+        void discardAttachmentPreload(ctx, preload.preloadId).then(() => {
+          forgetPreloadState(state, file);
+        });
+      } else {
+        preload.controller = null;
       }
     }
     state.selectedFiles = state.selectedFiles.filter((item) => item !== file);
-    forgetPreloadState(state, file);
+    if (!preload || preload.preloadId) {
+      forgetPreloadState(state, file);
+    }
     if (state.selectedFiles.length === 0) {
       state.currentArchiveGroupId = null;
     }

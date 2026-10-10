@@ -1080,7 +1080,7 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
     app_shell_version = "20261009a"
-    ticket_static_version = "20261008a"
+    ticket_static_version = "20261010b"
     ticket_attachments_version = "20260828a"
     ticket_controls_version = "20261009d"
     ticket_page_version = "20261009b"
@@ -1478,6 +1478,199 @@ console.log(JSON.stringify({{
     assert payload["beforeAppendCurrent"] != payload["firstBatchCurrent"]
     assert payload["afterRemoveLast"] is None
     assert len(payload["deletedPreloads"]) == 3
+
+
+def test_removed_browser_uploading_preload_survives_restore_race_until_late_post_delete():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.crypto = {{ randomUUID: () => "archive-group-1" }};
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.FormData = class FakeFormData {{
+  append() {{}}
+}};
+global.AbortController = class FakeAbortController {{
+  constructor() {{
+    this.aborted = false;
+    this.signal = {{}};
+  }}
+  abort() {{
+    this.aborted = true;
+  }}
+}};
+global.document = {{
+  createElement() {{
+    return {{
+      className: "",
+      textContent: "",
+      append() {{}},
+      appendChild(child) {{ return child; }},
+      addEventListener() {{}},
+      classList: {{ add() {{}}, remove() {{}}, toggle() {{}} }},
+    }};
+  }},
+}};
+global.setInterval = () => 1;
+global.clearInterval = () => {{}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+(async () => {{
+let resolvePost;
+const file = {{ name: "late.pdf", size: 3 }};
+const otherFile = {{ name: "keep.pdf", size: 5, __attachmentPreloadVirtual: true, __attachmentPreloadId: "preload-keep" }};
+const calls = [];
+const errors = [];
+const ctx = {{
+  state: {{
+    ticketId: "ticket-1",
+    selectedFiles: [otherFile],
+    filePreloads: new Map([[otherFile, {{
+      preloadId: "preload-keep",
+      status: "ready",
+      stage: "ready",
+      controller: null,
+      pollTimer: null,
+      error: null,
+      removed: false,
+      restored: true,
+    }}]]),
+    currentArchiveGroupId: null,
+  }},
+  el: {{
+    replyFilesInput: {{ value: "has-value" }},
+    selectedFilesList: null,
+  }},
+  canUseAttachmentPreload: () => true,
+  showError: (message) => errors.push(message),
+  api: (url, options = {{}}) => {{
+    calls.push([url, options.method || "POST"]);
+    if ((options.method || "POST") === "POST") {{
+      return new Promise((resolve) => {{ resolvePost = resolve; }});
+    }}
+    return Promise.resolve({{ ok: true }});
+  }},
+}};
+
+global.TicketComposer.queueSelectedFiles(ctx, [file]);
+await Promise.resolve();
+const preloadBeforeRemove = ctx.state.filePreloads.get(file);
+await global.TicketComposer.removeSelectedFile(ctx, file);
+
+global.TicketComposer.syncRestoredPreloads(ctx, [
+  {{ id: "preload-late", original_filename: "late.pdf", file_size: 3, status: "uploading" }},
+  {{ id: "preload-keep", original_filename: "keep.pdf", file_size: 5, status: "ready" }},
+]);
+const afterRestoreNames = ctx.state.selectedFiles.map((item) => item.name);
+const removedStateStillPending = ctx.state.filePreloads.has(file) && ctx.state.filePreloads.get(file).removed === true;
+
+resolvePost({{ id: "preload-late", status: "uploading" }});
+await Promise.resolve();
+await Promise.resolve();
+await Promise.resolve();
+
+console.log(JSON.stringify({{
+  selectedNames: ctx.state.selectedFiles.map((item) => item.name),
+  afterRestoreNames,
+  removedStateStillPending,
+  hasPreloadState: ctx.state.filePreloads.has(file),
+  otherPreloadId: ctx.state.filePreloads.get(otherFile)?.preloadId || null,
+  aborted: preloadBeforeRemove.controller?.aborted || false,
+  calls,
+  errors,
+  inputValue: ctx.el.replyFilesInput.value,
+}}));
+}})().catch((error) => {{
+  console.error(error);
+  process.exit(1);
+}});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["afterRestoreNames"] == ["keep.pdf"]
+    assert payload["selectedNames"] == ["keep.pdf"]
+    assert payload["removedStateStillPending"] is True
+    assert payload["hasPreloadState"] is False
+    assert payload["otherPreloadId"] == "preload-keep"
+    assert payload["aborted"] is False
+    assert payload["calls"] == [
+        ["/api/v1/tickets/ticket-1/attachment-preloads", "POST"],
+        ["/api/v1/tickets/ticket-1/attachment-preloads/preload-late", "DELETE"],
+    ]
+    assert payload["errors"] == []
+    assert payload["inputValue"] == ""
+
+
+def test_remove_preload_delete_failure_uses_existing_error_surface():
+    repo_root = Path(__file__).resolve().parents[1]
+    composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
+    script = f"""
+const fs = require("fs");
+global.window = global;
+global.TicketApi = {{ formatFileSize: (value) => String(value) }};
+global.document = {{
+  createElement() {{
+    return {{
+      className: "",
+      textContent: "",
+      append() {{}},
+      appendChild(child) {{ return child; }},
+      addEventListener() {{}},
+      classList: {{ add() {{}}, remove() {{}}, toggle() {{}} }},
+    }};
+  }},
+}};
+global.clearInterval = () => {{}};
+eval(fs.readFileSync({json.dumps(str(composer_path))}, "utf8"));
+
+(async () => {{
+const file = {{ name: "ready.pdf", size: 3 }};
+const errors = [];
+const ctx = {{
+  state: {{
+    ticketId: "ticket-1",
+    selectedFiles: [file],
+    filePreloads: new Map([[file, {{ preloadId: "preload-ready", status: "ready", stage: "ready" }}]]),
+  }},
+  el: {{
+    replyFilesInput: {{ value: "has-value" }},
+    selectedFilesList: null,
+  }},
+  canUseAttachmentPreload: () => true,
+  showError: (message) => errors.push(message),
+  api: () => Promise.reject(new Error("server delete failed")),
+}};
+
+await global.TicketComposer.removeSelectedFile(ctx, file);
+await Promise.resolve();
+console.log(JSON.stringify({{
+  selectedCount: ctx.state.selectedFiles.length,
+  errors,
+}}));
+}})().catch((error) => {{
+  console.error(error);
+  process.exit(1);
+}});
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=repo_root,
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["selectedCount"] == 0
+    assert payload["errors"] == ["server delete failed"]
 
 
 def test_successful_send_clears_archive_group_id_and_next_selection_gets_new_one():
@@ -3742,6 +3935,40 @@ def test_remove_ready_preload_deletes_local_file_and_row(tmp_path):
     assert not path.exists()
 
 
+def test_remove_claimed_preload_is_rejected_and_preserves_sent_attachment(tmp_path):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    path = tmp_path / "sent.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id="admin-1",
+        original_filename="sent.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        status="ready",
+        final_attachment_id="attachment-1",
+        created_at=datetime.utcnow(),
+    )
+    session.add(preload)
+    session.commit()
+
+    with pytest.raises(HTTPException) as raised:
+        delete_attachment_preload(
+            ticket_id=ticket.id,
+            preload_id=preload.id,
+            db=session,
+            user=SimpleNamespace(id="admin-1", role="admin"),
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error"]["code"] == "attachment_preload_already_claimed"
+    assert session.get(outbound_service.TicketAttachmentPreload, preload.id) is not None
+    assert path.exists()
+
+
 def test_remove_uploading_preload_marks_cancelled_and_worker_cleans_without_client_delivery(monkeypatch, tmp_path):
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
@@ -3781,6 +4008,61 @@ def test_remove_uploading_preload_marks_cancelled_and_worker_cleans_without_clie
         assert check.get(outbound_service.TicketAttachmentPreload, preload.id) is None
     finally:
         check.close()
+    assert not path.exists()
+
+
+def test_cancelled_uploading_preload_cleans_late_staged_telegram_message(monkeypatch, tmp_path):
+    _engine, SessionFactory, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    user = ticket_messages_service.User(
+        id="agent-1",
+        company_id=ticket.company_id,
+        full_name="Иван Петров",
+        role="agent",
+    )
+    path = tmp_path / "late.pdf"
+    path.write_bytes(b"pdf")
+    preload = outbound_service.TicketAttachmentPreload(
+        id=str(uuid.uuid4()),
+        ticket_id=ticket.id,
+        user_id=user.id,
+        original_filename="late.pdf",
+        mime_type="application/pdf",
+        file_size=3,
+        local_path=str(path),
+        status="uploading",
+        created_at=datetime.utcnow(),
+    )
+    session.add_all([user, preload])
+    session.commit()
+
+    monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
+    monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(outbound_service, "send_message", lambda *_args, **_kwargs: {"result": {"message_id": 501}})
+    deleted = []
+    monkeypatch.setattr(outbound_service, "delete_message", lambda chat_id, message_id: deleted.append((chat_id, str(message_id))) or {"ok": True})
+    monkeypatch.setattr(outbound_service, "send_document_by_file_id", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("client delivery should not run")))
+
+    def _cancel_after_staging_started(*_args, **_kwargs):
+        cancel_session = SessionFactory()
+        try:
+            cancelling = cancel_session.get(outbound_service.TicketAttachmentPreload, preload.id)
+            cancelling.status = "cancelled"
+            cancel_session.commit()
+        finally:
+            cancel_session.close()
+        return {"result": {"message_id": 502, "document": {"file_id": "stage-file-id", "file_unique_id": "stage-unique-id"}}}
+
+    monkeypatch.setattr(outbound_service, "send_document", _cancel_after_staging_started)
+
+    outbound_service.deliver_attachment_preload(preload_id=preload.id)
+
+    check = SessionFactory()
+    try:
+        assert check.get(outbound_service.TicketAttachmentPreload, preload.id) is None
+    finally:
+        check.close()
+    assert deleted == [("staging-chat", "502"), ("staging-chat", "501")]
     assert not path.exists()
 
 
