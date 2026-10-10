@@ -3321,9 +3321,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010b"\] \}\]/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010c"\] \}\]/);
   assert.match(quickRepliesTemplate, /styles\.css\?v=20261010a/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010b/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010c/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 

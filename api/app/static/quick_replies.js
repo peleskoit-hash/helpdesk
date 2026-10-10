@@ -35,6 +35,7 @@
       session: null,
       editing: null,
       draftFiles: [],
+      initialDraft: null,
       uploadInFlight: false,
       modalToken: 0,
       useInFlight: false,
@@ -164,13 +165,42 @@
       renderDraftFiles();
     }
 
+    function draftFileIds() {
+      return state.draftFiles.map((file) => String(file.id));
+    }
+
+    function rememberInitialDraft() {
+      state.initialDraft = {
+        shortTitle: el.titleInput.value,
+        body: el.bodyInput.value,
+        fileIds: draftFileIds(),
+      };
+    }
+
+    function draftChanged() {
+      if (state.uploadInFlight) return true;
+      if (!state.initialDraft) return false;
+      const fileIds = draftFileIds();
+      return el.titleInput.value !== state.initialDraft.shortTitle
+        || el.bodyInput.value !== state.initialDraft.body
+        || fileIds.length !== state.initialDraft.fileIds.length
+        || fileIds.some((id, index) => id !== state.initialDraft.fileIds[index]);
+    }
+
     function closeModal() {
       state.modalToken += 1;
       state.editing = null;
       state.draftFiles = [];
+      state.initialDraft = null;
       state.uploadInFlight = false;
       el.fileInput.value = "";
       el.modal.classList.add("hidden");
+    }
+
+    function requestCloseModal() {
+      if (el.modal.classList.contains("hidden")) return;
+      if (draftChanged() && !window.confirm("Есть несохранённые изменения. Закрыть без сохранения?")) return;
+      closeModal();
     }
 
     function openCreate() {
@@ -184,6 +214,7 @@
       el.authorFooter.textContent = "";
       el.authorFooter.classList.add("hidden");
       setDraftFiles([]);
+      rememberInitialDraft();
       el.modal.classList.remove("hidden");
       el.titleInput.focus();
     }
@@ -199,6 +230,7 @@
       el.authorFooter.textContent = `Создал: ${reply.author_name || reply.author_user_id || "-"}`;
       el.authorFooter.classList.remove("hidden");
       setDraftFiles(reply.saved_files || []);
+      rememberInitialDraft();
       el.modal.classList.remove("hidden");
       el.titleInput.focus();
     }
@@ -312,8 +344,8 @@
     }
 
     el.create.addEventListener("click", openCreate);
-    el.closeModal.addEventListener("click", closeModal);
-    el.cancel.addEventListener("click", closeModal);
+    el.closeModal.addEventListener("click", requestCloseModal);
+    el.cancel.addEventListener("click", requestCloseModal);
     el.save.addEventListener("click", save);
     el.attachFile.addEventListener("click", () => {
       if (!el.attachFile.disabled) el.fileInput.click();
@@ -358,8 +390,20 @@
       const reply = state.replies.find((item) => String(item.id) === String(replyId));
       if (reply) openEdit(reply);
     });
+    el.modal.addEventListener("click", (event) => {
+      if (event.target === el.modal) requestCloseModal();
+    });
+    const keydownHandler = (event) => {
+      if (event.key === "Escape") requestCloseModal();
+    };
+    document.addEventListener("keydown", keydownHandler);
 
     await load();
+    return {
+      destroy() {
+        document.removeEventListener("keydown", keydownHandler);
+      },
+    };
   }
 
   window.HelpdeskQuickReplies = { initQuickRepliesPage };
