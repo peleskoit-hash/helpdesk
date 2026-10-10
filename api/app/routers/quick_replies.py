@@ -1,14 +1,15 @@
 from datetime import datetime
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import QuickReply, QuickReplyUsage, User
+from ..models import QuickReply, QuickReplyUsage, SavedFile, User
+from ..services.saved_files import create_saved_file
 
 
 router = APIRouter(prefix="/api/v1/quick-replies", tags=["quick-replies"])
@@ -17,6 +18,15 @@ router = APIRouter(prefix="/api/v1/quick-replies", tags=["quick-replies"])
 class QuickReplyPayload(BaseModel):
     short_title: str
     body: str
+    saved_file_ids: list[str] | None = None
+
+
+class QuickReplySavedFileOut(BaseModel):
+    id: str
+    display_filename: str
+    file_size: int
+    mime_type: str | None = None
+    created_at: datetime | None = None
 
 
 class QuickReplyOut(BaseModel):
@@ -28,10 +38,11 @@ class QuickReplyOut(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     can_edit: bool = False
+    saved_files: list[QuickReplySavedFileOut] = Field(default_factory=list)
 
 
-def _error(status_code: int, code: str, message: str):
-    raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
+def _error(status_code: int, code: str, message: str, details: dict | None = None):
+    raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": details or {}}})
 
 
 def _can_create(user: CurrentUser) -> bool:
@@ -52,6 +63,56 @@ def _clean_payload(payload: QuickReplyPayload) -> tuple[str, str]:
     return title, body
 
 
+def _payload_has_saved_file_ids(payload: QuickReplyPayload) -> bool:
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    return "saved_file_ids" in fields_set
+
+
+def _dedupe_saved_file_ids(saved_file_ids: list[str] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in saved_file_ids or []:
+        file_id = str(value or "").strip()
+        if file_id and file_id not in seen:
+            result.append(file_id)
+            seen.add(file_id)
+    return result
+
+
+def _saved_file_out(saved_file: SavedFile) -> QuickReplySavedFileOut:
+    return QuickReplySavedFileOut(
+        id=saved_file.id,
+        display_filename=saved_file.display_filename,
+        file_size=saved_file.file_size,
+        mime_type=saved_file.mime_type,
+        created_at=saved_file.created_at,
+    )
+
+
+def _load_saved_files_by_id(db: Session, saved_file_ids: list[str]) -> dict[str, SavedFile]:
+    if not saved_file_ids:
+        return {}
+    rows = db.execute(select(SavedFile).where(SavedFile.id.in_(saved_file_ids))).scalars().all()
+    return {row.id: row for row in rows}
+
+
+def _validate_saved_file_ids(db: Session, saved_file_ids: list[str] | None) -> list[str]:
+    ids = _dedupe_saved_file_ids(saved_file_ids)
+    if len(ids) > 5:
+        _error(422, "quick_reply_saved_files_limit", "К быстрому ответу можно прикрепить не более 5 файлов")
+    files_by_id = _load_saved_files_by_id(db, ids)
+    missing = [file_id for file_id in ids if file_id not in files_by_id]
+    if missing:
+        _error(404, "saved_file_not_found", "Сохранённый файл не найден", {"saved_file_ids": missing})
+    return ids
+
+
+def _reply_saved_file_ids(reply: QuickReply) -> list[str]:
+    return _dedupe_saved_file_ids(reply.saved_file_ids_json if isinstance(reply.saved_file_ids_json, list) else [])
+
+
 def _authors_by_id(db: Session, author_ids: set[str]) -> dict[str, str]:
     if not author_ids:
         return {}
@@ -59,8 +120,14 @@ def _authors_by_id(db: Session, author_ids: set[str]) -> dict[str, str]:
     return {user.id: user.full_name for user in users}
 
 
-def _out(reply: QuickReply, user: CurrentUser, authors: dict[str, str] | None = None) -> QuickReplyOut:
+def _out(
+    reply: QuickReply,
+    user: CurrentUser,
+    authors: dict[str, str] | None = None,
+    saved_files_by_id: dict[str, SavedFile] | None = None,
+) -> QuickReplyOut:
     authors = authors or {}
+    saved_files_by_id = saved_files_by_id or {}
     return QuickReplyOut(
         id=reply.id,
         short_title=reply.short_title,
@@ -70,12 +137,21 @@ def _out(reply: QuickReply, user: CurrentUser, authors: dict[str, str] | None = 
         created_at=reply.created_at,
         updated_at=reply.updated_at,
         can_edit=_can_edit(user, reply),
+        saved_files=[
+            _saved_file_out(saved_files_by_id[file_id])
+            for file_id in _reply_saved_file_ids(reply)
+            if file_id in saved_files_by_id
+        ],
     )
 
 
 def _list_out(db: Session, replies: list[QuickReply], user: CurrentUser) -> list[QuickReplyOut]:
     authors = _authors_by_id(db, {reply.author_user_id for reply in replies})
-    return [_out(reply, user, authors) for reply in replies]
+    saved_file_ids: list[str] = []
+    for reply in replies:
+        saved_file_ids.extend(_reply_saved_file_ids(reply))
+    saved_files_by_id = _load_saved_files_by_id(db, _dedupe_saved_file_ids(saved_file_ids))
+    return [_out(reply, user, authors, saved_files_by_id) for reply in replies]
 
 
 @router.get("", response_model=list[QuickReplyOut])
@@ -99,13 +175,14 @@ def create_quick_reply(
         short_title=title,
         body=body,
         author_user_id=user.id,
+        saved_file_ids_json=_validate_saved_file_ids(db, payload.saved_file_ids),
         created_at=now,
         updated_at=now,
     )
     db.add(reply)
     db.commit()
     db.refresh(reply)
-    return _out(reply, user, _authors_by_id(db, {reply.author_user_id}))
+    return _list_out(db, [reply], user)[0]
 
 
 @router.patch("/{reply_id}", response_model=QuickReplyOut)
@@ -121,12 +198,36 @@ def update_quick_reply(
     if not _can_edit(user, reply):
         _error(403, "quick_reply_edit_forbidden", "Нет прав на редактирование быстрого ответа")
     title, body = _clean_payload(payload)
+    saved_file_ids = None
+    if _payload_has_saved_file_ids(payload):
+        saved_file_ids = _validate_saved_file_ids(db, payload.saved_file_ids)
     reply.short_title = title
     reply.body = body
+    if saved_file_ids is not None:
+        reply.saved_file_ids_json = saved_file_ids
     reply.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(reply)
-    return _out(reply, user, _authors_by_id(db, {reply.author_user_id}))
+    return _list_out(db, [reply], user)[0]
+
+
+@router.post("/files", response_model=QuickReplySavedFileOut)
+def upload_quick_reply_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    if not _can_create(user):
+        _error(403, "quick_reply_file_upload_forbidden", "Нет прав на загрузку файла быстрого ответа")
+    saved_file = create_saved_file(
+        db,
+        content=file.file,
+        display_filename=file.filename or "file.bin",
+        mime_type=file.content_type,
+    )
+    db.commit()
+    db.refresh(saved_file)
+    return _saved_file_out(saved_file)
 
 
 @router.delete("/{reply_id}")
@@ -212,4 +313,4 @@ def use_quick_reply(
         usage.last_used_at = now
     db.commit()
     db.refresh(reply)
-    return _out(reply, user, _authors_by_id(db, {reply.author_user_id}))
+    return _list_out(db, [reply], user)[0]

@@ -1876,6 +1876,7 @@ def ensure_quick_reply_tables() -> None:
                         short_title VARCHAR(255) NOT NULL,
                         body TEXT NOT NULL,
                         author_user_id VARCHAR(36) NOT NULL,
+                        saved_file_ids_json TEXT,
                         created_at TIMESTAMP,
                         updated_at TIMESTAMP
                     )
@@ -1903,6 +1904,7 @@ def ensure_quick_reply_tables() -> None:
                         short_title VARCHAR(255) NOT NULL,
                         body TEXT NOT NULL,
                         author_user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                        saved_file_ids_json JSONB,
                         created_at TIMESTAMP,
                         updated_at TIMESTAMP
                     )
@@ -1921,6 +1923,23 @@ def ensure_quick_reply_tables() -> None:
                     """
                 )
             )
+        if dialect == "sqlite":
+            rows = conn.execute(text("PRAGMA table_info(quick_replies)")).mappings().all()
+            existing = {row["name"] for row in rows}
+        else:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'quick_replies'
+                    """
+                )
+            ).mappings().all()
+            existing = {row["column_name"] for row in rows}
+        if "saved_file_ids_json" not in existing:
+            column_type = "TEXT" if dialect == "sqlite" else "JSONB"
+            conn.execute(text(f"ALTER TABLE quick_replies ADD COLUMN saved_file_ids_json {column_type}"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_replies_author_user_id ON quick_replies(author_user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_replies_updated_at ON quick_replies(updated_at)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_quick_reply_usage_user_reply ON quick_reply_usage(user_id, quick_reply_id)"))

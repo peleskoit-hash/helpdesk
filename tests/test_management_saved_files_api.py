@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from api.app.auth import CurrentUser
 from api.app.db import Base, get_db
-from api.app.models import BotButtonSetting, SavedFile
+from api.app.models import BotButtonSetting, QuickReply, SavedFile
 from api.app.routers import management_saved_files
 from api.app.services import saved_files
 
@@ -72,6 +72,22 @@ def _seed_button_row(session, **overrides) -> BotButtonSetting:
     }
     payload.update(overrides)
     row = BotButtonSetting(**payload)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _seed_quick_reply(session, saved_file_ids: list[str]) -> QuickReply:
+    now = datetime.utcnow()
+    row = QuickReply(
+        id=str(uuid.uuid4()),
+        short_title="Reply",
+        body="Body",
+        author_user_id="agent-1",
+        saved_file_ids_json=saved_file_ids,
+        created_at=now,
+        updated_at=now,
+    )
     session.add(row)
     session.commit()
     return row
@@ -225,6 +241,50 @@ def test_multiple_bot_button_refs_do_not_duplicate_usage_source(monkeypatch, tmp
     item = _client(session).get("/api/v1/management/saved-files").json()["items"][0]
 
     assert item["usage_sources"] == ["bot_buttons"]
+
+
+def test_quick_reply_usage_marks_file_used(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    Session = _session_factory()
+    session = Session()
+    saved = _create_saved(session)
+    _seed_quick_reply(session, [saved.id])
+
+    item = _client(session).get("/api/v1/management/saved-files").json()["items"][0]
+
+    assert item["used"] is True
+    assert item["usage_sources"] == ["quick_replies"]
+
+
+def test_bot_button_and_quick_reply_usage_sources_are_both_reported(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    Session = _session_factory()
+    session = Session()
+    saved = _create_saved(session)
+    _seed_button_row(session, files_json=[f"saved:{saved.id}"])
+    _seed_quick_reply(session, [saved.id])
+
+    item = _client(session).get("/api/v1/management/saved-files").json()["items"][0]
+
+    assert item["used"] is True
+    assert item["usage_sources"] == ["bot_buttons", "quick_replies"]
+
+
+def test_quick_reply_used_file_delete_is_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    Session = _session_factory()
+    session = Session()
+    saved = _create_saved(session)
+    saved_id = saved.id
+    path = saved_files.resolve_saved_file_path(saved)
+    _seed_quick_reply(session, [saved.id])
+
+    response = _client(session).delete(f"/api/v1/management/saved-files/{saved.id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"]["details"] == {"used": True, "usage_sources": ["quick_replies"]}
+    assert session.get(SavedFile, saved_id) is not None
+    assert path.exists()
 
 
 def test_used_file_delete_is_blocked_and_preserves_row_and_file(monkeypatch, tmp_path):

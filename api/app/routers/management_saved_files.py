@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import BotButtonSetting, SavedFile
+from ..models import BotButtonSetting, QuickReply, SavedFile
 from ..services.saved_files import (
     SavedFileStorageError,
     create_saved_file,
@@ -63,12 +63,19 @@ def _bot_button_file_refs(row: BotButtonSetting) -> set[str]:
 
 
 def _usage_sources_for_saved_file(db: Session, saved_file_id: str) -> list[str]:
+    usage_sources: list[str] = []
     ref = f"saved:{saved_file_id}"
     rows = db.execute(select(BotButtonSetting)).scalars().all()
     for row in rows:
         if ref in _bot_button_file_refs(row):
-            return ["bot_buttons"]
-    return []
+            usage_sources.append("bot_buttons")
+            break
+    quick_replies = db.execute(select(QuickReply)).scalars().all()
+    for reply in quick_replies:
+        if isinstance(reply.saved_file_ids_json, list) and saved_file_id in {str(value) for value in reply.saved_file_ids_json}:
+            usage_sources.append("quick_replies")
+            break
+    return usage_sources
 
 
 def _saved_file_out(db: Session, saved_file: SavedFile) -> dict:
