@@ -20,7 +20,6 @@
     };
 
     const el = {
-      statusText: document.getElementById("statusText"),
       backToSettingsBtn: document.getElementById("backToSettingsBtn"),
       automaticMessagesRoot: document.getElementById("automaticMessagesRoot"),
       emptyAutomaticMessagesText: document.getElementById("emptyAutomaticMessagesText"),
@@ -31,9 +30,7 @@
       okErrorBtn: document.getElementById("okErrorBtn"),
     };
 
-    function setStatus(text) {
-      if (el.statusText) el.statusText.textContent = text;
-    }
+    function setStatus() {}
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -606,16 +603,14 @@
       el.errorText?.select();
       try { await navigator.clipboard.writeText(el.errorText?.value || ""); }
       catch { document.execCommand("copy"); }
-      setStatus("Текст ошибки скопирован");
     });
     closeOnBackdropClick(el.errorModal, closeError);
     document.addEventListener("keydown", handlePageKeydown);
 
-    window.HelpdeskSidebar.init({ onError: (error) => setStatus(`Ошибка: ${error.message}`) })
+    window.HelpdeskSidebar.init({ onError: (error) => showError(error.message) })
       .then(loadTemplates)
       .catch((error) => {
         if (error?.status !== 401) showError(error.message);
-        setStatus("Ошибка загрузки автоматических сообщений");
       });
 
     return () => {

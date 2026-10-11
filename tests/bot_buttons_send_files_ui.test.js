@@ -206,13 +206,13 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20260803b/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20260803b/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261011a/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20261011a/);
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261010a/);
-  assert.match(appShellSource, /ticket\.js\?v=20261010a/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261011b/);
+  assert.match(appShellSource, /ticket\.js\?v=20261011b/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
 });
 
@@ -1850,7 +1850,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261009a/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261011b/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
@@ -3321,9 +3321,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261010c"\] \}\]/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261011b"\] \}\]/);
   assert.match(quickRepliesTemplate, /styles\.css\?v=20261010a/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261010c/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261011b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
@@ -3405,7 +3405,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261009f/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261010b/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);
@@ -3419,7 +3419,7 @@ test('ticket quick reply button sits between add files and send', () => {
 test('ticket quick reply button shows visual Ctrl+Q tooltip on hover and focus', () => {
   const toggleStyle = sourceBetween(stylesSource, '.quick-replies-toggle {', '.quick-replies-panel {');
   assert.match(toggleStyle, /\.quick-replies-icon \{[\s\S]*width: 24px;[\s\S]*height: 24px;[\s\S]*object-fit: contain;/);
-  assert.match(toggleStyle, /\.quick-replies-toggle::after \{[\s\S]*content: "CTRL\+Q";[\s\S]*top: calc\(100% \+ 6px\);[\s\S]*opacity: 0;/);
+  assert.match(toggleStyle, /\.quick-replies-toggle::after \{[\s\S]*content: "CTRL\+Q";[\s\S]*bottom: calc\(100% \+ 6px\);[\s\S]*opacity: 0;/);
   assert.match(toggleStyle, /\.quick-replies-toggle:hover::after,\s*\.quick-replies-toggle:focus-visible::after \{[\s\S]*opacity: 1;/);
   assert.match(toggleStyle, /position: absolute;/);
   assert.match(toggleStyle, /pointer-events: none;/);

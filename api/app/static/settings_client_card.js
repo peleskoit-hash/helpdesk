@@ -126,7 +126,6 @@ const uiText = {
 };
 
 const el = {
-  statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   addClientCardBlockBtn: document.getElementById("addClientCardBlockBtn"),
   clientCardMainTabs: Array.from(document.querySelectorAll("[data-client-card-main-tab]")),
@@ -230,7 +229,7 @@ const el = {
   okErrorBtn: document.getElementById("okErrorBtn"),
 };
 
-function setStatus(text) { el.statusText.textContent = text; }
+function setStatus() {}
 function escapeHtml(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 
 function syncClientCardTabs() {
@@ -2147,19 +2146,16 @@ const handlePageKeydown = (e) => {
     } catch {
       document.execCommand("copy");
     }
-    setStatus("Текст ошибки скопирован");
   });
 
   document.addEventListener("keydown", handlePageKeydown);
   syncClientCardTabs();
 
   setStatus("Загружаю настройки...");
-  window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
+  window.HelpdeskSidebar.init({ onError: (e) => showError(e.message) })
     .then(() => loadClientCardConfig())
-    .then(() => setStatus("Готово"))
     .catch((e) => {
       if (e?.status !== 401) showError(e.message);
-      setStatus("Ошибка загрузки настроек");
     });
 })();
 return () => {

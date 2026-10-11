@@ -17,8 +17,8 @@
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20260916a"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20260930a"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20260824a"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20260803b"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261011a"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261011a"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
@@ -30,14 +30,14 @@
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20261005a",
-        "/static/settings_bot_buttons.js?v=20261005b",
+        "/static/settings_bot_buttons.js?v=20261011a",
       ],
     }],
     ["/settings/automatic-messages", {
       page: "settings-automatic-messages",
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/settings_automatic_messages.js?v=20260605a",
+        "/static/settings_automatic_messages.js?v=20261011a",
       ],
     }],
     ["/settings/notification-bot-basic", {
@@ -45,7 +45,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/settings_notification_bot_basic.js?v=20261005b",
+        "/static/settings_notification_bot_basic.js?v=20261011a",
       ],
     }],
     ["/profile/notification-bot", {
@@ -53,13 +53,13 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/profile_notification_bot.js?v=20261005a",
+        "/static/profile_notification_bot.js?v=20261011a",
       ],
     }],
-    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20260911a"] }],
-    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261009a"] }],
-    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20260604a"] }],
-    ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261010c"] }],
+    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261011a"] }],
+    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261011a"] }],
+    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261011a"] }],
+    ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261011b"] }],
     ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],
     ["/management/users", {
       page: "management-users",
@@ -72,7 +72,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20260904a"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261009a"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261011b"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -85,7 +85,7 @@
         "/static/ticket_composer.js?v=20261010b",
         "/static/ticket_controls.js?v=20261009d",
         "/static/ticket_message_view.js?v=20260810b",
-        "/static/ticket.js?v=20261010a",
+        "/static/ticket.js?v=20261011b",
       ],
     },
   ];
@@ -243,11 +243,12 @@
   }
 
   function renderShellError(error) {
-    const status = document.getElementById("statusText");
     const message = error?.message || "ошибка загрузки страницы";
-    if (status) {
-      status.textContent = `Ошибка: ${message}`;
-    }
+    window.HelpdeskErrorDialog?.show?.({
+      title: "Ошибка загрузки страницы",
+      message: "Не удалось открыть страницу внутри приложения. Технические подробности можно скопировать ниже.",
+      error: message,
+    });
   }
 
   async function ensurePageScript(page) {

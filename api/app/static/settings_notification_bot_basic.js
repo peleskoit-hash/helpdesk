@@ -11,14 +11,11 @@
     };
 
     const el = {
-      statusText: document.getElementById("statusText"),
       backToSettingsBtn: document.getElementById("backToSettingsBtn"),
       root: document.getElementById("notificationBotBasicRoot"),
     };
 
-    function setStatus(text) {
-      if (el.statusText) el.statusText.textContent = text;
-    }
+    function setStatus() {}
 
     function escapeHtml(value) {
       if (tg.escapeHtml) return tg.escapeHtml(value);
@@ -241,7 +238,6 @@
     }
 
     async function load() {
-      setStatus("Загружаю настройки уведомлений...");
       const payload = await api(apiBase);
       state.items = Array.isArray(payload?.items) ? payload.items : [];
       state.drafts = new Map();
@@ -253,7 +249,6 @@
       });
       state.activeType = state.items[0]?.type || "";
       render();
-      setStatus("Готово");
     }
 
     async function saveActive() {
@@ -302,10 +297,10 @@
       window.location.href = "/settings";
     });
 
-    window.HelpdeskSidebar.init({ onError: (error) => setStatus(`Ошибка: ${error.message}`) })
+    window.HelpdeskSidebar.init({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) })
       .then(load)
       .catch((error) => {
-        setStatus(`Ошибка: ${error.message}`);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось загрузить страницу.", error });
       });
     window.addEventListener("beforeunload", handleBeforeUnload);
 

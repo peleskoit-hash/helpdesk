@@ -14,7 +14,6 @@ const BRANCH_OPTIONS_BY_DESTINATION = {
 const LOCATION_OPTIONS = ["Офисный", "Удалённый"];
 
 const el = {
-  statusText: document.getElementById("statusText"),
   filterFieldSelect: document.getElementById("filterFieldSelect"),
   filterValueSelect: document.getElementById("filterValueSelect"),
   locationTypeSelect: document.getElementById("locationTypeSelect"),
@@ -33,11 +32,7 @@ const el = {
   backToManagementBtn: document.getElementById("backToManagementBtn"),
 };
 
-function setStatus(text) {
-  const value = String(text || "");
-  el.statusText.textContent = value;
-  el.statusText.classList.toggle("hidden", !value || value === "Готово");
-}
+function setStatus() {}
 function showError(message) { el.errorText.value = message || "Неизвестная ошибка"; el.errorModal.classList.remove("hidden"); }
 function closeError() { el.errorModal.classList.add("hidden"); }
 function escapeHtml(value) {
@@ -203,16 +198,11 @@ async function sendBroadcast() {
     el.errorText.select();
     try { await navigator.clipboard.writeText(el.errorText.value); }
     catch { document.execCommand("copy"); }
-    setStatus("Текст ошибки скопирован");
   });
-
-  setStatus("Загрузка...");
-  window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
+  window.HelpdeskSidebar.init({ onError: (e) => showError(e.message) })
     .then(() => loadRecipients())
-    .then(() => setStatus("Готово"))
     .catch((error) => {
       if (error?.status !== 401) showError(error.message);
-      setStatus("Ошибка загрузки");
     });
 })();
 return () => {

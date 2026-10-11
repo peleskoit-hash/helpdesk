@@ -42,7 +42,6 @@
       deletingIds: new Set(),
     };
     const el = {
-      status: document.getElementById("statusText"),
       create: document.getElementById("createQuickReplyBtn"),
       list: document.getElementById("quickRepliesList"),
       modal: document.getElementById("quickReplyModal"),
@@ -61,9 +60,7 @@
       filesList: document.getElementById("quickReplyFilesList"),
     };
 
-    function setStatus(text) {
-      if (el.status) el.status.textContent = text;
-    }
+    function setStatus() {}
 
     function canCreate() {
       const role = state.session?.effective_user?.role;
@@ -236,13 +233,13 @@
     }
 
     async function load() {
-      setStatus("Загружаю...");
+
       state.session = await api("/api/v1/auth/session");
       state.replies = await api("/api/v1/quick-replies");
       el.create.classList.toggle("hidden", !canCreate());
       el.create.disabled = !canCreate();
       renderReplies();
-      setStatus(ticketMode ? `Контекст заявки: ${ticketId}` : "Готово");
+
     }
 
     async function save() {
@@ -264,7 +261,7 @@
         closeModal();
         await load();
       } catch (e) {
-        setStatus(e.message);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось выполнить действие.", error: e });
         renderDraftFiles();
       }
     }
@@ -284,9 +281,9 @@
         if (token !== state.modalToken) return;
         if (!savedFile?.id) throw new Error("Сервер не вернул файл");
         state.draftFiles = [...state.draftFiles.filter((item) => item.id !== savedFile.id), savedFile];
-        setStatus("Файл прикреплён");
+
       } catch (e) {
-        if (token === state.modalToken) setStatus(e.message);
+        if (token === state.modalToken) window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось выполнить действие.", error: e });
       } finally {
         if (token === state.modalToken) {
           state.uploadInFlight = false;
@@ -339,7 +336,7 @@
       } catch (e) {
         state.deletingIds.delete(replyId);
         renderReplies();
-        setStatus(e.message);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось выполнить действие.", error: e });
       }
     }
 
@@ -364,14 +361,14 @@
       if (deleteId) {
         event.stopPropagation();
         const reply = state.replies.find((item) => String(item.id) === String(deleteId));
-        if (reply) void deleteReply(reply).catch((e) => setStatus(e.message));
+        if (reply) void deleteReply(reply).catch((e) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось удалить быстрый ответ.", error: e }));
         return;
       }
       const useId = event.target?.dataset?.use;
       if (useId) {
         event.stopPropagation();
         const reply = state.replies.find((item) => String(item.id) === String(useId));
-        if (reply) void useReply(reply).catch((e) => setStatus(e.message));
+        if (reply) void useReply(reply).catch((e) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось применить быстрый ответ.", error: e }));
         return;
       }
       const card = event.target?.closest?.("[data-reply-id]");

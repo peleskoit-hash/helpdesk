@@ -16,7 +16,6 @@ const statusLabels = {
 };
 
 const el = {
-  statusText: document.getElementById("statusText"),
   statusBoardGrid: document.getElementById("statusBoardGrid"),
   statusBoardEmpty: document.getElementById("statusBoardEmpty"),
   errorModal: document.getElementById("errorModal"),
@@ -26,7 +25,7 @@ const el = {
   okErrorBtn: document.getElementById("okErrorBtn"),
 };
 
-function setStatus(text) { el.statusText.textContent = text; }
+function setStatus() {}
 function showError(message) { el.errorText.value = message || "Неизвестная ошибка"; el.errorModal.classList.remove("hidden"); }
 function closeError() { el.errorModal.classList.add("hidden"); }
 function escapeHtml(value) {
@@ -203,11 +202,8 @@ function stopPolling() {
     el.errorText.select();
     try { await navigator.clipboard.writeText(el.errorText.value); }
     catch { document.execCommand("copy"); }
-    setStatus("Текст ошибки скопирован");
   });
-
-  setStatus("Загрузка...");
-  window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
+  window.HelpdeskSidebar.init({ onError: (e) => showError(e.message) })
     .then(() => loadStatusBoard())
     .then(() => {
       setStatus("Готово");
@@ -217,7 +213,6 @@ function stopPolling() {
       if (error?.status !== 401) {
         showError(error.message);
       }
-      setStatus("Ошибка загрузки");
     });
 
   window.addEventListener("beforeunload", stopPolling);

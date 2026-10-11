@@ -73,13 +73,10 @@
 
     const el = {
       root: document.getElementById("profileNotificationBotRoot"),
-      statusText: document.getElementById("statusText"),
       backToTicketsBtn: document.getElementById("backToTicketsBtn"),
     };
 
-    function setStatus(text) {
-      if (el.statusText) el.statusText.textContent = text;
-    }
+    function setStatus() {}
 
     function escapeHtml(value) {
       if (tg.escapeHtml) return tg.escapeHtml(value);
@@ -451,11 +448,9 @@
     }
 
     async function load() {
-      setStatus("Загружаю настройки уведомлений...");
       const payload = await api(apiBase);
       applyPayload(payload);
       render();
-      setStatus("Готово");
     }
 
     async function save(options = {}) {
@@ -477,7 +472,7 @@
         render();
         setStatus("Сохранено");
       } catch (error) {
-        setStatus(`Ошибка: ${error.message || "не удалось сохранить"}`);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка сохранения", message: "Не удалось сохранить настройки.", error });
         render();
       }
     }
@@ -495,7 +490,7 @@
         render();
         setStatus("Базовые настройки скопированы");
       } catch (error) {
-        setStatus(`Ошибка: ${error.message || "не удалось восстановить"}`);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка восстановления", message: "Не удалось восстановить базовые настройки.", error });
       }
     }
 
@@ -507,10 +502,10 @@
       window.location.href = "/tickets";
     });
 
-    window.HelpdeskSidebar.init({ onError: (error) => setStatus(`Ошибка: ${error.message}`) })
+    window.HelpdeskSidebar.init({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) })
       .then(load)
       .catch((error) => {
-        setStatus(`Ошибка: ${error.message}`);
+        window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось загрузить страницу.", error });
       });
 
     return () => {

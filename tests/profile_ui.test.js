@@ -8,6 +8,14 @@ const template = fs.readFileSync(path.join(root, "api", "app", "templates", "pro
 const script = fs.readFileSync(path.join(root, "api", "app", "static", "profile.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "api", "app", "static", "styles.css"), "utf8");
 
+function sourceBetween(source, start, end) {
+  const startIndex = source.indexOf(start);
+  assert.notEqual(startIndex, -1, `missing start marker: ${start}`);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.notEqual(endIndex, -1, `missing end marker: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
 test("profile page template contains expected read-only fields and edit modals", () => {
   assert.match(template, /data-shell-page="profile"/);
   assert.match(template, /id="profileAvatar"/);
@@ -62,8 +70,10 @@ test("profile typography is visually stronger", () => {
   assert.match(styles, /\.profile-avatar-image\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;/);
   assert.match(styles, /\.profile-label\s*\{[\s\S]*font-size:\s*18px;/);
   assert.match(styles, /\.profile-value\s*\{[\s\S]*font-size:\s*22px;/);
-  assert.doesNotMatch(styles, /\.profile-label\s*\{[\s\S]*font-size:\s*19px;/);
-  assert.doesNotMatch(styles, /\.profile-value\s*\{[\s\S]*font-size:\s*23px;/);
+  const labelStyle = sourceBetween(styles, ".profile-label {", ".profile-value {");
+  assert.doesNotMatch(labelStyle, /font-size:\s*19px;/);
+  const valueStyle = sourceBetween(styles, ".profile-value {", ".profile-edit-btn {");
+  assert.doesNotMatch(valueStyle, /font-size:\s*23px;/);
   assert.match(styles, /\.profile-edit-btn\s*\{[\s\S]*width:\s*48px;[\s\S]*height:\s*48px;[\s\S]*font-size:\s*28px;/);
 });
 

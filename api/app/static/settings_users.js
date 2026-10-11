@@ -10,7 +10,6 @@ const roleLabels = { admin: "Администратор", agent: "Сотрудн
 const statusLabels = { offline: "Не в сети", online: "В сети", on_ticket: "На заявке", waiting: "В ожидании", lunch: "Обед" };
 
 const el = {
-  statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   createUserBtn: document.getElementById("createUserBtn"),
   usersTableBody: document.getElementById("usersTableBody"),
@@ -35,7 +34,7 @@ const el = {
   okErrorBtn: document.getElementById("okErrorBtn"),
 };
 
-function setStatus(text) { el.statusText.textContent = text; }
+function setStatus() {}
 function escapeHtml(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 function fmtDate(d) { return d ? new Date(d).toLocaleString("ru-RU", { hour12: false }) : "-"; }
 
@@ -217,17 +216,14 @@ const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); c
     el.errorText.select();
     try { await navigator.clipboard.writeText(el.errorText.value); }
     catch { document.execCommand("copy"); }
-    setStatus("Текст ошибки скопирован");
   });
   document.addEventListener("keydown", handlePageKeydown);
 
   setStatus("Загружаю настройки...");
-  window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
+  window.HelpdeskSidebar.init({ onError: (e) => showError(e.message) })
     .then(() => loadUsers())
-    .then(() => setStatus("Готово"))
     .catch((e) => {
       if (e?.status !== 401) showError(e.message);
-      setStatus("Ошибка загрузки настроек");
     });
 })();
 return () => {

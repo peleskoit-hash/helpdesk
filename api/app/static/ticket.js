@@ -83,7 +83,6 @@ const el = {
   roleControl: document.getElementById("roleControl"),
   agentSelect: document.getElementById("agentSelect"),
   agentControl: document.getElementById("agentControl"),
-  statusText: document.getElementById("statusText"),
   ticketSubject: document.getElementById("ticketSubject"),
   ticketStatusBadges: document.getElementById("ticketStatusBadges"),
   instructionBtn: document.getElementById("instructionBtn"),
@@ -390,7 +389,7 @@ async function loadTaskPanel(options = {}) {
   } catch (e) {
     state.taskPanelItems = [];
     renderTaskPanel();
-    if (!options.silent) setStatus(`Ошибка панели задач: ${e.message}`);
+    if (!options.silent) showError(`Не удалось загрузить панель задач.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
@@ -848,8 +847,7 @@ async function consumePendingQuickReplyUse() {
     const token = ++state.quickReplyUseSeq;
     await applyQuickReplyToComposer(payload, "", token, state.card?.id);
   } catch (e) {
-    setStatus(`Ошибка быстрых ответов: ${e.message || "не удалось подготовить вложения"}`);
-    showError(e.message || "Не удалось подготовить вложения быстрого ответа");
+    showError(`Не удалось подготовить вложения быстрого ответа.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
@@ -1056,9 +1054,7 @@ function messageViewCtx() {
 }
 
 // ===== modals =====
-function setStatus(text) {
-  el.statusText.textContent = text;
-}
+function setStatus() {}
 
 function showError(message) {
   el.errorText.value = message || "Неизвестная ошибка";
@@ -1303,7 +1299,7 @@ async function loadTabCounts(options = {}) {
     const sidebarState = window.HelpdeskSidebar.getState();
     state.counts = sidebarState.counts || state.counts;
   } catch (e) {
-    if (!silent) setStatus(`Ошибка счётчиков: ${e.message}`);
+    if (!silent) showError(`Не удалось обновить счётчики заявок.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
@@ -1889,7 +1885,7 @@ function bindPageHandlers() {
       saveDraftSelection();
     });
     el.quickRepliesBtn.addEventListener("click", (event) => {
-      void toggleQuickRepliesPanel({ focusSearch: false }).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+      void toggleQuickRepliesPanel({ focusSearch: false }).catch((e) => showError(`Не удалось открыть быстрые ответы.\n\n${e.message || "Неизвестная ошибка"}`));
     });
   }
   if (el.quickRepliesSearchInput) {
@@ -1911,11 +1907,11 @@ function bindPageHandlers() {
         const row = rows[state.quickRepliesHighlightedIndex];
         if (row === el.quickRepliesSearchInput) return;
         if (row === el.quickRepliesEditorRow) {
-          void openQuickRepliesEditorFromPanel().catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+          void openQuickRepliesEditorFromPanel().catch((e) => showError(`Не удалось открыть редактор быстрых ответов.\n\n${e.message || "Неизвестная ошибка"}`));
           return;
         }
         const reply = state.quickReplies.find((item) => String(item.id) === String(row?.dataset?.quickReplyId));
-        if (reply) void useQuickReply(reply).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+        if (reply) void useQuickReply(reply).catch((e) => showError(`Не удалось вставить быстрый ответ.\n\n${e.message || "Неизвестная ошибка"}`));
       } else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -1927,7 +1923,7 @@ function bindPageHandlers() {
     el.quickRepliesPanelRows.addEventListener("click", (event) => {
       const row = event.target?.closest?.("[data-quick-reply-id]");
       const reply = state.quickReplies.find((item) => String(item.id) === String(row?.dataset?.quickReplyId));
-      if (reply) void useQuickReply(reply).catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+      if (reply) void useQuickReply(reply).catch((e) => showError(`Не удалось вставить быстрый ответ.\n\n${e.message || "Неизвестная ошибка"}`));
     });
     el.quickRepliesPanelRows.addEventListener("mouseover", (event) => {
       const row = event.target?.closest?.("[data-quick-reply-id]");
@@ -1939,7 +1935,7 @@ function bindPageHandlers() {
   if (el.quickRepliesEditorRow) {
     el.quickRepliesEditorRow.addEventListener("click", () => {
       if (el.quickRepliesEditorRow.disabled) return;
-      void openQuickRepliesEditorFromPanel().catch((e) => setStatus(`Ошибка быстрых ответов: ${e.message}`));
+      void openQuickRepliesEditorFromPanel().catch((e) => showError(`Не удалось открыть редактор быстрых ответов.\n\n${e.message || "Неизвестная ошибка"}`));
     });
   }
 
@@ -1962,10 +1958,8 @@ function bindPageHandlers() {
     el.errorText.select();
     try {
       await navigator.clipboard.writeText(el.errorText.value);
-      setStatus("Текст ошибки скопирован");
     } catch {
       document.execCommand("copy");
-      setStatus("Текст ошибки скопирован");
     }
   });
   closeOnBackdropClick(el.errorModal, closeError);
@@ -1978,7 +1972,7 @@ function bindPageHandlers() {
       const inModal = Boolean(document.activeElement?.closest?.(".modal"));
       if (!inModal && (document.activeElement === el.messageInput || tag === "body" || document.activeElement === el.quickRepliesSearchInput)) {
         e.preventDefault();
-        void toggleQuickRepliesPanel({ focusSearch: true }).catch((err) => setStatus(`Ошибка быстрых ответов: ${err.message}`));
+        void toggleQuickRepliesPanel({ focusSearch: true }).catch((err) => showError(`Не удалось открыть быстрые ответы.\n\n${err.message || "Неизвестная ошибка"}`));
         return;
       }
     }

@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   tab: "active",
   sort: "created_at",
   order: "desc",
@@ -36,7 +36,6 @@ const el = {
   freezeBtn: document.getElementById("freezeBtn"),
   unfreezeBtn: document.getElementById("unfreezeBtn"),
   closeBtn: document.getElementById("closeBtn"),
-  statusText: document.getElementById("statusText"),
 };
 
 function headers() {
@@ -47,9 +46,7 @@ function headers() {
   };
 }
 
-function setStatus(text) {
-  el.statusText.textContent = text;
-}
+function setStatus() {}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -193,7 +190,7 @@ async function ticketAction(action, body = null) {
     if (action === "reply" || action === "comment") el.messageInput.value = "";
     setStatus("Готово");
   } catch (e) {
-    setStatus(`Ошибка: ${e.message}`);
+    window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось выполнить действие.", error: e });
   }
 }
 

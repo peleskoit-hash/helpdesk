@@ -17,7 +17,6 @@ let cropState = null;
 let activePointerId = null;
 
 const el = {
-  statusText: document.getElementById("statusText"),
   backToTicketsBtn: document.getElementById("backToTicketsBtn"),
   loading: document.getElementById("profileLoading"),
   error: document.getElementById("profileError"),
@@ -68,9 +67,7 @@ const el = {
   passwordModalError: document.getElementById("passwordModalError"),
 };
 
-function setStatus(text) {
-  if (el.statusText) el.statusText.textContent = text || "";
-}
+function setStatus() {}
 
 function setText(node, value) {
   if (node) node.textContent = String(value ?? "");
@@ -657,7 +654,7 @@ function bind() {
 }
 
 bind();
-window.HelpdeskSidebar?.init?.({ onError: (error) => setStatus(`Ошибка: ${error.message}`) }).catch(() => {});
+window.HelpdeskSidebar?.init?.({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) }).catch(() => {});
 loadProfile();
 
 return () => {

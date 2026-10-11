@@ -84,7 +84,6 @@ async function settle() {
 
 async function loadQuickReplies({ replies = [], confirm = () => true } = {}) {
   const ids = [
-    "statusText",
     "createQuickReplyBtn",
     "quickRepliesList",
     "quickReplyModal",

@@ -190,7 +190,6 @@ function collectElements() {
     nextPageBtn: byId("nextPageBtn"),
     paginationPages: byId("paginationPages"),
     emptyText: byId("emptyText"),
-    statusText: byId("statusText"),
     bulkAssignBtn: byId("bulkAssignBtn"),
     bulkCloseBtn: byId("bulkCloseBtn"),
     bulkDeleteBtn: byId("bulkDeleteBtn"),
@@ -275,7 +274,6 @@ const REQUIRED_LIST_ELEMENT_KEYS = [
   "nextPageBtn",
   "paginationPages",
   "emptyText",
-  "statusText",
 ];
 
 function requireListElements() {
@@ -339,7 +337,7 @@ async function clearSearchQuery() {
   }
 }
 
-function setStatus(text) { el.statusText.textContent = text; }
+function setStatus() {}
 
 function showError(message) {
   el.errorText.value = message || "Неизвестная ошибка";
@@ -458,7 +456,7 @@ async function fetchTaskPanelItems(options = {}) {
     state.taskPanelItems = await api("/api/v1/tickets/task-panel");
   } catch (e) {
     state.taskPanelItems = [];
-    if (!options.silent) setStatus(`Ошибка панели задач: ${e.message}`);
+    if (!options.silent) showError(`Не удалось загрузить панель задач.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
@@ -1556,7 +1554,7 @@ async function loadTickets(options = {}) {
     renderTable();
     setStatus("Готово");
   } catch (e) {
-    if (!silent) setStatus(`Ошибка: ${e.message}`);
+    if (!silent) showError(`Не удалось загрузить список заявок.\n\n${e.message || "Неизвестная ошибка"}`);
   } finally {
     state.isLoading = false;
     if (pendingLoadOptions) {
@@ -1574,7 +1572,7 @@ async function loadCounts(options = {}) {
     const sidebarState = window.HelpdeskSidebar.getState();
     state.counts = sidebarState.counts || state.counts;
   } catch (e) {
-    if (!silent) setStatus(`Ошибка счётчиков: ${e.message}`);
+    if (!silent) showError(`Не удалось обновить счётчики заявок.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
@@ -1746,7 +1744,6 @@ function init() {
     } catch {
       document.execCommand("copy");
     }
-    setStatus("Текст ошибки скопирован");
   }, { signal: pageSignal });
 
   el.searchInput.addEventListener("input", () => {
@@ -1832,7 +1829,6 @@ async function runTicketsListPage() {
 
 runTicketsListPage().catch((error) => {
   const message = error?.message || "Ошибка загрузки списка заявок";
-  setStatus(`Ошибка: ${message}`);
   showError(message);
 });
 

@@ -115,7 +115,6 @@ function isSystemMenuTypeRecord(item) {
 
 function initSettingsBotButtonsPage() {
 const el = {
-  statusText: document.getElementById("statusText"),
   backToSettingsBtn: document.getElementById("backToSettingsBtn"),
   pageTitle: document.getElementById("botButtonsPageTitle"),
   breadcrumb: document.getElementById("botButtonsBreadcrumb"),
@@ -247,9 +246,7 @@ const OPERATOR_OPTIONS = {
   ],
 };
 
-function setStatus(text) {
-  if (el.statusText) el.statusText.textContent = text;
-}
+function setStatus() {}
 
 const {
   api,
@@ -884,7 +881,7 @@ function bindBreadcrumbSaveButton() {
     try {
       await saveInstruction();
     } catch (error) {
-      setStatus(`Ошибка: ${error?.message || "Не удалось сохранить"}`);
+      window.HelpdeskErrorDialog?.show?.({ title: "Ошибка сохранения", message: "Не удалось сохранить настройки кнопок бота.", error });
     }
   });
 }
@@ -1355,7 +1352,7 @@ window.addEventListener("beforeunload", handleBeforeUnload);
     discardEditorChanges,
   });
   el.backToSettingsBtn?.addEventListener("click", handleBack);
-window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.message}`) })
+window.HelpdeskSidebar.init({ onError: (e) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error: e }) })
     .then(async () => {
       await loadAssignees();
       const filesPayload = await api("/api/v1/settings/bot-buttons/files");
@@ -1371,7 +1368,7 @@ window.HelpdeskSidebar.init({ onError: (e) => setStatus(`Ошибка: ${e.messa
       await loadMenuTypes();
     })
     .catch((e) => {
-      setStatus(`Ошибка: ${e.message}`);
+      window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось загрузить настройки кнопок бота.", error: e });
     });
 })();
 return {
