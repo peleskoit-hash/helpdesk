@@ -458,6 +458,26 @@ def test_user_task_panel_enabled_column_is_added_idempotently_for_existing_schem
     assert task_panel_enabled in (0, False)
 
 
+def test_user_theme_preference_column_is_added_idempotently_for_existing_schema(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+
+    with engine.connect() as conn:
+        columns = {
+            row["name"]: row
+            for row in conn.execute(text("PRAGMA table_info(users)")).mappings().all()
+        }
+        theme_preference = conn.execute(text("SELECT theme_preference FROM users WHERE id = 'user-1'")).scalar_one()
+
+    assert "theme_preference" in columns
+    assert columns["theme_preference"]["notnull"] == 1
+    assert theme_preference == "light"
+
+
 def test_user_ticket_list_columns_column_is_added_idempotently_for_existing_schema(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     _create_legacy_users_table(engine)

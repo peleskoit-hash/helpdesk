@@ -111,6 +111,7 @@ class User(Base):
     send_by_enter: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
     color_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     task_panel_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    theme_preference: Mapped[str] = mapped_column(String(10), default="light", server_default=text("'light'"), nullable=False)
     ticket_list_columns_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

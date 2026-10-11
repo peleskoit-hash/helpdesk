@@ -3598,7 +3598,7 @@ test('ticket context quick replies use stores only pending reply body and return
   assert.match(ticketPageSource, /await applyQuickReplyToComposer\(payload, "", token, state\.card\?\.id\)/);
 });
 
-test('theme toggle rebinds to replaced DOM node without stacking old listeners', () => {
+test('theme toggle rebinds to replaced DOM node without stacking old listeners', async () => {
   const source = fs.readFileSync('api/app/static/theme.js', 'utf8');
   const buttons = [];
   function makeButton() {
@@ -3641,17 +3641,34 @@ test('theme toggle rebinds to replaced DOM node without stacking old listeners',
     addEventListener() {},
   };
   const localStorage = {
-    store: {},
+    store: { hd_theme: 'dark' },
     getItem(key) { return this.store[key] || null; },
     setItem(key, value) { this.store[key] = value; },
     removeItem(key) { delete this.store[key]; },
   };
+  const fetchCalls = [];
+  const fetch = async (url, options = {}) => {
+    fetchCalls.push([url, options.method || 'GET', options.body || null]);
+    if ((options.method || 'GET') === 'PATCH') {
+      const payload = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ theme_preference: payload.theme_preference }) };
+    }
+    return { ok: true, json: async () => ({ theme_preference: 'light' }) };
+  };
   const window = {};
-  const context = vm.createContext({ document, localStorage, window });
+  const context = vm.createContext({ document, localStorage, window, fetch });
+  const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
   vm.runInContext(source, context);
+  await flushAsync();
 
   assert.equal(currentButton.listenerCount('click'), 1);
+  assert.equal(localStorage.store.hd_theme, undefined);
+  assert.equal(document.body.dataset.theme, 'light');
   currentButton.click();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
   assert.equal(document.body.dataset.theme, 'dark');
 
   const oldButton = currentButton;
@@ -3661,6 +3678,96 @@ test('theme toggle rebinds to replaced DOM node without stacking old listeners',
   assert.equal(oldButton.listenerCount('click'), 0);
   assert.equal(currentButton.listenerCount('click'), 1);
   currentButton.click();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(document.body.dataset.theme, 'light');
+  assert.deepEqual(fetchCalls, [
+    ['/api/v1/users/me/preferences', 'GET', null],
+    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
+    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'light' })],
+  ]);
+});
+
+test('theme toggle serializes rapid saves and persists the last choice', async () => {
+  const source = fs.readFileSync('api/app/static/theme.js', 'utf8');
+  const listeners = {};
+  const button = {
+    textContent: '',
+    attrs: {},
+    addEventListener(type, fn) {
+      listeners[type] = listeners[type] || [];
+      listeners[type].push(fn);
+    },
+    removeEventListener(type, fn) {
+      listeners[type] = (listeners[type] || []).filter((item) => item !== fn);
+    },
+    setAttribute(name, value) {
+      this.attrs[name] = value;
+    },
+    click() {
+      (listeners.click || []).forEach((fn) => fn());
+    },
+  };
+  const document = {
+    readyState: 'complete',
+    body: { dataset: {} },
+    getElementById(id) {
+      return id === 'themeToggleBtn' ? button : null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '#themeToggleBtn') return [button];
+      if (selector === "form[action='/logout']") return [];
+      return [];
+    },
+    addEventListener() {},
+  };
+  const localStorage = {
+    removeItem() {},
+  };
+  const patchResolvers = [];
+  const fetchCalls = [];
+  const fetch = (url, options = {}) => {
+    fetchCalls.push([url, options.method || 'GET', options.body || null]);
+    if ((options.method || 'GET') === 'PATCH') {
+      const payload = JSON.parse(options.body);
+      return new Promise((resolve) => {
+        patchResolvers.push(() => resolve({
+          ok: true,
+          json: async () => ({ theme_preference: payload.theme_preference }),
+        }));
+      });
+    }
+    return Promise.resolve({ ok: true, json: async () => ({ theme_preference: 'light' }) });
+  };
+  const window = {};
+  const context = vm.createContext({ document, localStorage, window, fetch });
+  const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
+  vm.runInContext(source, context);
+  await flushAsync();
+
+  button.click();
+  button.click();
+  await flushAsync();
+  assert.equal(document.body.dataset.theme, 'light');
+  assert.equal(JSON.stringify(fetchCalls), JSON.stringify([
+    ['/api/v1/users/me/preferences', 'GET', null],
+    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
+  ]));
+  assert.equal(patchResolvers.length, 1);
+
+  patchResolvers.shift()();
+  await flushAsync();
+  assert.equal(JSON.stringify(fetchCalls), JSON.stringify([
+    ['/api/v1/users/me/preferences', 'GET', null],
+    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
+    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'light' })],
+  ]));
+  assert.equal(patchResolvers.length, 1);
+
+  patchResolvers.shift()();
+  await flushAsync();
   assert.equal(document.body.dataset.theme, 'light');
 });
 

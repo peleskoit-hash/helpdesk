@@ -1,11 +1,32 @@
-const THEME_STORAGE_KEY = "hd_theme";
+const LEGACY_THEME_STORAGE_KEY = "hd_theme";
+const THEME_PREFERENCES_URL = "/api/v1/users/me/preferences";
+
 let themeToggleButton = null;
 let themeToggleClickHandler = null;
+let preferencesLoadPromise = null;
+let currentTheme = "light";
+let loadedTheme = "light";
+let themeRevision = 0;
+let confirmedTheme = "light";
+let pendingThemeToSave = null;
+let themeSaveInFlight = false;
+
+function normalizeTheme(theme) {
+  return theme === "dark" ? "dark" : "light";
+}
+
+function forgetLegacyTheme() {
+  try {
+    localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
+  } catch {
+    // localStorage can be unavailable in private or embedded contexts.
+  }
+}
 
 function applyTheme(theme) {
-  const normalized = theme === "dark" ? "dark" : "light";
+  const normalized = normalizeTheme(theme);
+  currentTheme = normalized;
   document.body.dataset.theme = normalized;
-  localStorage.setItem(THEME_STORAGE_KEY, normalized);
 
   document.querySelectorAll("#themeToggleBtn").forEach((button) => {
     button.textContent = normalized === "dark" ? "Светлая тема" : "Тёмная тема";
@@ -13,9 +34,89 @@ function applyTheme(theme) {
   });
 }
 
+async function fetchThemePreference() {
+  const response = await fetch(THEME_PREFERENCES_URL, {
+    headers: { accept: "application/json" },
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = await response.json();
+  return normalizeTheme(payload?.theme_preference);
+}
+
+function loadThemePreference() {
+  if (!preferencesLoadPromise) {
+    const revisionAtRequest = themeRevision;
+    preferencesLoadPromise = fetchThemePreference()
+      .then((theme) => {
+        loadedTheme = theme;
+        confirmedTheme = theme;
+        if (themeRevision === revisionAtRequest) {
+          applyTheme(theme);
+        }
+        return theme;
+      })
+      .catch(() => {
+        if (themeRevision === revisionAtRequest) {
+          applyTheme(loadedTheme);
+        }
+        return loadedTheme;
+      });
+  }
+  return preferencesLoadPromise;
+}
+
+async function patchThemePreference(theme) {
+  const response = await fetch(THEME_PREFERENCES_URL, {
+    method: "PATCH",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify({ theme_preference: theme }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = await response.json();
+  return normalizeTheme(payload?.theme_preference);
+}
+
+async function flushThemeSaveQueue() {
+  if (themeSaveInFlight) return;
+  themeSaveInFlight = true;
+  try {
+    while (pendingThemeToSave) {
+      const nextTheme = pendingThemeToSave;
+      pendingThemeToSave = null;
+      try {
+        const savedTheme = await patchThemePreference(nextTheme);
+        confirmedTheme = savedTheme;
+        loadedTheme = savedTheme;
+        if (!pendingThemeToSave) {
+          applyTheme(savedTheme);
+        }
+      } catch {
+        if (!pendingThemeToSave) {
+          loadedTheme = confirmedTheme;
+          applyTheme(confirmedTheme);
+        }
+      }
+    }
+  } finally {
+    themeSaveInFlight = false;
+  }
+}
+
+function saveThemePreference(nextTheme) {
+  pendingThemeToSave = normalizeTheme(nextTheme);
+  void flushThemeSaveQueue();
+}
+
 function initThemeToggle() {
-  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "light";
-  applyTheme(savedTheme);
+  forgetLegacyTheme();
+  applyTheme(currentTheme);
+  void loadThemePreference();
 
   const button = document.getElementById("themeToggleBtn");
   if (themeToggleButton && themeToggleButton !== button && themeToggleClickHandler) {
@@ -23,8 +124,11 @@ function initThemeToggle() {
   }
   if (button && button !== themeToggleButton) {
     themeToggleClickHandler = () => {
-      const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
+      const previousTheme = normalizeTheme(document.body.dataset.theme);
+      const nextTheme = previousTheme === "dark" ? "light" : "dark";
+      themeRevision += 1;
       applyTheme(nextTheme);
+      saveThemePreference(nextTheme);
     };
     button.addEventListener("click", themeToggleClickHandler);
     themeToggleButton = button;
@@ -42,6 +146,7 @@ function initThemeToggle() {
       localStorage.removeItem("hd_tab_counts");
       localStorage.removeItem("hd_agents_cache");
       localStorage.removeItem("hd_completion_sidebar_open");
+      localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
     });
   });
 }

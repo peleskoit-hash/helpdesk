@@ -241,6 +241,7 @@ def get_my_preferences(
         send_by_enter=bool(user.send_by_enter),
         color_enabled=bool(user.color_enabled),
         task_panel_enabled=bool(user.task_panel_enabled),
+        theme_preference=user.theme_preference if user.theme_preference in {"light", "dark"} else "light",
         ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
     )
 
@@ -259,6 +260,8 @@ def update_my_preferences(
         user.color_enabled = bool(updates["color_enabled"])
     if "task_panel_enabled" in updates:
         user.task_panel_enabled = bool(updates["task_panel_enabled"])
+    if "theme_preference" in updates:
+        user.theme_preference = updates["theme_preference"]
     if "ticket_list_columns" in updates:
         user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:
@@ -269,6 +272,7 @@ def update_my_preferences(
         send_by_enter=bool(user.send_by_enter),
         color_enabled=bool(user.color_enabled),
         task_panel_enabled=bool(user.task_panel_enabled),
+        theme_preference=user.theme_preference if user.theme_preference in {"light", "dark"} else "light",
         ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
     )
 

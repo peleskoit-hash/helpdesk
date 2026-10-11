@@ -404,6 +404,7 @@ class UserPreferencesOut(BaseModel):
     send_by_enter: bool = False
     color_enabled: bool = True
     task_panel_enabled: bool = False
+    theme_preference: Literal["light", "dark"] = "light"
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
 
 
@@ -411,7 +412,15 @@ class UserPreferencesUpdate(BaseModel):
     send_by_enter: bool | None = None
     color_enabled: bool | None = None
     task_panel_enabled: bool | None = None
+    theme_preference: Literal["light", "dark"] | None = None
     ticket_list_columns: list[TicketListColumnPreference] | None = None
+
+    @field_validator("theme_preference")
+    @classmethod
+    def validate_theme_preference(cls, value):
+        if value is None:
+            raise ValueError("theme_preference must be light or dark")
+        return value
 
     @field_validator("ticket_list_columns")
     @classmethod

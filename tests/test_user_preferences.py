@@ -43,6 +43,7 @@ def _user(
     role: str = "agent",
     send_by_enter=None,
     color_enabled=None,
+    theme_preference=None,
     ticket_list_columns_json=None,
 ) -> User:
     user = User(
@@ -63,6 +64,8 @@ def _user(
         user.send_by_enter = send_by_enter
     if color_enabled is not None:
         user.color_enabled = color_enabled
+    if theme_preference is not None:
+        user.theme_preference = theme_preference
     if ticket_list_columns_json is not None:
         user.ticket_list_columns_json = ticket_list_columns_json
     session.add(user)
@@ -93,6 +96,7 @@ def test_user_preferences_default_is_false_for_new_user():
     assert result.send_by_enter is False
     assert result.color_enabled is True
     assert result.task_panel_enabled is False
+    assert result.theme_preference == "light"
     assert [column.model_dump() for column in result.ticket_list_columns] == [
         {"key": "subject", "width": 0},
         {"key": "requester", "width": 150},
@@ -189,6 +193,70 @@ def test_user_preferences_patch_task_panel_persists_without_changing_other_prefe
     assert user.task_panel_enabled is True
     assert user.send_by_enter is True
     assert user.color_enabled is False
+    assert user.ticket_list_columns_json == columns
+
+
+def test_user_preferences_theme_persists_and_roundtrips():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov")
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(theme_preference="dark"),
+        db=session,
+        current_user=current_user,
+    )
+    loaded = users_router.get_my_preferences(db=session, current_user=current_user)
+
+    session.refresh(user)
+    assert updated.theme_preference == "dark"
+    assert loaded.theme_preference == "dark"
+    assert user.theme_preference == "dark"
+
+
+def test_user_preferences_theme_rejects_invalid_value():
+    with pytest.raises(ValidationError):
+        UserPreferencesUpdate(theme_preference="blue")
+
+
+def test_user_preferences_theme_rejects_explicit_null():
+    with pytest.raises(ValidationError):
+        UserPreferencesUpdate(theme_preference=None)
+
+
+def test_user_preferences_patch_theme_preserves_other_preferences():
+    session = _session()
+    company = _company(session)
+    columns = [{"key": "subject", "width": 0}, {"key": "created_at", "width": 140}]
+    user = _user(
+        session,
+        company_id=company.id,
+        full_name="Ivan Petrov",
+        send_by_enter=True,
+        color_enabled=False,
+        ticket_list_columns_json=columns,
+    )
+    user.task_panel_enabled = True
+    session.commit()
+    current_user = _current_user(effective_user_id=user.id, real_user_id=user.id)
+
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(theme_preference="dark"),
+        db=session,
+        current_user=current_user,
+    )
+
+    session.refresh(user)
+    assert updated.theme_preference == "dark"
+    assert updated.send_by_enter is True
+    assert updated.color_enabled is False
+    assert updated.task_panel_enabled is True
+    assert [column.model_dump() for column in updated.ticket_list_columns] == columns
+    assert user.theme_preference == "dark"
+    assert user.send_by_enter is True
+    assert user.color_enabled is False
+    assert user.task_panel_enabled is True
     assert user.ticket_list_columns_json == columns
 
 
@@ -319,7 +387,7 @@ def test_user_preferences_are_isolated_between_users():
     user_b = _user(session, company_id=company.id, full_name="User B")
 
     users_router.update_my_preferences(
-        UserPreferencesUpdate(send_by_enter=True, color_enabled=False),
+        UserPreferencesUpdate(send_by_enter=True, color_enabled=False, theme_preference="dark"),
         db=session,
         current_user=_current_user(effective_user_id=user_a.id, real_user_id=user_a.id),
     )
@@ -328,9 +396,11 @@ def test_user_preferences_are_isolated_between_users():
     session.refresh(user_b)
     assert user_a.send_by_enter is True
     assert user_a.color_enabled is False
+    assert user_a.theme_preference == "dark"
     assert user_a.ticket_list_columns_json is None
     assert user_b.send_by_enter is False
     assert user_b.color_enabled is True
+    assert user_b.theme_preference == "light"
     assert user_b.ticket_list_columns_json is None
 
     users_router.update_my_preferences(

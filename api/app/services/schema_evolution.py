@@ -890,6 +890,7 @@ def ensure_user_columns() -> None:
             "send_by_enter": "BOOLEAN NOT NULL DEFAULT FALSE",
             "color_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
             "task_panel_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "theme_preference": "VARCHAR(10) NOT NULL DEFAULT 'light'",
             "ticket_list_columns_json": json_type,
             "legacy_ticket_count": "INTEGER",
             "last_assigned_at": "TIMESTAMP",
@@ -923,6 +924,7 @@ def ensure_user_columns() -> None:
         conn.execute(text("UPDATE users SET send_by_enter = FALSE WHERE send_by_enter IS NULL"))
         conn.execute(text("UPDATE users SET color_enabled = TRUE WHERE color_enabled IS NULL"))
         conn.execute(text("UPDATE users SET task_panel_enabled = FALSE WHERE task_panel_enabled IS NULL"))
+        conn.execute(text("UPDATE users SET theme_preference = 'light' WHERE theme_preference IS NULL OR theme_preference NOT IN ('light', 'dark')"))
         conn.execute(text("UPDATE users SET legacy_ticket_count = 0 WHERE legacy_ticket_count IS NULL"))
         conn.execute(text("UPDATE users SET login = email WHERE login IS NULL"))
         conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
