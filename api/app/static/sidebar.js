@@ -234,12 +234,6 @@
     }
   }
 
-  function positionUserStatsByRole() {
-    const stats = qs("#sidebarUserStats");
-    if (!stats) return;
-    stats.classList.remove("sidebar-user-stats-bottom");
-  }
-
   function renderAvatar() {
     const avatar = qs(".sidebar-user-avatar-button") || qs(".agent-avatar");
     if (!avatar) return;
@@ -356,13 +350,6 @@
     legacyNameNode.hidden = true;
     legacyNameNode.setAttribute("aria-hidden", "true");
 
-    const stats = qs("#sidebarUserStats");
-    if (stats) {
-      const hasCompletionControls = Boolean(stats.querySelector("#completionToggleBtn") || stats.querySelector("#completionDetails"));
-      if (!hasCompletionControls) {
-        stats.hidden = true;
-      }
-    }
     const logoutForm = qs("[data-sidebar-logout-form]") || qs("form[action='/logout']");
     if (!logoutForm) return null;
     if (logoutForm.parentNode !== panel) {
@@ -943,7 +930,6 @@
   function renderFromCurrentState() {
     ensureManagementSection();
     ensureAvailabilityStatusPanel();
-    positionUserStatsByRole();
     renderAdminVisibility();
     renderAvailabilityVisibility();
     renderCounts();

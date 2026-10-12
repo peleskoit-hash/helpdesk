@@ -80,8 +80,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цвет<\/span>/);
-  assert.match(template, /list\.js\?v=20261011b/);
-  assert.match(template, /styles\.css\?v=20261010b/);
+  assert.match(template, /list\.js\?v=20261012a/);
+  assert.match(template, /styles\.css\?v=20261012a/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -90,7 +90,7 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
   assert.match(loadSource, /api\("\/api\/v1\/users\/me\/preferences"\)/);
   assert.match(loadSource, /preferences\?\.color_enabled !== false/);
 
-  const updateSource = sourceBetween(listSource, "async function updateColorPreference", "async function loadCompletionStats");
+  const updateSource = sourceBetween(listSource, "async function updateColorPreference", "function renderTabCounts");
   assert.match(updateSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", \{ color_enabled: state\.colorEnabled \}\)/);
   assert.doesNotMatch(updateSource, /send_by_enter/);
   assert.match(updateSource, /state\.colorEnabled = previous/);
@@ -131,8 +131,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261011b"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261011b/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261012a"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261012a/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});

@@ -355,25 +355,6 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
   adminAgentHeader.appendChild(adminAgentHeaderText);
   adminAgentFilter.appendChild(adminAgentHeader);
   adminAgentFilter.appendChild(adminAgentList);
-  const stats = createElement(document, "div", { id: "sidebarUserStats", className: "sidebar-user-stats" });
-  const statsRow = createElement(document, "div", { className: "sidebar-user-name-row" });
-  const legacyName = createElement(document, "div", {
-    id: "sidebarUserDisplayName",
-    className: "sidebar-user-name",
-    textContent: "—",
-  });
-  const completionToggle = createElement(document, "button", {
-    id: "completionToggleBtn",
-    className: "completion-toggle-icon hidden",
-  });
-  const completionDetails = createElement(document, "div", {
-    id: "completionDetails",
-    className: "completion-details hidden",
-  });
-  statsRow.appendChild(legacyName);
-  statsRow.appendChild(completionToggle);
-  stats.appendChild(statsRow);
-  stats.appendChild(completionDetails);
 
   const sidebarBottom = createElement(document, "div", { className: "sidebar-bottom" });
   const userActions = createElement(document, "div", { className: "sidebar-user-actions" });
@@ -397,11 +378,10 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
   const outside = createElement(document, "div", { id: "outside" });
   aside.appendChild(massLink);
   aside.appendChild(adminAgentFilter);
-  aside.appendChild(stats);
   aside.appendChild(sidebarBottom);
   document.body.appendChild(aside);
   document.body.appendChild(outside);
-  return { document, aside, stats, logoutForm, outside };
+  return { document, aside, logoutForm, outside };
 }
 
 const DEFAULT_AGENTS = [
@@ -566,7 +546,7 @@ function sidebarAssignees(window) {
 }
 
 test("sidebar user menu init creates separate panel and binds interactions", async () => {
-  const { document, aside, stats, logoutForm, outside } = buildSidebarDom();
+  const { document, logoutForm, outside } = buildSidebarDom();
   const window = await loadSidebar(document);
 
   assert.ok(window.HelpdeskSidebar);
@@ -575,8 +555,6 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
   const panel = document.querySelector("[data-sidebar-user-panel]");
   assert.ok(panel);
   assert.equal(panel.parentNode.classList.contains("sidebar-bottom"), true);
-  assert.equal(stats.parentNode, aside);
-  assert.equal(panel.contains(stats), false);
 
   const visibleName = document.querySelector("[data-sidebar-user-full-name]");
   assert.equal(visibleName.textContent, "Ivan Petrov");
@@ -584,7 +562,7 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
   const legacyName = document.getElementById("sidebarUserDisplayName");
   assert.ok(legacyName);
   assert.ok(legacyName.hidden);
-  assert.equal(stats.contains(legacyName), true);
+  assert.equal(panel.contains(legacyName), true);
 
   const avatarButton = document.querySelector("[data-sidebar-user-menu-toggle]");
   assert.equal(avatarButton.tagName, "BUTTON");

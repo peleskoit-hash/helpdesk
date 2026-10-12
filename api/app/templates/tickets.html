@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261010b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261012a" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -37,40 +37,8 @@
         <span>Статусы</span>
       </a>
       <a class="settings-link admin-only hidden" href="/management/tasks">
-        <span>Задачи</span>
-      </a>      <div id="sidebarUserStats" class="sidebar-user-stats">
-        <div class="sidebar-user-name-row">
-          <div id="sidebarUserDisplayName" class="sidebar-user-name">—</div>
-          <button id="completionToggleBtn" type="button" class="completion-toggle-icon hidden" aria-label="Показать статистику">
-            <span id="completionSummaryArrow" class="completion-arrow">▼</span>
-          </button>
-        </div>
-        <div id="completionDetails" class="completion-details hidden">
-          <div class="completion-heading">
-            <span class="completion-title-text">Выполнено:</span>
-          </div>
-          <table class="completion-table">
-            <thead>
-              <tr>
-                <th>Текущий:</th>
-                <th class="tickets">Заявки</th>
-                <th class="tasks">Задачи</th>
-                <th class="total">Итого</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td>Год</td><td class="tickets" id="completionYearTickets">0</td><td class="tasks" id="completionYearTasks">0</td><td class="total" id="completionYearTotal">0</td></tr>
-              <tr><td>Месяц</td><td class="tickets" id="completionMonthTickets">0</td><td class="tasks" id="completionMonthTasks">0</td><td class="total" id="completionMonthTotal">0</td></tr>
-              <tr><td>Неделя</td><td class="tickets" id="completionWeekTickets">0</td><td class="tasks" id="completionWeekTasks">0</td><td class="total" id="completionWeekTotal">0</td></tr>
-              <tr><td>День</td><td class="tickets" id="completionDayTickets">0</td><td class="tasks" id="completionDayTasks">0</td><td class="total" id="completionDayTotal">0</td></tr>
-              <tr><td>Всё время</td><td class="tickets" id="completionAllTimeTickets">0</td><td class="tasks" id="completionAllTimeTasks">0</td><td class="total" id="completionAllTimeTotalRow">0</td></tr>
-            </tbody>
-          </table>
-          <div class="completion-footer">
-            <span class="completion-chip legacy">Legacy:&nbsp;&nbsp;<b id="completionLegacy">0</b></span>
-          </div>
-        </div>
-      </div>
+        <span>Задачи и Регулярки</span>
+      </a>
       <div class="sidebar-bottom">
         <div class="status-panel hidden">
           <div class="status-panel-title">Статус</div>
@@ -229,10 +197,10 @@
   </div>
 
 
-  <script src="/static/theme.js?v=20261010b"></script>
-  <script src="/static/sidebar.js?v=20261009b"></script>
+  <script src="/static/theme.js?v=20261012a"></script>
+  <script src="/static/sidebar.js?v=20261012a"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/app_shell.js?v=20261011b"></script>
-  <script src="/static/list.js?v=20261011b"></script>
+  <script src="/static/list.js?v=20261012a"></script>
 </body>
 </html>

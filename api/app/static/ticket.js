@@ -3,7 +3,6 @@ function initTicketCardPage() {
 // ===== state/elements =====
 const params = new URLSearchParams(window.location.search);
 const ticketId = window.location.pathname.split("/").pop();
-const COMPLETION_OPEN_STORAGE_KEY = "hd_completion_sidebar_open";
 const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);
 const RESTORE_CLOSE_COOLDOWN_MS = 10_000;
 
@@ -47,8 +46,6 @@ const state = {
   clientCardViewConfig: null,
   counts: { unassigned: 0, active: 0, special: 0, frozen: 0, closed: 0 },
   sessionContext: null,
-  completionStats: null,
-  completionOpen: false,
   isSendingReply: false,
   pendingCloseAfterSend: false,
   filePreloads: new Map(),
@@ -190,27 +187,6 @@ const el = {
   statusPanel: document.querySelector(".status-panel"),
   agentAvatar: document.querySelector(".agent-avatar"),
   tabCountNodes: [...document.querySelectorAll("[data-tab-count]")],
-  sidebarUserDisplayName: document.getElementById("sidebarUserDisplayName"),
-  completionToggleBtn: document.getElementById("completionToggleBtn"),
-  completionSummaryArrow: document.getElementById("completionSummaryArrow"),
-  completionDetails: document.getElementById("completionDetails"),
-  completionYearTickets: document.getElementById("completionYearTickets"),
-  completionYearTasks: document.getElementById("completionYearTasks"),
-  completionYearTotal: document.getElementById("completionYearTotal"),
-  completionMonthTickets: document.getElementById("completionMonthTickets"),
-  completionMonthTasks: document.getElementById("completionMonthTasks"),
-  completionMonthTotal: document.getElementById("completionMonthTotal"),
-  completionWeekTickets: document.getElementById("completionWeekTickets"),
-  completionWeekTasks: document.getElementById("completionWeekTasks"),
-  completionWeekTotal: document.getElementById("completionWeekTotal"),
-  completionDayTickets: document.getElementById("completionDayTickets"),
-  completionDayTasks: document.getElementById("completionDayTasks"),
-  completionDayTotal: document.getElementById("completionDayTotal"),
-  completionAllTimeTickets: document.getElementById("completionAllTimeTickets"),
-  completionAllTimeTasks: document.getElementById("completionAllTimeTasks"),
-  completionAllTimeTotal: document.getElementById("completionAllTimeTotal"),
-  completionAllTimeTotalRow: document.getElementById("completionAllTimeTotalRow"),
-  completionLegacy: document.getElementById("completionLegacy"),
 };
 
 state.lastMessagesSignature = null;
@@ -1218,79 +1194,6 @@ function renderTabCounts() {
   // Sidebar counters are rendered by shared sidebar.js
 }
 
-function renderCompletionStats() {
-  if (!el.sidebarUserDisplayName) return;
-  const session = state.sessionContext || {};
-  const effectiveName = session?.effective_user?.full_name || session?.real_user?.full_name || "";
-  const fallbackLogin = session?.effective_user?.login || session?.real_user?.login || "";
-  el.sidebarUserDisplayName.textContent = (effectiveName || fallbackLogin || "Пользователь").trim();
-
-  const role = session?.effective_user?.role || state.role;
-  const showExpanded = role === "agent" || role === "trainee";
-  if (el.completionToggleBtn) {
-    el.completionToggleBtn.classList.toggle("hidden", !showExpanded);
-  }
-  if (!showExpanded) {
-    if (el.completionDetails) el.completionDetails.classList.add("hidden");
-    return;
-  }
-
-  const stats = state.completionStats || {};
-  const total = stats.total || { total: 0, tasks: 0, tickets: 0 };
-  const calendar = stats.calendar || {};
-  const legacy = Number(stats.legacy || 0);
-  const year = calendar.year || { total: 0, tasks: 0, tickets: 0 };
-  const month = calendar.month || { total: 0, tasks: 0, tickets: 0 };
-  const week = calendar.week || { total: 0, tasks: 0, tickets: 0 };
-  const day = calendar.day || { total: 0, tasks: 0, tickets: 0 };
-
-  if (el.completionYearTickets) el.completionYearTickets.textContent = String(Number(year.tickets || 0));
-  if (el.completionYearTasks) el.completionYearTasks.textContent = String(Number(year.tasks || 0));
-  if (el.completionYearTotal) el.completionYearTotal.textContent = String(Number(year.total || 0));
-  if (el.completionMonthTickets) el.completionMonthTickets.textContent = String(Number(month.tickets || 0));
-  if (el.completionMonthTasks) el.completionMonthTasks.textContent = String(Number(month.tasks || 0));
-  if (el.completionMonthTotal) el.completionMonthTotal.textContent = String(Number(month.total || 0));
-  if (el.completionWeekTickets) el.completionWeekTickets.textContent = String(Number(week.tickets || 0));
-  if (el.completionWeekTasks) el.completionWeekTasks.textContent = String(Number(week.tasks || 0));
-  if (el.completionWeekTotal) el.completionWeekTotal.textContent = String(Number(week.total || 0));
-  if (el.completionDayTickets) el.completionDayTickets.textContent = String(Number(day.tickets || 0));
-  if (el.completionDayTasks) el.completionDayTasks.textContent = String(Number(day.tasks || 0));
-  if (el.completionDayTotal) el.completionDayTotal.textContent = String(Number(day.total || 0));
-  if (el.completionAllTimeTickets) el.completionAllTimeTickets.textContent = String(Number(total.tickets || 0));
-  if (el.completionAllTimeTasks) el.completionAllTimeTasks.textContent = String(Number(total.tasks || 0));
-  if (el.completionAllTimeTotal) el.completionAllTimeTotal.textContent = String(Number(total.total || 0));
-  if (el.completionAllTimeTotalRow) el.completionAllTimeTotalRow.textContent = String(Number(total.total || 0));
-  if (el.completionLegacy) el.completionLegacy.textContent = String(legacy);
-
-  if (el.completionSummaryArrow) el.completionSummaryArrow.textContent = state.completionOpen ? "▲" : "▼";
-  if (el.completionDetails) el.completionDetails.classList.toggle("hidden", !state.completionOpen);
-}
-
-async function loadCompletionStats(options = {}) {
-  if (!(state.role === "agent" || state.role === "trainee")) {
-    state.completionStats = null;
-    renderCompletionStats();
-    return;
-  }
-  try {
-    state.completionStats = await api("/api/v1/users/me/completion-stats");
-  } catch (e) {
-    state.completionStats = {
-      total: { total: 0, tasks: 0, tickets: 0 },
-      calendar: {
-        year: { total: 0, tasks: 0, tickets: 0 },
-        month: { total: 0, tasks: 0, tickets: 0 },
-        week: { total: 0, tasks: 0, tickets: 0 },
-        day: { total: 0, tasks: 0, tickets: 0 },
-      },
-      legacy: 0,
-    };
-    if (!options.silent) {
-      console.error("loadCompletionStats failed", e);
-    }
-  }
-  renderCompletionStats();
-}
 
 async function loadTabCounts(options = {}) {
   const silent = Boolean(options.silent);
@@ -1737,10 +1640,6 @@ async function loadMe() {
       el.agentAvatar.textContent = name.trim().slice(0, 1).toUpperCase();
       el.agentAvatar.title = name;
     }
-    if (el.sidebarUserDisplayName) {
-      const displayName = (me.full_name || "").trim() || me.login || "";
-      el.sidebarUserDisplayName.textContent = displayName || "Пользователь";
-    }
   } catch (e) {
     showError(`Ошибка статуса: ${e.message}`);
   }
@@ -1803,13 +1702,10 @@ function syncSidebarState(sidebarState) {
     effective_user: { role: state.role, id: state.userId, full_name: fullName, login },
     session_login_ts: Number(sidebarState.sessionLoginTs || 0),
   };
-  const storedOpen = localStorage.getItem(COMPLETION_OPEN_STORAGE_KEY);
-  state.completionOpen = storedOpen === String(state.sessionContext.session_login_ts || 0);
   if (el.roleSelect) el.roleSelect.value = state.role;
   if (el.agentSelect) el.agentSelect.value = state.userId;
   renderAgentSelect();
   updateTabLinks();
-  renderCompletionStats();
   renderTaskPanel();
   if ((prevRole !== state.role || prevUserId !== state.userId) && state.card) {
     loadCard({ silent: true });
@@ -2022,19 +1918,6 @@ function bindPageHandlers() {
   window.addEventListener("resize", resizeHandler);
   el.messages.addEventListener("scroll", hideMessageContextMenu);
 
-  if (el.completionToggleBtn) {
-    el.completionToggleBtn.addEventListener("click", () => {
-      state.completionOpen = !state.completionOpen;
-      const loginTs = Number(state.sessionContext?.session_login_ts || 0);
-      if (state.completionOpen && loginTs) {
-        localStorage.setItem(COMPLETION_OPEN_STORAGE_KEY, String(loginTs));
-      } else {
-        localStorage.removeItem(COMPLETION_OPEN_STORAGE_KEY);
-      }
-      renderCompletionStats();
-    });
-  }
-
   beforeUnloadHandler = () => {
     flushDraftKeepalive();
     TicketAttachments.destroyAllAttachmentResources();
@@ -2062,7 +1945,6 @@ function startPolling() {
     if (document.hidden) return;
     if (!el.clientModal.classList.contains("hidden")) return;
     loadCard({ silent: true });
-    loadCompletionStats({ silent: true });
   }, 3000);
 }
 
@@ -2085,7 +1967,7 @@ function startPolling() {
     console.error("loadMe failed", e);
   }
   if (destroyed) return;
-  await Promise.all([loadCard(), loadTabCounts(), loadCompletionStats()]);
+  await Promise.all([loadCard(), loadTabCounts()]);
   startPolling();
 })();
 

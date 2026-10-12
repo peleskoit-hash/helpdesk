@@ -31,6 +31,7 @@ def test_sidebar_user_menu_static_contract() -> None:
     styles_css = STYLES_CSS.read_text(encoding="utf-8")
 
     assert "function ensureUserMenuStructure()" in sidebar_js
+    assert "#sidebarUserStats" not in sidebar_js
     assert "function ensureAvailabilityStatusPanel()" in sidebar_js
     assert "function renderAvailabilityVisibility()" in sidebar_js
     assert "sidebarUserMenuToggle" in sidebar_js
@@ -88,7 +89,7 @@ def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
         if "/static/sidebar.js" not in content:
             continue
         sidebar_entrypoints.append(template.name)
-        assert '/static/sidebar.js?v=20261009b' in content
+        assert '/static/sidebar.js?v=20261012a' in content
         assert '<script src="/static/sidebar.js"></script>' not in content
 
     assert sidebar_entrypoints

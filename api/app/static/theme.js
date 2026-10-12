@@ -145,7 +145,6 @@ function initThemeToggle() {
       localStorage.removeItem("hd_admin_assignee_ids");
       localStorage.removeItem("hd_tab_counts");
       localStorage.removeItem("hd_agents_cache");
-      localStorage.removeItem("hd_completion_sidebar_open");
       localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
     });
   });

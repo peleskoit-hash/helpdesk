@@ -184,7 +184,7 @@ function sidebarLinks(template) {
 test("management tasks route template and navigation are registered", () => {
   assert.match(fs.readFileSync("api/app/main.py", "utf8"), /@app\.get\("\/management\/tasks"\)/);
   assert.match(fs.readFileSync("api/app/static/app_shell.js", "utf8"), /"\/management\/tasks".*"management-tasks"/);
-  assert.match(fs.readFileSync("api/app/templates/management.html", "utf8"), /href="\/management\/tasks">Задачи/);
+  assert.match(fs.readFileSync("api/app/templates/management.html", "utf8"), /href="\/management\/tasks"[\s\S]*Задачи и Регулярки/);
   const template = fs.readFileSync("api/app/templates/management_tasks.html", "utf8");
   assert.match(template, /data-shell-page="management-tasks"/);
   assert.match(template, /data-internal-task-tab="active"/);
