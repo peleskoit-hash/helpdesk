@@ -50,6 +50,7 @@ const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_c
 const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
+const ticketControlsSource = fs.readFileSync('api/app/static/ticket_controls.js', 'utf8');
 const ticketComposerSource = fs.readFileSync('api/app/static/ticket_composer.js', 'utf8');
 const quickRepliesSource = fs.readFileSync('api/app/static/quick_replies.js', 'utf8');
 const ticketsListSource = fs.readFileSync('api/app/static/list.js', 'utf8');
@@ -291,6 +292,17 @@ test('ticket page task panel mirrors list behavior and preserves return url', ()
   const bindSource = sourceBetween(ticketPageSource, 'function bindPageHandlers()', 'function initPostSidebarState()');
   assert.match(bindSource, /taskPanelMoreBtn[\s\S]*state\.taskPanelDropdownOpen = !state\.taskPanelDropdownOpen/);
   assert.match(bindSource, /if \(event\.target\.closest\("#taskPanel"\)\) return/);
+});
+
+test('ticket freeze button stays visible but disabled for unassigned cards', () => {
+  const renderSource = sourceBetween(ticketControlsSource, 'function renderTicketControlsView(ctx)', 'function bindTicketControlHandlers(ctx)');
+
+  assert.match(renderSource, /const isUnassigned = card\.status === "unassigned" \|\| !card\.assignee_id/);
+  assert.match(renderSource, /const canFreezeToggle = card\.is_frozen \|\| !isUnassigned/);
+  assert.match(renderSource, /setVisible\(el\.freezeToggleBtn, showFreezeToggle\)/);
+  assert.match(renderSource, /el\.freezeToggleBtn\.disabled = !showFreezeToggle \|\| !canFreezeToggle \|\| stateActionLocked/);
+  assert.match(renderSource, /const showMarkSpecial = state\.role === "admin" && !isClosed && !card\.is_special && workflowType === "ticket"/);
+  assert.doesNotMatch(renderSource, /showMarkSpecial[\s\S]*isUnassigned/);
 });
 
 test('task panel layout stays compact and dropdown is opaque in light and dark themes', () => {
@@ -1850,7 +1862,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261012a/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261013d/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
@@ -3322,7 +3334,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261011b"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261013a/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261013c/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261011b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3405,7 +3417,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261013a/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261013c/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

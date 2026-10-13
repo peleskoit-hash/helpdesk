@@ -218,6 +218,8 @@
     const showClose = !isReadonly && (state.role === "admin" || state.role === "agent");
     const canClose = !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
     const showFreezeToggle = !isReadonly && !isClosed;
+    const isUnassigned = card.status === "unassigned" || !card.assignee_id;
+    const canFreezeToggle = card.is_frozen || !isUnassigned;
     const canRestore = state.role === "admin" || (card.closed_by_user_id && card.closed_by_user_id === state.userId);
     const canRestoreFlow = workflowType !== "task" && workflowType !== "auto";
     const showRestore = !isReadonly && isClosed && canRestoreFlow && canRestore;
@@ -272,7 +274,7 @@
       el.closeBtn.classList.toggle("close-action-ready", canClose && !stateActionLocked && !restoreCloseCooldownActive);
     }
     if (el.restoreBtn) el.restoreBtn.disabled = !showRestore || stateActionLocked;
-    if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || stateActionLocked;
+    if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || !canFreezeToggle || stateActionLocked;
     if (el.autoCloseDisabledCheckbox) {
       el.autoCloseDisabledCheckbox.checked = Boolean(card.auto_close_disabled);
     }

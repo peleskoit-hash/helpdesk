@@ -281,6 +281,23 @@ class AdminCloseResult(BaseModel):
     not_found: list[str] = Field(default_factory=list)
 
 
+class AdminFreezeResult(BaseModel):
+    ok: bool = True
+    frozen: int = 0
+    already_frozen: int = 0
+    invalid: int = 0
+    closed: int = 0
+    not_found: list[str] = Field(default_factory=list)
+
+
+class AdminUnfreezeResult(BaseModel):
+    ok: bool = True
+    unfrozen: int = 0
+    already_unfrozen: int = 0
+    closed: int = 0
+    not_found: list[str] = Field(default_factory=list)
+
+
 class AdminDeleteResult(BaseModel):
     ok: bool = True
     deleted: int = 0

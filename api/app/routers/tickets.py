@@ -28,7 +28,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
@@ -785,6 +785,85 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
         ok=True,
         closed=closed,
         already_closed=already_closed,
+        not_found=not_found,
+    )
+
+
+@router.post("/admin/freeze", response_model=AdminFreezeResult)
+def admin_freeze_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+
+    ticket_ids = list(dict.fromkeys(payload.ticket_ids))
+    tickets = db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids))).scalars().all()
+    found_ids = {ticket.id for ticket in tickets}
+    not_found = [ticket_id for ticket_id in ticket_ids if ticket_id not in found_ids]
+
+    frozen = 0
+    already_frozen = 0
+    invalid = 0
+    closed = 0
+    for ticket in tickets:
+        if ticket.status == TicketStatus.CLOSED.value:
+            closed += 1
+            continue
+        if ticket.is_frozen:
+            already_frozen += 1
+            continue
+        if ticket.status == TicketStatus.UNASSIGNED.value or not ticket.assignee_id or ticket.is_special:
+            invalid += 1
+            continue
+        freeze_ticket(
+            db,
+            ticket,
+            freeze_until=None,
+            add_message_fn=_add_message,
+        )
+        frozen += 1
+
+    db.commit()
+    return AdminFreezeResult(
+        ok=True,
+        frozen=frozen,
+        already_frozen=already_frozen,
+        invalid=invalid,
+        closed=closed,
+        not_found=not_found,
+    )
+
+
+@router.post("/admin/unfreeze", response_model=AdminUnfreezeResult)
+def admin_unfreeze_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+
+    ticket_ids = list(dict.fromkeys(payload.ticket_ids))
+    tickets = db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids))).scalars().all()
+    found_ids = {ticket.id for ticket in tickets}
+    not_found = [ticket_id for ticket_id in ticket_ids if ticket_id not in found_ids]
+
+    unfrozen = 0
+    already_unfrozen = 0
+    closed = 0
+    for ticket in tickets:
+        if ticket.status == TicketStatus.CLOSED.value:
+            closed += 1
+            continue
+        if not ticket.is_frozen:
+            already_unfrozen += 1
+            continue
+        unfreeze_ticket(
+            db,
+            ticket,
+            add_message_fn=_add_message,
+            refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+        )
+        unfrozen += 1
+
+    db.commit()
+    return AdminUnfreezeResult(
+        ok=True,
+        unfrozen=unfrozen,
+        already_unfrozen=already_unfrozen,
+        closed=closed,
         not_found=not_found,
     )
 
@@ -1557,6 +1636,8 @@ def freeze(ticket_id: str, payload: FreezePayload, db: Session = Depends(get_db)
         _error(403, "readonly_role", "Нет прав на управление заявкой")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "freeze_closed_ticket", "Нельзя заморозить закрытую заявку")
+    if ticket.status == TicketStatus.UNASSIGNED.value or not ticket.assignee_id:
+        _error(409, "freeze_unassigned_ticket", "Нельзя заморозить нераспределённую заявку")
 
     freeze_ticket(
         db,

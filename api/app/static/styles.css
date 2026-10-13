@@ -1324,6 +1324,17 @@ body[data-sidebar-ready="0"] .admin-select-col {
   color: #0f172a;
 }
 
+.bulk-freeze-btn {
+  background: rgba(219, 234, 254, 0.82);
+  border-color: rgba(96, 165, 250, 0.38);
+  color: #1e3a8a;
+}
+
+.bulk-freeze-btn:hover:not(:disabled) {
+  background: rgba(191, 219, 254, 0.9);
+  border-color: rgba(59, 130, 246, 0.48);
+}
+
 .color-toggle {
   position: relative;
   display: inline-flex;
@@ -4601,6 +4612,16 @@ body[data-theme="dark"] .modal-body select {
 body[data-theme="dark"] .toolbar input::placeholder,
 body[data-theme="dark"] textarea::placeholder {
   color: #8da4bd;
+}
+
+body[data-theme="dark"] .bulk-freeze-btn {
+  background: rgba(37, 99, 235, 0.24);
+  border-color: rgba(96, 165, 250, 0.32);
+  color: #bfdbfe;
+}
+
+body[data-theme="dark"] .bulk-freeze-btn:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.34);
 }
 
 body[data-theme="dark"] .tab-btn:hover,

@@ -80,8 +80,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261012a/);
-  assert.match(template, /styles\.css\?v=20261013a/);
+  assert.match(template, /list\.js\?v=20261013d/);
+  assert.match(template, /styles\.css\?v=20261013c/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -97,6 +97,54 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
   assert.match(updateSource, /showError\(`Ошибка настройки цвета:/);
 
   assert.match(listSource, /await Promise\.all\(\[loadMe\(\), loadPreferences\(\)\]\)/);
+});
+
+test("ticket list admin bulk freeze and unfreeze use existing selection and confirmation modal", () => {
+  assert.match(template, /id="bulkCloseBtn"[\s\S]*id="bulkFreezeBtn"[\s\S]*id="bulkUnfreezeBtn"[\s\S]*id="bulkDeleteBtn"/);
+  assert.match(template, /id="bulkFreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Заморозить<\/button>/);
+  assert.match(template, /id="bulkUnfreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Разморозить<\/button>/);
+
+  const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
+  assert.match(collectSource, /bulkFreezeBtn: byId\("bulkFreezeBtn"\)/);
+  assert.match(collectSource, /bulkUnfreezeBtn: byId\("bulkUnfreezeBtn"\)/);
+
+  const bulkUiSource = sourceBetween(listSource, "function updateBulkAssignUi()", "async function assignTickets");
+  assert.match(bulkUiSource, /el\.bulkFreezeBtn[\s\S]*state\.tab !== "active"/);
+  assert.match(bulkUiSource, /el\.bulkFreezeBtn[\s\S]*disabled = selectedCount === 0/);
+  assert.match(bulkUiSource, /el\.bulkUnfreezeBtn[\s\S]*state\.tab !== "frozen"/);
+  assert.match(bulkUiSource, /el\.bulkUnfreezeBtn[\s\S]*disabled = selectedCount === 0/);
+
+  const modalSource = sourceBetween(listSource, "function openBulkActionModal", "function closeBulkActionModal");
+  assert.match(modalSource, /const isFreeze = kind === "freeze"/);
+  assert.match(modalSource, /const isUnfreeze = kind === "unfreeze"/);
+  assert.match(modalSource, /"Заморозка заявок"/);
+  assert.match(modalSource, /"Разморозка заявок"/);
+  assert.match(modalSource, /"Заморозить выбранную заявку\?"/);
+  assert.match(modalSource, /`Заморозить выбранные заявки \(\$\{selected\}\)\?`/);
+  assert.match(modalSource, /"Разморозить выбранную заявку\?"/);
+  assert.match(modalSource, /`Разморозить выбранные заявки \(\$\{selected\}\)\?`/);
+  assert.match(modalSource, /textContent = isDelete \? "Удалить" : isFreeze \? "Заморозить" : isUnfreeze \? "Разморозить" : "Завершить"/);
+  assert.match(modalSource, /classList\.toggle\("danger", isDelete\)/);
+  assert.match(modalSource, /classList\.toggle\("primary", !isDelete\)/);
+
+  const runSource = sourceBetween(listSource, "async function runBulkAction()", "function toggleAllVisibleTickets");
+  assert.match(runSource, /pendingBulkAction === "freeze"/);
+  assert.match(runSource, /apiPost\("\/api\/v1\/tickets\/admin\/freeze", \{ ticket_ids: ticketIds \}\)/);
+  assert.match(runSource, /Number\(result\.already_frozen \|\| 0\) \+ Number\(result\.invalid \|\| 0\) \+ Number\(result\.closed \|\| 0\) \+ Number\(result\.not_found\?\.length \|\| 0\)/);
+  assert.match(runSource, /if \(skipped\) \{[\s\S]*console\.info\("Bulk freeze skipped items", result\)/);
+  assert.match(runSource, /pendingBulkAction === "unfreeze"/);
+  assert.match(runSource, /apiPost\("\/api\/v1\/tickets\/admin\/unfreeze", \{ ticket_ids: ticketIds \}\)/);
+  assert.match(runSource, /Number\(result\.already_unfrozen \|\| 0\) \+ Number\(result\.closed \|\| 0\) \+ Number\(result\.not_found\?\.length \|\| 0\)/);
+  assert.match(runSource, /state\.selectedTicketIds\.clear\(\)/);
+
+  const initSource = sourceBetween(listSource, "function init()", "async function runTicketsListPage");
+  assert.match(initSource, /bulkFreezeBtn[\s\S]*openBulkActionModal\("freeze"\)/);
+  assert.match(initSource, /bulkUnfreezeBtn[\s\S]*openBulkActionModal\("unfreeze"\)/);
+  assert.match(initSource, /confirmBulkActionBtn\.disabled = true/);
+  assert.match(initSource, /catch \(e\) \{[\s\S]*confirmBulkActionBtn\.disabled = false[\s\S]*showError\(e\.message\)/);
+
+  assert.match(styles, /\.bulk-freeze-btn \{/);
+  assert.match(styles, /body\[data-theme="dark"\] \.bulk-freeze-btn/);
 });
 
 test("ticket task panel preference control and lifecycle are wired into list settings", () => {
@@ -131,8 +179,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261012a"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261012a/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261013d"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261013d/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});

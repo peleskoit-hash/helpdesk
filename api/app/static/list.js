@@ -189,6 +189,8 @@ function collectElements() {
     emptyText: byId("emptyText"),
     bulkAssignBtn: byId("bulkAssignBtn"),
     bulkCloseBtn: byId("bulkCloseBtn"),
+    bulkFreezeBtn: byId("bulkFreezeBtn"),
+    bulkUnfreezeBtn: byId("bulkUnfreezeBtn"),
     bulkDeleteBtn: byId("bulkDeleteBtn"),
     selectAllTicketsBtn: byId("selectAllTicketsBtn"),
     assignModal: byId("assignModal"),
@@ -742,6 +744,14 @@ function updateBulkAssignUi() {
     el.bulkCloseBtn.classList.toggle("hidden", !isAdmin);
     el.bulkCloseBtn.disabled = selectedCount === 0;
   }
+  if (el.bulkFreezeBtn) {
+    el.bulkFreezeBtn.classList.toggle("hidden", !isAdmin || state.tab !== "active");
+    el.bulkFreezeBtn.disabled = selectedCount === 0;
+  }
+  if (el.bulkUnfreezeBtn) {
+    el.bulkUnfreezeBtn.classList.toggle("hidden", !isAdmin || state.tab !== "frozen");
+    el.bulkUnfreezeBtn.disabled = selectedCount === 0;
+  }
   if (el.bulkDeleteBtn) {
     el.bulkDeleteBtn.classList.toggle("hidden", !isAdmin);
     el.bulkDeleteBtn.disabled = selectedCount === 0;
@@ -791,16 +801,27 @@ function openBulkActionModal(kind) {
   pendingBulkAction = kind;
   const isSingle = selected === 1;
   const isDelete = kind === "delete";
-  el.bulkActionModalTitle.textContent = isDelete ? "Удаление заявок" : "Завершение заявок";
+  const isFreeze = kind === "freeze";
+  const isUnfreeze = kind === "unfreeze";
+  el.bulkActionModalTitle.textContent = isDelete ? "Удаление заявок" : isFreeze ? "Заморозка заявок" : isUnfreeze ? "Разморозка заявок" : "Завершение заявок";
   el.bulkActionModalText.textContent = isDelete
     ? (isSingle ? "Вы уверены, что хотите удалить заявку?" : "Вы уверены, что хотите удалить заявки?")
-    : (isSingle ? "Вы уверены, что хотите закрыть заявку?" : "Вы уверены, что хотите закрыть заявки?");
+    : isFreeze
+      ? (isSingle ? "Заморозить выбранную заявку?" : `Заморозить выбранные заявки (${selected})?`)
+      : isUnfreeze
+        ? (isSingle ? "Разморозить выбранную заявку?" : `Разморозить выбранные заявки (${selected})?`)
+      : (isSingle ? "Вы уверены, что хотите закрыть заявку?" : "Вы уверены, что хотите закрыть заявки?");
+  el.confirmBulkActionBtn.textContent = isDelete ? "Удалить" : isFreeze ? "Заморозить" : isUnfreeze ? "Разморозить" : "Завершить";
   el.confirmBulkActionBtn.classList.toggle("danger", isDelete);
   el.confirmBulkActionBtn.classList.toggle("primary", !isDelete);
   el.bulkActionModal.classList.remove("hidden");
 }
 function closeBulkActionModal() {
   pendingBulkAction = null;
+  if (el.confirmBulkActionBtn) {
+    el.confirmBulkActionBtn.disabled = false;
+    el.confirmBulkActionBtn.textContent = "Подтвердить";
+  }
   el.bulkActionModal.classList.add("hidden");
 }
 
@@ -811,6 +832,31 @@ async function runBulkAction() {
     setStatus("Принудительно закрываю заявки...");
     const result = await apiPost("/api/v1/tickets/admin/close", { ticket_ids: ticketIds });
     setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
+  } else if (pendingBulkAction === "freeze") {
+    setStatus("Замораживаю заявки...");
+    const result = await apiPost("/api/v1/tickets/admin/freeze", { ticket_ids: ticketIds });
+    const parts = [
+      `Заморожено: ${Number(result.frozen || 0)}`,
+      `уже заморожены: ${Number(result.already_frozen || 0)}`,
+      `не подходят: ${Number(result.invalid || 0)}`,
+      `закрыты: ${Number(result.closed || 0)}`,
+    ];
+    if (result.not_found?.length) {
+      parts.push(`не найдены: ${result.not_found.length}`);
+    }
+    const message = parts.join(", ");
+    const skipped = Number(result.already_frozen || 0) + Number(result.invalid || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
+    if (skipped) {
+      console.info("Bulk freeze skipped items", result);
+    } else {
+      setStatus(message);
+    }
+  } else if (pendingBulkAction === "unfreeze") {
+    const result = await apiPost("/api/v1/tickets/admin/unfreeze", { ticket_ids: ticketIds });
+    const skipped = Number(result.already_unfrozen || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
+    if (skipped) {
+      console.info("Bulk unfreeze skipped items", result);
+    }
   } else {
     setStatus("Удаляю заявки...");
     const result = await apiPost("/api/v1/tickets/admin/delete", { ticket_ids: ticketIds });
@@ -1555,6 +1601,12 @@ function init() {
   if (el.bulkCloseBtn) {
     el.bulkCloseBtn.addEventListener("click", () => openBulkActionModal("close"), { signal: pageSignal });
   }
+  if (el.bulkFreezeBtn) {
+    el.bulkFreezeBtn.addEventListener("click", () => openBulkActionModal("freeze"), { signal: pageSignal });
+  }
+  if (el.bulkUnfreezeBtn) {
+    el.bulkUnfreezeBtn.addEventListener("click", () => openBulkActionModal("unfreeze"), { signal: pageSignal });
+  }
   if (el.bulkDeleteBtn) {
     el.bulkDeleteBtn.addEventListener("click", () => openBulkActionModal("delete"), { signal: pageSignal });
   }
@@ -1574,9 +1626,11 @@ function init() {
   if (el.confirmBulkActionBtn) {
     el.confirmBulkActionBtn.addEventListener("click", async () => {
       try {
+        el.confirmBulkActionBtn.disabled = true;
         await runBulkAction();
         closeBulkActionModal();
       } catch (e) {
+        el.confirmBulkActionBtn.disabled = false;
         showError(e.message);
       }
     }, { signal: pageSignal });

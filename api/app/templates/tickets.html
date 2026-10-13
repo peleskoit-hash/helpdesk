@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261013a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261013c" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -76,6 +76,8 @@
         </div>
         <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button">Назначить ответственно</button>
         <button id="bulkCloseBtn" class="action admin-only hidden" type="button" disabled>Завершить</button>
+        <button id="bulkFreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Заморозить</button>
+        <button id="bulkUnfreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Разморозить</button>
         <button id="bulkDeleteBtn" class="action admin-only hidden danger" type="button" disabled>Удалить</button>
         <div class="display-settings">
           <label class="color-toggle" id="colorToggleLabel">
@@ -203,6 +205,6 @@
   <script src="/static/sidebar.js?v=20261012a"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/app_shell.js?v=20261011b"></script>
-  <script src="/static/list.js?v=20261012a"></script>
+  <script src="/static/list.js?v=20261013d"></script>
 </body>
 </html>

@@ -1082,9 +1082,9 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     app_shell_version = "20261011b"
     ticket_static_version = "20261010b"
     ticket_attachments_version = "20260828a"
-    ticket_controls_version = "20261009d"
+    ticket_controls_version = "20261013a"
     ticket_page_version = "20261012a"
-    ticket_styles_version = "20261013a"
+    ticket_styles_version = "20261013c"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1112,7 +1112,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in template
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in app_shell
     assert f'/static/styles.css?v={ticket_styles_version}' in template
-    assert '/static/styles.css?v=20261013a' in index_template
+    assert '/static/styles.css?v=20261013c' in index_template
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():
