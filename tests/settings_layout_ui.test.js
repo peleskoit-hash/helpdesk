@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
+const templatesDir = path.join(root, "api", "app", "templates");
 const stylesSource = fs.readFileSync(path.join(root, "api", "app", "static", "styles.css"), "utf8");
 const massTemplate = fs.readFileSync(path.join(root, "api", "app", "templates", "mass_notifications.html"), "utf8");
 const massScript = fs.readFileSync(path.join(root, "api", "app", "static", "mass_notifications.js"), "utf8");
@@ -117,4 +118,34 @@ test("management home uses compact two-column cards while settings stays one-col
   assert.match(managementLinksScope, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*max-width:\s*1120px;/);
   assert.match(linkScope, /font-size:\s*30px;[\s\S]*padding:\s*18px 28px;[\s\S]*white-space:\s*normal;[\s\S]*overflow-wrap:\s*anywhere;/);
   assert.match(stylesSource, /@media \(max-width:\s*1180px\)\s*\{[\s\S]*\.management-home-panel \.settings-home-links\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+});
+
+test("display settings container wraps theme toggle and keeps ticket color control scoped", () => {
+  const templates = fs.readdirSync(templatesDir)
+    .filter((name) => name.endsWith(".html"))
+    .map((name) => [name, fs.readFileSync(path.join(templatesDir, name), "utf8")]);
+  const themeTemplates = templates.filter(([, source]) => source.includes('id="themeToggleBtn"'));
+  assert.ok(themeTemplates.length > 0);
+
+  for (const [name, source] of themeTemplates) {
+    const scope = sourceBetween(source, '<div class="display-settings">', "</div>");
+    assert.match(scope, /id="themeToggleBtn"/, name);
+  }
+
+  const tickets = fs.readFileSync(path.join(templatesDir, "tickets.html"), "utf8");
+  const ticketsScope = sourceBetween(tickets, '<div class="display-settings">', "</div>");
+  assert.ok(ticketsScope.indexOf('id="colorToggleLabel"') < ticketsScope.indexOf('id="themeToggleBtn"'));
+  assert.match(ticketsScope, /id="colorEnabledInput" type="checkbox"/);
+  assert.match(ticketsScope, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
+  assert.match(ticketsScope, /id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true"/);
+
+  for (const [name, source] of templates) {
+    if (name === "tickets.html") continue;
+    assert.doesNotMatch(source, /id="colorEnabledInput"/, name);
+  }
+
+  const displaySettingsScope = sourceBetween(stylesSource, ".display-settings {", ".search-input-wrap {");
+  assert.match(displaySettingsScope, /margin-left:\s*auto;[\s\S]*display:\s*inline-flex;[\s\S]*overflow:\s*visible;/);
+  assert.match(stylesSource, /\.display-settings \.theme-toggle\s*\{[\s\S]*margin-left:\s*0;/);
+  assert.match(stylesSource, /body\[data-theme="dark"\] \.display-settings\s*\{/);
 });

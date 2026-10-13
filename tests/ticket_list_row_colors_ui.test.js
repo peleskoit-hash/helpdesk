@@ -79,9 +79,9 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
-  assert.match(template, /id="colorToggleText"[^>]*>Цвет<\/span>/);
+  assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
   assert.match(template, /list\.js\?v=20261012a/);
-  assert.match(template, /styles\.css\?v=20261012a/);
+  assert.match(template, /styles\.css\?v=20261013a/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -253,7 +253,7 @@ test("ticket colors disabled state removes semantic backgrounds but keeps unread
 });
 
 test("ticket color legend is available only while colors are enabled and has exact swatches", () => {
-  const legendSource = sourceBetween(template, '<span id="colorLegend"', "</span>\n        </label>");
+  const legendSource = sourceBetween(template, '<span id="colorLegend"', "</span>\n          </label>");
   const labels = [...legendSource.matchAll(/color-legend-swatch[^"]*">([^<]+)<\/span>/g)].map((match) => match[1]);
   assert.deepEqual(labels, ["Задача", "Заявка", "Увольнение", "Внутренняя", "Замороженная", "Закрытая"]);
 
@@ -263,6 +263,7 @@ test("ticket color legend is available only while colors are enabled and has exa
   assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\):has\(#colorToggleText:hover\) \.color-legend/);
   assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\):has\(#colorToggleText:focus-visible\) \.color-legend/);
   assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\) \.color-legend:hover/);
+  assert.match(styles, /\.color-legend \{[\s\S]*left:\s*auto;[\s\S]*right:\s*0;/);
   assert.match(listSource, /el\.colorToggleLabel\.classList\.toggle\("color-toggle-disabled", !state\.colorEnabled\)/);
 });
 

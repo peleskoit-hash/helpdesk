@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261012a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261013a" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -74,22 +74,24 @@
           <input id="searchInput" placeholder="Поиск по теме/клиенту/сообщениям" />
           <button id="searchClearBtn" class="search-clear-btn hidden" type="button" aria-label="Очистить поиск">&times;</button>
         </div>
-        <label class="color-toggle" id="colorToggleLabel">
-          <input id="colorEnabledInput" type="checkbox" />
-          <span id="colorToggleText" tabindex="0">Цвет</span>
-          <span id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true">
-            <span class="color-legend-swatch color-legend-task">Задача</span>
-            <span class="color-legend-swatch color-legend-request">Заявка</span>
-            <span class="color-legend-swatch color-legend-group-task">Увольнение</span>
-            <span class="color-legend-swatch color-legend-internal-task">Внутренняя</span>
-            <span class="color-legend-swatch color-legend-frozen">Замороженная</span>
-            <span class="color-legend-swatch color-legend-closed">Закрытая</span>
-          </span>
-        </label>
         <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button">Назначить ответственно</button>
         <button id="bulkCloseBtn" class="action admin-only hidden" type="button" disabled>Завершить</button>
         <button id="bulkDeleteBtn" class="action admin-only hidden danger" type="button" disabled>Удалить</button>
-        <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        <div class="display-settings">
+          <label class="color-toggle" id="colorToggleLabel">
+            <input id="colorEnabledInput" type="checkbox" />
+            <span id="colorToggleText" tabindex="0">Цветные плашки</span>
+            <span id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true">
+              <span class="color-legend-swatch color-legend-task">Задача</span>
+              <span class="color-legend-swatch color-legend-request">Заявка</span>
+              <span class="color-legend-swatch color-legend-group-task">Увольнение</span>
+              <span class="color-legend-swatch color-legend-internal-task">Внутренняя</span>
+              <span class="color-legend-swatch color-legend-frozen">Замороженная</span>
+              <span class="color-legend-swatch color-legend-closed">Закрытая</span>
+            </span>
+          </label>
+          <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        </div>
       </div>
 
       <div id="taskPanel" class="task-panel hidden">
