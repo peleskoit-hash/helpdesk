@@ -347,6 +347,7 @@
     state.revealed = false;
     state.hasSaved = false;
     state.draftValue = "";
+    state.originalValue = null;
     if (el.fBitrixPassword) {
       el.fBitrixPassword.value = "";
       el.fBitrixPassword.type = "text";
@@ -448,13 +449,19 @@
         }
         if (!state.hasSaved || state.revealed) return;
         try {
+          const revision = ctx.state.clientCardInline?.revision;
           const payload = await revealBitrixPassword(ctx);
+          if (ctx.inlineClient && (ctx.isDestroyed() || revision !== ctx.state.clientCardInline?.revision)) return;
           if (!payload) return;
+          if (ctx.inlineClient) {
+            state.originalValue = payload.bitrix_password || "";
+            if (state.dirty) return;
+          }
           el.fBitrixPassword.value = payload?.bitrix_password || "";
           state.dirty = false;
           state.revealed = Boolean(payload?.bitrix_password);
         } catch (error) {
-          ctx.showError?.(error.message);
+          if (!ctx.isDestroyed?.()) ctx.showError?.(error.message);
         }
       });
       el.fBitrixPassword.addEventListener("blur", () => {
@@ -838,6 +845,7 @@
       if (activeBitrixPasswordCardReveal(ctx, ownerKey)) return;
       try {
         const payload = await revealBitrixPassword(ctx);
+        if (ctx.isDestroyed?.()) return;
         if (!payload?.bitrix_password) return;
         if (clientCardRevealOwnerKey(ctx) !== ownerKey) return;
         const state = bitrixPasswordCardRevealState(ctx);
@@ -850,7 +858,7 @@
         }
         scheduleBitrixPasswordCardRevealHide(ctx, ownerKey);
       } catch (error) {
-        ctx.showError?.(error.message);
+        if (!ctx.isDestroyed?.()) ctx.showError?.(error.message);
       }
     });
     valueEl.dataset.clientCardBitrixPasswordValueBound = "1";
@@ -1129,24 +1137,112 @@
 
   async function openClientModal(ctx) {
     if (!ctx.state.card) return;
+    const editor = ctx.inlineClient ? inlineEditorState(ctx) : null;
+    if (editor?.loading || editor?.open || ctx.isDestroyed?.()) return;
+    const revision = editor ? ++editor.revision : null;
+    if (editor) {
+      editor.loading = true;
+      ctx.el.editClientBtn.disabled = true;
+    }
     try {
       ctx.setStatus("Загружаю текущий профиль клиента...");
       const profile = await ctx.api(`/api/v1/tickets/${ctx.state.ticketId}/client-profile`);
+      if (editor && (ctx.isDestroyed() || editor.revision !== revision)) return;
       ctx.state.currentClientProfile = profile || {};
       fillModal(ctx, ctx.state.currentClientProfile);
       ctx.el.clientModal.classList.remove("hidden");
+      if (editor) {
+        editor.open = true;
+        editor.values = new Map(inlineEditorControls(ctx).map((control) => [control, inlineControlValue(control)]));
+        ctx.el.clientModal.closest(".ticket-side").classList.add("client-editing");
+        ctx.el.editClientBtn.textContent = "Редактирование";
+        ctx.el.editClientBtn.disabled = true;
+        ctx.el.clientModal.querySelector(".modal-body").scrollTop = 0;
+        inlineEditorControls(ctx).find((control) => !control.disabled && !control.readOnly && control.getClientRects().length)?.focus();
+      }
       ctx.setStatus("Текущий профиль клиента загружен");
     } catch (e) {
-      ctx.showError(e.message);
+      if (!ctx.isDestroyed?.()) ctx.showError(e.message);
+    } finally {
+      if (editor) {
+        editor.loading = false;
+        ctx.el.editClientBtn.disabled = editor.open;
+      }
     }
   }
 
-  function closeClientModal(ctx) {
+  function inlineEditorState(ctx) {
+    return ctx.state.clientCardInline ||= { open: false, loading: false, saving: false, revision: 0, values: null };
+  }
+
+  function inlineEditorControls(ctx) {
+    return Array.from(ctx.el.clientModal.querySelectorAll("input, select, textarea"))
+      .filter((control) => control !== ctx.el.fBitrixPassword);
+  }
+
+  function inlineControlValue(control) {
+    if (control.type === "checkbox" || control.type === "radio") return control.checked;
+    if (control.multiple) return JSON.stringify(Array.from(control.selectedOptions, (option) => option.value));
+    return control.value;
+  }
+
+  function hasInlineChanges(ctx) {
+    const editor = ctx.state.clientCardInline;
+    if (!editor?.open) return false;
+    if (inlineEditorControls(ctx).some((control) => editor.values.get(control) !== inlineControlValue(control))) return true;
+    const password = bitrixPasswordState(ctx);
+    if (!password.dirty) return false;
+    if (password.originalValue !== null) return password.draftValue !== password.originalValue;
+    return password.hasSaved || password.draftValue !== "";
+  }
+
+  function confirmInlineExit(ctx) {
+    if (ctx.state.clientCardInline?.saving) return false;
+    return !hasInlineChanges(ctx) || global.confirm("Есть несохранённые изменения. Выйти без сохранения?");
+  }
+
+  function closeClientModal(ctx, { force = false } = {}) {
+    if (ctx.inlineClient) {
+      if (!force && !confirmInlineExit(ctx)) return false;
+      const editor = inlineEditorState(ctx);
+      editor.open = false;
+      editor.values = null;
+      editor.revision += 1;
+      inlineEditorControls(ctx).forEach((control) => {
+        if (control.type === "checkbox" || control.type === "radio") control.checked = false;
+        else control.value = "";
+      });
+      ctx.el.clientModal.closest(".ticket-side").classList.remove("client-editing");
+      ctx.el.editClientBtn.textContent = "Редактировать";
+      ctx.el.editClientBtn.disabled = false;
+    }
     clearBitrixPasswordField(ctx);
     ctx.el.clientModal.classList.add("hidden");
+    if (ctx.inlineClient && !ctx.isDestroyed()) ctx.el.editClientBtn.focus();
+    return true;
+  }
+
+  function destroyClientEditor(ctx) {
+    closeClientModal(ctx, { force: true });
+    const editor = inlineEditorState(ctx);
+    editor.loading = false;
+    editor.saving = false;
+    ctx.el.clientModal.querySelector(".modal-body").inert = false;
+    clearBitrixPasswordCardReveal(ctx);
+    ctx.state.clientCardRuleProfile = null;
+    ctx.state.currentClientProfile = null;
   }
 
   async function saveClientProfile(ctx) {
+    const editor = ctx.inlineClient ? inlineEditorState(ctx) : null;
+    if (editor && (!editor.open || editor.saving || ctx.isDestroyed())) return;
+    const revision = editor?.revision;
+    if (editor) {
+      editor.saving = true;
+      ctx.el.saveClientBtn.disabled = true;
+      ctx.el.closeClientModalBtn.disabled = true;
+      ctx.el.clientModal.querySelector(".modal-body").inert = true;
+    }
     try {
       ctx.setStatus("Сохраняю профиль клиента...");
       const payload = getModalPayload(ctx);
@@ -1155,12 +1251,25 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (editor && (ctx.isDestroyed() || editor.revision !== revision)) return;
       ctx.state.currentClientProfile = profile || {};
-      await ctx.loadCard({ silent: true });
-      closeClientModal(ctx);
+      await ctx.loadCard({ silent: true, ...(editor ? { preserveComposerDraft: true } : {}) });
+      if (editor) {
+        if (ctx.isDestroyed() || editor.revision !== revision) return;
+        ctx.state.card.client_profile = ctx.state.currentClientProfile;
+        fillClientPanel(ctx, ctx.state.currentClientProfile);
+      }
+      closeClientModal(ctx, { force: true });
       ctx.setStatus("Профиль клиента сохранён");
     } catch (e) {
-      ctx.showError(e.message);
+      if (!ctx.isDestroyed?.()) ctx.showError(e.message);
+    } finally {
+      if (editor) {
+        editor.saving = false;
+        ctx.el.saveClientBtn.disabled = false;
+        ctx.el.closeClientModalBtn.disabled = false;
+        ctx.el.clientModal.querySelector(".modal-body").inert = false;
+      }
     }
   }
 
@@ -1172,7 +1281,7 @@
     return getClientFieldValue(profile, field.key);
   }
 
-  function renderReadonlyEditorField(field, value) {
+  function renderReadonlyEditorField(field, value, ctx) {
     const wrap = document.createElement("div");
     wrap.className = "custom-field-editor readonly-copyable";
     wrap.dataset.clientCardFieldKey = field.key;
@@ -1183,6 +1292,9 @@
     valueRow.className = "readonly-copyable-row";
     const valueEl = renderClientFieldValue(field, value);
     if (valueEl.textContent.trim() === "") valueEl.textContent = "-";
+    valueRow.appendChild(valueEl);
+    wrap.appendChild(valueRow);
+    if (ctx?.inlineClient) return wrap;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "action";
@@ -1203,9 +1315,7 @@
         textarea.remove();
       }
     });
-    valueRow.appendChild(valueEl);
     valueRow.appendChild(button);
-    wrap.appendChild(valueRow);
     return wrap;
   }
 
@@ -1269,7 +1379,7 @@
 
   function renderConfiguredSystemEditorField(ctx, field, currentValue) {
     const { control } = fieldEditorNodes(ctx, field.key);
-    if (!control) return renderReadonlyEditorField(field, currentValue);
+    if (!control) return renderReadonlyEditorField(field, currentValue, ctx);
     const wrap = document.createElement("label");
     wrap.className = "custom-field-editor";
     wrap.dataset.clientCardFieldKey = field.key;
@@ -1341,7 +1451,7 @@
         } else if (field.is_editable !== false) {
           fieldEl = renderEditableCustomField(ctx, field, currentValue);
         } else {
-          fieldEl = renderReadonlyEditorField(field, currentValue);
+          fieldEl = renderReadonlyEditorField(field, currentValue, ctx);
         }
         if (baseHidden) fieldEl.classList.add("hidden");
         blockWrap.appendChild(fieldEl);
@@ -1362,5 +1472,8 @@
     openClientModal,
     closeClientModal,
     saveClientProfile,
+    hasInlineChanges,
+    confirmInlineExit,
+    destroyClientEditor,
   };
 })(window);

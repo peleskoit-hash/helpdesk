@@ -371,6 +371,7 @@ async function loadTaskPanel(options = {}) {
 
 function cleanupTicketCardPage() {
   destroyed = true;
+  TicketClientCard.destroyClientEditor(clientCardCtx());
   flushDraftKeepalive();
   stopRestoreCloseCooldownTimer();
   if (pollTimer !== null) {
@@ -449,6 +450,8 @@ function attachmentsCtx() {
 
 function clientCardCtx() {
   return {
+    inlineClient: true,
+    isDestroyed: () => destroyed,
     state,
     el,
     api,
@@ -1510,9 +1513,11 @@ async function loadCard(options = {}) {
       applyServerDraft(card);
     }
     TicketComposer.syncRestoredPreloads?.(composerCtx(), card.active_attachment_preloads || []);
-    state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
-      ? cardConfig
-      : defaultClientCardViewConfig();
+    if (!state.clientCardInline?.open) {
+      state.clientCardViewConfig = cardConfig && Array.isArray(cardConfig.blocks)
+        ? cardConfig
+        : defaultClientCardViewConfig();
+    }
     renderCard();
     applyComposeModeUi();
     if (!state.initialComposerFocusApplied) {
@@ -1918,9 +1923,17 @@ function bindPageHandlers() {
   window.addEventListener("resize", resizeHandler);
   el.messages.addEventListener("scroll", hideMessageContextMenu);
 
-  beforeUnloadHandler = () => {
+  beforeUnloadHandler = (event) => {
+    if (event.type === "beforeunload" && (TicketClientCard.hasInlineChanges(clientCardCtx()) || state.clientCardInline?.saving)) {
+      event.preventDefault();
+      event.returnValue = "";
+      flushDraftKeepalive();
+      return;
+    }
     flushDraftKeepalive();
-    TicketAttachments.destroyAllAttachmentResources();
+    if (event.type === "pagehide" && !event.persisted) {
+      TicketAttachments.destroyAllAttachmentResources();
+    }
   };
   window.addEventListener("beforeunload", beforeUnloadHandler);
   window.addEventListener("pagehide", beforeUnloadHandler);
@@ -1978,7 +1991,13 @@ document.querySelectorAll("#appContent input, #appContent textarea").forEach((fi
   field.setAttribute("spellcheck", "false");
 });
 
-return cleanupTicketCardPage;
+return {
+  destroy: cleanupTicketCardPage,
+  canNavigateAway: () => {
+    if (state.clientCardInline?.open) return closeClientModal();
+    return true;
+  },
+};
 }
 
 if (window.HelpdeskAppShell?.registerPage) {

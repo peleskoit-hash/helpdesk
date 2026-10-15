@@ -56,6 +56,7 @@
     </aside>
 
     <main id="appContent" class="main" data-shell-page="ticket-card">
+      <link rel="stylesheet" href="/static/ticket_client_card.css?v=20261018b" />
       <div class="toolbar">
         <button id="backToListBtn" type="button" class="action back-btn">Назад</button>
         <label id="roleControl" class="hidden">Роль
@@ -81,14 +82,109 @@
       </div>
 
       <section class="content ticket-layout">
-        <aside class="panel ticket-side">
+        <aside class="panel ticket-side ticket-client-side">
           <div class="card-head">
             <div class="client-headline">
               <span style="font-weight:700;">Клиент</span>
-              <button id="editClientBtn" type="button" class="action edit-client-btn" title="Редактировать клиента">✎</button>
+              <button id="editClientBtn" type="button" class="action edit-client-btn" title="Редактировать клиента">Редактировать</button>
             </div>
           </div>
           <div id="clientDynamicCard" class="ticket-client-info"></div>
+          <div id="clientModal" class="ticket-client-editor hidden">
+            <div class="modal-dialog">
+              <div class="modal-body">
+                <div class="client-modal-scroll">
+                  <div class="modal-field-section modal-field-section-profile">
+                    <label>Имя<input id="fContactName" autocomplete="off" /></label>
+                    <label>Фамилия<input id="fLastName" autocomplete="off" /></label>
+                  </div>
+
+                  <div class="modal-field-section modal-field-section-department">
+                    <label>
+                      <span class="modal-label-title">
+                        Куда..?
+                        <img
+                          class="emoji-mark-img"
+                          src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1faf4.png"
+                          alt="🫴"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </span>
+                      <select id="fDestination">
+                        <option value="">Не выбрано</option>
+                        <option value="Песок">Песок</option>
+                        <option value="Отдел Продаж">Отдел Продаж</option>
+                        <option value="Колл Центр">Колл Центр</option>
+                        <option value="HR">HR</option>
+                        <option value="Руководство">Руководство</option>
+                        <option value="Отдел Коучей">Отдел Коучей</option>
+                        <option value="Контроль Качества">Контроль Качества</option>
+                      </select>
+                    </label>
+                    <label id="fSandOwnerWrap" class="hidden">Чей песок:
+                      <select id="fSandOwner">
+                        <option value="">Не выбрано</option>
+                        <option value="песок Власова">песок Власова</option>
+                        <option value="песок Шабурова">песок Шабурова</option>
+                        <option value="песок Сайдаралиева">песок Сайдаралиева</option>
+                        <option value="песок Макаренко">песок Макаренко</option>
+                        <option value="песок Шахалиевой">песок Шахалиевой</option>
+                        <option value="песок Кочуры">песок Кочуры</option>
+                        <option value="песок Москвиченко">песок Москвиченко</option>
+                      </select>
+                    </label>
+                    <label id="fSalesGroupWrap" class="hidden">Выберите группу
+                      <select id="fSalesGroup">
+                        <option value="">Не выбрано</option>
+                        <option value="группа Власова">группа Власова</option>
+                        <option value="группа Шабурова">группа Шабурова</option>
+                        <option value="группа Сайдаралиева">группа Сайдаралиева</option>
+                        <option value="группа Макаренко">группа Макаренко</option>
+                        <option value="группа Шахалиевой">группа Шахалиевой</option>
+                        <option value="группа Кочуры">группа Кочуры</option>
+                        <option value="группа Москвиченко">группа Москвиченко</option>
+                      </select>
+                    </label>
+                    <label>Расположение
+                      <select id="fLocationType">
+                        <option value="">Не выбрано</option>
+                        <option value="Офисный">Офисный</option>
+                        <option value="Удалённый">Удалённый</option>
+                      </select>
+                    </label>
+                    <label id="fAnydeskWrap" class="hidden">Anydesk<input id="fAnydesk" autocomplete="off" /></label>
+                  </div>
+
+                  <div class="modal-field-section modal-field-section-work">
+                    <label>Внутренний номер<input id="fInternalNumber" autocomplete="off" /></label>
+                    <label>Логин Bitrix<input id="fBitrixLogin" autocomplete="off" /></label>
+                    <label>Пароль Bitrix<input id="fBitrixPassword" autocomplete="off" /></label>
+                    <label>ID в Bitrix<input id="fBitrixId" autocomplete="off" /></label>
+                  </div>
+
+                  <div id="customFieldsSection" class="modal-field-section modal-field-section-custom hidden">
+                    <div class="status-panel-title">Дополнительные поля</div>
+                    <div id="customFieldsContainer" class="custom-fields-container"></div>
+                  </div>
+
+                  <div class="modal-field-section modal-field-section-verification">
+                    <label class="checkbox-label">
+                      Верификация пройдена
+                      <input id="fIsVerified" type="checkbox" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-foot">
+                <button id="closeClientModalBtn" type="button" class="action">Отмена</button>
+                <button id="saveClientBtn" type="button" class="action primary">Сохранить</button>
+              </div>
+            </div>
+          </div>
+          <svg class="client-edit-border" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="1" rx="9" pathLength="1000" />
+          </svg>
         </aside>
 
         <div class="panel ticket-card">
@@ -180,102 +276,6 @@
           </div>
         </aside>
       </section>
-  <div id="clientModal" class="modal hidden">
-    <div class="modal-dialog">
-      <div class="modal-head">
-        <div style="font-weight:700;">Редактирование клиента</div>
-        <button id="closeClientModalBtn" type="button" class="action">Закрыть</button>
-      </div>
-      <div class="modal-body">
-        <div class="client-modal-scroll">
-          <div class="modal-field-section modal-field-section-profile">
-            <label>Имя<input id="fContactName" autocomplete="off" /></label>
-            <label>Фамилия<input id="fLastName" autocomplete="off" /></label>
-          </div>
-
-          <div class="modal-field-section modal-field-section-department">
-            <label>
-              <span class="modal-label-title">
-                Куда..?
-                <img
-                  class="emoji-mark-img"
-                  src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1faf4.png"
-                  alt="🫴"
-                  loading="lazy"
-                  decoding="async"
-                />
-              </span>
-              <select id="fDestination">
-                <option value="">Не выбрано</option>
-                <option value="Песок">Песок</option>
-                <option value="Отдел Продаж">Отдел Продаж</option>
-                <option value="Колл Центр">Колл Центр</option>
-                <option value="HR">HR</option>
-                <option value="Руководство">Руководство</option>
-                <option value="Отдел Коучей">Отдел Коучей</option>
-                <option value="Контроль Качества">Контроль Качества</option>
-              </select>
-            </label>
-            <label id="fSandOwnerWrap" class="hidden">Чей песок:
-              <select id="fSandOwner">
-                <option value="">Не выбрано</option>
-                <option value="песок Власова">песок Власова</option>
-                <option value="песок Шабурова">песок Шабурова</option>
-                <option value="песок Сайдаралиева">песок Сайдаралиева</option>
-                <option value="песок Макаренко">песок Макаренко</option>
-                <option value="песок Шахалиевой">песок Шахалиевой</option>
-                <option value="песок Кочуры">песок Кочуры</option>
-                <option value="песок Москвиченко">песок Москвиченко</option>
-              </select>
-            </label>
-            <label id="fSalesGroupWrap" class="hidden">Выберите группу
-              <select id="fSalesGroup">
-                <option value="">Не выбрано</option>
-                <option value="группа Власова">группа Власова</option>
-                <option value="группа Шабурова">группа Шабурова</option>
-                <option value="группа Сайдаралиева">группа Сайдаралиева</option>
-                <option value="группа Макаренко">группа Макаренко</option>
-                <option value="группа Шахалиевой">группа Шахалиевой</option>
-                <option value="группа Кочуры">группа Кочуры</option>
-                <option value="группа Москвиченко">группа Москвиченко</option>
-              </select>
-            </label>
-            <label>Расположение
-              <select id="fLocationType">
-                <option value="">Не выбрано</option>
-                <option value="Офисный">Офисный</option>
-                <option value="Удалённый">Удалённый</option>
-              </select>
-            </label>
-            <label id="fAnydeskWrap" class="hidden">Anydesk<input id="fAnydesk" autocomplete="off" /></label>
-          </div>
-
-          <div class="modal-field-section modal-field-section-work">
-            <label>Внутренний номер<input id="fInternalNumber" autocomplete="off" /></label>
-            <label>Логин Bitrix<input id="fBitrixLogin" autocomplete="off" /></label>
-            <label>Пароль Bitrix<input id="fBitrixPassword" autocomplete="off" /></label>
-            <label>ID в Bitrix<input id="fBitrixId" autocomplete="off" /></label>
-          </div>
-
-          <div id="customFieldsSection" class="modal-field-section modal-field-section-custom hidden">
-            <div class="status-panel-title">Дополнительные поля</div>
-            <div id="customFieldsContainer" class="custom-fields-container"></div>
-          </div>
-
-          <div class="modal-field-section modal-field-section-verification">
-            <label class="checkbox-label">
-              Верификация пройдена
-              <input id="fIsVerified" type="checkbox" />
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button id="saveClientBtn" type="button" class="action primary">Сохранить</button>
-      </div>
-    </div>
-  </div>
-
   <div id="wrongProblemModal" class="modal hidden">
     <div class="modal-dialog wrong-problem-dialog">
       <div class="modal-head">
@@ -350,13 +350,13 @@
   <script src="/static/theme.js?v=20261012a"></script>
   <script src="/static/sidebar.js?v=20261012a"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261016a"></script>
+  <script src="/static/app_shell.js?v=20261018c"></script>
   <script src="/static/ticket_api.js?v=20260521a"></script>
   <script src="/static/ticket_attachments.js?v=20260828a"></script>
-  <script src="/static/ticket_client_card.js?v=20260903e"></script>
+  <script src="/static/ticket_client_card.js?v=20261018b"></script>
   <script src="/static/ticket_composer.js?v=20261010b"></script>
   <script src="/static/ticket_controls.js?v=20261013a"></script>
   <script src="/static/ticket_message_view.js?v=20260810b"></script>
-  <script src="/static/ticket.js?v=20261012a"></script>
+  <script src="/static/ticket.js?v=20261018b"></script>
 </body>
 </html>

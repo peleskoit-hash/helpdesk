@@ -1079,11 +1079,11 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261016a"
+    app_shell_version = "20261018c"
     ticket_static_version = "20261010b"
     ticket_attachments_version = "20260828a"
     ticket_controls_version = "20261013a"
-    ticket_page_version = "20261012a"
+    ticket_page_version = "20261018b"
     ticket_styles_version = "20261017a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")

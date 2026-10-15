@@ -209,11 +209,11 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 test('client card script cache busting is updated for changed JS files', () => {
   assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261013b/);
   assert.match(appShellSource, /settings_client_card\.js\?v=20261013b/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261012a/);
-  assert.match(appShellSource, /ticket\.js\?v=20261012a/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261018b/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261018b/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261018b/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261018b/);
+  assert.match(appShellSource, /ticket\.js\?v=20261018b/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261015a/);
 });
 
