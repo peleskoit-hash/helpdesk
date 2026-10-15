@@ -209,9 +209,9 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 test('client card script cache busting is updated for changed JS files', () => {
   assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261013b/);
   assert.match(appShellSource, /settings_client_card\.js\?v=20261013b/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261018b/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261018b/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20261018b/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261018c/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261018c/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261018c/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261018b/);
   assert.match(appShellSource, /ticket\.js\?v=20261018b/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261015a/);
@@ -1033,7 +1033,7 @@ test('ticket client card renders bitrix password by presence flag and reveals th
   assert.match(valueSource, /if \(key === "bitrix_password"\) return profile\.bitrix_password_set \? "\*{8}" : null/);
   assert.match(valueSource, /if \(key === "bitrix_password"\) return !ctx\.isBlank\(value\)/);
   assert.match(valueSource, /function bindBitrixPasswordValueReveal/);
-  assert.match(valueSource, /valueEl\.textContent = generateBitrixPasswordMask\(\)/);
+  assert.match(valueSource, /valueEl\.textContent = bitrixPasswordMask\(ctx\)/);
   assert.match(valueSource, /valueEl\.addEventListener\("click", async \(\) =>/);
   assert.match(ticketClientCardSource, /clientCardBitrixPasswordReveal/);
   assert.match(ticketClientCardSource, /state\.revealedUntil = Date\.now\(\) \+ 5000/);
@@ -1043,7 +1043,7 @@ test('ticket client card renders bitrix password by presence flag and reveals th
   assert.match(valueSource, /applyBitrixPasswordValueRevealState\(ctx, valueEl\)/);
   assert.match(ticketClientCardSource, /if \(!profile\?\.bitrix_password_set\) clearBitrixPasswordCardReveal\(ctx\)/);
   assert.doesNotMatch(valueSource, /valueEl\.addEventListener\("blur"/);
-  assert.match(valueSource, /resetBitrixPasswordValueEl\(valueEl\)/);
+  assert.match(valueSource, /resetBitrixPasswordValueEl\(ctx, valueEl\)/);
   assert.match(revealSource, /\/api\/v1\/tickets\/\$\{encodeURIComponent\(ctx\.state\.ticketId\)\}\/client-profile\/bitrix-password/);
   assert.match(revealSource, /\/api\/v1\/management\/users\/\$\{encodeURIComponent\(clientId\)\}\/profile\/bitrix-password/);
 });
@@ -1285,7 +1285,7 @@ test('bitrix password editor uses visual mask without browser password autofill'
   assert.match(editorSource, /state\.draftValue = ""/);
   assert.match(editorSource, /el\.fBitrixPassword\.type = "text"/);
   assert.match(editorSource, /el\.fBitrixPassword\.autocomplete = "off"/);
-  assert.match(editorSource, /el\.fBitrixPassword\.value = generateBitrixPasswordMask\(\)/);
+  assert.match(editorSource, /el\.fBitrixPassword\.value = bitrixPasswordMask\(ctx\)/);
   assert.match(editorSource, /state\.draftValue = el\.fBitrixPassword\.value/);
   assert.doesNotMatch(editorSource, /fBitrixPassword\.type = "password"/);
   assert.doesNotMatch(ticketTemplate, /id="fBitrixPassword" autocomplete="new-password"/);

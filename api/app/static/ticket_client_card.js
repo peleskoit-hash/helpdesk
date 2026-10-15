@@ -323,6 +323,15 @@
     return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
   }
 
+  function bitrixPasswordMask(ctx) {
+    if (!ctx.inlineClient) return generateBitrixPasswordMask();
+    const ownerKey = clientCardRevealOwnerKey(ctx);
+    if (ctx.state.clientCardBitrixPasswordMask?.ownerKey !== ownerKey) {
+      ctx.state.clientCardBitrixPasswordMask = { ownerKey, value: generateBitrixPasswordMask() };
+    }
+    return ctx.state.clientCardBitrixPasswordMask.value;
+  }
+
   function setBitrixPasswordInputHidden(ctx) {
     const { el } = ctx;
     const state = bitrixPasswordState(ctx);
@@ -332,7 +341,7 @@
     state.revealed = false;
     el.fBitrixPassword.classList.remove("client-card-password-revealed");
     if ((state.dirty && state.draftValue.trim()) || (!state.dirty && state.hasSaved)) {
-      el.fBitrixPassword.value = generateBitrixPasswordMask();
+      el.fBitrixPassword.value = bitrixPasswordMask(ctx);
       el.fBitrixPassword.classList.add("client-card-password");
     } else {
       el.fBitrixPassword.value = "";
@@ -407,7 +416,7 @@
     state.revealedUntil = 0;
     state.timerId = null;
     const valueEl = currentBitrixPasswordValueEl(ctx);
-    if (valueEl) resetBitrixPasswordValueEl(valueEl);
+    if (valueEl) resetBitrixPasswordValueEl(ctx, valueEl);
   }
 
   function activeBitrixPasswordCardReveal(ctx, ownerKey) {
@@ -819,8 +828,8 @@
     return !ctx.isBlank(value);
   }
 
-  function resetBitrixPasswordValueEl(valueEl) {
-    valueEl.textContent = generateBitrixPasswordMask();
+  function resetBitrixPasswordValueEl(ctx, valueEl) {
+    valueEl.textContent = bitrixPasswordMask(ctx);
     valueEl.classList.add("client-card-password");
     valueEl.classList.remove("client-card-password-revealed");
   }
@@ -834,7 +843,7 @@
       scheduleBitrixPasswordCardRevealHide(ctx, ownerKey);
       return;
     }
-    resetBitrixPasswordValueEl(valueEl);
+    resetBitrixPasswordValueEl(ctx, valueEl);
   }
 
   function bindBitrixPasswordValueReveal(ctx, valueEl) {

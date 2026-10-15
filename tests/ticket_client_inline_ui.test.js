@@ -26,7 +26,7 @@ function element(tagName = 'input') {
   };
 }
 
-function fixture({ inline = true, savedPassword = false, required = false } = {}) {
+function fixture({ inline = true, savedPassword = false, required = false, runtime = {}, crypto } = {}) {
   const panel = element('aside');
   const body = element('div');
   const el = {
@@ -72,8 +72,8 @@ function fixture({ inline = true, savedPassword = false, required = false } = {}
     if (options?.method === 'PATCH') return { ...profile, ...JSON.parse(options.body) };
     return profile;
   };
-  const window = { confirm: (message) => { confirmations.push(message); return allowExit; } };
-  vm.runInNewContext(source, { window, console, setTimeout, clearTimeout, Uint8Array });
+  const window = { crypto, confirm: (message) => { confirmations.push(message); return allowExit; } };
+  vm.runInNewContext(source, { window, console, setTimeout, clearTimeout, Uint8Array, ...runtime });
   const card = window.TicketClientCard;
   const ctx = {
     inlineClient: inline, isDestroyed: () => destroyed,
@@ -327,7 +327,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018c' : '20261018b']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : resource === 'ticket_client_card.js' ? '20261018c' : '20261018b']);
   }
 });
 
@@ -563,4 +563,94 @@ test('view typography grows modestly only in ticket card; editor fonts and spaci
   assert.match(css, /#clientDynamicCard \.client-card-field \{[^}]*line-height: 1\.3;/);
   assert.doesNotMatch(css, /#clientDynamicCard[^{}]*\{[^}]*padding:/);
   assert.doesNotMatch(css, /#clientModal[^{}]*\{[^}]*font-size:/);
+});
+
+
+function passwordCardFixture() {
+  let now = 1000, generations = 0, nextTimer = 0;
+  const timers = new Map();
+  const document = { createElement(tag) {
+    const node = element(tag);
+    node.children = [];
+    node.appendChild = (child) => node.children.push(child);
+    Object.defineProperty(node, 'innerHTML', { set() { node.children = []; } });
+    node.querySelector = () => {
+      const visit = (item) => item.dataset.clientCardBitrixPasswordValue === '1'
+        ? item : item.children?.map(visit).find(Boolean);
+      return visit(node) || null;
+    };
+    return node;
+  } };
+  const f = fixture({ savedPassword: true, crypto: { getRandomValues(bytes) { bytes.fill(++generations); return bytes; } }, runtime: {
+    document, Date: { now: () => now },
+    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, at: now + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  } });
+  // A deterministic generator lets the tests detect unnecessary regeneration.
+  // Only synthetic values are used; secret assertions report booleans.
+  f.el.clientDynamicCard = document.createElement('div');
+  f.ctx.isBlank = (value) => value == null || value === '';
+  f.ctx.state.card.client_id = 'client-1';
+  const config = { blocks: [{ key: 'access', fields: [{ key: 'bitrix_password' }] }] };
+  const render = () => {
+    f.card.renderClientDynamicCard(f.ctx, { bitrix_password_set: true }, config);
+    return f.el.clientDynamicCard.querySelector();
+  };
+  return { ...f, render, timers, advance(ms) {
+    now += ms;
+    for (const [id, timer] of [...timers]) {
+      if (timer.at <= now) { timers.delete(id); timer.callback(); }
+    }
+  } };
+}
+
+test('password mask survives polling rerenders and inline editor hide/reopen', async () => {
+  const f = passwordCardFixture();
+  const mask = f.render().textContent;
+  assert.match(mask, /^[A-Za-z0-9]{10}$/);
+  assert.equal(f.render().textContent, mask);
+  await f.open();
+  assert.equal(f.el.fBitrixPassword.value, mask);
+  await f.el.fBitrixPassword.handlers.focus();
+  f.el.fBitrixPassword.handlers.blur();
+  assert.equal(f.el.fBitrixPassword.value, mask);
+  f.close();
+  await f.open();
+  assert.equal(f.el.fBitrixPassword.value, mask);
+});
+
+test('password reveal survives rerender and hides at five seconds with the original mask and cleared plaintext', async () => {
+  const f = passwordCardFixture();
+  const value = f.render(), mask = value.textContent;
+  await value.handlers.click();
+  assert.equal(Boolean(f.ctx.state.clientCardBitrixPasswordReveal.plaintext), true);
+  f.advance(3000);
+  const current = f.render();
+  assert.equal(current.classList.contains('client-card-password-revealed'), true);
+  f.advance(1999);
+  assert.equal(current.classList.contains('client-card-password-revealed'), true);
+  f.advance(1);
+  assert.equal(current.textContent, mask);
+  assert.equal(current.classList.contains('client-card-password-revealed'), false);
+  const state = f.ctx.state.clientCardBitrixPasswordReveal;
+  assert.equal(Boolean(state.plaintext), false);
+  assert.equal(state.ownerKey, '');
+  assert.equal(state.revealedUntil, 0);
+  assert.equal(state.timerId, null);
+  assert.equal(f.timers.size, 0);
+});
+
+test('switching client creates its own mask and clears the previous reveal', async () => {
+  const f = passwordCardFixture();
+  const first = f.render(), mask = first.textContent;
+  await first.handlers.click();
+  f.ctx.state.card.client_id = 'client-2';
+  const second = f.render();
+  assert.notEqual(second.textContent, mask);
+  assert.equal(second.classList.contains('client-card-password-revealed'), false);
+  assert.equal(Boolean(f.ctx.state.clientCardBitrixPasswordReveal.plaintext), false);
+  assert.equal(f.timers.size, 0);
+  assert.equal(f.render().textContent, second.textContent);
+  await f.open();
+  assert.equal(f.el.fBitrixPassword.value, second.textContent);
 });
