@@ -264,7 +264,10 @@
 
   function setStatus(root, message) {
     const el = els(root);
-    if (el.status) el.status.textContent = message || "";
+    if (el.status) {
+      el.status.textContent = message || "";
+      el.status.hidden = !message || message === "Готово";
+    }
   }
 
   function setValidation(root, message) {
@@ -611,7 +614,7 @@
       state.appTimezone = options?.app_timezone || "UTC";
       state.overview = overview || state.overview;
       render(root);
-      setStatus(root, "Готово");
+      setStatus(root, "");
     } catch (error) {
       setValidation(root, error.message || "Ошибка загрузки");
       setStatus(root, "Ошибка");

@@ -273,19 +273,62 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .main[data-shell-page="management-users"] {
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
+.main[data-shell-page="management-users"] .management-users-page,
+.main[data-shell-page="management-saved-files"] .management-saved-files-page,
+.main[data-shell-page="management-feedback"] .management-feedback-page,
+.main[data-shell-page="management-statistics"] .management-statistics-page,
+.main[data-shell-page="management-tasks"] .management-tasks-page {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.main[data-shell-page="management-feedback"] .management-feedback-page {
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.main[data-shell-page="management-users"] .management-users-table,
+.main[data-shell-page="management-saved-files"] .management-saved-files-panel,
+.main[data-shell-page="management-feedback"] .management-feedback-panel,
+.main[data-shell-page="management-statistics"] .management-statistics-panel,
+.main[data-shell-page="management-tasks"] .management-tasks-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+.main[data-shell-page="management-users"] .management-users-search {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.main[data-shell-page="management-users"] .management-users-search input {
+  flex: 1 1 auto;
+}
+
+.main[data-shell-page="management-users"] #managementUsersStatus {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .management-users-page {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   align-content: start;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px;
+  padding: 8px 16px 16px;
   min-width: 0;
 }
 
@@ -315,6 +358,7 @@ body[data-sidebar-ready="0"] .admin-select-col {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-top: 6px;
 }
 
 .management-users-search {
@@ -387,19 +431,20 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .main[data-shell-page="management-saved-files"] {
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
 .management-saved-files-page {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   align-content: start;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px;
+  padding: 8px 16px 16px;
   min-width: 0;
 }
 
@@ -471,21 +516,27 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .main[data-shell-page="management-statistics"] {
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main[data-shell-page="management-feedback"] {
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
 .management-statistics-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
   align-content: start;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 16px;
+  padding: 8px 16px 16px;
   min-width: 0;
 }
 
@@ -504,7 +555,7 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .panel.table-wrap.management-statistics-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   gap: 0;
   height: 100%;
   min-height: 0;
@@ -816,9 +867,9 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .management-integrations-page {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   align-content: start;
-  padding: 16px;
+  padding: 8px 16px 16px;
   min-width: 0;
 }
 
@@ -852,6 +903,12 @@ body[data-sidebar-ready="0"] .admin-select-col {
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
+}
+
+.main[data-shell-page="management-integrations"] #integrationLogStatus {
+  align-self: center;
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .integration-log-filters label {
@@ -946,6 +1003,30 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .settings-table th,
 .settings-table td {
   white-space: nowrap;
+}
+
+.main[data-shell-page="settings-users"] .settings-panel > #createUserBtn,
+.main[data-shell-page="settings-client-card"] #addClientCardBlockBtn,
+.main[data-shell-page="quick-replies"] .quick-replies-workspace > #createQuickReplyBtn,
+.main[data-shell-page="management-tasks"] .management-tasks-panel > #internalTaskCreateBtn {
+  justify-self: start;
+  align-self: start;
+  margin: 4px 4px 12px;
+  width: auto;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.main[data-shell-page="settings-client-card"] .client-card-main-row {
+  padding: 4px 4px 0;
+}
+
+.main[data-shell-page="settings-client-card"] #addClientCardBlockBtn {
+  margin: 0;
+}
+
+.main[data-shell-page="management-users"] .management-users-controls {
+  padding: 4px 4px 12px;
 }
 
 .settings-empty {
@@ -1594,16 +1675,34 @@ th, td {
   padding: 0;
 }
 
-.quick-replies-content {
-  grid-template-columns: minmax(320px, 50%) 1fr;
-  align-content: start;
-  overflow: auto;
+.main[data-shell-page="quick-replies"] .quick-replies-content {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.main[data-shell-page="quick-replies"] .quick-replies-workspace {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main[data-shell-page="quick-replies"] .quick-replies-list {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .quick-replies-list {
   display: grid;
   gap: 8px;
   align-content: start;
+}
+
+.quick-replies-workspace {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  width: 100%;
 }
 
 .quick-reply-row {
@@ -6126,6 +6225,15 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   align-self: start;
 }
 
+.main[data-shell-page="settings-client-card"] .client-card-main-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
 .main[data-shell-page="settings-client-card"] .client-card-subtabs {
   margin-bottom: 12px;
 }
@@ -7417,7 +7525,12 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   gap: 18px;
 }
 
-.main[data-shell-page="settings-notification-bot-basic"],
+.main[data-shell-page="settings-notification-bot-basic"] {
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
 .main[data-shell-page="profile-notification-bot"] {
   display: block;
   min-height: 0;
@@ -7425,7 +7538,15 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   overflow-x: hidden;
 }
 
-.main[data-shell-page="settings-notification-bot-basic"] .content,
+.main[data-shell-page="settings-notification-bot-basic"] .content {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .main[data-shell-page="profile-notification-bot"] .content {
   align-content: start;
   align-items: start;
@@ -7434,7 +7555,12 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
   min-height: max-content;
 }
 
-.main[data-shell-page="settings-notification-bot-basic"] .settings-panel,
+.main[data-shell-page="settings-notification-bot-basic"] .settings-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
 .main[data-shell-page="profile-notification-bot"] .settings-panel {
   align-self: start;
   overflow: visible;
@@ -7676,8 +7802,8 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
 .management-tasks-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
   height: 100%;
   min-height: 0;
   width: 100%;
@@ -7695,7 +7821,7 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
 
 .management-tasks-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
   gap: 0;
   min-height: 0;
   overflow: hidden;

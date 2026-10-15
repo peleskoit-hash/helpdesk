@@ -495,11 +495,11 @@
     }
 
     el.backToTicketsBtn?.addEventListener("click", () => {
-      if (window.HelpdeskAppShell?.navigate) {
-        window.HelpdeskAppShell.navigate("/tickets");
+      if (window.HelpdeskAppShell?.goBack) {
+        window.HelpdeskAppShell.goBack();
         return;
       }
-      window.location.href = "/tickets";
+      window.history.back();
     });
 
     window.HelpdeskSidebar.init({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) })

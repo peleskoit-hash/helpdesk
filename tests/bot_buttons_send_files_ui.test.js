@@ -207,14 +207,14 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261011a/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20261011a/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261013b/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20261013b/);
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20260903e/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20260903e/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261012a/);
   assert.match(appShellSource, /ticket\.js\?v=20261012a/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20260808c/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261015a/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -338,7 +338,8 @@ test('settings client card automation has rules and sources subtabs', () => {
   const rulesPanel = sourceBetween(settingsClientCardTemplate, 'id="clientCardRulesPanel"', 'id="clientCardSourcesPanel"');
   assert.match(rulesPanel, /id="clientCardRules"/);
   assert.doesNotMatch(rulesPanel, /id="clientCardSources"/);
-  assert.match(settingsClientCardTemplate, /id="clientCardSourcesPanel" class="panel settings-panel hidden"/);
+  assert.match(settingsClientCardTemplate, /id="clientCardSourcesPanel" class="hidden" data-client-card-automation-panel="sources"/);
+  assert.match(settingsClientCardTemplate, /class="panel settings-panel client-card-work-panel"/);
 });
 
 test('settings client card tab switching keeps loaded config and toolbar actions scoped', () => {
@@ -2359,6 +2360,10 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
         values: new Set(),
         add: (...items) => items.forEach((item) => this.classList.values.add(item)),
         remove: (...items) => items.forEach((item) => this.classList.values.delete(item)),
+        toggle: (item, force) => {
+          if (force) this.classList.values.add(item); else this.classList.values.delete(item);
+          return Boolean(force);
+        },
       };
     }
     set innerHTML(value) {
@@ -2386,7 +2391,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
 
   const documentElements = {
     statusText: new MockElement('statusText'),
-    backToSettingsBtn: new MockElement('backToSettingsBtn'),
+    botButtonsBackBtn: new MockElement('botButtonsBackBtn'),
     botButtonsPageTitle: new MockElement('botButtonsPageTitle'),
     botButtonsBreadcrumb: new MockElement('botButtonsBreadcrumb'),
     botButtonsContent: new MockElement('botButtonsContent'),
@@ -2395,6 +2400,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
   let levelCtx = null;
   const registerCalls = [];
   const saveCalls = [];
+  let allowDiscard = true;
   const source = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
   const window = {
     BotButtonsApi: {
@@ -2437,7 +2443,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
         return Promise.resolve();
       },
       hasUnsavedChanges() { return false; },
-      confirmDiscard() { return true; },
+      confirmDiscard() { return allowDiscard; },
       discardEditorChanges() {},
       syncAutomationSelectionMeta() {},
     },
@@ -2458,6 +2464,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
     HelpdeskSidebar: { init: () => Promise.resolve() },
     HelpdeskAppShell: {
       registerPage(name, fn) { registerCalls.push({ name, fn }); },
+      goBack() { saveCalls.push('shell-back'); },
     },
     addEventListener() {},
     removeEventListener() {},
@@ -2475,6 +2482,28 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
   assert.equal(registerCalls.length, 1);
   const page = registerCalls[0].fn();
   await new Promise((resolve) => setImmediate(resolve));
+  const backButton = documentElements.botButtonsBackBtn;
+  assert.equal(backButton.textContent, 'Назад');
+  assert.equal((backButton.listeners.click || []).length, 1);
+  await backButton.click();
+  assert.deepEqual(saveCalls, ['shell-back']);
+  saveCalls.length = 0;
+  await menuCtx.openMenu('menu-a', 'Menu A');
+  assert.equal(backButton.textContent, 'На уровень вверх');
+  assert.equal(documentElements.botButtonsBreadcrumb.classList.values.has('hidden'), false);
+  allowDiscard = false;
+  await backButton.click();
+  assert.equal(levelCtx.state.view, 'level');
+  assert.equal(levelCtx.state.selectedMenu, 'menu-a');
+  allowDiscard = true;
+  levelCtx.state.levelStack.push({ label: 'Nested', rows: [], levelKey: 'menu-a|level|nested' });
+  await backButton.click();
+  assert.equal(levelCtx.state.levelStack.length, 1);
+  assert.equal(backButton.textContent, 'На уровень вверх');
+  await backButton.click();
+  assert.equal(levelCtx.state.view, 'menu_types');
+  assert.equal(backButton.textContent, 'Назад');
+  assert.equal(documentElements.botButtonsBreadcrumb.classList.values.has('hidden'), true);
   await menuCtx.openMenu('menu-a', 'Menu A');
   await levelCtx.openEditor({
     technical_key: 'menu-a|group_task|Parent',
@@ -3334,7 +3363,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261011b"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261013c/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261017a/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261011b/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3400,7 +3429,7 @@ test('quick replies modal and fields use wider responsive layout', () => {
   assert.match(stylesSource, /\.modal-dialog \{[\s\S]*width: min\(480px, 92vw\);/);
   assert.match(stylesSource, /#quickReplyModal \.quick-reply-dialog \{[\s\S]*width: min\(1040px, calc\(100vw - 32px\)\);[\s\S]*max-width: calc\(100vw - 32px\);/);
   assert.match(stylesSource, /\.quick-reply-dialog \.modal-body input,\s*\.quick-reply-dialog \.modal-body textarea \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
-  assert.match(stylesSource, /\.quick-replies-content \{[\s\S]*grid-template-columns: minmax\(320px, 50%\) 1fr;/);
+  assert.match(stylesSource, /\.quick-replies-content \{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
 });
 
 test('quick replies management navigation and file attachment editor are present', () => {
@@ -3417,7 +3446,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261013c/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261017a/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

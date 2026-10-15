@@ -591,11 +591,11 @@
     };
 
     el.backToSettingsBtn?.addEventListener("click", () => {
-      if (window.HelpdeskAppShell?.navigate) {
-        window.HelpdeskAppShell.navigate("/settings");
+      if (window.HelpdeskAppShell?.goBack) {
+        window.HelpdeskAppShell.goBack();
         return;
       }
-      window.location.href = "/settings";
+      window.history.back();
     });
     el.closeErrorModalBtn?.addEventListener("click", closeError);
     el.okErrorBtn?.addEventListener("click", closeError);

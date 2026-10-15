@@ -14,11 +14,11 @@
     ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20260913a"] }],
-    ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20260916a"] }],
-    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20260930a"] }],
+    ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261015a"] }],
+    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016a"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261011a"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261011a"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261013b"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261013b"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
@@ -30,14 +30,14 @@
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20261005a",
-        "/static/settings_bot_buttons.js?v=20261011a",
+        "/static/settings_bot_buttons.js?v=20261015a",
       ],
     }],
     ["/settings/automatic-messages", {
       page: "settings-automatic-messages",
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/settings_automatic_messages.js?v=20261011a",
+        "/static/settings_automatic_messages.js?v=20261013b",
       ],
     }],
     ["/settings/notification-bot-basic", {
@@ -45,7 +45,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/settings_notification_bot_basic.js?v=20261011a",
+        "/static/settings_notification_bot_basic.js?v=20261013b",
       ],
     }],
     ["/profile/notification-bot", {
@@ -53,19 +53,19 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/profile_notification_bot.js?v=20261011a",
+        "/static/profile_notification_bot.js?v=20261013b",
       ],
     }],
-    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261011a"] }],
+    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261013b"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261011a"] }],
-    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261011a"] }],
+    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261011b"] }],
     ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],
     ["/management/users", {
       page: "management-users",
       scripts: [
         "/static/ticket_client_card.js?v=20260903e",
-        "/static/management_users.js?v=20260808c",
+        "/static/management_users.js?v=20261015a",
       ],
     }],
     ["/management/integrations", {
@@ -90,6 +90,16 @@
     },
   ];
   const loadedScripts = new Set([...document.scripts].map((script) => script.getAttribute("src")).filter(Boolean));
+  let skipNextPopstateGuard = false;
+  let skipNextPopstateGuardTimer = null;
+
+  function clearSkippedPopstateGuard() {
+    skipNextPopstateGuard = false;
+    if (skipNextPopstateGuardTimer) {
+      clearTimeout(skipNextPopstateGuardTimer);
+      skipNextPopstateGuardTimer = null;
+    }
+  }
 
   function getRoot() {
     return document.getElementById("appContent");
@@ -236,7 +246,7 @@
       const active = linkUrl.pathname === "/settings"
         ? url.pathname.startsWith("/settings")
         : linkUrl.pathname === "/management"
-          ? url.pathname.startsWith("/management") || url.pathname === "/mass-notifications"
+          ? (url.pathname.startsWith("/management") && url.pathname !== "/management/tasks") || url.pathname === "/mass-notifications"
         : linkUrl.pathname === url.pathname;
       link.classList.toggle("active", active);
     });
@@ -323,9 +333,19 @@
     return true;
   }
 
+  function goBack() {
+    if (!confirmNavigateAway()) return false;
+    skipNextPopstateGuard = true;
+    if (skipNextPopstateGuardTimer) clearTimeout(skipNextPopstateGuardTimer);
+    skipNextPopstateGuardTimer = setTimeout(clearSkippedPopstateGuard, 1000);
+    window.history.back();
+    return true;
+  }
+
   window.HelpdeskAppShell = {
     registerPage,
     navigate,
+    goBack,
     startCurrentPage,
     destroyCurrentPage,
     confirmNavigateAway,
@@ -337,6 +357,16 @@
   };
 
   document.addEventListener("click", (event) => {
+    const backButton = event.target?.closest?.("[data-shell-back]");
+    if (backButton) {
+      event.preventDefault();
+      if (window.HelpdeskAppShell?.goBack) {
+        window.HelpdeskAppShell.goBack();
+      } else {
+        window.history.back();
+      }
+      return;
+    }
     if (!isPlainLeftClick(event)) return;
     const match = findNavigableLink(event);
     if (!match) return;
@@ -347,7 +377,8 @@
 
   window.addEventListener("popstate", async () => {
     const url = new URL(window.location.href);
-    if (!canHandleUrl(url)) return;
+    const skipGuard = skipNextPopstateGuard;
+    clearSkippedPopstateGuard();
     if (url.pathname === current.url.split("?")[0] && typeof current.onUrlChange === "function") {
       await current.onUrlChange(url);
       current.url = `${url.pathname}${url.search}`;
@@ -355,11 +386,12 @@
       return;
     }
     const previousUrl = current.url || `${window.location.pathname}${window.location.search}`;
-    if (!confirmNavigateAway()) {
+    if (!skipGuard && !confirmNavigateAway()) {
       window.history.pushState({ shell: true, url: previousUrl }, "", previousUrl);
       updateSidebarActiveState(new URL(previousUrl, window.location.origin));
       return;
     }
+    if (!canHandleUrl(url)) return;
     await navigate(url, { replace: true, skipGuard: true });
   });
 

@@ -36,7 +36,7 @@ def test_profile_page_is_available_to_authenticated_roles(monkeypatch, role):
 
     assert response.status_code == 200
     assert 'data-shell-page="profile"' in response.text
-    assert "/static/profile.js?v=20261011a" in response.text
+    assert "/static/profile.js?v=20261013b" in response.text
     assert "Личные данные" in response.text
 
 
@@ -51,7 +51,7 @@ def test_profile_shell_navigation_contract():
     shell = (ROOT / "api/app/static/app_shell.js").read_text(encoding="utf-8")
     template = (ROOT / "api/app/templates/profile.html").read_text(encoding="utf-8")
 
-    assert '["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261011a"] }]' in shell
+    assert '["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261013b"] }]' in shell
     assert 'data-shell-page="profile"' in template
     assert 'id="profileRoot"' in template
     assert 'id="loginModal"' in template

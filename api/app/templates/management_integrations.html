@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - Управление - Интеграции</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261013c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261017a" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -48,15 +48,14 @@
     </aside>
 
     <main id="appContent" class="main" data-shell-page="management-integrations">
-      <div class="management-integrations-page">
-        <div class="management-integrations-head">
-          <div>
-            <div class="management-eyebrow">Управление</div>
-            <h1>Интеграции</h1>
-          </div>
-          <span class="status" id="integrationLogStatus">Готово</span>
+      <div class="toolbar">
+        <button class="action" type="button" data-shell-back>Назад</button>
+        <div class="settings-title">Интеграции</div>
+        <div class="display-settings">
+          <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
         </div>
-
+      </div>
+      <div class="management-integrations-page">
         <div class="panel table-wrap integration-log-panel">
           <div class="integration-log-title">Integration Log</div>
           <div class="integration-log-filters">
@@ -88,6 +87,7 @@
               <input id="integrationLogTimeTo" type="time" />
             </label>
             <button id="integrationLogResetBtn" class="action" type="button">Сбросить</button>
+            <span class="status" id="integrationLogStatus">Готово</span>
           </div>
 
           <div class="table-scroll">
@@ -122,7 +122,7 @@
   <script src="/static/theme.js?v=20261012a"></script>
   <script src="/static/sidebar.js?v=20261012a"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261011b"></script>
+  <script src="/static/app_shell.js?v=20261016a"></script>
   <script src="/static/management_integrations.js?v=20260904a"></script>
 </body>
 </html>

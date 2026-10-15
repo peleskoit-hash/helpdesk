@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - &#1059;&#1087;&#1088;&#1072;&#1074;&#1083;&#1077;&#1085;&#1080;&#1077; - &#1055;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261013c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261017a" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -56,25 +56,26 @@
     </aside>
 
     <main id="appContent" class="main" data-shell-page="management-users">
+      <div class="toolbar">
+        <button class="action" type="button" data-shell-back>Назад</button>
+        <div class="settings-title">Пользователи</div>
+        <div class="display-settings">
+          <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Переключить тему">Тёмная тема</button>
+        </div>
+      </div>
       <div class="management-users-page">
-        <div class="management-users-head">
-          <div>
-            <div class="management-eyebrow">&#1059;&#1087;&#1088;&#1072;&#1074;&#1083;&#1077;&#1085;&#1080;&#1077;</div>
-            <h1>&#1055;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;</h1>
-          </div>
-          <span class="status" id="managementUsersStatus">&#1043;&#1086;&#1090;&#1086;&#1074;&#1086;</span>
-        </div>
-        <div class="management-users-controls">
-          <div class="search-input-wrap management-users-search">
-            <input id="managementUsersSearch" placeholder="Telegram ID, chat ID, username, &#1080;&#1084;&#1103;, &#1092;&#1072;&#1084;&#1080;&#1083;&#1080;&#1103;, &#1074;&#1085;&#1091;&#1090;&#1088;&#1077;&#1085;&#1085;&#1080;&#1081; &#1085;&#1086;&#1084;&#1077;&#1088;" autocomplete="off" />
-            <button id="managementUsersSearchBtn" class="action primary" type="button">&#1053;&#1072;&#1081;&#1090;&#1080;</button>
-          </div>
-          <div class="management-users-filters">
-            <button class="action active" type="button" data-management-user-filter="all">&#1042;&#1089;&#1077; &#1087;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;</button>
-            <button class="action" type="button" data-management-user-filter="blocked">&#1047;&#1072;&#1073;&#1083;&#1086;&#1082;&#1080;&#1088;&#1086;&#1074;&#1072;&#1085;&#1085;&#1099;&#1077;</button>
-          </div>
-        </div>
         <div class="panel table-wrap management-users-table">
+          <div class="management-users-controls">
+            <div class="search-input-wrap management-users-search">
+              <input id="managementUsersSearch" placeholder="Telegram ID, chat ID, username, &#1080;&#1084;&#1103;, &#1092;&#1072;&#1084;&#1080;&#1083;&#1080;&#1103;, &#1074;&#1085;&#1091;&#1090;&#1088;&#1077;&#1085;&#1085;&#1080;&#1081; &#1085;&#1086;&#1084;&#1077;&#1088;" autocomplete="off" />
+              <button id="managementUsersSearchBtn" class="action primary" type="button">&#1053;&#1072;&#1081;&#1090;&#1080;</button>
+              <span class="status" id="managementUsersStatus" hidden>&#1043;&#1086;&#1090;&#1086;&#1074;&#1086;</span>
+            </div>
+            <div class="management-users-filters">
+              <button class="action active" type="button" data-management-user-filter="all">&#1042;&#1089;&#1077; &#1087;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;</button>
+              <button class="action" type="button" data-management-user-filter="blocked">&#1047;&#1072;&#1073;&#1083;&#1086;&#1082;&#1080;&#1088;&#1086;&#1074;&#1072;&#1085;&#1085;&#1099;&#1077;</button>
+            </div>
+          </div>
           <div class="table-scroll">
             <table>
               <thead>
@@ -197,8 +198,8 @@
   <script src="/static/theme.js?v=20261012a"></script>
   <script src="/static/sidebar.js?v=20261012a"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261011b"></script>
+  <script src="/static/app_shell.js?v=20261016a"></script>
   <script src="/static/ticket_client_card.js?v=20260903e"></script>
-  <script src="/static/management_users.js?v=20260808c"></script>
+  <script src="/static/management_users.js?v=20261015a"></script>
 </body>
 </html>

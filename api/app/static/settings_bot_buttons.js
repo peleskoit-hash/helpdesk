@@ -115,7 +115,7 @@ function isSystemMenuTypeRecord(item) {
 
 function initSettingsBotButtonsPage() {
 const el = {
-  backToSettingsBtn: document.getElementById("backToSettingsBtn"),
+  backButton: document.getElementById("botButtonsBackBtn"),
   pageTitle: document.getElementById("botButtonsPageTitle"),
   breadcrumb: document.getElementById("botButtonsBreadcrumb"),
   content: document.getElementById("botButtonsContent"),
@@ -910,8 +910,12 @@ function renderBreadcrumb() {
       el.breadcrumb.textContent = pathText;
     }
   }
-  const selectedInfo = selectedMenuInfo();
-  if (el.pageTitle) el.pageTitle.textContent = (selectedInfo?.display_name || state.selectedMenu) || "Кнопки бота";
+  if (el.pageTitle) el.pageTitle.textContent = "Кнопки бота";
+  if (el.breadcrumb) el.breadcrumb.classList.toggle("hidden", state.view === "menu_types");
+  if (el.backButton) {
+    const isRoot = state.view === "menu_types";
+    el.backButton.textContent = isRoot ? "Назад" : "На уровень вверх";
+  }
 }
 
 function render() {
@@ -1320,11 +1324,7 @@ function handleBack() {
     render();
     return;
   }
-  if (window.HelpdeskAppShell?.navigate) {
-    window.HelpdeskAppShell.navigate("/settings");
-    return;
-  }
-  window.location.href = "/settings";
+  if (window.HelpdeskAppShell?.goBack) window.HelpdeskAppShell.goBack();
 }
 
 function handleBeforeUnload(event) {
@@ -1351,7 +1351,14 @@ window.addEventListener("beforeunload", handleBeforeUnload);
     confirmDiscard,
     discardEditorChanges,
   });
-  el.backToSettingsBtn?.addEventListener("click", handleBack);
+  el.backButton?.addEventListener("click", () => {
+    if (state.view === "menu_types") {
+      if (window.HelpdeskAppShell?.goBack) window.HelpdeskAppShell.goBack();
+      else window.history.back();
+      return;
+    }
+    handleBack();
+  });
 window.HelpdeskSidebar.init({ onError: (e) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error: e }) })
     .then(async () => {
       await loadAssignees();

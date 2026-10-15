@@ -119,7 +119,10 @@
 
   function setStatus(root, message) {
     const node = root.querySelector("#managementUsersStatus");
-    if (node) node.textContent = message;
+    if (node) {
+      node.textContent = message;
+      node.hidden = !message || message === "Готово";
+    }
   }
 
   function showError(root, message) {

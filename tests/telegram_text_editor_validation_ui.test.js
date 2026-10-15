@@ -27,6 +27,7 @@ const appShellSource = fs.readFileSync(path.join(__dirname, "..", "api", "app", 
 function loadAppShellHarness({ guard } = {}) {
   const fetchCalls = [];
   const historyCalls = [];
+  const timers = [];
   const root = {
     id: "appContent",
     dataset: { shellPage: "tickets-list" },
@@ -53,6 +54,9 @@ function loadAppShellHarness({ guard } = {}) {
   const window = {
     location: { href: "https://desk.example/tickets", origin: "https://desk.example", pathname: "/tickets", search: "", hash: "" },
     history: {
+      back() {
+        historyCalls.push(["back"]);
+      },
       pushState(...args) {
         historyCalls.push(["pushState", ...args]);
         setLocation(args[2]);
@@ -85,6 +89,14 @@ function loadAppShellHarness({ guard } = {}) {
     String,
     Boolean,
     Error,
+    setTimeout: (handler) => {
+      timers.push(handler);
+      return handler;
+    },
+    clearTimeout: (handler) => {
+      const index = timers.indexOf(handler);
+      if (index !== -1) timers.splice(index, 1);
+    },
     fetch: async (url) => {
       fetchCalls.push(String(url));
       return {
@@ -101,7 +113,16 @@ function loadAppShellHarness({ guard } = {}) {
     destroy() { destroyed = true; },
   }));
   window.HelpdeskAppShell.registerPage("settings-home", () => ({ destroy() {} }));
-  return { window, root, fetchCalls, historyCalls, listeners, setLocation, destroyed: () => destroyed };
+  return {
+    window,
+    root,
+    fetchCalls,
+    historyCalls,
+    listeners,
+    setLocation,
+    runTimers: () => timers.splice(0).forEach((handler) => handler()),
+    destroyed: () => destroyed,
+  };
 }
 
 test("frontend telegram html validation follows shared contract", () => {
@@ -181,6 +202,90 @@ test("app shell confirmNavigateAway has no stateful bypass and skipGuard is expl
   assert.equal(skipGuardCalls, 1);
   assert.deepEqual(explicit.fetchCalls, ["/settings"]);
   assert.equal(explicit.root.dataset.shellPage, "settings-home");
+});
+
+test("app shell goBack uses browser history and preserves dirty guard", async () => {
+  let blockedGuardCalls = 0;
+  const blocked = loadAppShellHarness({
+    guard: () => {
+      blockedGuardCalls += 1;
+      return false;
+    },
+  });
+  assert.equal(blocked.window.HelpdeskAppShell.goBack(), false);
+  assert.equal(blockedGuardCalls, 1);
+  assert.deepEqual(blocked.fetchCalls, []);
+  assert.deepEqual(blocked.historyCalls, []);
+  assert.equal(blocked.root.dataset.shellPage, "tickets-list");
+
+  blocked.setLocation("/settings");
+  await blocked.listeners.popstate();
+  assert.equal(blockedGuardCalls, 2);
+  assert.deepEqual(blocked.fetchCalls, []);
+  assert.equal(blocked.root.dataset.shellPage, "tickets-list");
+  assert.deepEqual(blocked.historyCalls.map((call) => call[0]), ["pushState"]);
+
+  let allowedGuardCalls = 0;
+  const allowed = loadAppShellHarness({
+    guard: () => {
+      allowedGuardCalls += 1;
+      return true;
+    },
+  });
+  assert.equal(allowed.window.HelpdeskAppShell.goBack(), true);
+  assert.equal(allowedGuardCalls, 1);
+  assert.deepEqual(allowed.fetchCalls, []);
+  assert.deepEqual(allowed.historyCalls, [["back"]]);
+  assert.equal(allowed.root.dataset.shellPage, "tickets-list");
+
+  allowed.setLocation("/settings");
+  await allowed.listeners.popstate();
+  assert.equal(allowedGuardCalls, 1);
+  assert.deepEqual(allowed.fetchCalls, ["/settings"]);
+  assert.equal(allowed.root.dataset.shellPage, "settings-home");
+  assert.deepEqual(allowed.historyCalls.map((call) => call[0]), ["back", "replaceState"]);
+
+  let expiredGuardCalls = 0;
+  const expired = loadAppShellHarness({
+    guard: () => {
+      expiredGuardCalls += 1;
+      return expiredGuardCalls === 1;
+    },
+  });
+  assert.equal(expired.window.HelpdeskAppShell.goBack(), true);
+  expired.runTimers();
+  expired.setLocation("/settings");
+  await expired.listeners.popstate();
+  assert.equal(expiredGuardCalls, 2);
+  assert.deepEqual(expired.fetchCalls, []);
+  assert.deepEqual(expired.historyCalls.map((call) => call[0]), ["back", "pushState"]);
+});
+
+test("app shell delegates data-shell-back clicks to goBack", () => {
+  let guardCalls = 0;
+  const shell = loadAppShellHarness({
+    guard: () => {
+      guardCalls += 1;
+      return true;
+    },
+  });
+  const event = {
+    target: {
+      closest(selector) {
+        return selector === "[data-shell-back]" ? {} : null;
+      },
+    },
+    preventDefaultCalled: false,
+    preventDefault() {
+      this.preventDefaultCalled = true;
+    },
+  };
+
+  shell.listeners.click(event);
+
+  assert.equal(event.preventDefaultCalled, true);
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(shell.historyCalls, [["back"]]);
 });
 
 test("app shell popstate guard refusal restores current URL without navigation", async () => {

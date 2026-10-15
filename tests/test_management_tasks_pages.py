@@ -36,7 +36,7 @@ def test_management_tasks_page_is_admin_only(monkeypatch, role):
         return
     assert response.status_code == 200
     assert 'data-shell-page="management-tasks"' in response.text
-    assert "/static/management_tasks.js?v=20260916a" in response.text
+    assert "/static/management_tasks.js?v=20261015a" in response.text
     assert 'id="internalTaskCreateBtn"' in response.text
 
 

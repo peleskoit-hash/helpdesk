@@ -198,11 +198,11 @@ const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); c
 
 (function init() {
   el.backToSettingsBtn.addEventListener("click", () => {
-    if (window.HelpdeskAppShell?.navigate) {
-      window.HelpdeskAppShell.navigate("/settings");
+    if (window.HelpdeskAppShell?.goBack) {
+      window.HelpdeskAppShell.goBack();
       return;
     }
-    window.location.href = "/settings";
+    window.history.back();
   });
   el.createUserBtn.addEventListener("click", () => openUserModal());
   el.closeUserModalBtn.addEventListener("click", closeUserModal);

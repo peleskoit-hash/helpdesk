@@ -290,11 +290,11 @@
     }
 
     el.backToSettingsBtn?.addEventListener("click", () => {
-      if (window.HelpdeskAppShell?.navigate) {
-        window.HelpdeskAppShell.navigate("/settings");
+      if (window.HelpdeskAppShell?.goBack) {
+        window.HelpdeskAppShell.goBack();
         return;
       }
-      window.location.href = "/settings";
+      window.history.back();
     });
 
     window.HelpdeskSidebar.init({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) })

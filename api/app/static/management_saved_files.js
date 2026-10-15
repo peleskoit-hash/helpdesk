@@ -62,7 +62,7 @@
 
     function setStatus(message) {
       el.Status.textContent = message || "";
-      el.Status.hidden = !message;
+      el.Status.hidden = !message || message === "Готово";
     }
 
     function setNote(message) {

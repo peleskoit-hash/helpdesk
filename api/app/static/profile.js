@@ -616,11 +616,11 @@ const handleKeydown = (event) => {
 
 function bind() {
   el.backToTicketsBtn?.addEventListener("click", () => {
-    if (window.HelpdeskAppShell?.navigate) {
-      window.HelpdeskAppShell.navigate("/tickets");
-    } else {
-      window.location.href = "/tickets";
+    if (window.HelpdeskAppShell?.goBack) {
+      window.HelpdeskAppShell.goBack();
+      return;
     }
+    window.history.back();
   });
   el.editLoginBtn?.addEventListener("click", openLoginModal);
   el.editPasswordBtn?.addEventListener("click", openPasswordModal);

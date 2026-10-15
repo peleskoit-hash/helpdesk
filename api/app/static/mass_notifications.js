@@ -184,11 +184,11 @@ async function sendBroadcast() {
   });
   el.sendBroadcastBtn.addEventListener("click", sendBroadcast);
   el.backToManagementBtn?.addEventListener("click", () => {
-    if (window.HelpdeskAppShell?.navigate) {
-      window.HelpdeskAppShell.navigate("/management");
+    if (window.HelpdeskAppShell?.goBack) {
+      window.HelpdeskAppShell.goBack();
       return;
     }
-    window.location.href = "/management";
+    window.history.back();
   });
 
   el.closeErrorModalBtn.addEventListener("click", closeError);

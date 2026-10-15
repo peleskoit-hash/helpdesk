@@ -136,8 +136,20 @@ test("independent status indicators remain referenced", () => {
   const integrationsTemplate = read("api", "app", "templates", "management_integrations.html");
   const integrationsScript = read("api", "app", "static", "management_integrations.js");
   const savedFilesScript = read("api", "app", "static", "management_saved_files.js");
+  const integrationsStatusIndex = integrationsTemplate.indexOf('id="integrationLogStatus"');
+  const integrationsResetIndex = integrationsTemplate.indexOf('id="integrationLogResetBtn"');
 
   assert.match(integrationsTemplate, /id="integrationLogStatus"/);
+  assert.ok(integrationsStatusIndex > integrationsResetIndex);
+  assert.match(read("api", "app", "static", "styles.css"), /\.main\[data-shell-page="management-integrations"\] #integrationLogStatus\s*\{[^}]*margin-left:\s*auto;/s);
   assert.match(integrationsScript, /integrationLogStatus/);
   assert.match(savedFilesScript, /function setStatus\(message\)/);
+  assert.match(savedFilesScript, /el\.Status\.hidden = !message \|\| message === "Готово"/);
+  assert.match(savedFilesScript, /setStatus\("Загрузка\.\.\."\)/);
+  assert.match(savedFilesScript, /setStatus\(error\.message \|\| "Ошибка загрузки"\)/);
+});
+
+test("management feedback workspace has an explicit stretching grid row", () => {
+  const styles = read("api", "app", "static", "styles.css");
+  assert.match(styles, /\.main\[data-shell-page="management-feedback"\] \.management-feedback-page\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\);[^}]*align-content:\s*stretch;/s);
 });

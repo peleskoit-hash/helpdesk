@@ -187,6 +187,7 @@ test("management tasks route template and navigation are registered", () => {
   assert.match(fs.readFileSync("api/app/templates/management.html", "utf8"), /href="\/management\/tasks"[\s\S]*Задачи и Регулярки/);
   const template = fs.readFileSync("api/app/templates/management_tasks.html", "utf8");
   assert.match(template, /data-shell-page="management-tasks"/);
+  assert.match(template, /class="settings-title">Задачи и Регулярки<\/div>/);
   assert.match(template, /data-internal-task-tab="active"/);
   assert.match(template, /data-internal-task-tab="scheduled"/);
   assert.match(template, /data-internal-task-tab="recurring"/);
@@ -256,6 +257,8 @@ test("management tasks loads options overview and renders tabs", async () => {
   assert.match(ui.el.RecurringBody.html, /Finished recurring/);
   assert.match(ui.el.RecurringBody.html, /Завершена/);
   assert.match(ui.el.CompletedBody.html, /Done/);
+  assert.equal(ui.el.Status.text, "");
+  assert.equal(ui.el.Status.hidden, true);
   ui.tabs[1].fire("click");
   assert.equal(ui.panels[1].hidden, false);
   assert.equal(ui.panels[0].hidden, true);
@@ -565,6 +568,18 @@ test("recurring pause or resume error is shown in page validation", async () => 
 
   assert.equal(ui.el.Validation.hidden, false);
   assert.match(ui.el.Validation.textContent, /Лимит повторений уже исчерпан/);
+});
+
+test("task overview errors remain visible while successful ready status stays hidden", async () => {
+  const ui = await load((url) => {
+    if (url.startsWith("/api/v1/management/internal-tasks/overview")) {
+      return { ok: false, status: 503, text: "Internal Server Error" };
+    }
+    return defaultPayload(url);
+  });
+  assert.equal(ui.el.Status.text, "Ошибка");
+  assert.equal(ui.el.Status.hidden, false);
+  assert.equal(ui.el.Validation.hidden, false);
 });
 
 test("server errors show neutral text while structured business messages remain visible", async () => {

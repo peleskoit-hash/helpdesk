@@ -37,7 +37,7 @@ def test_management_feedback_page_is_admin_only(monkeypatch, role):
         return
     assert response.status_code == 200
     assert 'data-shell-page="management-feedback"' in response.text
-    assert "/static/management_feedback.css?v=20260909b" in response.text
+    assert "/static/management_feedback.css?v=20261013a" in response.text
     assert "/static/management_feedback.js?v=20260909b" in response.text
     assert 'id="managementFeedbackSearch"' in response.text
     assert 'id="managementFeedbackTableBody"' in response.text
