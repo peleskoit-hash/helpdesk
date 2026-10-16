@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Callable
@@ -43,9 +43,16 @@ def _apply_move_to_special(
     append_system_message_fn(
         db,
         ticket,
-        f"Заявка переведена в особые. Ответственный администратор: {admin_user.full_name}",
+        f"{'Задача' if ticket.workflow_type == TicketWorkflowType.TASK.value else 'Заявка'} переведена в особые. Ответственный администратор: {admin_user.full_name}",
         agent_visible=True,
     )
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value:
+        append_system_message_fn(
+            db,
+            ticket,
+            "Обратите внимание, что Вы перенесли ЗАЯВКУ в особый список. Пока она не будет закрыта, клиент не сможет создавать новые заявки.",
+            agent_visible=True,
+        )
     if old_assignee is not None and old_assignee.id != admin_user.id:
         append_system_message_fn(
             db,
@@ -81,7 +88,7 @@ def _handle_special_assignment(
             ticket.status = TicketStatus.NEW.value
         ticket.updated_at = datetime.utcnow()
         append_system_message_fn(db, ticket, assignee_change_message_fn(old_assignee, assignee))
-        append_system_message_fn(db, ticket, f"Особая заявка передана сотруднику: {assignee.full_name}", agent_visible=True)
+        append_system_message_fn(db, ticket, f"Особая {'задача' if ticket.workflow_type == TicketWorkflowType.TASK.value else 'заявка'} передана сотруднику: {assignee.full_name}", agent_visible=True)
         refresh_auto_close_timer_fn(db, ticket, restart_from_now=True)
         if old_assignee is None and old_status == TicketStatus.UNASSIGNED.value:
             notify_client_about_assignee_fn(db, ticket, assignee)
@@ -100,7 +107,7 @@ def _handle_special_assignment(
         append_system_message_fn(
             db,
             ticket,
-            f"Ответственный администратор особой заявки изменён: {assignee.full_name}",
+            f"Ответственный администратор особой {'задачи' if ticket.workflow_type == TicketWorkflowType.TASK.value else 'заявки'} изменён: {assignee.full_name}",
             agent_visible=True,
         )
         return True

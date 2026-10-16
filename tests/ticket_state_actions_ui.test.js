@@ -339,3 +339,29 @@ test("successful greeting unlocks next quick actions before card reload finishes
 
   await clarificationRun;
 });
+
+
+test("move to special stays visible for admin and disables closed, special or unsupported workflows", () => {
+  for (const workflow of ["ticket", "task", "auto", "unsupported"]) {
+    for (const kind of ["normal", "group_parent", "group_child", "internal"]) {
+      for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
+        for (const status of ["unassigned", "new", "pending", "closed"]) {
+          for (const special of [false, true]) {
+            const { controls, ctx } = controlsRenderCtx();
+            ctx.state.role = role;
+            Object.assign(ctx.state.card, { workflow_type: workflow, task_kind: kind === "internal" ? "normal" : kind,
+              is_internal_task: kind === "internal", parent_ticket_id: kind === "group_child" ? "parent" : null,
+              status, is_special: special });
+            let visible;
+            ctx.setVisible = (element, show) => { if (element === ctx.el.markSpecialBtn) visible = show; };
+            controls.renderTicketControlsView(ctx);
+            assert.equal(visible, role === "admin",
+              `${workflow}/${kind}/${role}/${status}/${special}`);
+            assert.equal(ctx.el.markSpecialBtn.disabled, status === "closed" || special || !["ticket", "task"].includes(workflow),
+              `${workflow}/${kind}/${role}/${status}/${special}`);
+          }
+        }
+      }
+    }
+  }
+});

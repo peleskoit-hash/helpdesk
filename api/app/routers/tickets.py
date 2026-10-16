@@ -1727,8 +1727,8 @@ def move_to_special(ticket_id: str, db: Session = Depends(get_db), user: Current
     ticket = _get_ticket_or_404(db, ticket_id, user)
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытую заявку нельзя перевести в особые")
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
-        _error(409, "special_only_for_ticket", "В особые можно переводить только обычные заявки")
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) not in {TicketWorkflowType.TICKET.value, TicketWorkflowType.TASK.value}:
+        _error(409, "special_only_for_ticket", "В особые можно переводить только заявки и задачи")
     if ticket.is_special:
         return {"ok": True, "already_special": True}
 

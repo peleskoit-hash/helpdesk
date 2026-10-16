@@ -232,7 +232,7 @@
     const showRestore = !isReadonly && isClosed && canRestoreFlow && canRestore;
     const isGroupChildTask = (card.task_kind || "") === "group_child" || Boolean(card.parent_ticket_id);
     const showWrongProblem = !isReadonly && !isClosed && !card.wrong_problem_used && !isGroupChildTask;
-    const showMarkSpecial = state.role === "admin" && !isClosed && !card.is_special && workflowType === "ticket";
+    const showMarkSpecial = state.role === "admin";
     const showAdminForceClose = state.role === "admin" && !isClosed;
     const showAdminDelete = state.role === "admin";
     const isCollecting = (card.intake_state || "ready") === "collecting";
@@ -247,7 +247,10 @@
     if (el.adminDeleteBtn) setVisible(el.adminDeleteBtn, showAdminDelete);
     setVisible(el.freezeToggleBtn, showFreezeToggle);
     setVisible(el.restoreBtn, showRestore);
-    if (el.markSpecialBtn) setVisible(el.markSpecialBtn, showMarkSpecial);
+    if (el.markSpecialBtn) {
+      setVisible(el.markSpecialBtn, showMarkSpecial);
+      el.markSpecialBtn.disabled = isClosed || Boolean(card.is_special) || !["ticket", "task"].includes(workflowType);
+    }
     if (el.autoCloseBox) setVisible(el.autoCloseBox, showAutoCloseBox);
     const canSeeInstruction = state.role !== "chiki_piki" && Boolean(card.instruction_text);
     if (el.instructionBtn) setVisible(el.instructionBtn, canSeeInstruction);
