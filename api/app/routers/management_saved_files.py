@@ -17,6 +17,7 @@ from ..services.saved_files import (
     create_saved_file,
     delete_saved_file,
     rename_saved_file,
+    replace_saved_file_content,
     resolve_saved_file_path,
 )
 
@@ -141,6 +142,30 @@ def download_saved_file(
         media_type=saved_file.mime_type or "application/octet-stream",
         headers=headers,
     )
+
+
+@router.put("/{saved_file_id}/content")
+def replace_management_saved_file_content(
+    saved_file_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    saved_file = db.get(SavedFile, saved_file_id, with_for_update=True)
+    if saved_file is None:
+        _error(404, "saved_file_not_found", "Сохранённый файл не найден")
+    try:
+        replace_saved_file_content(
+            db,
+            saved_file,
+            content=file.file,
+            display_filename=file.filename or "file.bin",
+            mime_type=file.content_type,
+        )
+    except (SavedFileStorageError, OSError):
+        _error(500, "saved_file_replace_failed", "Не удалось заменить файл. Прежний файл сохранён.")
+    return _saved_file_out(db, saved_file)
 
 
 @router.patch("/{saved_file_id}")

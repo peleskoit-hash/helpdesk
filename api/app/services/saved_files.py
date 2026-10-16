@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import BytesIO
+import logging
 from mimetypes import guess_extension
+import os
 from pathlib import Path
+import shutil
 from typing import BinaryIO
 import uuid
 
@@ -10,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import SavedFile
+
+
+logger = logging.getLogger(__name__)
 
 
 class SavedFileStorageError(RuntimeError):
@@ -88,6 +95,54 @@ def create_saved_file(
 def rename_saved_file(db: Session, saved_file: SavedFile, display_filename: str) -> SavedFile:
     saved_file.display_filename = _safe_display_filename(display_filename)
     db.add(saved_file)
+    return saved_file
+
+
+def _remove_replaced_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.exception("Could not remove saved file: %s", path)
+
+
+def replace_saved_file_content(
+    db: Session,
+    saved_file: SavedFile,
+    *,
+    content: bytes | BinaryIO,
+    display_filename: str,
+    mime_type: str | None = None,
+) -> SavedFile:
+    old_path = resolve_saved_file_path(saved_file)
+    storage_key = _storage_key(display_filename, mime_type)
+    path = _storage_root() / storage_key
+    created = False
+    try:
+        with path.open("xb") as target:
+            created = True
+            shutil.copyfileobj(content if hasattr(content, "read") else BytesIO(content), target)
+            size = target.tell()
+            target.flush()
+            os.fsync(target.fileno())
+        if path.stat().st_size != size:
+            raise SavedFileStorageError("saved_file_incomplete_write")
+        saved_file.storage_key = storage_key
+        saved_file.display_filename = _safe_display_filename(display_filename)
+        saved_file.mime_type = mime_type
+        saved_file.file_size = size
+        db.add(saved_file)
+        db.commit()
+    except Exception as exc:
+        logger.exception("Could not replace saved file content: %s", old_path)
+        try:
+            db.rollback()
+        finally:
+            if created:
+                _remove_replaced_file(path)
+        raise SavedFileStorageError("saved_file_replace_failed") from exc
+
+    # The database now points to the durable new file. Cleanup must not undo it.
+    _remove_replaced_file(old_path)
     return saved_file
 
 

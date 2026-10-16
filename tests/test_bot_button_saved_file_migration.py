@@ -183,6 +183,18 @@ def test_runtime_resolves_migrated_saved_ref(monkeypatch, tmp_path):
     assert path.read_bytes() == (button_root / "files" / filename).read_bytes()
     assert telegram_filename == filename
 
+    saved = session.get(SavedFile, migration.legacy_bot_button_saved_file_id(filename))
+    saved_files.replace_saved_file_content(
+        session, saved, content=b"replacement", display_filename="updated.txt", mime_type="text/plain",
+    )
+    migration.migrate_legacy_bot_button_pdf_saved_files(session)
+    session.commit()
+
+    path, telegram_filename = telegram_router._resolve_button_file_path(session, _saved_ref(filename))
+    assert path.read_bytes() == b"replacement"
+    assert telegram_filename == "updated.txt"
+    assert (button_root / "files" / filename).read_bytes() != b"replacement"
+
 
 def test_existing_saved_file_missing_physical_copy_is_recovered(monkeypatch, tmp_path):
     button_root = tmp_path / "button-config"

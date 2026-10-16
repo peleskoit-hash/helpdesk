@@ -43,12 +43,12 @@
 
   function initManagementSavedFilesPage({ root }) {
     const el = {};
-    ["Status", "UploadBtn", "DownloadBtn", "RenameBtn", "DeleteBtn", "ActionNote", "UploadInput",
+    ["Status", "UploadBtn", "DownloadBtn", "RenameBtn", "DeleteBtn", "ActionNote", "UploadInput", "ReplaceBtn", "ReplaceInput",
       "TableBody", "Empty", "RenameModal", "RenameCloseBtn", "RenameForm", "RenameInput",
       "RenameError", "RenameSaveBtn"].forEach((key) => {
       el[key] = root.querySelector("#managementSavedFiles" + key);
     });
-    const state = { items: [], selectedId: null, loading: false };
+    const state = { items: [], selectedId: null, loading: false, replacing: false, replaceId: null };
     const listeners = [];
 
     function listen(target, event, handler) {
@@ -76,6 +76,14 @@
       el.DownloadBtn.disabled = !hasSelection;
       el.RenameBtn.disabled = !hasSelection;
       el.DeleteBtn.disabled = !hasSelection || Boolean(item?.used);
+      el.ReplaceBtn.disabled = !hasSelection || state.replacing;
+      if (state.replacing) {
+        el.UploadBtn.disabled = true;
+        el.RenameBtn.disabled = true;
+        el.DeleteBtn.disabled = true;
+      } else {
+        el.UploadBtn.disabled = false;
+      }
       if (item?.used) {
         setNote(`Файл используется: ${usageText(item)}. Удаление недоступно.`);
       } else if (!state.loading) {
@@ -136,6 +144,7 @@
     }
 
     function selectRow(id) {
+      if (state.replacing) return;
       state.selectedId = id;
       render();
     }
@@ -154,6 +163,34 @@
         setStatus(error.message || "Не удалось добавить файл");
       } finally {
         el.UploadInput.value = "";
+      }
+    }
+
+    async function replaceSelectedFile(file) {
+      if (!file || state.replacing) return;
+      const item = state.items.find((value) => value.id === state.replaceId);
+      try {
+        if (!item) return;
+        if (!window.confirm(`Заменить файл "${item.display_filename}" на "${file.name}"? Новый файл будет использоваться во всех существующих привязках, включая кнопки Telegram-бота и быстрые ответы.`)) return;
+        state.replacing = true;
+        updateActions();
+        setStatus("Замена файла...");
+        const data = new FormData();
+        data.append("file", file);
+        const updated = await fetchJson(`${API}/${encodeURIComponent(item.id)}/content`, {
+          method: "PUT", body: data,
+        });
+        state.items = state.items.map((value) => value.id === updated.id ? updated : value);
+        state.selectedId = updated.id;
+        render();
+        setStatus("Файл заменён");
+      } catch (error) {
+        setStatus(error.message || "Не удалось заменить файл");
+      } finally {
+        state.replacing = false;
+        state.replaceId = null;
+        el.ReplaceInput.value = "";
+        updateActions();
       }
     }
 
@@ -228,8 +265,8 @@
         render();
         setStatus("Файл удалён");
       } catch (error) {
-        setStatus(error.message || "Не удалось удалить файл");
         await loadFiles({ keepSelection: true });
+        setStatus(error.message || "Не удалось удалить файл");
       }
     }
 
@@ -241,6 +278,17 @@
       }
     });
     listen(el.UploadInput, "change", () => uploadSelectedFile(el.UploadInput.files?.[0]));
+    listen(el.ReplaceBtn, "click", () => {
+      if (state.replacing || !selectedItem()) return;
+      state.replaceId = state.selectedId;
+      el.ReplaceInput.value = "";
+      if (typeof el.ReplaceInput.showPicker === "function") {
+        el.ReplaceInput.showPicker();
+      } else {
+        el.ReplaceInput.click();
+      }
+    });
+    listen(el.ReplaceInput, "change", () => replaceSelectedFile(el.ReplaceInput.files?.[0]));
     listen(el.DownloadBtn, "click", downloadSelected);
     listen(el.RenameBtn, "click", openRenameModal);
     listen(el.DeleteBtn, "click", deleteSelected);

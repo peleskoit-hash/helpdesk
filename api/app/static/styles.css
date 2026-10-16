@@ -431,6 +431,8 @@ body[data-sidebar-ready="0"] .admin-select-col {
 }
 
 .main[data-shell-page="management-saved-files"] {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
@@ -438,13 +440,21 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .management-saved-files-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
   gap: 10px;
-  align-content: start;
+  align-content: stretch;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 8px 16px 16px;
+  min-width: 0;
+}
+
+.management-saved-files-panel {
+  width: 100%;
   min-width: 0;
 }
 
@@ -463,6 +473,7 @@ body[data-sidebar-ready="0"] .admin-select-col {
 
 .management-saved-files-toolbar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
@@ -474,8 +485,18 @@ body[data-sidebar-ready="0"] .admin-select-col {
   margin-left: 4px;
 }
 
+.status.management-saved-files-status {
+  margin-left: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .management-saved-files-table {
   min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0 7px;
 }
 
 .management-saved-files-table th:nth-child(2),
@@ -494,12 +515,29 @@ body[data-sidebar-ready="0"] .admin-select-col {
   cursor: pointer;
 }
 
+.management-saved-files-row td {
+  background: var(--glass-strong);
+  border: solid var(--border);
+  border-width: 1px 0;
+}
+
+.management-saved-files-row td:first-child {
+  border-left-width: 1px;
+  border-radius: 10px 0 0 10px;
+}
+
+.management-saved-files-row td:last-child {
+  border-right-width: 1px;
+  border-radius: 0 10px 10px 0;
+}
+
 .management-saved-files-row:hover td {
-  background: rgba(231, 241, 255, 0.58);
+  background: color-mix(in srgb, var(--accent) 8%, var(--glass-strong));
 }
 
 .management-saved-files-row.is-selected td {
-  background: rgba(59, 130, 246, 0.14);
+  background: color-mix(in srgb, var(--accent) 20%, var(--glass-strong));
+  border-color: var(--accent);
 }
 
 .management-saved-files-empty {

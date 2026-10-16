@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 import uuid
+from pathlib import Path
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -320,3 +323,143 @@ def test_unrelated_legacy_filename_is_not_saved_file_usage(monkeypatch, tmp_path
 
     assert item["used"] is False
     assert item["usage_sources"] == []
+
+
+def test_replace_used_file_keeps_identity_bindings_and_updates_consumers(monkeypatch, tmp_path):
+    from api.app.routers import telegram, quick_replies
+
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session_factory()()
+    saved = _create_saved(session)
+    saved_id, created_at = saved.id, saved.created_at
+    old_path = saved_files.resolve_saved_file_path(saved)
+    ref = f"saved:{saved_id}"
+    rules = [{"conditions": [], "files": [ref]}]
+    button = _seed_button_row(session, files_json=[ref], conditional_files_json=rules)
+    reply = _seed_quick_reply(session, [saved_id])
+    commit = session.commit
+
+    def checked_commit():
+        assert old_path.read_bytes() == b"data"
+        assert saved_files.resolve_saved_file_path(saved).read_bytes() == b"new content"
+        commit()
+
+    monkeypatch.setattr(session, "commit", checked_commit)
+    client = _client(session)
+    response = client.put(
+        f"/api/v1/management/saved-files/{saved_id}/content",
+        files={"file": ("new.txt", b"new content", "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": saved_id, "created_at": created_at.isoformat(),
+        "display_filename": "new.txt", "file_size": 11, "mime_type": "text/plain",
+        "used": True, "usage_sources": ["bot_buttons", "quick_replies"],
+    }
+    session.expire_all()
+    assert saved.id == saved_id and saved.created_at == created_at
+    assert button.files_json == [ref] and button.conditional_files_json == rules
+    assert reply.saved_file_ids_json == [saved_id]
+    assert not old_path.exists()
+    assert len(list(tmp_path.iterdir())) == 1
+    download = client.get(f"/api/v1/management/saved-files/{saved_id}/download")
+    assert download.content == b"new content"
+    assert download.headers["content-type"].startswith("text/plain")
+    path, filename = telegram._resolve_button_file_path(session, ref)
+    assert path.read_bytes() == b"new content" and filename == "new.txt"
+    reply_download = quick_replies.download_quick_reply_file(
+        reply.id, saved_id, db=session, user=_current_user(),
+    )
+    assert Path(reply_download.path).read_bytes() == b"new content"
+
+
+@pytest.mark.parametrize("failure", ["write", "verify", "fsync", "commit"])
+def test_replace_failure_preserves_original_and_cleans_new_file(monkeypatch, tmp_path, failure):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session_factory()()
+    saved = _create_saved(session)
+    saved_id, storage_key, created_at = saved.id, saved.storage_key, saved.created_at
+    old_path = saved_files.resolve_saved_file_path(saved)
+
+    def fail_write(source, target):
+        target.write(b"partial")
+        raise OSError("disk full")
+
+    def fail_commit():
+        session.flush()
+        raise RuntimeError("commit failed")
+
+    def fail_fsync(fd):
+        raise OSError("fsync failed")
+
+    if failure == "write":
+        monkeypatch.setattr(saved_files.shutil, "copyfileobj", fail_write)
+    elif failure == "verify":
+        monkeypatch.setattr(saved_files.shutil, "copyfileobj", lambda source, target: target.seek(10))
+    elif failure == "fsync":
+        monkeypatch.setattr(saved_files.os, "fsync", fail_fsync)
+    else:
+        monkeypatch.setattr(session, "commit", fail_commit)
+    client = _client(session)
+    response = client.put(
+        f"/api/v1/management/saved-files/{saved_id}/content",
+        files={"file": ("new.txt", b"new", "text/plain")},
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"]["error"]["code"] == "saved_file_replace_failed"
+    session.expire_all()
+    assert saved.storage_key == storage_key and saved.created_at == created_at
+    assert saved.display_filename == "file.pdf" and saved.file_size == 4
+    assert saved.mime_type == "application/pdf"
+    assert list(tmp_path.iterdir()) == [old_path]
+    assert client.get(f"/api/v1/management/saved-files/{saved_id}/download").content == b"data"
+
+
+def test_replace_old_file_cleanup_failure_keeps_committed_new_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session_factory()()
+    saved = _create_saved(session)
+    old_path = saved_files.resolve_saved_file_path(saved)
+    unlink = Path.unlink
+
+    def fail_old_unlink(path, *args, **kwargs):
+        if path == old_path:
+            raise PermissionError("busy")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_old_unlink)
+    client = _client(session)
+    response = client.put(
+        f"/api/v1/management/saved-files/{saved.id}/content",
+        files={"file": ("new.txt", b"new", "text/plain")},
+    )
+    assert response.status_code == 200
+    assert old_path.read_bytes() == b"data"
+    assert client.get(f"/api/v1/management/saved-files/{saved.id}/download").content == b"new"
+
+
+@pytest.mark.parametrize("role", ["agent", "trainee", "chiki_piki"])
+def test_replace_is_admin_only(monkeypatch, tmp_path, role):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    session = _session_factory()()
+    saved = _create_saved(session)
+    path = saved_files.resolve_saved_file_path(saved)
+    response = _client(session, role=role).put(
+        f"/api/v1/management/saved-files/{saved.id}/content",
+        files={"file": ("new.txt", b"new", "text/plain")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"]["code"] == "admin_only"
+    assert list(tmp_path.iterdir()) == [path] and path.read_bytes() == b"data"
+
+
+def test_replace_missing_id_does_not_write_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
+    response = _client(_session_factory()()).put(
+        f"/api/v1/management/saved-files/{uuid.uuid4()}/content",
+        files={"file": ("new.txt", b"new", "text/plain")},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "saved_file_not_found"
+    assert list(tmp_path.iterdir()) == []

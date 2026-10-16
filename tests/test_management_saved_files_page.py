@@ -40,7 +40,7 @@ def test_management_saved_files_page_is_admin_only(monkeypatch, role):
         return
     assert response.status_code == 200
     assert 'data-shell-page="management-saved-files"' in response.text
-    assert "/static/management_saved_files.js?v=20261016a" in response.text
+    assert "/static/management_saved_files.js?v=20261016c" in response.text
     assert 'id="managementSavedFilesTableBody"' in response.text
 
 
@@ -53,7 +53,7 @@ def test_management_saved_files_page_redirects_anonymous_to_login(monkeypatch):
 def test_management_saved_files_navigation_contract():
     shell = (ROOT / "api/app/static/app_shell.js").read_text(encoding="utf-8")
     management = (ROOT / "api/app/templates/management.html").read_text(encoding="utf-8")
-    assert '["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016a"] }]' in shell
+    assert '["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016c"] }]' in shell
     assert 'href="/management/saved-files">Сохранённые файлы</a>' in management
 
 
@@ -64,6 +64,8 @@ def test_management_saved_files_table_columns_and_default_disabled_actions():
     assert positions == sorted(positions)
     assert 'id="managementSavedFilesDownloadBtn" class="action" type="button" disabled' in html
     assert 'id="managementSavedFilesRenameBtn" class="action" type="button" disabled' in html
+    assert 'id="managementSavedFilesReplaceBtn" class="action" type="button" disabled' in html
+    assert 'id="managementSavedFilesReplaceInput" type="file" hidden' in html
     assert 'id="managementSavedFilesDeleteBtn" class="action danger" type="button" disabled' in html
 
 
@@ -89,3 +91,13 @@ def test_management_saved_files_js_contracts():
     assert 'state.items = state.items.filter((value) => value.id !== item.id);' in source
     assert 'el.Empty.textContent = "Список пуст";' in source
     assert 'el.Empty.textContent = "Ошибка загрузки";' in source
+
+
+def test_management_saved_files_status_and_usage_note_are_separate_toolbar_elements():
+    html = (ROOT / "api/app/templates/management_saved_files.html").read_text(encoding="utf-8")
+    before_toolbar, toolbar = html.split('<div class="management-saved-files-toolbar">', 1)
+    toolbar = toolbar.split('</div>', 1)[0]
+    assert 'id="managementSavedFilesStatus"' not in before_toolbar
+    assert 'id="managementSavedFilesStatus"' in toolbar
+    assert 'id="managementSavedFilesActionNote"' in toolbar
+    assert 'role="status" aria-live="polite"' in toolbar

@@ -15,7 +15,7 @@
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20260913a"] }],
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261015a"] }],
-    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016a"] }],
+    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016c"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261013b"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261013b"] }],
