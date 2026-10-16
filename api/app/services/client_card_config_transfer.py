@@ -536,7 +536,7 @@ def _import_fields(db: Session, fields: list[dict[str, Any]], *, stats: Transfer
             values["admin_only_values_json"] = [
                 value
                 for value in (str(raw).strip() for raw in item.get("admin_only_values_json") or item.get("admin_only_values") or [])
-                if value and value in options
+                if value and (value in options or (values["is_system"] and values["options_json"] is None))
             ] or None
         else:
             values["admin_only_values_json"] = None

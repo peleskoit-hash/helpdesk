@@ -270,6 +270,53 @@ def test_import_over_seed_records_updates_without_duplicate_system_entities(monk
     assert after_counts["rules"] == seeded_counts["rules"]
 
 
+@pytest.mark.parametrize(
+    "is_system, options, expected",
+    [
+        (True, None, ["Руководство"]),
+        (True, ["Руководство", "Продажи"], ["Руководство"]),
+        (True, ["Продажи"], None),
+        (True, [], None),
+        (False, None, None),
+    ],
+)
+def test_import_select_admin_only_values_with_dry_run_and_repeat(is_system, options, expected):
+    dev = _session()
+    dev.add_all([
+        _block(),
+        _field("destination", is_system=is_system, field_type="select",
+               options_json=options, admin_only_values_json=["Руководство"]),
+    ])
+    dev.commit()
+    exported = export_client_card_config(dev)
+    prod = _session()
+    prod.add_all([
+        _block(),
+        _field("destination", is_system=is_system, field_type="select", options_json=options),
+    ])
+    prod.commit()
+
+    dry_run = import_client_card_config(prod, exported)
+    field = prod.execute(select(ClientCardFieldConfig)).scalar_one()
+    assert dry_run["dry_run"] is True
+    assert dry_run["applied"] is False
+    assert dry_run["conflicts"] == []
+    assert field.admin_only_values_json is None
+
+    first = import_client_card_config(prod, exported, apply=True)
+    assert first["applied"] is True
+    assert first["conflicts"] == []
+    assert field.options_json == options
+    assert field.admin_only_values_json == expected
+
+    second = import_client_card_config(prod, exported, apply=True)
+    assert second["applied"] is True
+    assert second["conflicts"] == []
+    assert second["created"] == {}
+    assert second["updated"] == {}
+    assert field.admin_only_values_json == expected
+
+
 def test_repeated_import_is_idempotent():
     dev = _session()
     _seed_config(dev)
