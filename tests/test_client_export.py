@@ -156,6 +156,29 @@ def test_output_path_rules_and_no_overwrite(db, tmp_path):
     assert existing.read_text() == "keep"
 
 
+@pytest.mark.parametrize("git_marker", ["directory", "file"])
+def test_docker_output_path_and_parent_git_repository(tmp_path, monkeypatch, git_marker):
+    application = tmp_path / "app"
+    services = application / "app" / "services"
+    services.mkdir(parents=True)
+    monkeypatch.setattr(client_export, "__file__", str(services / "client_export.py"))
+    outside = tmp_path / "tmp"
+    outside.mkdir()
+    target = outside / "esdesk-clients.json"
+    assert client_export._output_path(target) == target.resolve()
+    for parent in (application, services):
+        with pytest.raises(client_export.ClientExportError):
+            client_export._output_path(parent / "clients.json")
+    # A parent checkout/worktree must still be protected outside the app root.
+    marker = tmp_path / ".git"
+    if git_marker == "directory":
+        marker.mkdir()
+    else:
+        marker.write_text("gitdir: elsewhere")
+    with pytest.raises(client_export.ClientExportError):
+        client_export._output_path(target)
+
+
 @pytest.mark.parametrize("failure", ["permissions", "write", "publish"])
 def test_io_failures_remove_temporary_files(db, tmp_path, monkeypatch, failure):
     seed(db)

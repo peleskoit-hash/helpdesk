@@ -82,7 +82,7 @@ def _output_path(output: Path):
     if not output.is_absolute():
         raise ClientExportError("An absolute output path is required.")
     parent = output.parent.resolve(strict=True)
-    repository = Path(__file__).resolve().parents[3]
+    repository = Path(__file__).resolve().parents[2]
     if parent == repository or repository in parent.parents or any((p / ".git").exists() for p in (parent, *parent.parents)):
         raise ClientExportError("Output must be outside Git repositories.")
     target = parent / output.name
