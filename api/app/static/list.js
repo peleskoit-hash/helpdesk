@@ -1110,7 +1110,13 @@ async function saveColumnsModal() {
 
 function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
   const key = column.key;
-  if (key === "subject") return linkedCell("ticket-subject-col", (ticket.subject || "") + intakeBadge(ticket), column.width);
+  if (key === "subject") {
+    const subject = (ticket.subject || "") + intakeBadge(ticket);
+    if (ticket.task_kind === "group_parent") {
+      return linkedCell("ticket-subject-col", `<span class="ticket-main-badge">MAIN</span><span class="ticket-main-subject">${escapeHtml(subject)}</span>`, column.width, true);
+    }
+    return linkedCell("ticket-subject-col", subject, column.width);
+  }
   if (key === "requester") return linkedCell("ticket-client-col", ticket.requester_display_name || ticket.client_name || "", column.width);
   if (key === "department") return linkedCell("ticket-department-col", ticket.is_internal_task ? "Система" : (ticket.requester_department || "—"), column.width);
   if (key === "location") return linkedCell("ticket-location-col", ticket.is_internal_task ? "" : (ticket.requester_location_type || ""), column.width);

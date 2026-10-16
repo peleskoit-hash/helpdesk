@@ -468,3 +468,31 @@ test("ticket resize draft preview rolls back on close and persists on modal save
   assert.match(saveSource, /state\.ticketListColumns = normalizeTicketColumns\(preferences\?\.ticket_list_columns \|\| payloadColumns\)/);
   assert.match(saveSource, /state\.columnDraftPreviewActive = false/);
 });
+
+
+test("MAIN marks only group parents in subject independently of colors and type column", () => {
+  const escapeHtml = text => String(text).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  const context = vm.createContext({ escapeHtml, state: { tab: "active", colorEnabled: false } });
+  vm.runInContext([
+    sourceBetween(listSource, "function intakeBadge(", "function assigneeOptionsHtml("),
+    sourceBetween(listSource, "function ticketCellHtml(", "function renderTable("),
+  ].join("\n"), context);
+  for (const colorEnabled of [false, true]) {
+    context.state.colorEnabled = colorEnabled;
+    for (const workflow_type of ["ticket", "task", "auto"]) {
+      for (const task_kind of ["group_parent", "group_child", "normal", undefined]) {
+        const ticket = { workflow_type, task_kind, subject: '<Original & "subject">', is_special: true };
+        const before = JSON.stringify(ticket);
+        const linkedCell = (className, text, width, isHtml) => `<td class="${className}"><a href="/tickets/42">${isHtml ? text : escapeHtml(text)}</a></td>`;
+        const html = context.ticketCellHtml({ key: "subject", width: 150 }, ticket, "/tickets/42", linkedCell);
+        assert.equal(html.includes('class="ticket-main-badge">MAIN</span>'), task_kind === "group_parent");
+        assert.ok(html.includes(escapeHtml(ticket.subject)));
+        assert.ok(html.includes(escapeHtml(context.intakeBadge(ticket))));
+        assert.ok(html.includes('href="/tickets/42"'));
+        assert.equal(JSON.stringify(ticket), before);
+        if (task_kind === "group_parent") assert.ok(html.indexOf("MAIN</span>") < html.indexOf(escapeHtml(ticket.subject)));
+        else assert.equal(html, linkedCell("ticket-subject-col", ticket.subject + context.intakeBadge(ticket), 150, false));
+      }
+    }
+  }
+});

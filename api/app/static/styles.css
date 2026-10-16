@@ -2084,6 +2084,24 @@ th, td {
   white-space: nowrap;
 }
 
+.ticket-main-badge {
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+}
+
+.ticket-main-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ticket-row-link:focus-visible {
   outline: 2px solid #0ea5e9;
   outline-offset: 2px;
