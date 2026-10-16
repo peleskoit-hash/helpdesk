@@ -762,6 +762,7 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
             ticket,
             user,
             force_without_agent_reply_for_task=True,
+            skip_client_notification=payload.skip_client_notification,
             is_admin_fn=is_admin,
             get_or_create_client_profile_fn=_get_or_create_client_profile,
             last_agent_message_fn=_last_agent_message,
@@ -903,7 +904,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
             continue
 
         parent_ticket_id = ticket_parent_id if ticket_task_kind == TicketTaskKind.GROUP_CHILD.value else None
-        if workflow_type == TicketWorkflowType.TICKET.value:
+        if not payload.skip_client_notification and workflow_type == TicketWorkflowType.TICKET.value:
             # For admin hard-delete of a regular ticket, notify client with the same text as normal close.
             try:
                 _send_to_telegram_client(
@@ -916,7 +917,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
             except Exception:
                 # Deletion must not be blocked by Telegram delivery issues.
                 pass
-        elif workflow_type == TicketWorkflowType.TASK.value:
+        elif not payload.skip_client_notification and workflow_type == TicketWorkflowType.TASK.value:
             try:
                 # For group children we avoid client spam; parent close/restore flow handles parent state.
                 if ticket_task_kind != TicketTaskKind.GROUP_CHILD.value:
@@ -945,6 +946,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                     db,
                     parent,
                     closed_by_user_id=user.id,
+                    skip_client_notification=payload.skip_client_notification,
                     system_note="Групповая задача завершена системой (возможен неполный ответ)",
                     first_client_message_fn=_first_client_message,
                     send_to_telegram_client_fn=_send_to_telegram_client,

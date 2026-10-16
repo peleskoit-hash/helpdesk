@@ -74,11 +74,14 @@
           <input id="searchInput" placeholder="Поиск по теме/клиенту/сообщениям" />
           <button id="searchClearBtn" class="search-clear-btn hidden" type="button" aria-label="Очистить поиск">&times;</button>
         </div>
-        <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button">Назначить ответственно</button>
-        <button id="bulkCloseBtn" class="action admin-only hidden" type="button" disabled>Завершить</button>
+        <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button" disabled>Назначить ответственного (0)</button>
         <button id="bulkFreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Заморозить</button>
         <button id="bulkUnfreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Разморозить</button>
-        <button id="bulkDeleteBtn" class="action admin-only hidden danger" type="button" disabled>Удалить</button>
+        <div id="bulkAdminActions" class="bulk-admin-actions admin-only hidden">
+          <label><input id="bulkSkipClientNotification" type="checkbox" autocomplete="off" />Без ответа клиенту</label>
+          <button id="bulkCloseBtn" class="action" type="button" disabled>Завершить</button>
+          <button id="bulkDeleteBtn" class="action danger" type="button" disabled>Удалить</button>
+        </div>
         <div class="display-settings">
           <label class="color-toggle" id="colorToggleLabel">
             <input id="colorEnabledInput" type="checkbox" />

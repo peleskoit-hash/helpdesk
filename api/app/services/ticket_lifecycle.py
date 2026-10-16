@@ -525,6 +525,7 @@ def finalize_group_parent_if_ready(
     db: Session,
     parent: Ticket,
     *,
+    skip_client_notification: bool = False,
     closed_by_user_id: str | None = None,
     system_note: str = "Групповая задача завершена системой",
     first_client_message_fn,
@@ -558,7 +559,7 @@ def finalize_group_parent_if_ready(
         return False
 
     parent_client_message = first_client_message_fn(db, parent)
-    if parent_client_message is not None:
+    if parent_client_message is not None and not skip_client_notification:
         answers, attachments = _group_parent_children_payload(db, parent)
         subject_text = resolve_ticket_subject(db, parent)
         _send_optional_client_message(
@@ -705,6 +706,7 @@ def _close_task_without_reply(
     ticket: Ticket,
     actor: CurrentUser,
     *,
+    skip_client_notification: bool = False,
     add_message_fn,
     first_client_message_fn,
     send_to_telegram_client_fn,
@@ -718,7 +720,7 @@ def _close_task_without_reply(
     ticket.freeze_until = None
     sync_work_interval_after_close(db, ticket, now=closed_at)
     add_message_fn(db, ticket, MessageType.SYSTEM, "Задача принудительно закрыта администратором без ответа", None, agent_visible=True)
-    if ticket.task_kind != TicketTaskKind.GROUP_CHILD.value and not is_internal_task_ticket(db, ticket):
+    if not skip_client_notification and ticket.task_kind != TicketTaskKind.GROUP_CHILD.value and not is_internal_task_ticket(db, ticket):
         client_message = first_client_message_fn(db, ticket)
         subject_text = resolve_ticket_subject(db, ticket)
         _send_optional_client_message(
@@ -747,6 +749,7 @@ def close_ticket_by_actor(
     actor: CurrentUser,
     *,
     force_without_agent_reply_for_task: bool = False,
+    skip_client_notification: bool = False,
     is_admin_fn,
     get_or_create_client_profile_fn,
     last_agent_message_fn,
@@ -763,11 +766,13 @@ def close_ticket_by_actor(
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     is_admin_action = is_admin_fn(actor)
     is_force_close_action = is_admin_action and force_without_agent_reply_for_task
+    skip_client_notification = skip_client_notification and is_force_close_action
 
     def _finalize_wrapper(db_session: Session, parent_ticket: Ticket, **kwargs):
         return finalize_group_parent_if_ready(
             db_session,
             parent_ticket,
+            skip_client_notification=skip_client_notification,
             first_client_message_fn=first_client_message_fn,
             send_to_telegram_client_fn=send_to_telegram_client_fn,
             send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
@@ -790,6 +795,7 @@ def close_ticket_by_actor(
                 first_client_message_fn=first_client_message_fn,
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
                 finalize_group_parent_if_ready_fn=_finalize_wrapper,
+                skip_client_notification=skip_client_notification,
             )
             return "closed"
         if workflow_type == TicketWorkflowType.TICKET.value:
@@ -805,7 +811,7 @@ def close_ticket_by_actor(
             clear_ticket_auto_close_timer(ticket)
             add_message_fn(db, ticket, MessageType.SYSTEM, f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}", None, agent_visible=True)
             reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
-            close_response = _send_optional_client_message(
+            close_response = None if skip_client_notification else _send_optional_client_message(
                 db,
                 ticket,
                 ticket_closed_client_text,
@@ -856,13 +862,14 @@ def close_ticket_by_actor(
                     first_client_message_fn=first_client_message_fn,
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
                     finalize_group_parent_if_ready_fn=_finalize_wrapper,
+                    skip_client_notification=skip_client_notification,
                 )
                 return "closed"
             _error(409, "task_client_message_required", "У задачи нет текста клиента")
         if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
             answers, attachments = _group_parent_children_payload(db, ticket)
             subject_text = resolve_ticket_subject(db, ticket)
-            if not suppress_task_client_delivery:
+            if not suppress_task_client_delivery and not skip_client_notification:
                 _send_optional_client_message(
                     db,
                     ticket,
@@ -922,7 +929,7 @@ def close_ticket_by_actor(
                     ticket=ticket,
                     final_message=last_agent_message,
                 )
-            if not suppress_task_client_delivery:
+            if not suppress_task_client_delivery and not skip_client_notification:
                 _send_optional_client_message(
                     db,
                     ticket,
@@ -964,7 +971,7 @@ def close_ticket_by_actor(
         if bool(ticket.onsite_triggered):
             add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
         reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
-        close_response = _send_optional_client_message(
+        close_response = None if skip_client_notification else _send_optional_client_message(
             db,
             ticket,
             ticket_closed_client_text,

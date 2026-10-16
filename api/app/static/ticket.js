@@ -159,6 +159,7 @@ const el = {
   freezeToggleBtn: document.getElementById("freezeToggleBtn"),
   restoreBtn: document.getElementById("restoreBtn"),
   closeBtn: document.getElementById("closeBtn"),
+  adminSkipClientNotification: document.getElementById("adminSkipClientNotification"),
   adminForceCloseBtn: document.getElementById("adminForceCloseBtn"),
   adminDeleteBtn: document.getElementById("adminDeleteBtn"),
   adminActionModal: document.getElementById("adminActionModal"),

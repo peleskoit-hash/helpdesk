@@ -104,6 +104,7 @@
 
   function openAdminActionModal(ctx, kind) {
     const { state, el } = ctx;
+    if (state.role !== "admin") return;
     pendingAdminAction = kind;
     const isDelete = kind === "delete";
     const isTask = (state.card?.workflow_type || "ticket") === "task";
@@ -120,31 +121,37 @@
 
   function closeAdminActionModal(ctx) {
     const { el } = ctx;
+    if (el.adminSkipClientNotification) el.adminSkipClientNotification.checked = false;
     pendingAdminAction = null;
     el.adminActionModal.classList.add("hidden");
   }
 
   async function runAdminAction(ctx) {
-    const { state, apiPost, setStatus, loadCard, loadTabCounts, showError } = ctx;
-    if (!state.card || !pendingAdminAction) return;
-    const payload = { ticket_ids: [state.card.id] };
-    if (pendingAdminAction === "close") {
-      setStatus("Принудительно закрываю заявку...");
-      const result = await apiPost("/api/v1/tickets/admin/close", payload);
-      await Promise.all([loadCard(), loadTabCounts()]);
-      setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
-      return;
-    }
-    setStatus("Удаляю заявку...");
-    const result = await apiPost("/api/v1/tickets/admin/delete", payload);
-    if (result.file_delete_warnings?.length) {
-      showError(`Заявка удалена.\nПредупреждения:\n${result.file_delete_warnings.join("\n")}`);
-    }
-    const returnUrl = `/tickets?tab=${encodeURIComponent(state.tab)}`;
-    if (window.HelpdeskAppShell?.navigate) {
-      await window.HelpdeskAppShell.navigate(returnUrl);
-    } else {
-      window.location.href = returnUrl;
+    const { state, el, apiPost, setStatus, loadCard, loadTabCounts, showError } = ctx;
+    if (!state.card || !pendingAdminAction || state.role !== "admin") return;
+    const payload = { ticket_ids: [state.card.id], skip_client_notification: Boolean(el.adminSkipClientNotification?.checked) };
+    if (el.adminSkipClientNotification) el.adminSkipClientNotification.checked = false;
+    try {
+      if (pendingAdminAction === "close") {
+        setStatus("Принудительно закрываю заявку...");
+        const result = await apiPost("/api/v1/tickets/admin/close", payload);
+        await Promise.all([loadCard(), loadTabCounts()]);
+        setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
+        return;
+      }
+      setStatus("Удаляю заявку...");
+      const result = await apiPost("/api/v1/tickets/admin/delete", payload);
+      if (result.file_delete_warnings?.length) {
+        showError(`Заявка удалена.\nПредупреждения:\n${result.file_delete_warnings.join("\n")}`);
+      }
+      const returnUrl = `/tickets?tab=${encodeURIComponent(state.tab)}`;
+      if (window.HelpdeskAppShell?.navigate) {
+        await window.HelpdeskAppShell.navigate(returnUrl);
+      } else {
+        window.location.href = returnUrl;
+      }
+    } finally {
+      if (el.adminSkipClientNotification) el.adminSkipClientNotification.checked = false;
     }
   }
 
@@ -289,6 +296,7 @@
   }
 
   function bindTicketControlHandlers(ctx) {
+    if (ctx.el.adminSkipClientNotification) ctx.el.adminSkipClientNotification.checked = false;
     const { el, state, action, apiPost, apiPatch, loadCard, setStatus, showError, setVisible, openInstructionModal, closeInstructionModal, closeOnBackdropClick, assignCurrentTicket, saveClientProfile, openClientModal, closeClientModal } = ctx;
 
     if (el.greetingBtn) {
@@ -401,11 +409,15 @@
     if (el.cancelAdminActionBtn) el.cancelAdminActionBtn.addEventListener("click", () => closeAdminActionModal(ctx));
     if (el.confirmAdminActionBtn) {
       el.confirmAdminActionBtn.addEventListener("click", async () => {
+        if (el.confirmAdminActionBtn.disabled) return;
+        el.confirmAdminActionBtn.disabled = true;
         try {
           await runAdminAction(ctx);
           closeAdminActionModal(ctx);
         } catch (e) {
           showError(e.message);
+        } finally {
+          el.confirmAdminActionBtn.disabled = false;
         }
       });
     }

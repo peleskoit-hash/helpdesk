@@ -272,6 +272,7 @@ class AssignTicketsPayload(BaseModel):
 
 class AdminBulkTicketsPayload(BaseModel):
     ticket_ids: list[str] = Field(min_length=1)
+    skip_client_notification: bool = False
 
 
 class AdminCloseResult(BaseModel):

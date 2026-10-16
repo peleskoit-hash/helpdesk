@@ -187,6 +187,8 @@ function collectElements() {
     nextPageBtn: byId("nextPageBtn"),
     paginationPages: byId("paginationPages"),
     emptyText: byId("emptyText"),
+    bulkAdminActions: byId("bulkAdminActions"),
+    bulkSkipClientNotification: byId("bulkSkipClientNotification"),
     bulkAssignBtn: byId("bulkAssignBtn"),
     bulkCloseBtn: byId("bulkCloseBtn"),
     bulkFreezeBtn: byId("bulkFreezeBtn"),
@@ -739,14 +741,16 @@ function renderBulkAssigneeOptions() {
 function updateBulkAssignUi() {
   const isAdmin = state.role === "admin";
   const selectedCount = state.selectedTicketIds.size;
-  el.bulkAssignBtn.classList.toggle("hidden", !isAdmin || selectedCount === 0);
+  el.bulkAssignBtn.classList.toggle("hidden", !isAdmin);
+  el.bulkAssignBtn.disabled = selectedCount === 0;
+  if (el.bulkAdminActions) el.bulkAdminActions.classList.toggle("hidden", !isAdmin);
   if (el.bulkCloseBtn) {
     el.bulkCloseBtn.classList.toggle("hidden", !isAdmin);
     el.bulkCloseBtn.disabled = selectedCount === 0;
   }
   if (el.bulkFreezeBtn) {
-    el.bulkFreezeBtn.classList.toggle("hidden", !isAdmin || state.tab !== "active");
-    el.bulkFreezeBtn.disabled = selectedCount === 0;
+    el.bulkFreezeBtn.classList.toggle("hidden", !isAdmin || state.tab === "frozen");
+    el.bulkFreezeBtn.disabled = selectedCount === 0 || state.tab !== "active";
   }
   if (el.bulkUnfreezeBtn) {
     el.bulkUnfreezeBtn.classList.toggle("hidden", !isAdmin || state.tab !== "frozen");
@@ -756,11 +760,7 @@ function updateBulkAssignUi() {
     el.bulkDeleteBtn.classList.toggle("hidden", !isAdmin);
     el.bulkDeleteBtn.disabled = selectedCount === 0;
   }
-  if (selectedCount > 0) {
-    el.bulkAssignBtn.textContent = `Назначить ответственного (${selectedCount})`;
-  } else {
-    el.bulkAssignBtn.textContent = "Назначить ответственного";
-  }
+  el.bulkAssignBtn.textContent = `Назначить ответственного (${selectedCount})`;
 
   if (el.selectAllTicketsBtn) {
     const allVisibleSelected = state.visibleTicketIds.length > 0
@@ -817,6 +817,7 @@ function openBulkActionModal(kind) {
   el.bulkActionModal.classList.remove("hidden");
 }
 function closeBulkActionModal() {
+  if (["close", "delete"].includes(pendingBulkAction) && el.bulkSkipClientNotification) el.bulkSkipClientNotification.checked = false;
   pendingBulkAction = null;
   if (el.confirmBulkActionBtn) {
     el.confirmBulkActionBtn.disabled = false;
@@ -827,49 +828,56 @@ function closeBulkActionModal() {
 
 async function runBulkAction() {
   const ticketIds = [...state.selectedTicketIds];
-  if (!ticketIds.length || !pendingBulkAction) return;
-  if (pendingBulkAction === "close") {
-    setStatus("Принудительно закрываю заявки...");
-    const result = await apiPost("/api/v1/tickets/admin/close", { ticket_ids: ticketIds });
-    setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
-  } else if (pendingBulkAction === "freeze") {
-    setStatus("Замораживаю заявки...");
-    const result = await apiPost("/api/v1/tickets/admin/freeze", { ticket_ids: ticketIds });
-    const parts = [
-      `Заморожено: ${Number(result.frozen || 0)}`,
-      `уже заморожены: ${Number(result.already_frozen || 0)}`,
-      `не подходят: ${Number(result.invalid || 0)}`,
-      `закрыты: ${Number(result.closed || 0)}`,
-    ];
-    if (result.not_found?.length) {
-      parts.push(`не найдены: ${result.not_found.length}`);
-    }
-    const message = parts.join(", ");
-    const skipped = Number(result.already_frozen || 0) + Number(result.invalid || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
-    if (skipped) {
-      console.info("Bulk freeze skipped items", result);
+  if (!ticketIds.length || !pendingBulkAction || state.role !== "admin") return;
+  const skipClientNotification = ["close", "delete"].includes(pendingBulkAction) && Boolean(el.bulkSkipClientNotification?.checked);
+  const resetClientNotification = ["close", "delete"].includes(pendingBulkAction);
+  if (resetClientNotification && el.bulkSkipClientNotification) el.bulkSkipClientNotification.checked = false;
+  try {
+    if (pendingBulkAction === "close") {
+      setStatus("Принудительно закрываю заявки...");
+      const result = await apiPost("/api/v1/tickets/admin/close", { ticket_ids: ticketIds, skip_client_notification: skipClientNotification });
+      setStatus(`Закрыто: ${result.closed}, уже закрыты: ${result.already_closed}`);
+    } else if (pendingBulkAction === "freeze") {
+      setStatus("Замораживаю заявки...");
+      const result = await apiPost("/api/v1/tickets/admin/freeze", { ticket_ids: ticketIds });
+      const parts = [
+        `Заморожено: ${Number(result.frozen || 0)}`,
+        `уже заморожены: ${Number(result.already_frozen || 0)}`,
+        `не подходят: ${Number(result.invalid || 0)}`,
+        `закрыты: ${Number(result.closed || 0)}`,
+      ];
+      if (result.not_found?.length) {
+        parts.push(`не найдены: ${result.not_found.length}`);
+      }
+      const message = parts.join(", ");
+      const skipped = Number(result.already_frozen || 0) + Number(result.invalid || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
+      if (skipped) {
+        console.info("Bulk freeze skipped items", result);
+      } else {
+        setStatus(message);
+      }
+    } else if (pendingBulkAction === "unfreeze") {
+      const result = await apiPost("/api/v1/tickets/admin/unfreeze", { ticket_ids: ticketIds });
+      const skipped = Number(result.already_unfrozen || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
+      if (skipped) {
+        console.info("Bulk unfreeze skipped items", result);
+      }
     } else {
-      setStatus(message);
-    }
-  } else if (pendingBulkAction === "unfreeze") {
-    const result = await apiPost("/api/v1/tickets/admin/unfreeze", { ticket_ids: ticketIds });
-    const skipped = Number(result.already_unfrozen || 0) + Number(result.closed || 0) + Number(result.not_found?.length || 0);
-    if (skipped) {
-      console.info("Bulk unfreeze skipped items", result);
-    }
-  } else {
-    setStatus("Удаляю заявки...");
-    const result = await apiPost("/api/v1/tickets/admin/delete", { ticket_ids: ticketIds });
-    if (result.file_delete_warnings?.length) {
-      showError(`Удалено: ${result.deleted}
+      setStatus("Удаляю заявки...");
+      const result = await apiPost("/api/v1/tickets/admin/delete", { ticket_ids: ticketIds, skip_client_notification: skipClientNotification });
+      if (result.file_delete_warnings?.length) {
+        showError(`Удалено: ${result.deleted}
 Предупреждения:
 ${result.file_delete_warnings.join("\n")}`);
-    } else {
-      setStatus(`Удалено: ${result.deleted}`);
+      } else {
+        setStatus(`Удалено: ${result.deleted}`);
+      }
     }
+    state.selectedTicketIds.clear();
+    await Promise.all([loadTickets(), loadCounts({ silent: true })]);
+  } finally {
+    if (resetClientNotification && el.bulkSkipClientNotification) el.bulkSkipClientNotification.checked = false;
   }
-  state.selectedTicketIds.clear();
-  await Promise.all([loadTickets(), loadCounts({ silent: true })]);
 }
 
 function toggleAllVisibleTickets() {
@@ -1545,6 +1553,7 @@ function init() {
   pageEventController = new AbortController();
   el = collectElements();
   requireListElements();
+  if (el.bulkSkipClientNotification) el.bulkSkipClientNotification.checked = false;
   const pageSignal = pageEventController.signal;
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();

@@ -9,6 +9,7 @@ const template = fs.readFileSync("api/app/templates/tickets.html", "utf8");
 const appShellSource = fs.readFileSync("api/app/static/app_shell.js", "utf8");
 
 function sourceBetween(source, start, end) {
+  source = source.replaceAll("\r\n", "\n");
   const from = source.indexOf(start);
   assert.notEqual(from, -1, `start marker not found: ${start}`);
   const to = source.indexOf(end, from);
@@ -100,7 +101,7 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
 });
 
 test("ticket list admin bulk freeze and unfreeze use existing selection and confirmation modal", () => {
-  assert.match(template, /id="bulkCloseBtn"[\s\S]*id="bulkFreezeBtn"[\s\S]*id="bulkUnfreezeBtn"[\s\S]*id="bulkDeleteBtn"/);
+  assert.match(template, /id="bulkAssignBtn"[\s\S]*id="bulkFreezeBtn"[\s\S]*id="bulkUnfreezeBtn"[\s\S]*id="bulkSkipClientNotification"[\s\S]*id="bulkCloseBtn"[\s\S]*id="bulkDeleteBtn"/);
   assert.match(template, /id="bulkFreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Заморозить<\/button>/);
   assert.match(template, /id="bulkUnfreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Разморозить<\/button>/);
 
