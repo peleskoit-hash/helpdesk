@@ -12,6 +12,7 @@ from api.app.db import Base
 from api.app.models import BotButtonSetting, ClientProfile, Company, TelegramContact, Ticket, TicketStatus
 from api.app.routers import telegram
 from api.app.services import telegram_client_avatar_sync as sync
+from api.app.services import telegram_client_avatar_cleanup  # Same listeners registered at application startup.
 from api.app.services import telegram_client_avatars as storage
 from api.app.services.button_config import ButtonSpec
 
@@ -122,7 +123,10 @@ def test_new_ticket_unchanged_avatar_does_not_download(case):
     before = _snapshot(case)
     case.api.reset_mock()
     case.download.reset_mock()
-    _close_and_start(case)
+    # Another open request keeps the full file available for this new intake.
+    contact = _contact(case)
+    telegram._create_collecting_ticket(case.db, contact.company_id, contact.client_id)
+    case.db.commit()
     _run(case)
     assert [call.args[0] for call in case.api.call_args_list] == ["getUserProfilePhotos"]
     case.download.assert_not_called()
@@ -177,7 +181,9 @@ def test_no_telegram_photo_preserves_last_known_thumbnail_and_identity(case):
     case.download.reset_mock()
     _close_and_start(case)
     _run(case)
-    assert _snapshot(case) == before
+    after = _snapshot(case)
+    assert (after[0], after[1], after[3]) == (before[0], before[1], before[3])
+    assert after[2] is None  # Closing the last request removed only the full photo.
     case.download.assert_not_called()
 
 
@@ -377,8 +383,10 @@ def test_failed_new_avatar_preserves_previous_saved_data(case):
     case.api.side_effect = OSError("network failure")
     _close_and_start(case)
     _run(case)
-    assert _snapshot(case) == before
-    assert (case.directory / Path(before[2]).name).read_bytes() == case.content
+    after = _snapshot(case)
+    assert (after[0], after[1], after[3]) == (before[0], before[1], before[3])
+    assert after[2] is None
+    assert not (case.directory / Path(before[2]).name).exists()
 
 
 @pytest.mark.parametrize("kind", ["section", "group_parent"])

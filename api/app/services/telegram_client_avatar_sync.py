@@ -96,7 +96,7 @@ def _refresh(ticket_id: str) -> None:
             if file.get("file_size", 0) > MAX_IMAGE_BYTES:
                 raise ValueError("Telegram avatar exceeds the size limit")
             content = _download(file["file_path"], token)
-            save_avatar(db, contact.id, unique_id, content)
+            save_avatar(db, contact.id, unique_id, content, require_open_ticket=True)
     except Exception:
         logger.warning("Telegram client avatar refresh failed")
 

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import TelegramContact
+from ..models import TelegramContact, Ticket, TicketStatus
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -98,12 +98,22 @@ def needs_avatar_download(contact: TelegramContact, file_unique_id: str | None) 
             or path is None or not path.is_file())
 
 
-def save_avatar(db: Session, contact_id: str, file_unique_id: str | None, content: bytes | None = None) -> bool:
+def _has_open_tickets(db: Session, contact: TelegramContact) -> bool:
+    return db.scalar(select(Ticket.id).where(
+        Ticket.company_id == contact.company_id,
+        Ticket.client_id == contact.client_id,
+        Ticket.status != TicketStatus.CLOSED.value,
+    ).limit(1)) is not None
+
+
+def save_avatar(db: Session, contact_id: str, file_unique_id: str | None, content: bytes | None = None,
+                *, require_open_ticket: bool = False) -> bool:
     """Replace a changed photo or restore its missing full file from supplied bytes.
 
     Return False when no write is needed or bytes have not been supplied yet.
     Callers can use needs_avatar_download before acquiring image bytes. This service
     accepts bytes only; tokens, URLs and Telegram file_id are never persisted.
+    Background refreshes require an open ticket, checked under the contact lock.
     """
     if file_unique_id is None:
         return False
@@ -112,6 +122,9 @@ def save_avatar(db: Session, contact_id: str, file_unique_id: str | None, conten
     new_path = None
     try:
         contact = _locked_contact(db, contact_id)
+        if require_open_ticket and not _has_open_tickets(db, contact):
+            db.rollback()
+            return False
         if content is None or not needs_avatar_download(contact, file_unique_id):
             db.rollback()  # Release the row lock without altering the avatar timestamp.
             return False
@@ -138,10 +151,13 @@ def save_avatar(db: Session, contact_id: str, file_unique_id: str | None, conten
     return True
 
 
-def delete_full_avatar(db: Session, contact_id: str) -> bool:
-    """Remove only the full photo, retaining thumbnail, identity and update time."""
+def delete_full_avatar(db: Session, contact_id: str, *, only_if_inactive: bool = False) -> bool:
+    """Remove only the full photo; optionally recheck inactivity under the contact lock."""
     try:
         contact = _locked_contact(db, contact_id)
+        if only_if_inactive and _has_open_tickets(db, contact):
+            db.rollback()
+            return False
         old_path = contact.avatar_path
         if not old_path:
             db.rollback()

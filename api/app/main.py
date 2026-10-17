@@ -44,6 +44,7 @@ from .routers.tickets import router as tickets_router
 from .routers.ticket_client_avatars import router as ticket_client_avatars_router
 from .routers.users import router as users_router
 from .services.button_config import clear_button_config_cache, load_button_config
+from .services import telegram_client_avatar_cleanup  # Register post-commit cleanup for every closing path.
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (

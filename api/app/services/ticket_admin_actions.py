@@ -7,11 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Ticket, TicketAttachment, TicketMessage, TicketView
+from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
 
 
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
     warnings: list[str] = []
-    child_ids = db.execute(select(Ticket.id).where(Ticket.parent_ticket_id == ticket.id)).scalars().all()
+    children = db.execute(select(Ticket.id, Ticket.company_id, Ticket.client_id).where(Ticket.parent_ticket_id == ticket.id)).all()
+    child_ids = [child.id for child in children]
+    for child in children:
+        schedule_avatar_cleanup(db, child.company_id, child.client_id)
     attachment_ticket_ids = [ticket.id]
     if child_ids:
         attachment_ticket_ids.extend(child_ids)
