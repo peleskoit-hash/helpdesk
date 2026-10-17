@@ -8,6 +8,21 @@
   const stickerVideoElements = new Map();
   let imagePreviewScale = 1;
   let imagePreviewAttachment = null;
+  let imagePreviewRevision = 0;
+  let avatarPreviewController = null;
+  let avatarPreviewObjectUrl = null;
+  let avatarPreviewTimer = null;
+
+  function cancelImagePreview() {
+    imagePreviewRevision += 1;
+    avatarPreviewController?.abort();
+    avatarPreviewController = null;
+    clearTimeout(avatarPreviewTimer);
+    avatarPreviewTimer = null;
+    if (avatarPreviewObjectUrl) URL.revokeObjectURL(avatarPreviewObjectUrl);
+    avatarPreviewObjectUrl = null;
+    imagePreviewAttachment = null;
+  }
 
   function attachmentMeta(attachment) {
     return formatFileSize(attachment.file_size);
@@ -237,14 +252,16 @@
     const img = document.createElement("img");
     img.className = "image-preview-img";
     img.alt = "";
-    dialog.append(download, close, img);
+    const loading = document.createElement("div");
+    loading.className = "image-preview-avatar-loading hidden";
+    loading.textContent = "Загрузка…";
+    loading.setAttribute("role", "status");
+    dialog.append(download, close, img, loading);
     modal.appendChild(dialog);
     document.body.appendChild(modal);
 
     function closePreview() {
-      modal.classList.add("hidden");
-      img.removeAttribute("src");
-      imagePreviewAttachment = null;
+      closeImagePreview(ctx);
     }
 
     close.addEventListener("click", closePreview);
@@ -266,13 +283,17 @@
     el.imagePreviewImg = img;
     el.imagePreviewClose = close;
     el.imagePreviewDownload = download;
+    el.imagePreviewAvatarLoading = loading;
   }
 
   async function openImagePreview(ctx, attachment) {
     ensureImagePreviewModal(ctx);
+    closeImagePreview(ctx);
+    const revision = imagePreviewRevision;
     const { el } = ctx;
     try {
       const objectUrl = await getAttachmentObjectUrl(attachment);
+      if (revision !== imagePreviewRevision) return;
       imagePreviewAttachment = attachment;
       imagePreviewScale = 1;
       el.imagePreviewImg.src = objectUrl;
@@ -280,15 +301,73 @@
       el.imagePreviewImg.style.transform = "scale(1)";
       el.imagePreviewModal.classList.remove("hidden");
     } catch (e) {
-      ctx.showError(e.message);
+      if (revision === imagePreviewRevision) ctx.showError(e.message);
     }
   }
 
   function closeImagePreview(ctx) {
+    cancelImagePreview();
     const { el } = ctx;
     if (!el.imagePreviewModal) return;
     el.imagePreviewModal.classList.add("hidden");
+    el.imagePreviewModal.classList.remove("avatar-preview", "avatar-preview-full");
+    el.imagePreviewAvatarLoading?.classList.add("hidden");
+    el.imagePreviewDownload?.classList.remove("hidden");
     el.imagePreviewImg.removeAttribute("src");
+  }
+
+  async function openClientAvatarPreview(ctx, thumbnailUrl, fullUrl) {
+    ensureImagePreviewModal(ctx);
+    closeImagePreview(ctx);
+    const { el } = ctx;
+    const revision = imagePreviewRevision;
+    const controller = new AbortController();
+    avatarPreviewController = controller;
+    imagePreviewScale = 1;
+    el.imagePreviewImg.style.transform = "scale(1)";
+    el.imagePreviewImg.alt = "Фотография клиента";
+    el.imagePreviewImg.src = thumbnailUrl;
+    el.imagePreviewDownload.classList.add("hidden");
+    el.imagePreviewModal.classList.add("avatar-preview");
+    el.imagePreviewAvatarLoading.classList.remove("hidden");
+    el.imagePreviewModal.classList.remove("hidden");
+    avatarPreviewTimer = setTimeout(() => {
+      controller.abort();
+      if (revision === imagePreviewRevision) {
+        el.imagePreviewAvatarLoading.classList.add("hidden");
+        if (avatarPreviewObjectUrl && !el.imagePreviewModal.classList.contains("avatar-preview-full")) {
+          URL.revokeObjectURL(avatarPreviewObjectUrl);
+          avatarPreviewObjectUrl = null;
+        }
+      }
+    }, 45000);
+    let objectUrl = null;
+    try {
+      const response = await fetch(fullUrl, { headers: headers(), signal: controller.signal });
+      if (!response.ok) return;
+      const blob = await response.blob();
+      if (revision !== imagePreviewRevision || controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      avatarPreviewObjectUrl = objectUrl;
+      const image = new Image();
+      image.src = objectUrl;
+      await image.decode();
+      if (revision !== imagePreviewRevision || controller.signal.aborted) return;
+      el.imagePreviewImg.src = objectUrl;
+      el.imagePreviewModal.classList.add("avatar-preview-full");
+    } catch {
+      // Keep the saved thumbnail on network, Telegram or image decoding failure.
+      if (objectUrl && avatarPreviewObjectUrl === objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        avatarPreviewObjectUrl = null;
+      }
+    } finally {
+      if (revision === imagePreviewRevision) {
+        clearTimeout(avatarPreviewTimer);
+        avatarPreviewTimer = null;
+        el.imagePreviewAvatarLoading.classList.add("hidden");
+      }
+    }
   }
 
   function renderAttachments(ctx, message, container) {
@@ -419,6 +498,7 @@
   }
 
   function destroyAllAttachmentResources() {
+    cancelImagePreview();
     cleanupAttachmentObjectUrls(new Set());
     cleanupStickerResources(new Set());
     for (const [, data] of stickerLottieInstances.entries()) {
@@ -433,6 +513,7 @@
   }
 
   global.TicketAttachments = {
+    openClientAvatarPreview,
     renderAttachments,
     cleanupAttachmentObjectUrls,
     cleanupStickerResources,

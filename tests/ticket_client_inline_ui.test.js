@@ -327,7 +327,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : resource === 'ticket_client_card.js' ? '20261018c' : '20261018b']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : '20261018-avatar']);
   }
 });
 
@@ -572,7 +572,18 @@ function passwordCardFixture() {
   const document = { createElement(tag) {
     const node = element(tag);
     node.children = [];
-    node.appendChild = (child) => node.children.push(child);
+    node.insertBefore = (child, next) => {
+      child.remove();
+      const index = next ? node.children.indexOf(next) : node.children.length;
+      node.children.splice(index, 0, child);
+      child.parentNode = node;
+      return child;
+    };
+    node.appendChild = (child) => node.insertBefore(child, null);
+    node.remove = () => {
+      if (node.parentNode) node.parentNode.children = node.parentNode.children.filter(child => child !== node);
+      node.parentNode = null;
+    };
     Object.defineProperty(node, 'innerHTML', { set() { node.children = []; } });
     node.querySelector = () => {
       const visit = (item) => item.dataset.clientCardBitrixPasswordValue === '1'
@@ -617,6 +628,15 @@ test('password mask survives polling rerenders and inline editor hide/reopen', a
   f.close();
   await f.open();
   assert.equal(f.el.fBitrixPassword.value, mask);
+});
+
+test('inline editor cancel restores the client panel scroll position', async () => {
+  const f = fixture();
+  f.el.clientDynamicCard = { scrollTop: 175 };
+  await f.open();
+  f.el.clientDynamicCard.scrollTop = 0;
+  f.close();
+  assert.equal(f.el.clientDynamicCard.scrollTop, 175);
 });
 
 test('password reveal survives rerender and hides at five seconds with the original mask and cleared plaintext', async () => {

@@ -1002,10 +1002,22 @@
     return valueRowEl;
   }
 
+  function syncClientCardChildren(parent, nodes) {
+    nodes.forEach((node, index) => {
+      if (parent.children[index] !== node) parent.insertBefore(node, parent.children[index] || null);
+    });
+    Array.from(parent.children).slice(nodes.length).forEach((node) => node.remove());
+  }
+
   function renderClientDynamicCard(ctx, profile, config) {
     const { el } = ctx;
-    if (!el.clientDynamicCard) return;
-    el.clientDynamicCard.innerHTML = "";
+    if (!el.clientDynamicCard || (ctx.inlineClient && ctx.state.clientCardInline?.open)) return;
+    const root = el.clientDynamicCard;
+    const scrollTop = root.scrollTop;
+    const owner = JSON.stringify([clientCardRevealOwnerKey(ctx), Boolean(ctx.inlineClient), ctx.state.role]);
+    if (root.clientCardNodes?.owner !== owner) root.clientCardNodes = { owner, blocks: new Map() };
+    const cache = root.clientCardNodes;
+    const nextBlocks = new Map(), blockNodes = [];
     if (!profile?.bitrix_password_set) clearBitrixPasswordCardReveal(ctx);
     const effectiveConfig = applyClientCardRulesToCardConfig(config, profile);
     const blocks = (effectiveConfig?.blocks || [])
@@ -1016,42 +1028,108 @@
       const fields = (block.fields || [])
         .filter(fieldShownInCard)
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-      const blockEl = document.createElement("div");
-      blockEl.className = `client-card-block ${clientCardColorClass(block.color_scheme)}`;
-      applyClientCardBlockColor(blockEl, block.color_scheme);
+      const entry = cache.blocks.get(block.key) || { node: document.createElement("div"), fields: new Map() };
+      nextBlocks.set(block.key, entry);
+      const blockEl = entry.node, children = [], nextFields = new Map();
+      const color = block.color_scheme || "";
+      if (entry.color !== color) {
+        blockEl.className = `client-card-block ${clientCardColorClass(color)}`;
+        applyClientCardBlockColor(blockEl, color);
+        entry.color = color;
+      }
       if (blockShowsTitle(block)) {
-        const titleEl = document.createElement("div");
-        titleEl.className = "client-card-block-title";
-        titleEl.textContent = block.title || block.key || "";
-        blockEl.appendChild(titleEl);
+        const titleEl = entry.title ||= document.createElement("div");
+        if (titleEl.className !== "client-card-block-title") titleEl.className = "client-card-block-title";
+        const title = block.title || block.key || "";
+        if (titleEl.textContent !== title) titleEl.textContent = title;
+        children.push(titleEl);
       }
 
       let renderedFields = 0;
+      if (ctx.inlineClient && ctx.state.ticketId
+          && block.key === "tg" && profile?.telegram_avatar_present) {
+        const baseUrl = `/api/v1/tickets/${encodeURIComponent(ctx.state.ticketId)}/client-avatar`;
+        if (!entry.avatar) {
+          const node = document.createElement("button"), image = document.createElement("img");
+          node.type = "button";
+          node.className = "client-card-telegram-avatar hidden";
+          node.title = "Открыть фотографию клиента";
+          image.alt = "Фотография клиента";
+          node.appendChild(image);
+          node.addEventListener("click", () => ctx.openClientAvatarPreview?.(`${baseUrl}/thumbnail`, `${baseUrl}/full`));
+          entry.avatar = { node, image, loaded: false, failed: false };
+        }
+        const avatar = entry.avatar;
+        const src = `${baseUrl}/thumbnail${profile.telegram_avatar_updated_at ? `?v=${encodeURIComponent(profile.telegram_avatar_updated_at)}` : ""}`;
+        if (avatar.src !== src) {
+          avatar.src = src;
+          avatar.failed = false;
+          const current = () => root.clientCardNodes === cache && cache.blocks.get(block.key) === entry
+            && entry.avatar === avatar && avatar.src === src && !ctx.isDestroyed?.();
+          avatar.image.onload = () => {
+            if (!current()) return;
+            const position = root.scrollTop;
+            avatar.loaded = true;
+            avatar.node.classList.remove("hidden");
+            blockEl.classList.remove("hidden");
+            root.scrollTop = position;
+          };
+          avatar.image.onerror = () => {
+            if (!current()) return;
+            avatar.failed = true;
+            avatar.node.remove();
+            if (!entry.fields.size) blockEl.remove();
+          };
+          avatar.image.src = src;
+        }
+        if (!avatar.failed) children.push(avatar.node);
+      } else {
+        entry.avatar = null;
+      }
       for (const field of fields) {
         const value = getClientFieldValue(profile, field.key);
         if (!shouldRenderClientField(ctx, field, value)) continue;
 
-        const rowEl = document.createElement("div");
-        rowEl.className = "client-card-field";
+        const fieldEntry = entry.fields.get(field.key) || { node: document.createElement("div") };
+        const rowEl = fieldEntry.node;
+        const rowClass = `client-card-field${field.key === "is_verified" ? " client-card-field-verification" : ""}`;
+        if (rowEl.className !== rowClass) rowEl.className = rowClass;
 
-        if (field.key === "is_verified") {
-          rowEl.classList.add("client-card-field-verification");
-        } else {
-          const labelEl = document.createElement("div");
-          labelEl.className = "client-card-field-label";
-          labelEl.textContent = field.label || field.key;
-          rowEl.appendChild(labelEl);
+        const rowChildren = [];
+        if (field.key !== "is_verified") {
+          const labelEl = fieldEntry.label ||= document.createElement("div");
+          if (labelEl.className !== "client-card-field-label") labelEl.className = "client-card-field-label";
+          const label = field.label || field.key;
+          if (labelEl.textContent !== label) labelEl.textContent = label;
+          rowChildren.push(labelEl);
         }
 
-        rowEl.appendChild(renderClientFieldValueWithExternalLink(field, value, ctx));
-        blockEl.appendChild(rowEl);
+        const signature = JSON.stringify([field, value]);
+        if (fieldEntry.signature !== signature) {
+          fieldEntry.value = renderClientFieldValueWithExternalLink(field, value, ctx);
+          fieldEntry.signature = signature;
+        }
+        rowChildren.push(fieldEntry.value);
+        syncClientCardChildren(rowEl, rowChildren);
+        nextFields.set(field.key, fieldEntry);
+        children.push(rowEl);
         renderedFields += 1;
       }
 
-      if (renderedFields > 0) {
-        el.clientDynamicCard.appendChild(blockEl);
+      entry.fields = nextFields;
+      syncClientCardChildren(blockEl, children);
+      if (renderedFields > 0 || (entry.avatar && !entry.avatar.failed)) {
+        const hidden = !renderedFields && !entry.avatar.loaded;
+        if (blockEl.classList.contains("hidden") !== hidden) {
+          if (hidden) blockEl.classList.add("hidden");
+          else blockEl.classList.remove("hidden");
+        }
+        blockNodes.push(blockEl);
       }
     }
+    cache.blocks = nextBlocks;
+    syncClientCardChildren(root, blockNodes);
+    root.scrollTop = scrollTop;
   }
 
   function fillClientPanel(ctx, profile) {
@@ -1161,6 +1239,7 @@
       fillModal(ctx, ctx.state.currentClientProfile);
       ctx.el.clientModal.classList.remove("hidden");
       if (editor) {
+        editor.viewScrollTop = ctx.el.clientDynamicCard?.scrollTop;
         editor.open = true;
         editor.values = new Map(inlineEditorControls(ctx).map((control) => [control, inlineControlValue(control)]));
         ctx.el.clientModal.closest(".ticket-side").classList.add("client-editing");
@@ -1222,6 +1301,7 @@
         else control.value = "";
       });
       ctx.el.clientModal.closest(".ticket-side").classList.remove("client-editing");
+      if (ctx.el.clientDynamicCard && editor.viewScrollTop != null) ctx.el.clientDynamicCard.scrollTop = editor.viewScrollTop;
       ctx.el.editClientBtn.textContent = "Редактировать";
       ctx.el.editClientBtn.disabled = false;
     }
@@ -1266,9 +1346,9 @@
       if (editor) {
         if (ctx.isDestroyed() || editor.revision !== revision) return;
         ctx.state.card.client_profile = ctx.state.currentClientProfile;
-        fillClientPanel(ctx, ctx.state.currentClientProfile);
       }
       closeClientModal(ctx, { force: true });
+      if (editor) fillClientPanel(ctx, ctx.state.currentClientProfile);
       ctx.setStatus("Профиль клиента сохранён");
     } catch (e) {
       if (!ctx.isDestroyed?.()) ctx.showError(e.message);

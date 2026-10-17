@@ -41,6 +41,7 @@ from .routers.settings_notification_bot_basic import router as settings_notifica
 from .routers.settings_users import router as settings_users_router
 from .routers.telegram import router as telegram_router
 from .routers.tickets import router as tickets_router
+from .routers.ticket_client_avatars import router as ticket_client_avatars_router
 from .routers.users import router as users_router
 from .services.button_config import clear_button_config_cache, load_button_config
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
@@ -91,6 +92,7 @@ app.add_middleware(
     https_only=settings.session_cookie_secure,
 )
 app.include_router(tickets_router)
+app.include_router(ticket_client_avatars_router)
 app.include_router(telegram_router)
 app.include_router(users_router)
 app.include_router(settings_router)

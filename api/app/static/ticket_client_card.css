@@ -138,3 +138,57 @@
     animation: none;
   }
 }
+[data-shell-page="ticket-card"] .client-card-telegram-avatar {
+  display: block;
+  width: min(66.666%, 160px);
+  aspect-ratio: 1;
+  margin: 10px auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+[data-shell-page="ticket-card"] .client-card-telegram-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.avatar-preview .image-preview-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(600px, calc(100vw - 56px));
+  height: min(600px, calc(100vh - 56px));
+}
+
+.avatar-preview .image-preview-img {
+  width: 160px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.avatar-preview-full .image-preview-img {
+  width: auto;
+  height: auto;
+  animation: client-avatar-reveal 180ms ease-out;
+}
+
+.image-preview-avatar-loading {
+  position: absolute;
+  bottom: 16px;
+  color: #fff;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+@keyframes client-avatar-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-preview-full .image-preview-img { animation: none; }
+}

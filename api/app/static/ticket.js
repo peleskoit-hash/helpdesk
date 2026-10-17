@@ -179,6 +179,7 @@ const el = {
   imagePreviewImg: null,
   imagePreviewClose: null,
   imagePreviewDownload: null,
+  imagePreviewAvatarLoading: null,
   tabLinks: [...document.querySelectorAll("[data-tab-link]")],
   statusButtons: [...document.querySelectorAll("[data-availability-status]")],
   adminOnly: [...document.querySelectorAll(".admin-only")],
@@ -435,6 +436,7 @@ function cleanupTicketCardPage() {
     el.imagePreviewImg = null;
     el.imagePreviewClose = null;
     el.imagePreviewDownload = null;
+    el.imagePreviewAvatarLoading = null;
   }
   pageHandlersBound = false;
 }
@@ -452,6 +454,7 @@ function attachmentsCtx() {
 function clientCardCtx() {
   return {
     inlineClient: true,
+    openClientAvatarPreview: (thumbnailUrl, fullUrl) => TicketAttachments.openClientAvatarPreview(attachmentsCtx(), thumbnailUrl, fullUrl),
     isDestroyed: () => destroyed,
     state,
     el,

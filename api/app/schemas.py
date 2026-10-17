@@ -141,6 +141,8 @@ class TicketMessageOut(BaseModel):
 
 
 class ClientProfileOut(BaseModel):
+    telegram_avatar_present: bool = False
+    telegram_avatar_updated_at: datetime | None = None
     telegram_username: str | None = None
     telegram_display_name: str | None = None
     display_name: str | None = None

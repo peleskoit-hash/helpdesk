@@ -273,7 +273,10 @@ def _current_client_profile_out(profile: ClientProfile, ticket: Ticket, contact)
         profile,
         telegram_username,
         telegram_display_name,
-    )
+    ).model_copy(update={
+        "telegram_avatar_present": bool(contact and contact.avatar_thumbnail),
+        "telegram_avatar_updated_at": contact.avatar_updated_at if contact and contact.avatar_thumbnail else None,
+    })
 
 
 def _require_admin(user: CurrentUser):
@@ -1145,7 +1148,10 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             telegram_username,
             telegram_display_name,
             _call_center_profile_overrides(t),
-        ),
+        ).model_copy(update={
+            "telegram_avatar_present": bool(contact and contact.avatar_thumbnail),
+            "telegram_avatar_updated_at": contact.avatar_updated_at if contact and contact.avatar_thumbnail else None,
+        }),
         active_attachment_preloads=active_attachment_preloads,
         messages=[
             {
