@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -532,6 +532,10 @@ class TelegramContact(Base):
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     active_menu_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     menu_message_ids_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    avatar_thumbnail: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    avatar_file_unique_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    avatar_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

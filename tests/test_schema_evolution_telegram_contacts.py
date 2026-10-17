@@ -281,6 +281,84 @@ def test_telegram_contact_model_metadata_contains_composite_unique():
     assert TelegramContact.__table__.c.external_chat_id.unique is True
 
 
+def test_avatar_columns_extend_legacy_sqlite_without_losing_contact_or_avatar(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_telegram_contacts_table(engine)
+    _insert_contact(engine, company_id="company-a", client_id="client-a",
+                    external_user_id="123", external_chat_id="chat-1")
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_telegram_contact_columns()
+    with engine.begin() as conn:
+        columns = {row["name"]: row for row in conn.execute(
+            text("PRAGMA table_info(telegram_contacts)")).mappings()}
+        assert columns["avatar_thumbnail"]["type"] == "BLOB"
+        assert columns["avatar_file_unique_id"]["type"] == "VARCHAR(255)"
+        assert columns["avatar_path"]["type"] == "VARCHAR(500)"
+        assert columns["avatar_updated_at"]["type"] == "TIMESTAMP"
+        row = conn.execute(text("SELECT * FROM telegram_contacts")).mappings().one()
+        assert row["external_user_id"] == "123"
+        assert all(row[name] is None for name in columns if name.startswith("avatar_"))
+        conn.execute(text("UPDATE telegram_contacts SET avatar_thumbnail=:image, "
+                          "avatar_file_unique_id='unique', avatar_path='telegram_client_avatars/photo.jpg', "
+                          "avatar_updated_at='2026-10-17 10:00:00'"), {"image": b"webp-thumbnail"})
+    schema_evolution.ensure_telegram_contact_columns()
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT * FROM telegram_contacts")).mappings().one()
+        assert row["avatar_thumbnail"] == b"webp-thumbnail"
+        assert row["avatar_file_unique_id"] == "unique"
+        assert row["avatar_path"] == "telegram_client_avatars/photo.jpg"
+        assert row["avatar_updated_at"] == "2026-10-17 10:00:00"
+
+
+def test_avatar_columns_fresh_sqlite_match_model_and_migration_is_idempotent(monkeypatch):
+    from sqlalchemy import inspect
+    from api.app.db import Base
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    before = inspect(engine).get_columns("telegram_contacts")
+    schema_evolution.ensure_telegram_contact_columns()
+    schema_evolution.ensure_telegram_contact_columns()
+    after = inspect(engine).get_columns("telegram_contacts")
+    assert [(c["name"], str(c["type"]), c["nullable"]) for c in before] == [
+        (c["name"], str(c["type"]), c["nullable"]) for c in after]
+    assert all(c["nullable"] for c in after if c["name"].startswith("avatar_"))
+
+
+def test_avatar_postgres_migration_emits_bytea_and_timezone_and_is_idempotent(monkeypatch):
+    # Exercise PostgreSQL DDL generation without connecting to the DEV database.
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from sqlalchemy.dialects import postgresql
+    columns = {c.name for c in TelegramContact.__table__.columns if not c.name.startswith("avatar_")}
+    statements = []
+    def execute(statement):
+        sql = str(statement)
+        statements.append(sql)
+        if "information_schema.columns" in sql:
+            return SimpleNamespace(fetchall=lambda: [(name,) for name in columns])
+        if " ADD COLUMN " in sql:
+            columns.add(sql.split()[5])
+        return None
+    @contextmanager
+    def begin():
+        yield SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), execute=execute)
+    monkeypatch.setattr(schema_evolution, "engine", SimpleNamespace(begin=begin))
+    schema_evolution.ensure_telegram_contact_columns()
+    first_alters = [sql for sql in statements if " ADD COLUMN " in sql]
+    assert first_alters == [
+        "ALTER TABLE telegram_contacts ADD COLUMN avatar_thumbnail BYTEA",
+        "ALTER TABLE telegram_contacts ADD COLUMN avatar_file_unique_id VARCHAR(255)",
+        "ALTER TABLE telegram_contacts ADD COLUMN avatar_path VARCHAR(500)",
+        "ALTER TABLE telegram_contacts ADD COLUMN avatar_updated_at TIMESTAMP WITH TIME ZONE",
+    ]
+    statements.clear()
+    schema_evolution.ensure_telegram_contact_columns()
+    assert not any(" ADD COLUMN " in sql for sql in statements)
+    assert TelegramContact.__table__.c.avatar_thumbnail.type.compile(dialect=postgresql.dialect()) == "BYTEA"
+    assert TelegramContact.__table__.c.avatar_updated_at.type.compile(dialect=postgresql.dialect()) == "TIMESTAMP WITH TIME ZONE"
+
+
 def test_fresh_schema_remains_idempotent_for_existing_invariant(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     from api.app.db import Base

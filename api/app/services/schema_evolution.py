@@ -661,6 +661,10 @@ def ensure_telegram_contact_columns() -> None:
         "is_blocked": "BOOLEAN",
         "active_menu_message_id": "VARCHAR(100)",
         "menu_message_ids_json": "JSONB",
+        "avatar_thumbnail": "BYTEA",
+        "avatar_file_unique_id": "VARCHAR(255)",
+        "avatar_path": "VARCHAR(500)",
+        "avatar_updated_at": "TIMESTAMP WITH TIME ZONE",
     }
 
     with engine.begin() as conn:
@@ -671,6 +675,8 @@ def ensure_telegram_contact_columns() -> None:
             rows = conn.execute(text("PRAGMA table_info(telegram_contacts)")).mappings().all()
             existing = {row["name"] for row in rows}
             required_columns["menu_message_ids_json"] = "TEXT"
+            required_columns["avatar_thumbnail"] = "BLOB"
+            required_columns["avatar_updated_at"] = "TIMESTAMP"
         else:
             rows = conn.execute(
                 text(
