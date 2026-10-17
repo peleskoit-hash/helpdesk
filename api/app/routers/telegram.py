@@ -8,6 +8,7 @@ from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..services.telegram_client_avatar_sync import schedule_avatar_refresh
 from ..models import (
     SavedFile,
     Client,
@@ -313,6 +314,7 @@ def _create_collecting_ticket(db: Session, company_id: str, client_id: str, subj
     db.add(ticket)
     db.flush()
     append_system_message(db, ticket, "Клиент начал создание обращения")
+    schedule_avatar_refresh(db, ticket)
     return ticket
 
 
@@ -1468,6 +1470,7 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
         sync_work_interval_after_assignment_change(db, new_ticket, old_assignee_id=None, new_assignee_id=assignee_id, now=new_ticket.created_at)
 
     append_system_message(db, new_ticket, f"Заявка создана: {subject}")
+    schedule_avatar_refresh(db, new_ticket)
     if assignee_id:
         assignee.last_assigned_at = datetime.utcnow()
         append_system_message(db, new_ticket, assignee_change_message(None, assignee))
