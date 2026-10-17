@@ -63,6 +63,7 @@ from .services.schema_evolution import (
     ensure_stats_foundation_tables,
     ensure_telegram_contact_company_user_unique,
     ensure_telegram_contact_columns,
+    ensure_telegram_avatar_cleanup_state_table,
     ensure_telegram_notification_accounts_table,
     ensure_ticket_attachment_table,
     ensure_ticket_attachment_preload_table,
@@ -134,6 +135,7 @@ async def on_startup():
             Base.metadata.create_all(bind=engine)
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()
+            ensure_telegram_avatar_cleanup_state_table()
             ensure_telegram_contact_company_user_unique()
             ensure_telegram_notification_accounts_table()
             ensure_user_columns()

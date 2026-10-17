@@ -18,6 +18,7 @@ from .internal_task_recurrence import (
     validate_recurrence_end_rule,
 )
 from .internal_tasks import materialize_internal_task
+from .telegram_client_avatar_nightly import run_avatar_cleanup_once
 
 
 logger = logging.getLogger(__name__)
@@ -428,4 +429,10 @@ async def internal_task_scheduler_loop() -> None:
             raise
         except Exception:
             logger.exception("Internal task recurring scheduler pass failed")
+        try:
+            await asyncio.to_thread(run_avatar_cleanup_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Telegram avatar nightly scheduler pass failed")
         await asyncio.sleep(INTERNAL_TASK_SCHEDULER_INTERVAL_SECONDS)

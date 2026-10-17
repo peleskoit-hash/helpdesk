@@ -723,6 +723,7 @@ def test_scheduler_loop_runs_one_off_then_recurring_then_sleep_and_survives_one_
 
     monkeypatch.setattr(internal_task_scheduler, "run_internal_task_scheduler_once", one_off)
     monkeypatch.setattr(internal_task_scheduler, "run_internal_task_recurring_once", recurring)
+    monkeypatch.setattr(internal_task_scheduler, "run_avatar_cleanup_once", lambda: calls.append("avatars"))
     monkeypatch.setattr(internal_task_scheduler.asyncio, "sleep", stop_on_sleep)
 
     try:
@@ -730,4 +731,4 @@ def test_scheduler_loop_runs_one_off_then_recurring_then_sleep_and_survives_one_
     except asyncio.CancelledError:
         pass
 
-    assert calls == ["one_off", "recurring", "sleep"]
+    assert calls == ["one_off", "recurring", "avatars", "sleep"]

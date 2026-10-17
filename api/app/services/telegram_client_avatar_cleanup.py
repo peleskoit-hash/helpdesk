@@ -20,6 +20,14 @@ def schedule_avatar_cleanup(db: Session, company_id: str, client_id: str) -> Non
 
 @event.listens_for(Session, "before_flush")
 def _before_flush(db: Session, *_args) -> None:
+    # Serialize new intake with avatar cleanup: a committed new ticket must be
+    # visible before a cleaner holding the same contact lock checks inactivity.
+    clients = sorted({(ticket.company_id, ticket.client_id) for ticket in db.new if isinstance(ticket, Ticket)})
+    for company_id, client_id in clients:
+        db.execute(select(TelegramContact.id).where(
+            TelegramContact.company_id == company_id,
+            TelegramContact.client_id == client_id,
+        ).order_by(TelegramContact.id).with_for_update()).all()
     for ticket in db.deleted.union(db.dirty).union(db.new):
         if isinstance(ticket, Ticket) and (
             ticket in db.deleted or (

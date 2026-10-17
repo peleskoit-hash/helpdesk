@@ -1,7 +1,7 @@
 from enum import Enum
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -510,6 +510,14 @@ class StatsUserStatusInterval(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class TelegramAvatarCleanupState(Base):
+    __tablename__ = "telegram_avatar_cleanup_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_success_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    next_run_on: Mapped[date] = mapped_column(Date, nullable=False)
 
 
 class TelegramContact(Base):

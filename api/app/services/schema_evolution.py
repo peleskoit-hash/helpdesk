@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import text
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import inspect, text
 
 from ..db import engine
 
@@ -358,6 +361,30 @@ def ensure_client_card_field_config_columns() -> None:
         conn.execute(text("UPDATE client_card_source_configs SET method = 'GET' WHERE method IS NULL"))
         conn.execute(text("UPDATE client_card_source_configs SET timeout_ms = 3000 WHERE timeout_ms IS NULL"))
         conn.execute(text("UPDATE client_card_source_configs SET on_error = 'ignore' WHERE on_error IS NULL"))
+
+
+def ensure_telegram_avatar_cleanup_state_table() -> None:
+    from ..models import TelegramAvatarCleanupState
+
+    with engine.begin() as conn:
+        TelegramAvatarCleanupState.__table__.create(bind=conn, checkfirst=True)
+        columns = {column["name"]: column for column in inspect(conn).get_columns("telegram_avatar_cleanup_state")}
+        missing = "next_run_on" not in columns
+        local = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Moscow"))
+        due_date = local.date() - timedelta(days=int(local.hour < 3))
+        sqlite = conn.dialect.name == "sqlite"
+        if missing:
+            # SQLite cannot SET NOT NULL later; use a safe constant default while
+            # adding the column, then derive each legacy row's actual due date.
+            constraint = f" NOT NULL DEFAULT '{due_date.isoformat()}'" if sqlite else ""
+            conn.execute(text(f"ALTER TABLE telegram_avatar_cleanup_state ADD COLUMN next_run_on DATE{constraint}"))
+        next_day = "date(last_success_on, '+1 day')" if sqlite else "last_success_on + 1"
+        condition = "" if missing else " WHERE next_run_on IS NULL"
+        conn.execute(text(
+            f"UPDATE telegram_avatar_cleanup_state SET next_run_on = COALESCE({next_day}, :due_date){condition}"
+        ), {"due_date": due_date})
+        if not sqlite and (missing or columns["next_run_on"]["nullable"]):
+            conn.execute(text("ALTER TABLE telegram_avatar_cleanup_state ALTER COLUMN next_run_on SET NOT NULL"))
 
 
 def ensure_call_center_employee_resolver_state_table() -> None:
