@@ -141,6 +141,8 @@ class TicketMessageOut(BaseModel):
 
 
 class ClientProfileOut(BaseModel):
+    web_login: str | None = None
+    web_password_set: bool = False
     telegram_avatar_present: bool = False
     telegram_avatar_updated_at: datetime | None = None
     telegram_username: str | None = None
@@ -174,7 +176,17 @@ class BitrixPasswordRevealOut(BaseModel):
     bitrix_password: str | None = None
 
 
+class WebCredentialsGeneratePayload(BaseModel):
+    web_login: str | None = Field(default=None, max_length=255)
+    web_password_set: bool = False
+    regenerate: bool = False
+    bitrix_login: str | None = Field(default=None, max_length=255)
+    contact_name: str | None = Field(default=None, max_length=200)
+    last_name: str | None = Field(default=None, max_length=200)
+
+
 class ClientProfileUpdate(BaseModel):
+    clear_web_password: bool = Field(default=False, strict=True)
     contact_name: str | None = None
     last_name: str | None = None
     email: str | None = None

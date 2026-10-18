@@ -38,7 +38,7 @@ def seed(db, count=2):
                                   active_menu_message_id="0", menu_message_ids_json=[0, "1"])
         # Populate every optional string to exercise full-field export.
         for column in profile.__table__.columns:
-            if column.nullable and column.type.python_type is str and column.key != "bitrix_password":
+            if column.nullable and column.type.python_type is str and column.key != "bitrix_password" and not column.key.startswith("web_"):
                 setattr(profile, column.key, f"synthetic-{column.key}")
         db.add_all([client, profile, contact])
     db.add(Client(id="system", company_id="company", display_name="System"))

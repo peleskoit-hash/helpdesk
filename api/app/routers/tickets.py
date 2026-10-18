@@ -54,6 +54,9 @@ from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run, validate_client_card_direct_user_changes
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
+from ..services import web_credentials
+from ..schemas import WebCredentialsGeneratePayload
+from fastapi.responses import JSONResponse
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.statistics_lifecycle import (
     sync_completion_after_reopen,
@@ -1207,6 +1210,24 @@ def get_current_client_profile(ticket_id: str, db: Session = Depends(get_db), us
     return _current_client_profile_out(profile, t, contact)
 
 
+@router.get("/{ticket_id}/client-profile/web-password")
+def reveal_ticket_web_password(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    web_credentials.authorize_fields(db, user, {"custom_web_password"})
+    return JSONResponse(web_credentials.reveal(web_credentials.require_profile(db, ticket.client_id)), headers={"Cache-Control": "no-store"})
+
+
+@router.post("/{ticket_id}/client-profile/web-credentials/generate")
+def generate_ticket_web_credentials(ticket_id: str, payload: WebCredentialsGeneratePayload,
+                                    db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    if not can_edit_client_profile(user):
+        _error(403, "readonly_role", "Нет прав на редактирование карточки клиента")
+    web_credentials.authorize_fields(db, user, web_credentials.WEB_KEYS, write=True)
+    result = web_credentials.generate_draft(db, web_credentials.require_profile(db, ticket.client_id), payload)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/{ticket_id}/client-profile/bitrix-password", response_model=BitrixPasswordRevealOut)
 def reveal_ticket_client_bitrix_password(
     ticket_id: str,
@@ -1214,6 +1235,8 @@ def reveal_ticket_client_bitrix_password(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
+    if is_readonly_chiki_piki(user):
+        _error(403, "password_reveal_forbidden", "Нет прав на раскрытие пароля")
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
     if profile is None:
         _error(404, "client_profile_not_found", "Профиль клиента не найден")
@@ -1314,6 +1337,11 @@ def update_client_profile(
     contact = _telegram_contact_for_client(db, t.client_id)
 
     data = payload.model_dump(exclude_unset=True)
+    web_keys = web_credentials.WEB_KEYS.intersection(data.get("custom_fields") or {})
+    if data.get("clear_web_password"):
+        web_keys.add("custom_web_password")
+    if web_keys:
+        web_credentials.authorize_fields(db, user, web_keys, write=True)
     merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields_map = _custom_field_map(db)
@@ -1338,8 +1366,8 @@ def update_client_profile(
                 normalized_custom[key] = normalized
         merged_custom_fields = normalized_custom
     if not is_admin(user):
-        validate_client_card_direct_user_changes(db, profile, data, merged_custom_fields)
-    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=t.client_id)
+        validate_client_card_direct_user_changes(db, profile, data, merged_custom_fields, user=user)
+    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=t.client_id, user=user)
     profile = result.profile
 
     if t.client and "contact_name" in result.changed_keys and profile.contact_name:

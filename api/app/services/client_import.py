@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import Client, ClientProfile, Company, TelegramContact
 from .encryption import decrypt_secret, encrypt_secret
+from .web_credentials import WEB_COLUMNS, WEB_KEYS, without_web_fields
 
 MODELS = {"client": Client, "profile": ClientProfile, "telegram_contact": TelegramContact}
 PROTECTED = {"id", "client_id", "company_id", "created_at", "updated_at"}
@@ -41,6 +42,15 @@ def _same(left, right):
 
 def _decode_row(model, raw):
     columns = model.__table__.columns
+    if model is ClientProfile and isinstance(raw, dict):
+        custom = raw.get("custom_fields")
+        if isinstance(custom, dict) and any(not _empty(custom.get(k)) for k in WEB_KEYS):
+            raise ClientImportError("legacy_web_credentials_require_secure_migration")
+        if any(not _empty(raw.get(k)) for k in WEB_COLUMNS - {"web_credentials_version"}):
+            raise ClientImportError("web_credentials_import_not_supported")
+        raw = {**raw, **{k: (0 if k == "web_credentials_version" else None) for k in WEB_COLUMNS}}
+        if isinstance(custom, dict):
+            raw["custom_fields"] = without_web_fields(custom)
     if not isinstance(raw, dict) or set(raw) != set(columns.keys()):
         raise ClientImportError("invalid_field_schema")
     row = copy.deepcopy(raw)
@@ -114,7 +124,7 @@ def _validate(data):
 def _merge(existing, source, protected):
     values, skipped = {}, set()
     for field, value in source.items():
-        if field in protected or _empty(value):
+        if field in protected or field in WEB_COLUMNS or _empty(value):
             skipped.add(field)
             continue
         old = getattr(existing, field)

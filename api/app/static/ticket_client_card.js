@@ -323,13 +323,14 @@
     return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
   }
 
-  function bitrixPasswordMask(ctx) {
-    if (!ctx.inlineClient) return generateBitrixPasswordMask();
+  function bitrixPasswordMask(ctx, key = "bitrix_password") {
+    if (!ctx.inlineClient && key === "bitrix_password") return generateBitrixPasswordMask();
     const ownerKey = clientCardRevealOwnerKey(ctx);
-    if (ctx.state.clientCardBitrixPasswordMask?.ownerKey !== ownerKey) {
-      ctx.state.clientCardBitrixPasswordMask = { ownerKey, value: generateBitrixPasswordMask() };
+    const stateKey = key === "bitrix_password" ? "clientCardBitrixPasswordMask" : "clientCardWebPasswordMask";
+    if (ctx.state[stateKey]?.ownerKey !== ownerKey) {
+      ctx.state[stateKey] = { ownerKey, value: generateBitrixPasswordMask() };
     }
-    return ctx.state.clientCardBitrixPasswordMask.value;
+    return ctx.state[stateKey].value;
   }
 
   function setBitrixPasswordInputHidden(ctx) {
@@ -369,38 +370,42 @@
     return ctx.state.selectedClientId || ctx.clientId || ctx.state.card?.client_id || "";
   }
 
-  async function revealBitrixPassword(ctx) {
+  async function revealBitrixPassword(ctx, key = "bitrix_password") {
+    if (ctx.state.role === "chiki_piki") return null;
+    const suffix = key === "bitrix_password" ? "bitrix-password" : "web-password";
     if (ctx.state.ticketId) {
-      return ctx.api(`/api/v1/tickets/${encodeURIComponent(ctx.state.ticketId)}/client-profile/bitrix-password`);
+      return ctx.api(`/api/v1/tickets/${encodeURIComponent(ctx.state.ticketId)}/client-profile/${suffix}`);
     }
     const clientId = clientCardClientId(ctx);
     if (!clientId) return null;
-    return ctx.api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile/bitrix-password`);
+    return ctx.api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile/${suffix}`);
   }
 
-  function bitrixPasswordCardRevealState(ctx) {
-    if (!ctx.state.clientCardBitrixPasswordReveal) {
-      ctx.state.clientCardBitrixPasswordReveal = { ownerKey: "", plaintext: "", revealedUntil: 0, timerId: null };
-    }
-    return ctx.state.clientCardBitrixPasswordReveal;
+  const PASSWORD_REVEAL_MS = 5000;
+
+  function bitrixPasswordCardRevealState(ctx, key = "bitrix_password") {
+    const stateKey = key === "bitrix_password" ? "clientCardBitrixPasswordReveal" : "clientCardWebPasswordReveal";
+    return ctx.state[stateKey] ||= { ownerKey: "", plaintext: "", revealedUntil: 0, timerId: null };
   }
 
   function clientCardRevealOwnerKey(ctx) {
     return `${ctx.state.ticketId || ""}:${clientCardClientId(ctx) || ""}`;
   }
 
-  function currentBitrixPasswordValueEl(ctx) {
-    return ctx.el.clientDynamicCard?.querySelector("[data-client-card-bitrix-password-value='1']") || null;
+  function currentBitrixPasswordValueEl(ctx, key = "bitrix_password") {
+    const name = key === "bitrix_password" ? "bitrix" : "web";
+    return ctx.el.clientDynamicCard?.querySelector(`[data-client-card-${name}-password-value='1']`) || null;
   }
 
   function showBitrixPasswordValueEl(valueEl, plaintext) {
-    valueEl.textContent = plaintext;
+    if (valueEl.tagName === "INPUT" || valueEl.tagName === "TEXTAREA") valueEl.value = plaintext;
+    else valueEl.textContent = plaintext;
     valueEl.classList.remove("client-card-password");
     valueEl.classList.add("client-card-password-revealed");
   }
 
-  function clearBitrixPasswordCardReveal(ctx) {
-    const state = bitrixPasswordCardRevealState(ctx);
+  function clearBitrixPasswordCardReveal(ctx, key = "bitrix_password") {
+    const state = bitrixPasswordCardRevealState(ctx, key);
     if (state.timerId) clearTimeout(state.timerId);
     state.ownerKey = "";
     state.plaintext = "";
@@ -408,36 +413,37 @@
     state.timerId = null;
   }
 
-  function hideBitrixPasswordCardReveal(ctx, ownerKey) {
-    const state = bitrixPasswordCardRevealState(ctx);
+  function hideBitrixPasswordCardReveal(ctx, ownerKey, key = "bitrix_password") {
+    const state = bitrixPasswordCardRevealState(ctx, key);
     if (ownerKey && state.ownerKey !== ownerKey) return;
     state.ownerKey = "";
     state.plaintext = "";
     state.revealedUntil = 0;
     state.timerId = null;
-    const valueEl = currentBitrixPasswordValueEl(ctx);
-    if (valueEl) resetBitrixPasswordValueEl(ctx, valueEl);
+    const valueEl = currentBitrixPasswordValueEl(ctx, key);
+    if (valueEl) resetBitrixPasswordValueEl(ctx, valueEl, key);
+    if (key === "custom_web_password") global.ClientWebCredentials?.maskInput(ctx);
   }
 
-  function activeBitrixPasswordCardReveal(ctx, ownerKey) {
-    const state = bitrixPasswordCardRevealState(ctx);
+  function activeBitrixPasswordCardReveal(ctx, ownerKey, key = "bitrix_password") {
+    const state = bitrixPasswordCardRevealState(ctx, key);
     if (state.ownerKey && state.ownerKey !== ownerKey) {
-      clearBitrixPasswordCardReveal(ctx);
+      clearBitrixPasswordCardReveal(ctx, key);
       return null;
     }
     if (!state.plaintext || Date.now() >= state.revealedUntil) {
-      clearBitrixPasswordCardReveal(ctx);
+      clearBitrixPasswordCardReveal(ctx, key);
       return null;
     }
     return state;
   }
 
-  function scheduleBitrixPasswordCardRevealHide(ctx, ownerKey) {
-    const state = bitrixPasswordCardRevealState(ctx);
+  function scheduleBitrixPasswordCardRevealHide(ctx, ownerKey, key = "bitrix_password") {
+    const state = bitrixPasswordCardRevealState(ctx, key);
     if (state.timerId) clearTimeout(state.timerId);
     const delay = Math.max(0, state.revealedUntil - Date.now());
     state.timerId = setTimeout(() => {
-      hideBitrixPasswordCardReveal(ctx, ownerKey);
+      hideBitrixPasswordCardReveal(ctx, ownerKey, key);
     }, delay);
   }
 
@@ -448,6 +454,7 @@
     el.fBitrixPassword.autocomplete = "off";
     if (!el.fBitrixPassword.dataset.clientCardBitrixPasswordBound) {
       el.fBitrixPassword.addEventListener("focus", async () => {
+        if (ctx.state.role === "chiki_piki") return;
         const state = bitrixPasswordState(ctx);
         el.fBitrixPassword.type = "text";
         el.fBitrixPassword.classList.remove("client-card-password");
@@ -461,7 +468,7 @@
           const revision = ctx.state.clientCardInline?.revision;
           const payload = await revealBitrixPassword(ctx);
           if (ctx.inlineClient && (ctx.isDestroyed() || revision !== ctx.state.clientCardInline?.revision)) return;
-          if (!payload) return;
+          if (!payload || ctx.state.role === "chiki_piki") return;
           if (ctx.inlineClient) {
             state.originalValue = payload.bitrix_password || "";
             if (state.dirty) return;
@@ -808,6 +815,8 @@
   }
 
   function getClientFieldValue(profile, key) {
+    const webValue = global.ClientWebCredentials?.value(profile, key);
+    if (webValue !== undefined) return webValue;
     if (!profile || !key) return null;
     if (key === "telegram_username") return profile.telegram_username || null;
     if (key === "telegram_display_name") return profile.telegram_display_name || null;
@@ -828,44 +837,56 @@
     return !ctx.isBlank(value);
   }
 
-  function resetBitrixPasswordValueEl(ctx, valueEl) {
-    valueEl.textContent = bitrixPasswordMask(ctx);
+  function resetBitrixPasswordValueEl(ctx, valueEl, key = "bitrix_password") {
+    valueEl.textContent = bitrixPasswordMask(ctx, key);
     valueEl.classList.add("client-card-password");
     valueEl.classList.remove("client-card-password-revealed");
   }
 
-  function applyBitrixPasswordValueRevealState(ctx, valueEl) {
-    valueEl.dataset.clientCardBitrixPasswordValue = "1";
+  function applyBitrixPasswordValueRevealState(ctx, valueEl, key = "bitrix_password") {
+    valueEl.dataset[key === "bitrix_password" ? "clientCardBitrixPasswordValue" : "clientCardWebPasswordValue"] = "1";
     const ownerKey = clientCardRevealOwnerKey(ctx);
-    const state = activeBitrixPasswordCardReveal(ctx, ownerKey);
-    if (state) {
-      showBitrixPasswordValueEl(valueEl, state.plaintext);
-      scheduleBitrixPasswordCardRevealHide(ctx, ownerKey);
+    if (ctx.state.role === "chiki_piki") {
+      clearBitrixPasswordCardReveal(ctx, key);
+      resetBitrixPasswordValueEl(ctx, valueEl, key);
       return;
     }
-    resetBitrixPasswordValueEl(ctx, valueEl);
+    const state = activeBitrixPasswordCardReveal(ctx, ownerKey, key);
+    if (state) {
+      showBitrixPasswordValueEl(valueEl, state.plaintext);
+      scheduleBitrixPasswordCardRevealHide(ctx, ownerKey, key);
+      return;
+    }
+    resetBitrixPasswordValueEl(ctx, valueEl, key);
   }
 
-  function bindBitrixPasswordValueReveal(ctx, valueEl) {
+  function bindBitrixPasswordValueReveal(ctx, valueEl, key = "bitrix_password") {
     if (!ctx || valueEl.dataset.clientCardBitrixPasswordValueBound) return;
-    valueEl.tabIndex = 0;
+    const readonly = ctx.state.role === "chiki_piki";
+    valueEl.tabIndex = readonly ? -1 : 0;
+    valueEl.setAttribute("role", "button");
+    valueEl.setAttribute("aria-disabled", String(readonly));
     valueEl.addEventListener("click", async () => {
+      if (ctx.state.role === "chiki_piki") return;
       const ownerKey = clientCardRevealOwnerKey(ctx);
-      if (activeBitrixPasswordCardReveal(ctx, ownerKey)) return;
+      if (activeBitrixPasswordCardReveal(ctx, ownerKey, key)) return;
+      const revision = ctx.state.webCredentialsRevision;
       try {
-        const payload = await revealBitrixPassword(ctx);
+        const payload = await revealBitrixPassword(ctx, key);
         if (ctx.isDestroyed?.()) return;
-        if (!payload?.bitrix_password) return;
+        const plaintext = payload?.[key === "bitrix_password" ? "bitrix_password" : "web_password"];
+        if (!plaintext || ctx.state.role === "chiki_piki") return;
+        if (key === "custom_web_password" && revision !== ctx.state.webCredentialsRevision) return;
         if (clientCardRevealOwnerKey(ctx) !== ownerKey) return;
-        const state = bitrixPasswordCardRevealState(ctx);
+        const state = bitrixPasswordCardRevealState(ctx, key);
         state.ownerKey = ownerKey;
-        state.plaintext = payload.bitrix_password;
-        state.revealedUntil = Date.now() + 5000;
-        const currentValueEl = currentBitrixPasswordValueEl(ctx);
+        state.plaintext = plaintext;
+        state.revealedUntil = Date.now() + PASSWORD_REVEAL_MS;
+        const currentValueEl = currentBitrixPasswordValueEl(ctx, key);
         if (currentValueEl) {
           showBitrixPasswordValueEl(currentValueEl, state.plaintext);
         }
-        scheduleBitrixPasswordCardRevealHide(ctx, ownerKey);
+        scheduleBitrixPasswordCardRevealHide(ctx, ownerKey, key);
       } catch (error) {
         if (!ctx.isDestroyed?.()) ctx.showError?.(error.message);
       }
@@ -879,6 +900,7 @@
     const valueEl = document.createElement("div");
     valueEl.className = "client-card-field-value";
 
+    if (global.ClientWebCredentials?.protectValue(ctx, fieldKey, valueEl, value)) return valueEl;
     if (fieldKey === "bitrix_password") {
       applyBitrixPasswordValueRevealState(ctx, valueEl);
       bindBitrixPasswordValueReveal(ctx, valueEl);
@@ -1019,6 +1041,10 @@
     const cache = root.clientCardNodes;
     const nextBlocks = new Map(), blockNodes = [];
     if (!profile?.bitrix_password_set) clearBitrixPasswordCardReveal(ctx);
+    if (!profile?.web_password_set) {
+      clearBitrixPasswordCardReveal(ctx, "custom_web_password");
+      delete ctx.state.clientCardWebPasswordMask;
+    }
     const effectiveConfig = applyClientCardRulesToCardConfig(config, profile);
     const blocks = (effectiveConfig?.blocks || [])
       .filter(blockShownInCard)
@@ -1142,6 +1168,7 @@
   }
 
   function fillModal(ctx, profile) {
+    ctx.state.currentClientProfile = profile || {};
     const { el } = ctx;
     ctx.state.clientCardRuleProfile = profile || {};
     clearBitrixPasswordField(ctx);
@@ -1184,20 +1211,24 @@
     const anydesk = el.fAnydesk.value.trim() || null;
 
     const custom_fields = {};
+    let clearWebPassword = false;
     if (el.clientModal || el.customFieldsContainer) {
       const customInputs = (el.clientModal || el.customFieldsContainer).querySelectorAll("[data-custom-field-key]");
       customInputs.forEach((input) => {
         const key = input.dataset.customFieldKey;
+        if (key === "custom_web_password" && input.dataset.webPasswordDirty !== "1") return;
         if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) return;
         const fieldType = input.dataset.customFieldType || "text";
         let rawValue = null;
         if (input.type === "checkbox") rawValue = input.checked;
         else rawValue = input.value;
-        custom_fields[key] = parseCustomFieldValueForPayload(fieldType, rawValue);
+        if (key === "custom_web_password") clearWebPassword = !global.ClientWebCredentials.passwordValue(ctx);
+        custom_fields[key] = key === "custom_web_password" ? (global.ClientWebCredentials.passwordValue(ctx) || null) : parseCustomFieldValueForPayload(fieldType, rawValue);
       });
     }
 
     const payload = {
+      ...(clearWebPassword ? { clear_web_password: true } : {}),
       contact_name: el.fContactName.value.trim() || null,
       last_name: el.fLastName.value.trim() || null,
       is_verified: el.fIsVerified.checked,
@@ -1265,7 +1296,7 @@
 
   function inlineEditorControls(ctx) {
     return Array.from(ctx.el.clientModal.querySelectorAll("input, select, textarea"))
-      .filter((control) => control !== ctx.el.fBitrixPassword);
+      .filter((control) => control !== ctx.el.fBitrixPassword && control.dataset.customFieldKey !== "custom_web_password");
   }
 
   function inlineControlValue(control) {
@@ -1277,6 +1308,7 @@
   function hasInlineChanges(ctx) {
     const editor = ctx.state.clientCardInline;
     if (!editor?.open) return false;
+    if (global.ClientWebCredentials?.hasChanges(ctx)) return true;
     if (inlineEditorControls(ctx).some((control) => editor.values.get(control) !== inlineControlValue(control))) return true;
     const password = bitrixPasswordState(ctx);
     if (!password.dirty) return false;
@@ -1307,6 +1339,7 @@
     }
     clearBitrixPasswordField(ctx);
     ctx.el.clientModal.classList.add("hidden");
+    global.ClientWebCredentials?.clear(ctx);
     if (ctx.inlineClient && !ctx.isDestroyed()) ctx.el.editClientBtn.focus();
     return true;
   }
@@ -1364,6 +1397,8 @@
 
   function fieldValueForEditor(profile, field) {
     if (!field) return null;
+    const webValue = global.ClientWebCredentials?.value(profile, field.key);
+    if (webValue !== undefined) return webValue;
     if (String(field.key || "").startsWith("custom_")) {
       return (profile?.custom_fields || {})[field.key] ?? null;
     }
@@ -1417,9 +1452,15 @@
     wrap.appendChild(title);
     const fieldType = String(field.field_type || "text").toLowerCase();
     let inputEl = null;
-    if (fieldType === "textarea") {
+    if (fieldType === "textarea" || field.key === "custom_web_password") {
       inputEl = document.createElement("textarea");
-      inputEl.rows = 3;
+      inputEl.rows = field.key === "custom_web_password" ? 1 : 3;
+      if (field.key === "custom_web_password") {
+        // Keep the credential editor out of browser login/password form heuristics.
+        inputEl.style.minHeight = "0";
+        inputEl.style.resize = "none";
+        inputEl.style.overflow = "hidden";
+      }
       inputEl.value = currentValue ?? "";
     } else if (fieldType === "select") {
       inputEl = document.createElement("select");
@@ -1454,8 +1495,9 @@
     }
     inputEl.dataset.customFieldKey = field.key;
     inputEl.dataset.customFieldType = fieldType;
+    const webField = global.ClientWebCredentials?.isWebField(field.key);
     const baseReadonly = field.is_editable === false
-      || (!isAdminRole(ctx) && field.admin_only_edit)
+      || (webField ? !global.ClientWebCredentials.canEdit(ctx) : (!isAdminRole(ctx) && field.admin_only_edit))
       || (!isAdminRole(ctx) && fieldType === "select" && new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []).has(String(currentValue ?? "")));
     inputEl.dataset.clientCardBaseReadonly = baseReadonly ? "1" : "0";
     if (inputEl.dataset.clientCardBaseReadonly === "1") {
@@ -1463,6 +1505,7 @@
       wrap.classList.add("client-card-field-readonly-rule");
     }
     wrap.appendChild(inputEl);
+    global.ClientWebCredentials?.protectInput(ctx, field, inputEl, wrap);
     return wrap;
   }
 
@@ -1484,7 +1527,8 @@
       });
     }
     const adminOnlySelectCurrent = !isAdminRole(ctx) && fieldType === "select" && adminOnlyValues.has(String(currentValue ?? control.value ?? ""));
-    control.dataset.clientCardBaseReadonly = field.is_editable === false || (!isAdminRole(ctx) && field.admin_only_edit) || adminOnlySelectCurrent ? "1" : "0";
+    control.dataset.clientCardBaseReadonly = field.is_editable === false || (!isAdminRole(ctx) && field.admin_only_edit) || adminOnlySelectCurrent
+      || (field.key === "bitrix_password" && ctx.state.role === "chiki_piki") ? "1" : "0";
     if (control.dataset.clientCardBaseReadonly === "1") {
       setControlReadonly(control, true);
       wrap.classList.add("client-card-field-readonly-rule");
@@ -1548,9 +1592,17 @@
       }
       sectionParent.insertBefore(blockWrap, el.customFieldsSection);
     }
+    global.ClientWebCredentials?.addGenerate(ctx);
   }
 
   global.TicketClientCard = {
+    passwordPresentation: {
+      duration: PASSWORD_REVEAL_MS, owner: clientCardRevealOwnerKey, mask: bitrixPasswordMask,
+      state: bitrixPasswordCardRevealState, active: activeBitrixPasswordCardReveal,
+      clear: clearBitrixPasswordCardReveal, schedule: scheduleBitrixPasswordCardRevealHide,
+      show: showBitrixPasswordValueEl, read: revealBitrixPassword,
+      render: applyBitrixPasswordValueRevealState, bind: bindBitrixPasswordValueReveal,
+    },
     defaultClientCardViewConfig,
     renderClientDynamicCard,
     fillClientPanel,

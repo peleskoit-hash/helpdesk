@@ -64,8 +64,9 @@
     ["/management/users", {
       page: "management-users",
       scripts: [
-        "/static/ticket_client_card.js?v=20261018-avatar",
-        "/static/management_users.js?v=20261015a",
+        "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
+        "/static/ticket_client_card.js?v=20261018-web-empty-autofill",
+        "/static/management_users.js?v=20261018-web-roles",
       ],
     }],
     ["/management/integrations", {
@@ -81,7 +82,8 @@
       scripts: [
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20261018-avatar",
-        "/static/ticket_client_card.js?v=20261018-avatar",
+        "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
+        "/static/ticket_client_card.js?v=20261018-web-empty-autofill",
         "/static/ticket_composer.js?v=20261010b",
         "/static/ticket_controls.js?v=20261013a",
         "/static/ticket_message_view.js?v=20260810b",

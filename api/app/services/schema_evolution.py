@@ -129,6 +129,11 @@ def ensure_saved_files_table() -> None:
 
 def ensure_client_profile_columns() -> None:
     required_columns = {
+        "web_login": "VARCHAR(255)",
+        "web_login_normalized": "VARCHAR(255)",
+        "web_password_encrypted": "TEXT",
+        "web_password_hash": "TEXT",
+        "web_credentials_version": "INTEGER NOT NULL DEFAULT 0",
         "last_name": "VARCHAR(200)",
         "is_verified": "BOOLEAN",
         "destination": "VARCHAR(200)",
@@ -171,6 +176,8 @@ def ensure_client_profile_columns() -> None:
             conn.execute(text("UPDATE client_profiles SET custom_fields = '{}' WHERE custom_fields IS NULL"))
         else:
             conn.execute(text("UPDATE client_profiles SET custom_fields = '{}'::jsonb WHERE custom_fields IS NULL"))
+        from .web_credentials_migration import migrate_legacy_web_credentials
+        migrate_legacy_web_credentials(conn)
 
 
 def ensure_client_card_field_config_columns() -> None:

@@ -11,9 +11,11 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import CurrentUser
 from ..models import Client, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
 from .client_card import _normalize_custom_field_value
 from .encryption import encrypt_secret
+from .web_credentials import WEB_KEYS, apply_changes as apply_web_changes, authorize_fields as authorize_web_fields, without_web_fields
 
 SYSTEM_PROFILE_FIELDS = {
     "contact_name",
@@ -52,7 +54,7 @@ def _active_save_rules(db: Session) -> list[ClientCardRuleConfig]:
 def _custom_field_keys(db: Session) -> set[str]:
     return set(
         db.execute(
-            select(ClientCardFieldConfig.key).where(ClientCardFieldConfig.is_system.is_(False))
+            select(ClientCardFieldConfig.key).where(ClientCardFieldConfig.is_system.is_(False), ClientCardFieldConfig.key.notin_(WEB_KEYS))
         ).scalars().all()
     )
 
@@ -61,7 +63,7 @@ def strip_system_profile_keys_from_custom_fields(custom_fields: dict[str, Any] |
     return {
         key: value
         for key, value in dict(custom_fields or {}).items()
-        if key not in SYSTEM_PROFILE_FIELDS
+        if key not in SYSTEM_PROFILE_FIELDS and key not in WEB_KEYS
     }
 
 
@@ -240,6 +242,8 @@ def normalize_client_card_derived_value(
     field_configs: dict[str, ClientCardFieldConfig],
     custom_keys: set[str],
 ) -> Any:
+    if target_key in WEB_KEYS:
+        raise HTTPException(422, "WEB-реквизиты нельзя изменять через общие правила карточки")
     if target_key in SYSTEM_PROFILE_FIELDS:
         return _normalize_system_value(target_key, field_configs.get(target_key), value)
     if target_key in custom_keys:
@@ -401,11 +405,17 @@ def validate_client_card_direct_user_changes(
     profile: ClientProfile | None,
     incoming: dict[str, Any],
     merged_custom_fields: dict[str, Any],
+    *,
+    user: CurrentUser | None = None,
 ) -> None:
     field_configs = _field_configs(db)
     custom_keys = {key for key, field in field_configs.items() if not getattr(field, "is_system", False)}
     incoming_keys = _incoming_changed_keys(incoming)
     for key in incoming_keys:
+        if key in WEB_KEYS:
+            # WEB credentials use role permissions, independent of admin_only_edit.
+            authorize_web_fields(db, user, {key}, write=True)
+            continue
         field = field_configs.get(key)
         if field is None:
             continue
@@ -527,7 +537,20 @@ def apply_client_card_profile_save_pipeline(
     merged_custom_fields: dict[str, Any],
     *,
     client_id: str | None = None,
+    user: CurrentUser | None = None,
 ) -> SavePipelineResult:
+    clear_web_password = incoming.get("clear_web_password") is True
+    web_changes = {k: v for k, v in (incoming.get("custom_fields") or {}).items() if k in WEB_KEYS}
+    if clear_web_password:
+        authorize_web_fields(db, user, {"custom_web_password"}, write=True)
+    if web_changes:
+        validate_client_card_direct_user_changes(db, profile, {"custom_fields": web_changes}, web_changes, user=user)
+    incoming = dict(incoming)
+    incoming.pop("clear_web_password", None)
+    if "custom_fields" in incoming:
+        incoming["custom_fields"] = without_web_fields(incoming["custom_fields"])
+    if (web_changes or clear_web_password) and profile is None:
+        raise HTTPException(404, "Профиль клиента не найден")
     rules = [_copy_rule(rule) for rule in _active_save_rules(db)]
     sources_by_id = {source.id: _copy_source(source) for source in db.execute(select(ClientCardSourceConfig)).scalars().all()}
     custom_keys = _custom_field_keys(db)
@@ -659,6 +682,7 @@ def apply_client_card_profile_save_pipeline(
                 current[target_key] = value
             profile.custom_fields = current
     profile.custom_fields = strip_system_profile_keys_from_custom_fields(profile.custom_fields)
+    apply_web_changes(db, profile, web_changes, clear_password=clear_web_password)
     profile.updated_at = datetime.utcnow()
     return SavePipelineResult(profile=profile, changed_keys=changed_keys)
 

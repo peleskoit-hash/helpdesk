@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import Client, ClientProfile, Company, TelegramContact
 from .encryption import decrypt_secret
+from .web_credentials import WEB_COLUMNS, without_web_fields
 
 
 class ClientExportError(RuntimeError):
@@ -53,6 +54,9 @@ def _payload(db: Session, expected_count: int):
             if client.company_id not in company_ids or client.company_id != contact.company_id:
                 raise ClientExportError("Invalid client/company links.")
             profile = _record(profiles_by_client[client.id])
+            for key in WEB_COLUMNS:
+                profile[key] = 0 if key == "web_credentials_version" else None
+            profile["custom_fields"] = without_web_fields(profile["custom_fields"])
             if profile["bitrix_password"]:
                 try:
                     profile["bitrix_password"] = decrypt_secret(profile["bitrix_password"])

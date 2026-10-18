@@ -21,6 +21,9 @@ from ..services.client_card import (
 )
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
+from ..services import web_credentials
+from ..schemas import WebCredentialsGeneratePayload
+from fastapi.responses import JSONResponse
 from ..services.management_user_reset import (
     ResetManagementUserDataActiveTicketError,
     reset_management_user_data,
@@ -328,6 +331,22 @@ def get_management_user_profile(
     )
 
 
+@router.get("/{client_id}/profile/web-password")
+def reveal_management_web_password(client_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+    web_credentials.authorize_fields(db, user, {"custom_web_password"})
+    return JSONResponse(web_credentials.reveal(web_credentials.require_profile(db, client_id)), headers={"Cache-Control": "no-store"})
+
+
+@router.post("/{client_id}/profile/web-credentials/generate")
+def generate_management_web_credentials(client_id: str, payload: WebCredentialsGeneratePayload,
+                                        db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    _require_admin(user)
+    web_credentials.authorize_fields(db, user, web_credentials.WEB_KEYS, write=True)
+    result = web_credentials.generate_draft(db, web_credentials.require_profile(db, client_id), payload)
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/{client_id}/profile/bitrix-password", response_model=BitrixPasswordRevealOut)
 def reveal_management_user_bitrix_password(
     client_id: str,
@@ -416,6 +435,11 @@ def update_management_user_profile(
         _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
     data = _payload_data(payload)
+    web_keys = web_credentials.WEB_KEYS.intersection(data.get("custom_fields") or {})
+    if data.get("clear_web_password"):
+        web_keys.add("custom_web_password")
+    if web_keys:
+        web_credentials.authorize_fields(db, user, web_keys, write=True)
     merged_custom_fields = dict(profile.custom_fields or {}) if profile is not None else {}
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields = dict(merged_custom_fields)
@@ -430,7 +454,7 @@ def update_management_user_profile(
             else:
                 custom_fields[key] = normalized
         merged_custom_fields = custom_fields
-    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=client_id)
+    result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=client_id, user=user)
     profile = result.profile
     db.commit()
     db.refresh(profile)

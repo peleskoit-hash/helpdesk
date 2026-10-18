@@ -14,6 +14,7 @@ function element(tagName = 'input') {
   return {
     tagName: tagName.toUpperCase(), type: 'text', value: '', checked: false,
     dataset: {}, disabled: false, readOnly: false, required: false,
+    attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
     handlers: {}, focus() {}, getClientRects: () => [1],
     closest() { return null; },
     classList: {
@@ -26,7 +27,7 @@ function element(tagName = 'input') {
   };
 }
 
-function fixture({ inline = true, savedPassword = false, required = false, runtime = {}, crypto } = {}) {
+function fixture({ inline = true, savedPassword = false, required = false, runtime = {}, crypto, web = false } = {}) {
   const panel = element('aside');
   const body = element('div');
   const el = {
@@ -52,6 +53,13 @@ function fixture({ inline = true, savedPassword = false, required = false, runti
     return control;
   });
   el.clientModal.classList.add('hidden');
+  if (web) {
+    for (const key of ['custom_web_login', 'custom_web_password']) {
+      const input = element();
+      input.dataset = { customFieldKey: key, customFieldType: key.endsWith('password') ? 'password' : 'text' };
+      custom.push(input); controls.push(input);
+    }
+  }
   el.clientModal.closest = () => panel;
   el.clientModal.querySelectorAll = (selector) => {
     if (selector === 'input, select, textarea') return controls;
@@ -60,8 +68,9 @@ function fixture({ inline = true, savedPassword = false, required = false, runti
   };
   el.clientModal.querySelector = (selector) => {
     if (selector === '.modal-body') return body;
-    const key = selector.match(/data-client-card-field-key="([^"]+)"/)?.[1];
+    const key = selector.match(/data-(?:client-card-field-key|custom-field-key)="([^"]+)"/)?.[1];
     const control = custom.find((input) => input.dataset.customFieldKey === key);
+    if (selector.includes('data-custom-field-key=')) return control || null;
     return control ? Object.assign(control.wrap ||= element('label'), { querySelector: () => control }) : null;
   };
   const calls = [], errors = [], confirmations = [], reloads = [];
@@ -73,6 +82,7 @@ function fixture({ inline = true, savedPassword = false, required = false, runti
     return profile;
   };
   const window = { crypto, confirm: (message) => { confirmations.push(message); return allowExit; } };
+  if (web) vm.runInNewContext(fs.readFileSync('api/app/static/client_web_credentials.js', 'utf8'), { window });
   vm.runInNewContext(source, { window, console, setTimeout, clearTimeout, Uint8Array, ...runtime });
   const card = window.TicketClientCard;
   const ctx = {
@@ -101,6 +111,24 @@ function fixture({ inline = true, savedPassword = false, required = false, runti
 }
 
 const patchCalls = (f) => f.calls.filter((call) => call.options?.method === 'PATCH');
+
+test('WEB password is omitted until explicitly edited; changes and cancellation preserve existing inline rules', async () => {
+  const f = fixture({ web: true });
+  await f.open();
+  const password = f.custom.find(input => input.dataset.customFieldKey === 'custom_web_password');
+  password.dataset.webPasswordDirty = '0';
+  assert.equal(Object.hasOwn(f.card.getModalPayload(f.ctx).custom_fields, 'custom_web_password'), false);
+  password.value = '  Manual-A1!  '; // Do not silently trim a manually chosen password.
+  password.dataset.webPasswordDirty = '1';
+  f.ctx.state.webPasswordDraft = password.value; // Synthetic fixture has no dynamically rendered input handler.
+  assert.equal(f.dirty(), true);
+  assert.equal(f.card.getModalPayload(f.ctx).custom_fields.custom_web_password, '  Manual-A1!  ');
+  f.allowExit(true);
+  f.close();
+  assert.equal(password.value, '');
+  assert.equal(password.dataset.webPasswordDirty, '0');
+  assert.equal(patchCalls(f).length, 0);
+});
 
 test('ticket reuses one editor with all original IDs, inside left panel and without modal overlay', () => {
   const ids = [...template.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
@@ -327,7 +355,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : '20261018-avatar']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : resource === 'ticket_client_card.js' ? '20261018-web' : '20261018-avatar']);
   }
 });
 
@@ -674,3 +702,18 @@ test('switching client creates its own mask and clears the previous reveal', asy
   await f.open();
   assert.equal(f.el.fBitrixPassword.value, second.textContent);
 });
+
+
+for (const role of ['admin', 'agent', 'trainee', 'chiki_piki']) {
+  test(`${role}: Bitrix password focus respects reveal permission`, async () => {
+    const f = fixture({ savedPassword: true });
+    f.ctx.state.role = role;
+    await f.open();
+    const mask = f.el.fBitrixPassword.value;
+    assert.ok(mask && mask !== 'test-value');
+    await f.el.fBitrixPassword.handlers.focus();
+    const reveals = f.calls.filter(call => call.url.endsWith('/bitrix-password'));
+    assert.equal(reveals.length, role === 'chiki_piki' ? 0 : 1);
+    assert.equal(f.el.fBitrixPassword.value, role === 'chiki_piki' ? mask : 'test-value');
+  });
+}

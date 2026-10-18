@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
 from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
 from .temporary_rop import with_temporary_rop_suffix
+from .web_credentials import without_web_fields
 
 SYSTEM_PROFILE_FIELD_KEYS = {
     "contact_name",
@@ -159,7 +160,10 @@ def _profile_out(
                 if key not in SYSTEM_PROFILE_FIELD_KEYS
             }
         )
+    custom_fields = without_web_fields(custom_fields)
     return ClientProfileOut(
+        web_login=profile.web_login,
+        web_password_set=bool(profile.web_password_encrypted),
         telegram_username=telegram_username,
         telegram_display_name=telegram_display_name,
         display_name=with_temporary_rop_suffix(
