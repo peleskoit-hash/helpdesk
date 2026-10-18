@@ -176,6 +176,10 @@ class Ticket(Base):
     call_center_employee_bitrix_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
     call_center_profile_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     subject: Mapped[str] = mapped_column(String(255))
+    channel: Mapped[str] = mapped_column(
+        String(20), CheckConstraint("channel IN ('telegram', 'web')", name="ck_tickets_channel"),
+        default="telegram", server_default=text("'telegram'"), nullable=False,
+    )
     workflow_type: Mapped[str] = mapped_column(String(20), default=TicketWorkflowType.TICKET.value)
     intake_state: Mapped[str] = mapped_column(String(20), default=TicketIntakeState.READY.value)
     task_kind: Mapped[str] = mapped_column(String(30), default=TicketTaskKind.NORMAL.value)

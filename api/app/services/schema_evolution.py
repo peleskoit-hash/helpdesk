@@ -970,6 +970,7 @@ def ensure_user_columns() -> None:
 
 def ensure_ticket_columns() -> None:
     required_columns = {
+        "channel": "VARCHAR(20) NOT NULL DEFAULT 'telegram' CONSTRAINT ck_tickets_channel CHECK (channel IN ('telegram', 'web'))",
         "ticket_number": "INTEGER",
         "workflow_type": "VARCHAR(20)",
         "intake_state": "VARCHAR(20)",
@@ -1035,6 +1036,7 @@ def ensure_ticket_columns() -> None:
         for column_name, column_type in required_columns.items():
             if column_name not in existing:
                 conn.execute(text(f"ALTER TABLE tickets ADD COLUMN {column_name} {column_type}"))
+        conn.execute(text("UPDATE tickets SET channel = 'telegram' WHERE channel IS NULL"))
         conn.execute(text("UPDATE tickets SET workflow_type = 'ticket' WHERE workflow_type IS NULL"))
         conn.execute(text("UPDATE tickets SET intake_state = 'ready' WHERE intake_state IS NULL"))
         conn.execute(text("UPDATE tickets SET task_kind = 'normal' WHERE task_kind IS NULL"))
