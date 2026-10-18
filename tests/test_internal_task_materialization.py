@@ -508,7 +508,8 @@ def test_one_off_definitions_finish_but_recurring_remains_active(schedule_kind, 
     assert definition.state == expected_state
 
 
-def test_internal_task_close_suppresses_client_telegram_but_normal_task_still_sends():
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_internal_task_close_suppresses_client_telegram_but_normal_task_still_sends(channel):
     session = _session()
     company = _company(session)
     creator = _user(session, company, "admin")
@@ -542,6 +543,7 @@ def test_internal_task_close_suppresses_client_telegram_but_normal_task_still_se
         created_at=datetime.utcnow(),
     )
     session.add_all([normal_client, normal_ticket, normal_initial])
+    internal_result.ticket.channel = normal_ticket.channel = channel
     _seed_agent_response(session, internal_result.ticket, agent)
     _seed_agent_response(session, normal_ticket, agent)
     session.flush()
@@ -555,5 +557,5 @@ def test_internal_task_close_suppresses_client_telegram_but_normal_task_still_se
 
     assert internal_texts == []
     assert internal_files == []
-    assert normal_texts
-    assert normal_files
+    assert bool(normal_texts) == (channel == "telegram")
+    assert bool(normal_files) == (channel == "telegram")

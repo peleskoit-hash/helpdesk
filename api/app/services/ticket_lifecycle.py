@@ -52,6 +52,8 @@ def _ticket_telegram_contact(db: Session, ticket: Ticket) -> TelegramContact | N
 
 
 def _post_close_markup_for_ticket(db: Session, ticket: Ticket, review_cycle=None, *, assume_closed: bool = False) -> dict | None:
+    if ticket.channel == "web":
+        return None
     return post_close_actions_markup(
         db,
         ticket=ticket,
@@ -71,6 +73,8 @@ def _send_optional_client_message(
     remove_keyboard: bool = False,
     reply_markup: dict | None = None,
 ) -> dict | None:
+    if ticket.channel == "web":
+        return None
     response = send_to_telegram_client_fn(
         db,
         ticket,
@@ -96,6 +100,8 @@ def _send_required_client_attachment(
     failure_note: str,
     send_attachment_to_telegram_client_fn,
 ) -> None:
+    if ticket.channel == "web":
+        return
     try:
         send_attachment_to_telegram_client_fn(db, ticket, attachment, required=True)
     except HTTPException as exc:
@@ -606,6 +612,8 @@ def notify_group_parent_completion_before_delete(
     send_attachment_to_telegram_client_fn,
     resolve_group_parent_client_text_fn=None,
 ) -> None:
+    if parent.channel == "web":
+        return
     if (parent.workflow_type or TicketWorkflowType.TASK.value) != TicketWorkflowType.TASK.value:
         return
     if (parent.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
@@ -800,7 +808,7 @@ def close_ticket_by_actor(
             return "closed"
         if workflow_type == TicketWorkflowType.TICKET.value:
             review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
-            review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+            review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id) if ticket.channel != "web" else None
             closed_at = datetime.utcnow()
             ticket.status = TicketStatus.CLOSED.value
             ticket.closed_by_user_id = actor.id
@@ -961,7 +969,7 @@ def close_ticket_by_actor(
             add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
     elif workflow_type == TicketWorkflowType.TICKET.value:
         review_agent_id = attributable_review_agent_id_for_actor(db, ticket, actor)
-        review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id)
+        review_cycle = prepare_review_offer_cycle(db, ticket=ticket, agent_id=review_agent_id) if ticket.channel != "web" else None
         close_text = (
             f"{actor_display_name_fn(db, actor)} закрыл заявку"
             if is_admin_action and not is_force_close_action

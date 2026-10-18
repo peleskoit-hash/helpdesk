@@ -137,6 +137,8 @@ def _send_attachment_to_telegram_client(
     reply_to_message_id: str | int | None = None,
     show_upload_action: bool = False,
 ) -> dict | None:
+    if ticket.channel == "web":
+        return None
     contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
     if contact is None:
         if required:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import uuid
 from datetime import datetime
 from types import SimpleNamespace
@@ -1133,9 +1135,11 @@ def test_start_command_cleans_review_states_and_continues_start_flow(monkeypatch
             assert review.rating == 5
 
 
-def test_restore_cleans_review_before_restore_notification(monkeypatch):
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_restore_cleans_review_before_restore_notification(monkeypatch, channel):
     session = _session()
     contact, ticket, cycle, review = _awaiting_text_cycle(session, review_text="caption", caption_state=True)
+    ticket.channel = channel
     deleted = []
     sent = []
     user = SimpleNamespace(id=ticket.closed_by_user_id or ticket.assignee_id, role="admin")
@@ -1153,8 +1157,11 @@ def test_restore_cleans_review_before_restore_notification(monkeypatch):
     session.refresh(review)
 
     assert result == {"ok": True}
-    assert deleted == [(contact.external_chat_id, 99)]
-    assert sent and "вернули в работу" in sent[0][1]
+    assert deleted == ([(contact.external_chat_id, 99)] if channel == "telegram" else [])
+    if channel == "telegram":
+        assert sent and "вернули в работу" in sent[0][1]
+    else:
+        assert sent == []
     assert cycle.state == TicketReviewCycleState.CANCELLED.value
     assert cycle.review_current_message_id is None
     assert review.review_text == "caption"

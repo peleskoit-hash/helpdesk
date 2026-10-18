@@ -103,7 +103,8 @@ def test_download_missing_physical_file_without_telegram_metadata_returns_contro
     assert exc.value.detail["error"]["code"] == "attachment_file_missing"
 
 
-def test_download_large_telegram_file_uses_streaming_response_without_loading_body(monkeypatch, tmp_path):
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_download_large_telegram_file_uses_streaming_response_without_loading_body(monkeypatch, tmp_path, channel):
     session = _session()
     ticket, attachment = _seed_attachment(
         session,
@@ -111,10 +112,17 @@ def test_download_large_telegram_file_uses_streaming_response_without_loading_bo
         filename="large.pdf",
         local_exists=False,
         telegram_file_id="file-id",
-        telegram_file_path="documents/large.pdf",
+        telegram_file_path=None,
         file_size=8_600_000,
     )
     opened = []
+    ticket.channel = channel
+    session.commit()
+    monkeypatch.setattr(tickets_router, "get_file", lambda file_id, **kwargs:
+                        {"result": {"file_path": "documents/large.pdf"}})
+    if channel == "web":
+        monkeypatch.setattr(tickets_router, "_telegram_contact_for_client", lambda *args:
+                            pytest.fail("WEB download must not look up the client's Telegram contact"))
 
     class _TelegramResponse:
         headers = {"Content-Length": "8600000"}

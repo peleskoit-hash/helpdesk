@@ -315,6 +315,148 @@ def test_text_channel_edit_requires_telegram_id_only_for_telegram(text_channel_c
     assert [call[0] for call in case.calls] == (["edit", "delete"] if case.ticket.channel == "telegram" else [])
 
 
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+@pytest.mark.parametrize("workflow,transport", [
+    ("ticket", "raw"), ("ticket", "ready"), ("ticket", "uploading"),
+    ("task", "ready"), ("task", "raw"), ("group_child", "raw"),
+])
+def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path, channel, workflow, transport):
+    from api.app.services import ticket_attachments
+
+    engine, SessionFactory, db = _session_bundle()
+    ticket = _seed_ticket(db)
+    ticket.channel = channel
+    group_child = workflow == "group_child"
+    if group_child:
+        workflow = "task"
+        parent = Ticket(id=str(uuid.uuid4()), company_id=ticket.company_id, client_id=ticket.client_id,
+                        subject="Group", channel=channel, workflow_type="task", task_kind="group_parent",
+                        status="pending")
+        db.add(parent)
+        db.add(TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type="client", body="Group request"))
+        ticket.parent_ticket_id = parent.id
+        ticket.task_kind = "group_child"
+    ticket.workflow_type = workflow
+    ticket.assignee_id = "agent-1"
+    ticket.client_close_message_id = "700"
+    db.add(User(id="agent-1", company_id=ticket.company_id, full_name="Agent", role="agent"))
+    db.add(TicketMessage(id=str(uuid.uuid4()), ticket_id=ticket.id, message_type="client", body="Request"))
+    db.commit()
+    user = SimpleNamespace(id="agent-1", role="agent")
+    calls = []
+
+    def send_document(chat_id, *args, **kwargs):
+        calls.append(("document", chat_id))
+        return {"result": {"message_id": 301, "document": {
+            "file_id": "archive-file-id", "file_unique_id": "archive-unique-id"}}}
+
+    def send_text(chat_id, *args, **kwargs):
+        calls.append(("text", chat_id))
+        return {"result": {"message_id": 401}}
+
+    def send_file_id(chat_id, *args, **kwargs):
+        calls.append(("file-id", chat_id))
+        return {"result": {"message_id": 501}}
+
+    monkeypatch.setattr(outbound_service, "SessionLocal", SessionFactory)
+    monkeypatch.setattr(outbound_service.settings, "telegram_staging_chat_id", "staging-chat")
+    monkeypatch.setattr(ticket_attachments.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(outbound_service, "send_document", send_document)
+    monkeypatch.setattr(outbound_service, "send_message", send_text)
+    monkeypatch.setattr(outbound_service, "send_document_by_file_id", send_file_id)
+    monkeypatch.setattr(outbound_service, "edit_message_text", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(outbound_service, "delete_message", lambda *args, **kwargs:
+                        pytest.fail("A claimed archive must be retained"))
+    monkeypatch.setattr(tickets_router, "send_message", send_text)
+    monkeypatch.setattr(tickets_router, "remove_inline_keyboard", lambda *args, **kwargs: calls.append(("keyboard", args[0])))
+    monkeypatch.setattr(ticket_attachments, "send_document", send_document)
+    monkeypatch.setattr(ticket_attachments, "send_document_by_file_id", send_file_id)
+    if channel == "web":
+        monkeypatch.setattr(tickets_router, "_telegram_contact_for_client", lambda *args:
+                            pytest.fail("WEB must not look up the client's Telegram contact"))
+
+    upload = SimpleNamespace(filename="result.pdf", file=io.BytesIO(b"pdf"), content_type="application/pdf")
+    preload_id = None
+    if transport == "raw":
+        request = _MultipartRequest(_FormData(text="Final answer", files=[upload], single_attachment=True))
+    else:
+        preparation = BackgroundTasks()
+        result = asyncio.run(tickets_router.create_attachment_preload(
+            ticket.id, background_tasks=preparation, file=upload, archive_group_id="test-group", db=db, user=user))
+        preload_id = result["id"]
+        if transport == "ready":
+            asyncio.run(preparation())
+        request = _multipart_request_with_preload(text="Final answer", preload_id=preload_id, single_attachment=True)
+    delivery = BackgroundTasks()
+    assert asyncio.run(tickets_router.reply(ticket.id, request=request, background_tasks=delivery, db=db, user=user)) == {"ok": True}
+    if transport == "uploading":
+        asyncio.run(preparation())
+    asyncio.run(delivery())
+    db.expire_all()
+    message, = [m for m in _messages(db, ticket.id) if m.message_type == "agent"]
+    attachment, = _attachments(db, message.id)
+    assert attachment.ticket_id == ticket.id
+    assert attachment.message_id == message.id
+    assert message.body == "Final answer"
+    if not (workflow == "task" and transport == "raw" and channel == "telegram"):
+        assert attachment.telegram_file_id == "archive-file-id"
+        assert attachment.telegram_file_unique_id == "archive-unique-id"
+        assert Path(attachment.local_path).exists() == (workflow == "task" and transport == "raw")
+        assert ("document", "staging-chat") in calls
+    if workflow == "ticket" or (channel == "web" and transport == "raw"):
+        assert attachment.telegram_delivery_status == "sent"
+    if workflow == "task":
+        assert all(chat_id != "chat-42" for kind, chat_id in calls if kind != "keyboard")
+        assert tickets_router.close(ticket.id, db=db, user=user) == {"ok": True}
+        if group_child:
+            assert parent.status == "closed"
+            parent_answer, = [m for m in _messages(db, parent.id) if m.message_type == "agent"]
+            parent_file, = _attachments(db, parent_answer.id)
+            assert parent_answer.body == message.body
+            assert parent_file.telegram_file_id == attachment.telegram_file_id
+            assert parent_file.local_path == attachment.local_path
+    if channel == "web":
+        assert all(chat_id == "staging-chat" for _, chat_id in calls)
+        assert message.telegram_message_id is None
+        assert attachment.telegram_message_id is None
+    else:
+        assert any(chat_id == "chat-42" for _, chat_id in calls)
+    # Retrying completed workers must not redeliver or reupload.
+    previous = list(calls)
+    outbound_service.deliver_ticket_attachment(attachment_id=attachment.id, message_id=message.id, ticket_id=ticket.id)
+    assert calls == previous
+    db.close()
+    engine.dispose()
+
+
+def test_web_task_raw_archive_failure_does_not_persist_an_unarchived_answer(monkeypatch, tmp_path):
+    engine, _Session, db = _session_bundle()
+    ticket = _seed_ticket(db)
+    ticket.channel = "web"
+    ticket.workflow_type = "task"
+    ticket.assignee_id = "agent-1"
+    db.commit()
+    from api.app.services import ticket_attachments
+    monkeypatch.setattr(ticket_attachments.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(outbound_service, "_send_staging_document_from_path", lambda **kwargs:
+                        (_ for _ in ()).throw(outbound_service.TelegramApiError("archive unavailable")))
+    monkeypatch.setattr(tickets_router, "send_message", lambda *args, **kwargs:
+                        pytest.fail("WEB must not send to the client"))
+    upload = SimpleNamespace(filename="result.pdf", file=io.BytesIO(b"pdf"), content_type="application/pdf")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(tickets_router.reply(
+            ticket.id, request=_MultipartRequest(_FormData(text="Answer", files=[upload])),
+            background_tasks=BackgroundTasks(), db=db, user=SimpleNamespace(id="agent-1", role="agent")))
+    assert exc.value.status_code == 502
+    # Match the request session's rollback on failure.
+    db.rollback()
+    assert _messages(db, ticket.id) == []
+    assert db.query(TicketAttachment).filter_by(ticket_id=ticket.id).count() == 0
+    assert list(tmp_path.glob("*.pdf"))
+    db.close()
+    engine.dispose()
+
+
 def test_schema_evolution_adds_delivery_status_idempotently(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     with engine.begin() as conn:
@@ -737,9 +879,11 @@ def test_background_delivery_short_text_uses_staging_and_file_id_caption(monkeyp
     assert calls["send_document_by_file_id"][0][1]["caption"]
 
 
-def test_background_delivery_staging_failure_keeps_local_file(monkeypatch, tmp_path):
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_background_delivery_staging_failure_keeps_local_file(monkeypatch, tmp_path, channel):
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
+    ticket.channel = channel
     message = TicketMessage(
         id=str(uuid.uuid4()),
         ticket_id=ticket.id,
@@ -849,9 +993,11 @@ def test_background_delivery_delete_staging_failure_does_not_break_final_send(mo
     assert not path.exists()
 
 
-def test_background_delivery_commit_failure_keeps_local_file_and_skips_unlink(monkeypatch, tmp_path):
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_background_delivery_commit_failure_keeps_local_file_and_skips_unlink(monkeypatch, tmp_path, channel):
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
+    ticket.channel = channel
     message = TicketMessage(
         id=str(uuid.uuid4()),
         ticket_id=ticket.id,

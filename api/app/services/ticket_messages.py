@@ -369,7 +369,8 @@ async def reply_to_ticket(
             if actor_user is not None and actor_user.availability_status != "on_ticket":
                 set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
-        remove_client_close_button(db, ticket)
+        if ticket.channel != "web":
+            remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
@@ -430,9 +431,29 @@ async def reply_to_ticket(
         attachments.append(attachment)
     for upload in uploaded_files:
         attachment = save_upload_attachment(db, ticket, agent_message, upload)
+        if ticket.channel == "web":
+            if workflow_type == TicketWorkflowType.TASK.value:
+                # Complete archive metadata before a child task can copy it to its parent.
+                # Import locally because outbound delivery also imports this module.
+                from .telegram_outbound_delivery import _send_staging_document_from_path
+
+                try:
+                    file_id, unique_id, archive_id = _send_staging_document_from_path(
+                        local_path=attachment.local_path,
+                        original_filename=attachment.original_filename,
+                        mime_type=attachment.mime_type,
+                    )
+                except (FileNotFoundError, RuntimeError, TelegramApiError) as exc:
+                    _error(502, "telegram_send_failed", f"Не удалось сохранить файл в Telegram-архиве: {exc}")
+                attachment.telegram_file_id = file_id
+                attachment.telegram_file_unique_id = unique_id
+                attachment.telegram_archive_message_id = archive_id
+                attachment.telegram_delivery_status = "sent"
+            else:
+                attachment.telegram_delivery_status = "uploading"
         attachments.append(attachment)
 
-    if workflow_type != TicketWorkflowType.TASK.value and not is_internal_comment:
+    if workflow_type != TicketWorkflowType.TASK.value and not is_internal_comment and ticket.channel != "web":
         for attachment in attachments:
             try:
                 send_attachment_to_telegram_client(
@@ -476,6 +497,14 @@ async def reply_to_ticket(
     if not quick_action:
         clear_ticket_draft(db, ticket)
     db.commit()
+    if ticket.channel == "web":
+        for attachment in attachments:
+            if attachment.telegram_delivery_status == "uploading":
+                schedule_attachment_delivery(
+                    attachment_id=attachment.id,
+                    message_id=agent_message.id,
+                    ticket_id=ticket.id,
+                )
     return {"ok": True}
 
 

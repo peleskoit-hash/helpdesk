@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import logging
 import uuid
 
+import pytest
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -65,9 +67,12 @@ def _ticket_messages(session, ticket_id: str) -> list[TicketMessage]:
     ).scalars().all()
 
 
-def test_cleanup_auto_close_tickets_notifies_client_with_rendered_telegram_message(monkeypatch):
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_cleanup_auto_close_tickets_notifies_client_with_rendered_telegram_message(monkeypatch, channel):
     session = _session()
     ticket, contact = _seed_due_ticket(session)
+    ticket.channel = channel
+    session.commit()
     rendered_calls: list[tuple[object, str, str, object]] = []
     send_calls: list[tuple[str, str, str | None, bool]] = []
 
@@ -87,8 +92,9 @@ def test_cleanup_auto_close_tickets_notifies_client_with_rendered_telegram_messa
     assert closed == 1
     session.refresh(ticket)
     assert ticket.status == TicketStatus.CLOSED.value
-    assert rendered_calls == [(session, "telegram.auto_close.client", auto_close.AUTO_CLOSE_CLIENT_TEXT, ticket)]
-    assert send_calls == [(contact.external_chat_id, "<b>Closed</b>", "HTML", True)]
+    assert rendered_calls == ([(session, "telegram.auto_close.client", auto_close.AUTO_CLOSE_CLIENT_TEXT, ticket)] if channel == "telegram" else [])
+    assert send_calls == ([(contact.external_chat_id, "<b>Closed</b>", "HTML", True)] if channel == "telegram" else [])
+    assert auto_close.cleanup_auto_close_tickets(session) == 0
 
     messages = _ticket_messages(session, ticket.id)
     assert [message.body for message in messages] == ["Заявка автоматически закрыта из-за отсутствия активности"]

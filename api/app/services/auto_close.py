@@ -111,6 +111,8 @@ def _add_system_message(db: Session, ticket: Ticket, body: str, now: datetime) -
 
 
 def _send_auto_close_to_client(db: Session, ticket: Ticket) -> None:
+    if ticket.channel == "web":
+        return
     contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
     if contact is None:
         return

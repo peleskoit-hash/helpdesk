@@ -237,7 +237,8 @@ def test_admin_normal_task_close_without_agent_result_is_rejected():
     assert ticket.status == TicketStatus.PENDING.value
 
 
-def test_group_child_without_suppression_copies_answer_and_attachment_to_parent():
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_group_child_without_suppression_copies_answer_and_attachment_to_parent(channel):
     session = _session()
     parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
     child = _seed_ticket(
@@ -249,6 +250,7 @@ def test_group_child_without_suppression_copies_answer_and_attachment_to_parent(
         suppress_client_answer=False,
     )
     parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
+    parent.channel = child.channel = channel
     session.add(parent_client_message)
     session.commit()
     sent_texts: list[str] = []
@@ -263,11 +265,16 @@ def test_group_child_without_suppression_copies_answer_and_attachment_to_parent(
     assert child.status == TicketStatus.CLOSED.value
     assert parent.status == TicketStatus.CLOSED.value
     assert [message.body for message in parent_agent_messages] == ["Answer Allowed"]
-    assert sent_attachments == ["result.pdf"]
-    assert "Answer Allowed" in sent_texts[0]
+    assert len(_message_attachments(session, parent_agent_messages[0].id)) == 1
+    assert sent_attachments == (["result.pdf"] if channel == "telegram" else [])
+    if channel == "telegram":
+        assert "Answer Allowed" in sent_texts[0]
+    else:
+        assert sent_texts == []
 
 
-def test_group_child_with_suppression_does_not_copy_answer_or_attachment_but_completes_parent():
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_group_child_with_suppression_does_not_copy_answer_or_attachment_but_completes_parent(channel):
     session = _session()
     parent = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
     child = _seed_ticket(
@@ -278,6 +285,7 @@ def test_group_child_with_suppression_does_not_copy_answer_or_attachment_but_com
         subject="Suppressed",
         suppress_client_answer=True,
     )
+    parent.channel = child.channel = channel
     parent_client_message = TicketMessage(id=str(uuid.uuid4()), ticket_id=parent.id, message_type=MessageType.CLIENT.value, body="Parent request", created_at=datetime.utcnow())
     session.add(parent_client_message)
     session.commit()
@@ -296,7 +304,10 @@ def test_group_child_with_suppression_does_not_copy_answer_or_attachment_but_com
     assert [message.body for message in child_agent_messages] == ["Answer Suppressed"]
     assert parent_agent_messages == []
     assert sent_attachments == []
-    assert "Answer Suppressed" not in sent_texts[0]
+    if channel == "telegram":
+        assert "Answer Suppressed" not in sent_texts[0]
+    else:
+        assert sent_texts == []
 
 
 def test_mixed_group_parent_sends_only_unsuppressed_child_answers():
@@ -1627,7 +1638,8 @@ def test_task_files_only_completion_keeps_files_only_branch(tmp_path):
     assert "Файлы:\ncontract.pdf" not in sent_texts[0]
 
 
-def test_all_task_close_paths_send_feedback_action_to_client():
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_all_task_close_paths_send_feedback_action_to_client(channel):
     session = _session()
 
     normal = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.NORMAL.value)
@@ -1662,6 +1674,9 @@ def test_all_task_close_paths_send_feedback_action_to_client():
     session.add(parent_delete_client_message)
     session.commit()
 
+    for ticket in [normal, without_answer, parent_direct, parent_auto, parent_delete]:
+        ticket.channel = channel
+    session.commit()
     sent = {}
 
     def _send(_db, ticket, text, **kwargs):
@@ -1696,15 +1711,14 @@ def test_all_task_close_paths_send_feedback_action_to_client():
         **{**close_kwargs, "force_without_agent_reply_for_task": True, "is_admin_fn": lambda actor: True, "last_agent_message_fn": lambda *_: None},
     )
     close_ticket_by_actor(session, parent_direct, SimpleNamespace(id="agent-1", role="agent"), **close_kwargs)
-    finalize_group_parent_if_ready(
-        session,
-        parent_auto,
-        closed_by_user_id="agent-1",
-        first_client_message_fn=close_kwargs["first_client_message_fn"],
-        send_to_telegram_client_fn=_send,
-        send_attachment_to_telegram_client_fn=lambda *_args, **_kwargs: None,
-        add_message_fn=_add_message,
+    forced_child = _seed_ticket(session, channel=channel, workflow_type="task", task_kind="group_child",
+                                parent_ticket_id=parent_auto.id)
+    close_ticket_by_actor(
+        session, forced_child, SimpleNamespace(id="admin-1", role="admin"),
+        **{**close_kwargs, "force_without_agent_reply_for_task": True,
+           "is_admin_fn": lambda actor: True, "last_agent_message_fn": lambda *_: None},
     )
+    assert forced_child.status == parent_auto.status == TicketStatus.CLOSED.value
     notify_group_parent_completion_before_delete(
         session,
         parent_delete,
@@ -1714,5 +1728,51 @@ def test_all_task_close_paths_send_feedback_action_to_client():
     )
 
     for ticket in [normal, without_answer, parent_direct, parent_auto, parent_delete]:
-        assert sent[ticket.id]
-        assert _markup_labels(sent[ticket.id][0]) == ["Предложения и замечания"]
+        if channel == "telegram":
+            assert sent[ticket.id]
+            assert _markup_labels(sent[ticket.id][0]) == ["Предложения и замечания"]
+        else:
+            assert ticket.id not in sent
+
+
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+@pytest.mark.parametrize("role,force", [("agent", False), ("admin", False), ("admin", True)])
+def test_channel_close_preserves_result_and_completion_rules(channel, workflow, role, force):
+    session = _session()
+    ticket = _seed_ticket(session, channel=channel, workflow_type=workflow, assignee_id="agent-1")
+    _seed_contact_for_ticket(session, ticket)
+    _seed_user(session, "agent-1")
+    client_message = _add_message(session, ticket, MessageType.CLIENT, "Request", None)
+    answer = None if force else _seed_agent_message(session, ticket, "agent-1", body="Final answer")
+    attachment = _seed_attachment(session, ticket, answer) if answer is not None else None
+    session.commit()
+    sent, files = [], []
+    result = close_ticket_by_actor(
+        session, ticket, SimpleNamespace(id="agent-1" if role == "agent" else "admin-1", role=role),
+        force_without_agent_reply_for_task=force,
+        is_admin_fn=lambda actor: actor.role == "admin",
+        get_or_create_client_profile_fn=lambda *_: None,
+        last_agent_message_fn=lambda *_: answer,
+        first_client_message_fn=lambda *_: client_message,
+        send_to_telegram_client_fn=lambda *args, **kwargs: sent.append((args, kwargs)) or {"result": {"message_id": 101}},
+        actor_display_name_fn=lambda *_: "Actor", add_message_fn=_add_message,
+        message_attachments_fn=_message_attachments,
+        send_attachment_to_telegram_client_fn=lambda *args, **kwargs: files.append(args),
+        onsite_close_reminder_text="onsite", ticket_closed_client_text="closed",
+    )
+    session.commit()
+    assert result == "closed"
+    assert ticket.status == "closed"
+    assert ticket.closed_at is not None
+    assert ticket.completed_by_user_id == (None if force else "agent-1")
+    assert bool(sent) == (channel == "telegram")
+    assert bool(files) == (channel == "telegram" and workflow == "task" and not force)
+    if answer is not None:
+        assert session.get(TicketMessage, answer.id).body == "Final answer"
+        assert session.get(TicketAttachment, attachment.id).message_id == answer.id
+    if channel == "web":
+        from api.app.models import TicketReviewCycle
+        assert session.query(TicketReviewCycle).filter_by(ticket_id=ticket.id).count() == 0
+        assert all("не удалось" not in body for body in _system_messages(session, ticket))
+    session.close()

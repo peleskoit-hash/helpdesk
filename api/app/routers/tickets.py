@@ -409,6 +409,8 @@ def _send_to_telegram_client(
     reply_markup: dict | None = None,
     reply_to_message_id: str | None = None,
 ) -> dict | None:
+    if ticket.channel == "web":
+        return None
     contact = _telegram_contact_for_client(db, ticket.client_id)
     if contact is None:
         if required:
@@ -548,6 +550,8 @@ def _group_parent_client_text_override(db: Session, ticket: Ticket) -> str | Non
 
 
 def _remove_client_close_button(db: Session, ticket: Ticket):
+    if ticket.channel == "web":
+        return
     if not ticket.client_close_message_id:
         return
     contact = _telegram_contact_for_client(db, ticket.client_id)
@@ -1251,7 +1255,7 @@ def download_attachment(
         file_id = (attachment.telegram_file_id or "").strip()
         if not file_id:
             _error(404, "attachment_file_missing", "Файл недоступен для скачивания")
-        contact = _telegram_contact_for_client(db, ticket.client_id)
+        contact = _telegram_contact_for_client(db, ticket.client_id) if ticket.channel != "web" else None
         chat_id = contact.external_chat_id if contact else None
         try:
             file_response = get_file(file_id, chat_id=chat_id)
@@ -1863,7 +1867,10 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
     if active_exists is not None:
         _error(409, "client_has_active_ticket", "У клиента уже есть активная заявка")
 
-    contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
+    contact = (
+        db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
+        if ticket.channel != "web" else None
+    )
     collecting_tickets = db.execute(
         select(Ticket).where(
             and_(

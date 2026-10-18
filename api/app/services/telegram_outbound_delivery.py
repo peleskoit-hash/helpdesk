@@ -645,6 +645,12 @@ def _deliver_attachment_to_client(
         db.commit()
         return
 
+    if ticket.channel == "web":
+        # The file is already archived; WEB history uses the persisted file ID.
+        attachment.telegram_delivery_status = "sent"
+        db.commit()
+        return
+
     contact = db.execute(
         select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)
     ).scalar_one_or_none()
