@@ -382,7 +382,7 @@ async def reply_to_ticket(
         return {"ok": True}
 
     sent_message_id = None
-    if workflow_type != TicketWorkflowType.TASK.value and text and not is_internal_comment:
+    if workflow_type != TicketWorkflowType.TASK.value and text and not is_internal_comment and ticket.channel != "web":
         try:
             response = send_to_telegram_client(
                 db,
@@ -468,7 +468,8 @@ async def reply_to_ticket(
             set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
     if not is_internal_comment:
-        remove_client_close_button(db, ticket)
+        if ticket.channel != "web":
+            remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
@@ -528,7 +529,7 @@ def edit_agent_message(
         _error(409, "only_agent_message_edit", "Редактировать можно только сообщения сотрудника")
     if message.message_status == "deleted":
         _error(409, "message_deleted", "Удалённое сообщение нельзя редактировать")
-    if not message.telegram_message_id:
+    if ticket.channel != "web" and not message.telegram_message_id:
         _error(
             409,
             "telegram_message_id_missing",
@@ -541,7 +542,7 @@ def edit_agent_message(
         .order_by(asc(TicketAttachment.created_at))
     ).scalars().all()
 
-    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id)
+    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id) if ticket.channel != "web" else None
     if external_chat_id:
         try:
             if _message_uses_single_attachment_caption(message, attachments):
@@ -588,7 +589,7 @@ def delete_agent_message(
         .order_by(asc(TicketAttachment.created_at))
     ).scalars().all()
 
-    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id)
+    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id) if ticket.channel != "web" else None
     if external_chat_id:
         telegram_message_ids: list[str] = []
         if message.telegram_message_id:

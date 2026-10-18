@@ -182,6 +182,139 @@ def _upload(filename: str, content: bytes, content_type: str = "application/pdf"
     return SimpleNamespace(filename=filename, file=io.BytesIO(content), content_type=content_type)
 
 
+@pytest.fixture(params=["telegram", "web"])
+def text_channel_case(request, monkeypatch):
+    engine, _Session, db = _session_bundle()
+    ticket = _seed_ticket(db)
+    ticket.channel = request.param
+    ticket.assignee_id = "agent-1"
+    ticket.client_close_message_id = "700"
+    db.commit()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unexpected Telegram contact lookup or API call")
+
+    monkeypatch.setattr(tickets_router, "send_message", lambda *args, **kwargs:
+                        calls.append(("send", args, kwargs)) or {"result": {"message_id": 901}})
+    monkeypatch.setattr(tickets_router, "remove_inline_keyboard", lambda *args, **kwargs:
+                        calls.append(("keyboard", args, kwargs)))
+    monkeypatch.setattr(ticket_messages_service, "edit_message_text", lambda *args, **kwargs:
+                        calls.append(("edit", args, kwargs)))
+    monkeypatch.setattr(ticket_messages_service, "delete_message", lambda *args, **kwargs:
+                        calls.append(("delete", args, kwargs)))
+    monkeypatch.setattr(ticket_messages_service, "edit_message_caption", forbidden)
+    if ticket.channel == "web":
+        # The seeded client even has a Telegram contact: it must never be used.
+        monkeypatch.setattr(tickets_router, "_telegram_contact_for_client", forbidden)
+    try:
+        yield SimpleNamespace(db=db, ticket=ticket, calls=calls,
+                              user=SimpleNamespace(id="agent-1", role="agent"))
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def _run_text_channel_operation(case, operation, message_id=None):
+    if operation in {"reply", "comment"}:
+        return asyncio.run(getattr(tickets_router, operation)(
+            ticket_id=case.ticket.id, request=_JsonRequest({"text": "Answer"}),
+            background_tasks=BackgroundTasks(), db=case.db, user=case.user,
+        ))
+    kwargs = dict(ticket_id=case.ticket.id, message_id=message_id, db=case.db, user=case.user)
+    if operation == "edit":
+        return tickets_router.edit_ticket_message(**kwargs, payload=SimpleNamespace(text="Edited"))
+    return tickets_router.delete_ticket_message(**kwargs)
+
+
+def test_text_channel_reply_edit_delete(text_channel_case):
+    case = text_channel_case
+    assert _run_text_channel_operation(case, "reply") == {"ok": True}
+    message, = _messages(case.db, case.ticket.id)
+    assert message.body == "Answer"
+    assert message.message_type == MessageType.AGENT.value
+    assert message.author_user_id == case.user.id
+    assert message.message_status == "normal"
+    assert message.telegram_message_id == ("901" if case.ticket.channel == "telegram" else None)
+    assert case.ticket.status == TicketStatus.PENDING.value
+    assert _run_text_channel_operation(case, "edit", message.id) == {"ok": True}
+    case.db.refresh(message)
+    assert message.body == "Edited"
+    assert message.message_status == "edited"
+    assert message.status_note
+    assert _run_text_channel_operation(case, "delete", message.id) == {"ok": True}
+    case.db.refresh(message)
+    assert message.body == "Edited"
+    assert message.message_status == "deleted"
+    assert message.status_note
+    assert _run_text_channel_operation(case, "delete", message.id) == {"ok": True}
+    if case.ticket.channel == "telegram":
+        assert [call[0] for call in case.calls] == ["send", "keyboard", "edit", "delete"]
+        assert case.calls[0][1][:2] == ("chat-42", "Answer")
+        assert case.calls[2][1] == ("chat-42", "901", "Edited")
+        assert case.calls[3][1] == ("chat-42", "901")
+    else:
+        assert case.calls == []
+
+
+def test_text_channel_internal_comment_does_not_deliver(text_channel_case):
+    case = text_channel_case
+    assert _run_text_channel_operation(case, "comment") == {"ok": True}
+    message, = _messages(case.db, case.ticket.id)
+    assert message.message_type == MessageType.INTERNAL.value
+    assert message.body == "Answer"
+    assert message.telegram_message_id is None
+    assert case.calls == []
+
+
+@pytest.mark.parametrize("operation", ["reply", "comment", "edit", "delete"])
+@pytest.mark.parametrize("reason,code,status", [
+    ("role", "readonly_role", 403),
+    ("closed", "ticket_closed_readonly", 409),
+    ("assignment", "forbidden_ticket_access", 403),
+])
+def test_text_channel_preserves_access_checks(text_channel_case, operation, reason, code, status):
+    case = text_channel_case
+    message = TicketMessage(id=str(uuid.uuid4()), ticket_id=case.ticket.id,
+                            message_type=MessageType.AGENT.value, body="Original", telegram_message_id="901")
+    case.db.add(message)
+    if reason == "role":
+        case.user.role = "chiki_piki"
+        case.ticket.button_config_key = "Колл Центр|test"
+    elif reason == "closed":
+        case.ticket.status = TicketStatus.CLOSED.value
+    else:
+        case.ticket.assignee_id = "other-agent"
+    case.db.commit()
+    with pytest.raises(HTTPException) as exc:
+        _run_text_channel_operation(case, operation, message.id)
+    assert exc.value.status_code == status
+    assert exc.value.detail["error"]["code"] == code
+    case.db.refresh(message)
+    assert message.body == "Original"
+    assert message.message_status == "normal"
+    assert len(_messages(case.db, case.ticket.id)) == 1
+    assert case.calls == []
+
+
+@pytest.mark.parametrize("telegram_id", [None, "901"])
+def test_text_channel_edit_requires_telegram_id_only_for_telegram(text_channel_case, telegram_id):
+    case = text_channel_case
+    message = TicketMessage(id=str(uuid.uuid4()), ticket_id=case.ticket.id,
+                            message_type=MessageType.AGENT.value, body="Original", telegram_message_id=telegram_id)
+    case.db.add(message)
+    case.db.commit()
+    if case.ticket.channel == "telegram" and telegram_id is None:
+        with pytest.raises(HTTPException) as exc:
+            _run_text_channel_operation(case, "edit", message.id)
+        assert exc.value.detail["error"]["code"] == "telegram_message_id_missing"
+        assert case.calls == []
+        return
+    assert _run_text_channel_operation(case, "edit", message.id) == {"ok": True}
+    assert _run_text_channel_operation(case, "delete", message.id) == {"ok": True}
+    assert [call[0] for call in case.calls] == (["edit", "delete"] if case.ticket.channel == "telegram" else [])
+
+
 def test_schema_evolution_adds_delivery_status_idempotently(monkeypatch):
     engine = create_engine("sqlite:///:memory:", future=True)
     with engine.begin() as conn:
