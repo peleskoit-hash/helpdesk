@@ -2193,7 +2193,7 @@ console.log(JSON.stringify({{
     assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["staleFailedEntries"])
 
 
-def test_task_transport_selector_waits_for_preload_ready_before_reply():
+def test_task_transport_selector_accepts_uploading_preload_without_waiting_for_telegram():
     repo_root = Path(__file__).resolve().parents[1]
     composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
     ticket_js = (repo_root / "api" / "app" / "static" / "ticket.js").read_text(encoding="utf-8")
@@ -2250,8 +2250,11 @@ console.log(JSON.stringify({{ canUseAttachmentPreload, helperWorkflow, helperIsT
     assert payload["canUseAttachmentPreload"] is True
     assert payload["helperWorkflow"] == "task"
     assert payload["helperIsTaskReply"] is True
-    assert payload["uploading"]["mode"] == "error"
-    assert payload["uploading"]["reason"] == "task_preload_uploading"
+    assert payload["uploading"] == {
+        "mode": "preloaded",
+        "preloadId": "preload-uploading",
+        "preloadStatus": "uploading",
+    }
     assert payload["ready"] == {
         "mode": "preloaded",
         "preloadId": "preload-ready",
@@ -3273,7 +3276,8 @@ def test_task_preload_post_saves_before_close_without_touching_ticket_state(tmp_
     assert len(background_tasks.tasks) == 1
 
 
-def test_task_reply_claims_ready_preload_without_client_delivery_or_background_schedule(tmp_path):
+@pytest.mark.parametrize("preload_status", ["ready", "uploading"])
+def test_task_reply_claims_ready_preload_without_client_delivery_or_background_schedule(tmp_path, preload_status):
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
     ticket.workflow_type = TicketWorkflowType.TASK.value
@@ -3289,7 +3293,7 @@ def test_task_reply_claims_ready_preload_without_client_delivery_or_background_s
         local_path=str(path),
         telegram_file_id="ready-file-id",
         telegram_file_unique_id="ready-unique-id",
-        status="ready",
+        status=preload_status,
         created_at=datetime.utcnow(),
     )
     session.add(preload)
@@ -3331,7 +3335,7 @@ def test_task_reply_claims_ready_preload_without_client_delivery_or_background_s
     assert scheduled == []
     assert messages[0].body == "Task answer"
     assert attachments[0].telegram_file_id == "ready-file-id"
-    assert attachments[0].telegram_delivery_status is None
+    assert attachments[0].telegram_delivery_status == ("uploading" if preload_status == "uploading" else None)
     assert claimed_preload.final_attachment_id == attachments[0].id
 
 
@@ -3404,6 +3408,142 @@ def test_task_reply_claims_multiple_ready_preloads_into_one_agent_message(tmp_pa
     assert sent_to_client == []
     assert scheduled == []
     assert all(attachment.telegram_delivery_status is None for attachment in attachments)
+
+
+def _save_async_task_reply(factory, ticket_id, preload_ids):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Task preparation must not deliver to the client")
+
+    with factory() as db:
+        asyncio.run(reply_to_ticket(
+            request=_MultipartRequest(_FormData(text="Task answer", files=[], preloaded_attachment_ids=preload_ids)),
+            db=db, user=SimpleNamespace(id="agent-1", role="agent"), ticket=db.get(Ticket, ticket_id),
+            send_to_telegram_client=forbidden, telegram_message_id_from_response=lambda response: None,
+            save_upload_attachment=forbidden, send_attachment_to_telegram_client=forbidden,
+            claim_attachment_preload=lambda db, key, ticket_key, user_key: outbound_service.claim_attachment_preload(
+                db, preload_id=key, ticket_id=ticket_key, user_id=user_key),
+            schedule_attachment_delivery=forbidden, unfreeze_ticket_on_message=lambda *args: None,
+            remove_client_close_button=lambda *args: None, refresh_ticket_auto_close=lambda *args: None,
+        ))
+
+
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+@pytest.mark.parametrize("claim_at", ["before", "during", "after"])
+def test_task_async_preloads_keep_one_reply_across_staging_race(monkeypatch, tmp_path, channel, claim_at):
+    engine, factory, db = _threaded_session_bundle(tmp_path)
+    ticket = _seed_ticket(db)
+    ticket.workflow_type = "task"
+    ticket.channel = channel
+    ticket.assignee_id = "agent-1"
+    db.add(User(id="agent-1", company_id=ticket.company_id, role="agent", full_name="Agent"))
+    keys = []
+    for index in range(2):
+        path = tmp_path / f"task-{index}.pdf"
+        path.write_bytes(b"pdf")
+        key = str(uuid.uuid4())
+        keys.append(key)
+        db.add(outbound_service.TicketAttachmentPreload(id=key, ticket_id=ticket.id, user_id="agent-1",
+            original_filename=path.name, mime_type="application/pdf", local_path=str(path), file_size=3,
+            status="uploading", archive_group_id="task-group", telegram_staging_info_message_id="card"))
+    db.commit()
+    ticket_id = ticket.id
+    db.close()
+    monkeypatch.setattr(outbound_service, "SessionLocal", factory)
+    archive_updates = []
+    monkeypatch.setattr(outbound_service, "_best_effort_edit_group_archive_message", lambda **kwargs: archive_updates.append(kwargs["status_text"]))
+    deliveries = []
+    monkeypatch.setattr(outbound_service, "deliver_ticket_attachment", lambda **kwargs: deliveries.append(kwargs))
+    claimed = False
+
+    def claim():
+        nonlocal claimed
+        _save_async_task_reply(factory, ticket_id, keys)
+        claimed = True
+
+    def stage(*, preload):
+        if claim_at == "during" and not claimed:
+            claim()
+        return "file-" + preload.id, "unique-" + preload.id, "archive-" + preload.id
+
+    monkeypatch.setattr(outbound_service, "_send_staging_document", stage)
+    if claim_at == "before":
+        claim()
+        with factory() as check:
+            assert {row.telegram_delivery_status for row in check.execute(select(TicketAttachment)).scalars()} == {"uploading"}
+            card = get_ticket(ticket_id, db=check, user=SimpleNamespace(id="agent-1", role="agent"))
+            assert {row.telegram_delivery_status for row in card.messages[0].attachments} == {"uploading"}
+    for key in keys:
+        outbound_service.deliver_attachment_preload(preload_id=key)
+    if claim_at == "after":
+        claim()
+    # Repeated workers must never turn preparation into client delivery.
+    for key in keys:
+        outbound_service.deliver_attachment_preload(preload_id=key)
+    with factory() as check:
+        messages = _messages(check, ticket_id)
+        assert len(messages) == 1 and messages[0].body == "Task answer"
+        attachments = _attachments(check, messages[0].id)
+        assert len(attachments) == 2
+        for key in keys:
+            preload = check.get(outbound_service.TicketAttachmentPreload, key)
+            attachment = check.get(TicketAttachment, preload.final_attachment_id)
+            assert attachment.message_id == messages[0].id
+            assert preload.status == "ready"
+            assert attachment.telegram_delivery_status in {None, "ready"}
+            assert attachment.telegram_file_id == "file-" + key
+            assert attachment.telegram_archive_message_id == "archive-" + key
+        card = get_ticket(ticket_id, db=check, user=SimpleNamespace(id="agent-1", role="agent"))
+        assert len(card.messages[0].attachments) == 2
+        assert {row.telegram_delivery_status for row in card.messages[0].attachments} <= {None, "ready"}
+    assert deliveries == []
+    assert archive_updates[-1] == "готово к отправке"
+    engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["info", "missing", "telegram"])
+@pytest.mark.parametrize("claim_at", ["before", "during"])
+def test_task_async_preload_failure_preserves_claim_and_failed_status(monkeypatch, tmp_path, failure, claim_at):
+    engine, factory, db = _threaded_session_bundle(tmp_path)
+    ticket = _seed_ticket(db)
+    ticket.workflow_type = "task"
+    ticket.assignee_id = "agent-1"
+    path = tmp_path / "failed.pdf"
+    path.write_bytes(b"pdf")
+    key = str(uuid.uuid4())
+    db.add(outbound_service.TicketAttachmentPreload(id=key, ticket_id=ticket.id, user_id="agent-1",
+        original_filename=path.name, mime_type="application/pdf", local_path=str(path), file_size=3,
+        status="uploading", archive_group_id="task-group",
+        telegram_staging_info_message_id=None if failure == "info" else "card"))
+    db.commit()
+    ticket_id = ticket.id
+    db.close()
+    monkeypatch.setattr(outbound_service, "SessionLocal", factory)
+
+    def fail(**kwargs):
+        if claim_at == "during":
+            _save_async_task_reply(factory, ticket_id, [key])
+        if failure == "missing":
+            raise FileNotFoundError("missing")
+        raise outbound_service.TelegramApiError("staging failed")
+
+    monkeypatch.setattr(outbound_service, "_ensure_group_archive_info_message", fail)
+    monkeypatch.setattr(outbound_service, "_send_staging_document", fail)
+    if claim_at == "before":
+        _save_async_task_reply(factory, ticket_id, [key])
+    outbound_service.deliver_attachment_preload(preload_id=key)
+    outbound_service.deliver_attachment_preload(preload_id=key)
+    with factory() as check:
+        preload = check.get(outbound_service.TicketAttachmentPreload, key)
+        assert preload.status == "failed"
+        attachment = check.get(TicketAttachment, preload.final_attachment_id)
+        assert attachment.telegram_delivery_status == "failed"
+        assert check.get(TicketMessage, attachment.message_id).body == "Task answer"
+        card = get_ticket(ticket_id, db=check, user=SimpleNamespace(id="agent-1", role="agent"))
+        assert card.messages[0].attachments[0].telegram_delivery_status == "failed"
+        # A failed staged file must not be sent by the existing close-time sender.
+        from api.app.services.ticket_attachments import _send_attachment_to_telegram_client
+        assert _send_attachment_to_telegram_client(check, check.get(Ticket, ticket_id), attachment) is None
+    engine.dispose()
 
 
 def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history():
@@ -3956,9 +4096,11 @@ def test_internal_comment_claims_multiple_ready_preloads_without_client_delivery
     assert {attachment.message_id for attachment in attachments} == {messages[0].id}
 
 
-def test_internal_comment_uploading_preload_is_not_claimed_or_sent(tmp_path):
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_internal_comment_uploading_preload_is_not_claimed_or_sent(tmp_path, workflow):
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
+    ticket.workflow_type = workflow
     path = tmp_path / "uploading.pdf"
     path.write_bytes(b"pdf")
     preload = outbound_service.TicketAttachmentPreload(

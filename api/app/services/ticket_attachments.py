@@ -10,7 +10,7 @@ from sqlalchemy import asc, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage
+from ..models import TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType
 from .telegram_bot import TelegramApiError, download_file, get_file, send_chat_action, send_document, send_document_by_file_id
 from .telegram_text_format import prepare_telegram_html_message
 
@@ -137,6 +137,8 @@ def _send_attachment_to_telegram_client(
     reply_to_message_id: str | int | None = None,
     show_upload_action: bool = False,
 ) -> dict | None:
+    if ticket.workflow_type == TicketWorkflowType.TASK.value and attachment.telegram_delivery_status == "failed":
+        return None
     if ticket.channel == "web":
         return None
     contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()

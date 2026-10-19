@@ -240,6 +240,7 @@
 
   function renderSelectedFiles(ctx) {
     const { state, el } = ctx;
+    if (state.card?.workflow_type === "task") ctx.refreshTaskUploadControls?.();
     if (!el.selectedFilesList) return;
     const previousScrollTop = Number(el.selectedFilesList.scrollTop) || 0;
     el.selectedFilesList.innerHTML = "";
@@ -358,6 +359,8 @@
     if (!canUseAttachmentPreload(ctx)) return;
     const archiveGroupId = archiveGroupIdOverride || ensureArchiveGroupId(state);
     const controller = new AbortController();
+    let finishBrowserUpload;
+    const browserUploadDone = new Promise((resolve) => { finishBrowserUpload = resolve; });
     setPreloadState(state, file, {
       stage: "browser_uploading",
       status: null,
@@ -366,6 +369,8 @@
       pollTimer: null,
       error: null,
       removed: false,
+      browserUploadDone,
+      finishBrowserUpload,
     });
     renderSelectedFiles(ctx);
 
@@ -410,6 +415,8 @@
       preload.controller = null;
       clearPreloadPoll(state, file);
       renderSelectedFiles(ctx);
+    } finally {
+      finishBrowserUpload();
     }
   }
 
@@ -418,6 +425,7 @@
     const preload = getPreloadState(state, file);
     if (preload) {
       preload.removed = true;
+      preload.finishBrowserUpload?.();
       clearPreloadPoll(state, file);
       if (preload.preloadId) {
         void discardAttachmentPreload(ctx, preload.preloadId).then(() => {
@@ -506,17 +514,17 @@
     const preload = getPreloadState(state, file);
     const canUsePreload = canUseAttachmentPreload(ctx);
     if (preload?.stage === "failed") {
-      if (isVirtualPreloadFile(file) || state.composeMode === "comment") {
+      if (isVirtualPreloadFile(file) || state.composeMode === "comment" || isTaskReply(ctx)) {
         return {
           mode: "error",
           reason: "virtual_preload_failed",
-          message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
+          message: (isTaskReply(ctx) && preload.error) || "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
         };
       }
       return { mode: "raw", reason: "preload_failed" };
     }
     if (preload?.stage === "cancelled") {
-      if (isVirtualPreloadFile(file) || state.composeMode === "comment") {
+      if (isVirtualPreloadFile(file) || state.composeMode === "comment" || isTaskReply(ctx)) {
         return {
           mode: "error",
           reason: "virtual_preload_cancelled",
@@ -536,7 +544,7 @@
       abortPreloadRequest(state, file);
       return { mode: "raw", reason: "browser_uploading_without_preload_id" };
     }
-    if (canUsePreload && (isTaskReply(ctx) || state.composeMode === "comment") && preload?.preloadId && preload.status === "uploading") {
+    if (canUsePreload && state.composeMode === "comment" && preload?.preloadId && preload.status === "uploading") {
       return {
         mode: "error",
         reason: "task_preload_uploading",
@@ -551,7 +559,7 @@
       };
     }
     if (preload?.preloadId && preload?.status && !["ready", "uploading"].includes(preload.status)) {
-      if (isVirtualPreloadFile(file) || state.composeMode === "comment") {
+      if (isVirtualPreloadFile(file) || state.composeMode === "comment" || isTaskReply(ctx)) {
         return {
           mode: "error",
           reason: `virtual_preload_unusable_${preload.status}`,
@@ -567,11 +575,13 @@
         message: "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
       };
     }
-    if (state.composeMode === "comment") {
+    if (state.composeMode === "comment" || (isTaskReply(ctx) && canUsePreload)) {
       return {
         mode: "error",
         reason: "comment_preload_required",
-        message: "Файл ещё не подготовлен. Дождитесь готовности и отправьте комментарий снова.",
+        message: isTaskReply(ctx)
+          ? "Подготовленный файл больше недоступен. Удалите его и выберите заново."
+          : "Файл ещё не подготовлен. Дождитесь готовности и отправьте комментарий снова.",
       };
     }
     return { mode: "raw", reason: preload?.preloadId ? "preload_missing_usable_status" : "preload_id_missing" };
@@ -630,6 +640,9 @@
     if (!text && !hasFiles) return;
 
     const actionName = state.composeMode === "reply" ? "reply" : "comment";
+    const taskReply = isTaskReply(ctx);
+    const taskFiles = taskReply ? [...state.selectedFiles] : [];
+    let submittedTaskFiles = [];
     try {
       state.isSendingReply = true;
       state.pendingCloseAfterSend = false;
@@ -637,10 +650,25 @@
       await ctx.flushDraftBeforeSend?.();
       const quoteMessageId = state.quoteMessageId;
       if (hasFiles && (isTaskReply(ctx) || state.composeMode === "comment")) {
-        const queue = [...state.selectedFiles];
+        if (taskReply) {
+          await Promise.all(taskFiles.map(async (file) => {
+            await getPreloadState(state, file)?.browserUploadDone;
+            if (!state.selectedFiles.includes(file) || getPreloadState(state, file)?.removed) return;
+            const transport = resolveAttachmentTransport(ctx, file);
+            if (transport.mode === "error") throw new Error(transport.message);
+          }));
+        }
+        const queue = taskReply
+          ? taskFiles.filter((file) => state.selectedFiles.includes(file) && !getPreloadState(state, file)?.removed)
+          : [...state.selectedFiles];
+        if (taskReply && !text && !queue.length) {
+          ctx.setStatus("");
+          return;
+        }
+        submittedTaskFiles = queue;
         for (const file of queue) {
           const preload = getPreloadState(state, file);
-          if (preload) preload.stage = "sending";
+          if (preload && !taskReply) preload.stage = "sending";
         }
         renderSelectedFiles(ctx);
         ctx.setStatus(state.composeMode === "comment" ? "Сохранение комментария..." : "Сохранение ответа задачи...");
@@ -687,10 +715,17 @@
           body: JSON.stringify({ text, quote_message_id: quoteMessageId }),
         });
       }
-      el.messageInput.value = "";
+      if (!taskReply || el.messageInput.value.trim() === text) el.messageInput.value = "";
       state.quoteMessageId = null;
       ctx.clearDraftAfterSuccessfulSend?.();
-      clearSelectedFiles(ctx);
+      if (taskReply) {
+        submittedTaskFiles.forEach((file) => forgetPreloadState(state, file));
+        state.selectedFiles = state.selectedFiles.filter((file) => !submittedTaskFiles.includes(file));
+        if (!state.selectedFiles.length) state.currentArchiveGroupId = null;
+        renderSelectedFiles(ctx);
+      } else {
+        clearSelectedFiles(ctx);
+      }
       await ctx.loadCard();
       if (
         state.role === "agent"
@@ -717,13 +752,14 @@
           error: null,
           removed: false,
         });
-        preload.stage = "failed";
+        if (!taskReply) preload.stage = "failed";
         preload.error = e.message || "ошибка отправки";
         renderSelectedFiles(ctx);
       }
       ctx.showError(e.message);
     } finally {
       state.isSendingReply = false;
+      if (taskReply) ctx.refreshTaskUploadControls?.();
       if (state.pendingCloseAfterSend) {
         state.pendingCloseAfterSend = false;
         await ctx.action("close");

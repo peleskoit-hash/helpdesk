@@ -111,6 +111,98 @@ function controlsRenderCtx({ now = 0, restoreCloseCooldownUntil = 0 } = {}) {
   };
 }
 
+test("task close blocks on editor, server and message uploads and clears on ready or failed", () => {
+  for (const role of ["agent", "admin"]) {
+    for (const source of ["editor", "server", "message", "group"]) {
+      for (const terminal of ["ready", "failed"]) {
+        const { ctx, controls, closeBtn } = controlsRenderCtx();
+        ctx.state.role = role;
+        ctx.state.card.workflow_type = "task";
+        const file = { name: "upload.pdf" };
+        const preload = { stage: "browser_uploading", status: "uploading", id: "preload" };
+        const attachment = { telegram_delivery_status: "uploading" };
+        if (source === "editor") {
+          ctx.state.selectedFiles = [file];
+          ctx.state.filePreloads = new Map([[file, preload]]);
+        } else if (source === "server") {
+          ctx.state.card.active_attachment_preloads = [preload];
+        } else if (source === "message") {
+          ctx.state.card.messages[0].attachments = [attachment];
+        } else {
+          ctx.state.card.task_kind = "group_parent";
+          ctx.state.card.has_active_attachment_uploads = true;
+        }
+        controls.renderTicketControlsView(ctx);
+        assert.equal(closeBtn.disabled, true, `${role}/${source}`);
+        assert.equal(ctx.el.adminForceCloseBtn.disabled, true);
+        preload.stage = preload.status = terminal;
+        attachment.telegram_delivery_status = terminal;
+        ctx.state.card.has_active_attachment_uploads = false;
+        controls.renderTicketControlsView(ctx);
+        assert.equal(closeBtn.disabled, false, `${role}/${source}/${terminal}`);
+        assert.equal(ctx.el.adminForceCloseBtn.disabled, false);
+      }
+    }
+  }
+});
+
+test("task ignores removed uploads; ordinary ticket close ignores task upload guard", () => {
+  const { ctx, controls, closeBtn } = controlsRenderCtx();
+  const file = {};
+  ctx.state.selectedFiles = [file];
+  const preload = { stage: "uploading", removed: false };
+  ctx.state.filePreloads = new Map([[file, preload]]);
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+  ctx.state.card.workflow_type = "task";
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, true);
+  preload.removed = true;
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+});
+
+test("task close stays blocked between saving the answer and refreshing its attachments", () => {
+  const { ctx, controls, closeBtn } = controlsRenderCtx();
+  ctx.state.card.workflow_type = "task";
+  ctx.state.composeMode = "reply";
+  ctx.state.isSendingReply = true;
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, true);
+  ctx.state.isSendingReply = false;
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+  ctx.state.composeMode = "comment";
+  ctx.state.isSendingReply = true;
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+});
+
+test("deleted task messages do not block close while live messages and editor uploads do", () => {
+  const { ctx, controls, closeBtn } = controlsRenderCtx();
+  ctx.state.card.workflow_type = "task";
+  ctx.state.card.messages[0].message_status = "deleted";
+  ctx.state.card.messages[0].attachments = [{ telegram_delivery_status: "uploading" }];
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+  ctx.state.card.messages.push({ message_type: "agent", message_status: "normal", attachments: [{ telegram_delivery_status: "uploading" }] });
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, true);
+  ctx.state.card.messages[1].attachments[0].telegram_delivery_status = "ready";
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, false);
+  ctx.state.card.active_attachment_preloads = [{ id: "editor", status: "uploading" }];
+  controls.renderTicketControlsView(ctx);
+  assert.equal(closeBtn.disabled, true);
+});
+
+test("existing card polling and composer updates refresh task controls without new timers", () => {
+  const composerSource = fs.readFileSync("api/app/static/ticket_composer.js", "utf8");
+  assert.match(sourceBetween(composerSource, "function renderSelectedFiles(ctx)", "function syncRestoredPreloads"), /refreshTaskUploadControls\?\.\(\)/);
+  assert.match(sourceBetween(ticketPageSource, "function composerCtx()", "function controlsCtx()"), /refreshTaskUploadControls: renderTicketStateControls/);
+  assert.match(sourceBetween(ticketPageSource, "function renderCard()", "async function loadCard"), /TicketControls\.renderTicketControlsView/);
+});
+
 test("state action guard blocks duplicate freeze request while first request is in flight", async () => {
   const helperSource = [
     'const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);',

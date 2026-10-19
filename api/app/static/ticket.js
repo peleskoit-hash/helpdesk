@@ -470,6 +470,7 @@ function clientCardCtx() {
 
 function composerCtx() {
   return {
+    refreshTaskUploadControls: renderTicketStateControls,
     state,
     el,
     api,

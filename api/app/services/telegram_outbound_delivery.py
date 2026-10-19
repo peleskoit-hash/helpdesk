@@ -12,7 +12,7 @@ from sqlalchemy import Select, asc, select
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, User
+from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType, User
 from .telegram_bot import TelegramApiError, delete_message, edit_message_text, send_document, send_document_by_file_id, send_message
 from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html, telegram_html_code, telegram_html_link, telegram_html_text
 from .ticket_links import public_ticket_url
@@ -750,7 +750,10 @@ def _finalize_claimed_preload_archive(*, preload_id: str, final_status: str) -> 
         ticket = db.get(Ticket, ticket_id)
         user = db.get(User, user_id)
         status_text = _group_status_text(display_rows)
-        terminal = status_text in {"отправлено", "ошибка доставки"}
+        if final_status == "ready" and ticket is not None and ticket.workflow_type == TicketWorkflowType.TASK.value:
+            if not any(row.status == "failed" for row in display_rows):
+                status_text = "подготовка файлов" if any(row.status == "uploading" for row in display_rows) else "готово к отправке"
+        terminal = final_status != "ready" and status_text in {"отправлено", "ошибка доставки"}
         db.commit()
         if ticket is not None and display_rows:
             event_label = None
@@ -803,6 +806,8 @@ def deliver_ticket_attachment(
             ticket_id=ticket_id,
         )
         if attachment is None or message is None or ticket is None:
+            return
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_status == "deleted":
             return
         if attachment.telegram_delivery_status not in {"uploading", "sending"}:
             return
@@ -867,6 +872,12 @@ def deliver_ticket_attachment(
             db.commit()
             db.refresh(attachment)
             db.refresh(message)
+            if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_status == "deleted":
+                _delete_archive_message_by_id(_staging_message_id)
+                attachment.telegram_delivery_status = "failed"
+                db.commit()
+                _unlink_attachment_local_file(cleanup_path)
+                return
             _unlink_attachment_local_file(cleanup_path)
 
         _deliver_attachment_to_client(
@@ -883,7 +894,26 @@ def deliver_ticket_attachment(
         db.close()
 
 
+def _mark_preload_preparation_failed(db, preload: TicketAttachmentPreload) -> bool:
+    """Keep a claimed task attachment linked, including claims made during staging."""
+    ticket = db.get(Ticket, preload.ticket_id)
+    task = ticket is not None and ticket.workflow_type == TicketWorkflowType.TASK.value
+    if task:
+        db.refresh(preload, with_for_update=True)
+        if preload.status == "cancelled":
+            return False
+    preload.status = "failed"
+    if task and preload.final_attachment_id:
+        attachment = db.get(TicketAttachment, preload.final_attachment_id)
+        message = db.get(TicketMessage, attachment.message_id) if attachment is not None else None
+        if message is not None and message.message_type == MessageType.AGENT.value:
+            attachment.telegram_delivery_status = "failed"
+            return True
+    return False
+
+
 def deliver_attachment_preload(*, preload_id: str) -> None:
+    staged_task_file = False
     db = SessionLocal()
     try:
         preload = db.get(TicketAttachmentPreload, preload_id)
@@ -906,6 +936,13 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             db.commit()
             return
 
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and preload.final_attachment_id:
+            attachment = db.get(TicketAttachment, preload.final_attachment_id)
+            message = db.get(TicketMessage, attachment.message_id) if attachment is not None else None
+            if message is not None and message.message_status == "deleted":
+                _discard_preload(db, preload, delete_row=True, unlink_local=True)
+                return
+
         if not str(preload.telegram_staging_info_message_id or "").strip() or _is_pending_archive_message_id(preload.telegram_staging_info_message_id):
             try:
                 preload.telegram_staging_info_message_id = _ensure_group_archive_info_message(preload_id=preload.id)
@@ -915,8 +952,11 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                 db.rollback()
                 db.expire(preload)
                 db.refresh(preload)
+                _mark_preload_preparation_failed(db, preload)
+                if preload.status == "cancelled":
+                    _discard_preload(db, preload, delete_row=True, unlink_local=True)
+                    return
                 _clear_pending_info_reservation(db, preload)
-                preload.status = "failed"
                 logger.warning("preload=%s filename=%s staging_failed=%s", preload.id, preload.original_filename, exc)
                 db.commit()
                 return
@@ -929,16 +969,19 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if not (preload.telegram_file_id or "").strip():
             try:
                 file_id, file_unique_id, file_message_id = _send_staging_document(preload=preload)
+                staged_task_file = ticket.workflow_type == TicketWorkflowType.TASK.value
             except FileNotFoundError:
-                preload.status = "failed"
+                claimed_task = _mark_preload_preparation_failed(db, preload)
                 db.commit()
-                _discard_preload(db, preload, delete_row=True, unlink_local=True)
+                if not claimed_task:
+                    _discard_preload(db, preload, delete_row=True, unlink_local=True)
                 logger.warning("preload=%s filename=%s staging_failed=file_missing", preload.id, preload.original_filename)
                 return
             except (RuntimeError, TelegramApiError) as exc:
-                preload.status = "failed"
+                claimed_task = _mark_preload_preparation_failed(db, preload)
                 db.commit()
-                _discard_preload(db, preload, delete_row=True, unlink_local=True)
+                if not claimed_task:
+                    _discard_preload(db, preload, delete_row=True, unlink_local=True)
                 logger.warning("preload=%s filename=%s staging_failed=%s", preload.id, preload.original_filename, exc)
                 return
         else:
@@ -952,6 +995,8 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
     try:
         preload = _load_locked_preload(finalize_db, preload_id=preload_id)
         if preload is None:
+            if staged_task_file:
+                _delete_archive_message_by_id(file_message_id)
             return
         _ensure_archive_group_id(finalize_db, preload)
         ticket = finalize_db.get(Ticket, preload.ticket_id)
@@ -1003,6 +1048,10 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             _safe_unlink(cleanup_path)
             return
 
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_status == "deleted":
+            _discard_preload(finalize_db, preload, delete_row=True, unlink_local=True)
+            return
+
         attachment.telegram_file_id = file_id
         attachment.telegram_file_unique_id = file_unique_id
         already_sent = attachment.telegram_delivery_status == "sent" or bool(str(attachment.telegram_message_id or "").strip())
@@ -1016,6 +1065,15 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             finalize_db.commit()
             _safe_unlink(cleanup_path)
             _finalize_claimed_preload_archive(preload_id=preload.id, final_status="sent")
+            return
+
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_type == MessageType.AGENT.value:
+            preload.status = "ready"
+            attachment.telegram_delivery_status = "ready"
+            attachment.telegram_archive_message_id = file_message_id or None
+            finalize_db.commit()
+            _safe_unlink(cleanup_path)
+            _finalize_claimed_preload_archive(preload_id=preload.id, final_status="ready")
             return
 
         preload.status = "sending"

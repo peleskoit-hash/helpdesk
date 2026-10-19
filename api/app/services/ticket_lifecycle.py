@@ -5,12 +5,12 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import and_, asc, desc, or_, select
+from sqlalchemy import and_, asc, desc, exists, or_, select
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser
 from ..config import settings
-from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
+from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from .auto_close import clear_ticket_auto_close_timer
 from .statistics_lifecycle import (
     sync_completion_after_close,
@@ -41,6 +41,30 @@ def _http_error_code(exc: HTTPException) -> str | None:
     error = detail.get("error") if isinstance(detail, dict) else {}
     code = error.get("code") if isinstance(error, dict) else None
     return str(code) if code else None
+
+
+def task_has_active_attachment_uploads(db: Session, ticket: Ticket) -> bool:
+    if ticket.workflow_type != TicketWorkflowType.TASK.value:
+        return False
+    scope = Ticket.id == ticket.id
+    if ticket.task_kind == TicketTaskKind.GROUP_PARENT.value:
+        scope = or_(scope, Ticket.parent_ticket_id == ticket.id)
+    ticket_ids = select(Ticket.id).where(scope)
+    attachments = (select(TicketAttachment.id)
+        .join(TicketMessage, TicketMessage.id == TicketAttachment.message_id)
+        .where(TicketAttachment.ticket_id.in_(ticket_ids), _active_message_status_filter()))
+    return bool(db.scalar(select(or_(
+        attachments.where(TicketAttachment.telegram_delivery_status.in_(["uploading", "sending"])).exists(),
+        exists().where(TicketAttachmentPreload.ticket_id.in_(ticket_ids),
+                       TicketAttachmentPreload.status.in_(["uploading", "sending"]),
+                       or_(TicketAttachmentPreload.final_attachment_id.is_(None),
+                           TicketAttachmentPreload.final_attachment_id.in_(attachments))),
+    ))))
+
+
+def ensure_task_uploads_finished(db: Session, ticket: Ticket) -> None:
+    if ticket.status != TicketStatus.CLOSED.value and task_has_active_attachment_uploads(db, ticket):
+        _error(409, "task_attachments_uploading", "Дождитесь завершения загрузки файлов перед закрытием задачи.")
 
 
 def _ticket_has_telegram_contact(db: Session, ticket: Ticket) -> bool:
@@ -100,6 +124,8 @@ def _send_required_client_attachment(
     failure_note: str,
     send_attachment_to_telegram_client_fn,
 ) -> None:
+    if ticket.workflow_type == TicketWorkflowType.TASK.value and attachment.telegram_delivery_status == "failed":
+        return
     if ticket.channel == "web":
         return
     try:
@@ -564,6 +590,7 @@ def finalize_group_parent_if_ready(
     if open_children is not None:
         return False
 
+    ensure_task_uploads_finished(db, parent)
     parent_client_message = first_client_message_fn(db, parent)
     if parent_client_message is not None and not skip_client_notification:
         answers, attachments = _group_parent_children_payload(db, parent)
@@ -792,6 +819,7 @@ def close_ticket_by_actor(
     if ticket.status == TicketStatus.CLOSED.value:
         return "already_closed"
 
+    ensure_task_uploads_finished(db, ticket)
     last_agent_message = last_agent_message_fn(db, ticket)
     if last_agent_message is None and is_admin_action and force_without_agent_reply_for_task:
         if workflow_type == TicketWorkflowType.TASK.value:

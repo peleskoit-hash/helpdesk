@@ -193,6 +193,22 @@
     }
   }
 
+  function hasActiveTaskUploads(state) {
+    if (state.card?.workflow_type !== "task") return false;
+    const active = (status) => ["browser_uploading", "uploading", "sending"].includes(status);
+    return Boolean(state.card.has_active_attachment_uploads)
+      || (state.isSendingReply && state.composeMode === "reply")
+      || (state.selectedFiles || []).some((file) => {
+        const preload = state.filePreloads?.get(file);
+        return preload && !preload.removed && active(preload.stage || preload.status);
+      })
+      || (state.card.active_attachment_preloads || []).some((preload) =>
+        !state.discardedAttachmentPreloadIds?.has(preload.id) && active(preload.status))
+      || (state.card.messages || []).some((message) =>
+        message.message_status !== "deleted"
+        && (message.attachments || []).some((attachment) => active(attachment.telegram_delivery_status)));
+  }
+
   function renderTicketControlsView(ctx) {
     const { state, el, setVisible, minutesLeftToDue, greetingAllowed } = ctx;
     const card = state.card;
@@ -223,7 +239,8 @@
     const canUseClarification = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.clarification;
     const canUseOnsite = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.onsite;
     const showClose = !isReadonly && (state.role === "admin" || state.role === "agent");
-    const canClose = !isClosed && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
+    const taskUploadsActive = hasActiveTaskUploads(state);
+    const canClose = !isClosed && !taskUploadsActive && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
     const showFreezeToggle = !isReadonly && !isClosed;
     const isUnassigned = card.status === "unassigned" || !card.assignee_id;
     const canFreezeToggle = card.is_frozen || !isUnassigned;
@@ -265,6 +282,7 @@
     }
     if (el.adminForceCloseBtn) {
       el.adminForceCloseBtn.textContent = "Принудительно закрыть";
+      el.adminForceCloseBtn.disabled = taskUploadsActive;
     }
     if (el.freezeToggleBtn) el.freezeToggleBtn.textContent = card.is_frozen ? "Разморозить" : "Заморозить";
     if (el.greetingBtn) {
@@ -433,6 +451,7 @@
   }
 
   global.TicketControls = {
+    hasActiveTaskUploads,
     renderTicketAssigneeSelect,
     assigneeOptionsHtml,
     renderWrongProblemRows,

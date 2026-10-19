@@ -419,15 +419,20 @@ async def reply_to_ticket(
         preload = claim_attachment_preload(db, preloaded_attachment_id, ticket.id, user.id)
         if preload is None:
             _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
-        if preload.status != "ready" or not (preload.telegram_file_id or "").strip():
+        task_reply = workflow_type == TicketWorkflowType.TASK.value and not is_internal_comment
+        if not (task_reply and preload.status == "uploading") and (
+            preload.status != "ready" or not (preload.telegram_file_id or "").strip()
+        ):
             _error(409, "attachment_preload_not_ready", "Файл ещё не подготовлен. Дождитесь статуса готовности и отправьте ответ снова.")
         attachment = _attachment_from_preload(
             db=db,
             ticket=ticket,
             message=agent_message,
             preload=preload,
-            delivery_status=None,
+            delivery_status="uploading" if task_reply and preload.status == "uploading" else None,
         )
+        if task_reply:
+            attachment.telegram_archive_message_id = preload.telegram_staging_file_message_id
         attachments.append(attachment)
     for upload in uploaded_files:
         attachment = save_upload_attachment(db, ticket, agent_message, upload)
@@ -497,7 +502,7 @@ async def reply_to_ticket(
     if not quick_action:
         clear_ticket_draft(db, ticket)
     db.commit()
-    if ticket.channel == "web":
+    if ticket.channel == "web" and workflow_type != TicketWorkflowType.TASK.value:
         for attachment in attachments:
             if attachment.telegram_delivery_status == "uploading":
                 schedule_attachment_delivery(
@@ -609,7 +614,8 @@ def delete_agent_message(
         _error(404, "message_not_found", "Сообщение не найдено")
     if message.message_type != MessageType.AGENT.value:
         _error(409, "only_agent_message_delete", "Удалять можно только сообщения сотрудника")
-    if message.message_status == "deleted":
+    already_deleted = message.message_status == "deleted"
+    if already_deleted and ticket.workflow_type != TicketWorkflowType.TASK.value:
         return {"ok": True}
 
     attachments = db.execute(
@@ -619,7 +625,7 @@ def delete_agent_message(
     ).scalars().all()
 
     external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id) if ticket.channel != "web" else None
-    if external_chat_id:
+    if external_chat_id and not already_deleted:
         telegram_message_ids: list[str] = []
         if message.telegram_message_id:
             telegram_message_ids.append(str(message.telegram_message_id).strip())
@@ -645,8 +651,25 @@ def delete_agent_message(
                 pass
 
     message.message_status = "deleted"
-    actor_name = actor_display_name(db, user)
-    message.status_note = f"{actor_name} удалил сообщение"
-    ticket.updated_at = datetime.utcnow()
+    if not already_deleted:
+        actor_name = actor_display_name(db, user)
+        message.status_note = f"{actor_name} удалил сообщение"
+        ticket.updated_at = datetime.utcnow()
+    if ticket.workflow_type == TicketWorkflowType.TASK.value and attachments:
+        # Local import: outbound delivery imports this service as well.
+        from .telegram_outbound_delivery import _discard_preload, _lock_stmt
+
+        preloads = db.execute(_lock_stmt(select(TicketAttachmentPreload).where(
+            TicketAttachmentPreload.final_attachment_id.in_([attachment.id for attachment in attachments]),
+        ).order_by(TicketAttachmentPreload.id), db).execution_options(populate_existing=True)).scalars().all()
+        cancellations = [(preload, preload.status in {"uploading", "sending", "cancelled"}) for preload in preloads]
+        for preload, _in_flight in cancellations:
+            preload.status = "cancelled"
+        for attachment in attachments:
+            if attachment.telegram_delivery_status in {"uploading", "sending"}:
+                attachment.telegram_delivery_status = "failed"
+        db.flush()
+        for preload, in_flight in cancellations:
+            _discard_preload(db, preload, delete_row=not in_flight, unlink_local=not in_flight)
     db.commit()
     return {"ok": True}

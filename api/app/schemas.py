@@ -211,6 +211,7 @@ class ClientProfileUpdate(BaseModel):
 
 
 class TicketCard(BaseModel):
+    has_active_attachment_uploads: bool = False
     id: str
     ticket_number: int | None = None
     subject: str

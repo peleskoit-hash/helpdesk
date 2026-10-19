@@ -71,6 +71,8 @@ from ..services.ticket_messages import comment_on_ticket, delete_agent_message, 
 from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
+    ensure_task_uploads_finished,
+    task_has_active_attachment_uploads,
     format_task_closed_without_answer_text,
     finalize_group_parent_if_ready,
     freeze_ticket,
@@ -763,6 +765,8 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
     found_ids = {ticket.id for ticket in tickets}
     not_found = [ticket_id for ticket_id in payload.ticket_ids if ticket_id not in found_ids]
 
+    for ticket in tickets:
+        ensure_task_uploads_finished(db, ticket)
     closed = 0
     already_closed = 0
     for ticket in tickets:
@@ -1108,6 +1112,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
 
     return TicketCard(
         id=t.id,
+        has_active_attachment_uploads=task_has_active_attachment_uploads(db, t),
         ticket_number=t.ticket_number,
         subject=resolve_ticket_subject(db, t),
         workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
