@@ -162,6 +162,27 @@ class ClientProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class WebClientSession(Base):
+    __tablename__ = "web_client_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), index=True)
+    credentials_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    normal_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WebLoginLimit(Base):
+    __tablename__ = "web_login_limits"
+
+    login_normalized: Mapped[str] = mapped_column(String(255), primary_key=True)
+    source_ip: Mapped[str] = mapped_column(String(100), primary_key=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Ticket(Base):
     __tablename__ = "tickets"
 

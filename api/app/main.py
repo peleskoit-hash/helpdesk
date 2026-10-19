@@ -43,6 +43,7 @@ from .routers.telegram import router as telegram_router
 from .routers.tickets import router as tickets_router
 from .routers.ticket_client_avatars import router as ticket_client_avatars_router
 from .routers.users import router as users_router
+from .routers.web_auth import router as web_auth_router
 from .services.button_config import clear_button_config_cache, load_button_config
 from .services import telegram_client_avatar_cleanup  # Register post-commit cleanup for every closing path.
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
@@ -97,6 +98,7 @@ app.include_router(tickets_router)
 app.include_router(ticket_client_avatars_router)
 app.include_router(telegram_router)
 app.include_router(users_router)
+app.include_router(web_auth_router)
 app.include_router(settings_router)
 app.include_router(settings_automatic_messages_router)
 app.include_router(settings_bot_button_items_router)
