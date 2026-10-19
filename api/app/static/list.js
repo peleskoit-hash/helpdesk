@@ -43,6 +43,7 @@ let unsubscribeSidebar = null;
 let ownsPopState = false;
 let pendingLoadOptions = null;
 let pageEventController = null;
+let colorLegendHideTimer = null;
 const state = {
   tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   appliedSearchQuery: urlState.q,
@@ -328,6 +329,49 @@ function closeError() {
   el.errorModal.classList.add("hidden");
 }
 
+function hideColorLegend() {
+  window.clearTimeout(colorLegendHideTimer);
+  colorLegendHideTimer = null;
+  if (el.colorLegend?.matches(":popover-open")) el.colorLegend.hidePopover();
+  el.colorLegend?.setAttribute("aria-hidden", "true");
+}
+
+function positionColorLegend() {
+  const legend = el.colorLegend;
+  if (!legend?.matches(":popover-open")) return;
+  const anchor = el.colorToggleText.getBoundingClientRect();
+  const toolbar = el.colorToggleText.closest(".toolbar").getBoundingClientRect();
+  if (anchor.right <= Math.max(0, toolbar.left) || anchor.left >= Math.min(window.innerWidth, toolbar.right)
+      || anchor.bottom <= 0 || anchor.top >= window.innerHeight) {
+    hideColorLegend();
+    return;
+  }
+  const { width, height } = legend.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+  const below = anchor.bottom + 8;
+  const top = below + height <= window.innerHeight - 8 ? below : Math.max(8, anchor.top - height - 8);
+  legend.style.left = `${left}px`;
+  legend.style.top = `${top}px`;
+}
+
+function showColorLegend() {
+  window.clearTimeout(colorLegendHideTimer);
+  colorLegendHideTimer = null;
+  if (!state.colorEnabled || !el.colorLegend) return;
+  if (!el.colorLegend.matches(":popover-open")) el.colorLegend.showPopover();
+  el.colorLegend.setAttribute("aria-hidden", "false");
+  positionColorLegend();
+}
+
+function scheduleColorLegendHide() {
+  window.clearTimeout(colorLegendHideTimer);
+  colorLegendHideTimer = window.setTimeout(() => {
+    if (el.colorToggleText?.matches(":hover, :focus-visible")
+        || el.colorEnabledInput?.matches(":focus-visible") || el.colorLegend?.matches(":hover")) return;
+    hideColorLegend();
+  }, 120);
+}
+
 function applyColorPreference() {
   if (el.colorEnabledInput) {
     el.colorEnabledInput.checked = Boolean(state.colorEnabled);
@@ -336,9 +380,7 @@ function applyColorPreference() {
   if (el.colorToggleLabel) {
     el.colorToggleLabel.classList.toggle("color-toggle-disabled", !state.colorEnabled);
   }
-  if (el.colorLegend) {
-    el.colorLegend.setAttribute("aria-hidden", state.colorEnabled ? "false" : "true");
-  }
+  if (!state.colorEnabled) hideColorLegend();
 }
 
 function applyTaskPanelPreference() {
@@ -1729,6 +1771,23 @@ function init() {
       await updateColorPreference(el.colorEnabledInput.checked);
     }, { signal: pageSignal });
   }
+  if (el.colorToggleText && el.colorLegend) {
+    el.colorToggleText.addEventListener("mouseenter", showColorLegend, { signal: pageSignal });
+    el.colorToggleText.addEventListener("mouseleave", scheduleColorLegendHide, { signal: pageSignal });
+    for (const target of [el.colorToggleText, el.colorEnabledInput]) {
+      target?.addEventListener("focus", () => {
+        if (target.matches(":focus-visible")) showColorLegend();
+      }, { signal: pageSignal });
+      target?.addEventListener("blur", scheduleColorLegendHide, { signal: pageSignal });
+    }
+    el.colorLegend.addEventListener("mouseenter", showColorLegend, { signal: pageSignal });
+    el.colorLegend.addEventListener("mouseleave", scheduleColorLegendHide, { signal: pageSignal });
+    window.addEventListener("resize", positionColorLegend, { signal: pageSignal });
+    document.addEventListener("scroll", positionColorLegend, { capture: true, signal: pageSignal });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") hideColorLegend();
+    }, { signal: pageSignal });
+  }
   if (el.taskPanelMoreBtn) {
     el.taskPanelMoreBtn.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1786,6 +1845,7 @@ runTicketsListPage().catch((error) => {
 
 return {
   destroy() {
+    hideColorLegend();
     if (pollTimer) {
       window.clearInterval(pollTimer);
       pollTimer = null;

@@ -68,7 +68,7 @@ from ..services.statistics_lifecycle import (
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
-from ..services.ticket_list import build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
+from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
     format_task_closed_without_answer_text,
@@ -112,7 +112,6 @@ SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT = (
     "Заявка заморожена",
     "Заявка разморожена",
     "Заявка возвращена в работу.",
-    "Подсказка по неверной проблеме отправлена клиенту",
     "Сотрудник подсказал клиенту правильный пункт меню:",
     "Клиенту ушёл текст в бота:",
     "После завершения задачи клиенту будет отправлена подсказка:",
@@ -140,7 +139,7 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
         stmt = select(Ticket).where(Ticket.ticket_number == int(ticket_id))
     else:
         stmt = select(Ticket).where(Ticket.id == ticket_id)
-    ticket = db.execute(stmt).scalar_one_or_none()
+    ticket = db.execute(apply_group_parent_visibility_filter(stmt, user)).scalar_one_or_none()
     if not ticket:
         _error(404, "ticket_not_found", "Тикет не найден")
     if ticket.ticket_number is None:
@@ -986,7 +985,7 @@ def get_task_panel(db: Session = Depends(get_db), user: CurrentUser = Depends(ge
         .subquery()
     )
     rows = db.execute(
-        select(
+        apply_group_parent_visibility_filter(select(
             Ticket,
             TicketView.last_opened_at,
             latest_message.c.last_message_at,
@@ -1001,7 +1000,7 @@ def get_task_panel(db: Session = Depends(get_db), user: CurrentUser = Depends(ge
                 Ticket.is_special.is_(False),
             )
         )
-        .order_by(desc(TicketView.first_opened_at))
+        .order_by(desc(TicketView.first_opened_at)), user)
     ).all()
     tickets = [ticket for ticket, _last_opened_at, _last_message_at in rows]
     subject_map = build_ticket_subject_map(db, tickets)

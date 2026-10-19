@@ -1,11 +1,14 @@
+from functools import lru_cache
+
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, asc, case, desc, exists, func, or_, select
+from sqlalchemy import JSON, Numeric, Select, String, and_, asc, case, cast, desc, exists, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import operators
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import BotButtonSetting, Client, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, Client, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
-from .temporary_rop import with_temporary_rop_suffix
+from .temporary_rop import TEMPORARY_ROP_FIELD, TEMPORARY_ROP_SUFFIX, with_temporary_rop_suffix
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
 
@@ -14,7 +17,14 @@ def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
 
+def apply_group_parent_visibility_filter(stmt: Select, user: CurrentUser):
+    if not is_admin(user):
+        return stmt.where(or_(Ticket.task_kind.is_(None), Ticket.task_kind != TicketTaskKind.GROUP_PARENT.value))
+    return stmt
+
+
 def apply_role_filter(stmt: Select, user: CurrentUser):
+    stmt = apply_group_parent_visibility_filter(stmt, user)
     if is_support_user(user):
         return stmt.where(and_(Ticket.assignee_id == user.id, Ticket.agent_visible.is_(True)))
     if is_readonly_chiki_piki(user):
@@ -57,6 +67,7 @@ def apply_role_filter_for_statuses(
     include_support_all_closed: bool = False,
 ):
     if is_support_user(user):
+        stmt = apply_group_parent_visibility_filter(stmt, user)
         assigned_clause = and_(Ticket.assignee_id == user.id, Ticket.agent_visible.is_(True))
         if include_support_all_closed and TicketStatus.CLOSED.value in statuses:
             return stmt
@@ -79,7 +90,111 @@ def sort_clause(sort: str, order: str):
     return asc(field) if order == "asc" else desc(field)
 
 
-def apply_search_filter(stmt: Select, query: str | None):
+@lru_cache(maxsize=1)
+def _casefold_substitutions():
+    # Casefold is per character; avoid database locale-dependent lower() behavior.
+    result = {}
+    for code in range(0x110000):
+        char = chr(code)
+        if char != char.casefold():
+            result[char] = char.casefold()
+    return result
+
+
+def _casefold_search_expression(db: Session, expression, query: str):
+    if db.get_bind().dialect.name == "sqlite":
+        db.connection().connection.driver_connection.create_function(
+            "esdesk_requester_casefold", 1, lambda value: str(value or "").casefold(), deterministic=True,
+        )
+        return func.esdesk_requester_casefold(expression).contains(query.casefold(), autoescape=True)
+    folded = expression
+    needle_chars = set(query.casefold())
+    # Other characters cannot contribute to a match of this literal query.
+    relevant = {source: target for source, target in _casefold_substitutions().items()
+                if set(target) & needle_chars}
+    singles = {source: target for source, target in relevant.items() if len(source) == len(target) == 1}
+    if singles:
+        folded = func.translate(folded, "".join(singles), "".join(singles.values()))
+    for source, target in relevant.items():
+        if source not in singles:
+            folded = func.replace(folded, source, target)
+    return folded.contains(query.casefold(), autoescape=True)
+
+
+def _requester_search_expression(db: Session):
+    """SQL counterpart of the display helpers below; search never materializes tickets."""
+    postgres = db.get_bind().dialect.name == "postgresql"
+    trim = func.btrim if postgres else func.trim
+    whitespace = "".join(chr(code) for code in range(0x3001) if chr(code).isspace())
+
+    def json_type(value):
+        if postgres:
+            return func.json_typeof(cast(value, JSON))
+        # Inspect the original JSON path: JSON_QUOTE(JSON_EXTRACT(...)) loses booleans.
+        path = []
+        while getattr(value, "operator", None) is operators.json_getitem_op:
+            path.insert(0, value.right.value)
+            value = value.left
+        return func.json_type(value, "$" + "".join(f".{key}" for key in path))
+
+    def normalized(value):
+        return func.nullif(trim(cast(value, String), whitespace), "", type_=String)
+
+    def json_text(value):
+        kind = json_type(value)
+        scalar = value.as_string()
+        return normalized(case(
+            (kind.in_(["null", "false"]), None),
+            (kind == "true", "True"),
+            (and_(kind == "boolean", scalar == "false"), None),
+            (and_(kind.in_(["integer", "real", "number"]), cast(scalar, Numeric) == 0), None),
+            else_=scalar,
+        ))
+
+    snapshot = Ticket.call_center_profile_snapshot_json
+    delta = snapshot["profile_delta"]
+    delta_is_object = json_type(delta) == "object"
+    snapshot_fio = case(
+        (and_(delta_is_object, json_type(delta["custom_fields"]) == "object"), json_text(delta["custom_fields"]["custom_fio"])),
+        (json_type(snapshot["custom_fields"]) == "object", json_text(snapshot["custom_fields"]["custom_fio"])),
+    )
+    # The Python helper replaces a falsy snapshot with {}, but rejects truthy non-dicts.
+    object_or_empty = or_(json_type(snapshot) == "object", snapshot.is_(None),
+                         cast(snapshot, String).in_(["null", "false", "0", "0.0", '""', "[]"]))
+    last = case((delta_is_object, json_text(delta["last_name"])), else_=normalized(func.coalesce(
+        func.nullif(Ticket.call_center_employee_last_name, ""), snapshot["last_name"].as_string())))
+    first = case((delta_is_object, json_text(delta["contact_name"])), else_=normalized(func.coalesce(
+        func.nullif(Ticket.call_center_employee_first_name, ""), snapshot["first_name"].as_string())))
+    snapshot_name = case((object_or_empty, normalized(func.coalesce(last, "").concat(" ").concat(func.coalesce(first, "")))))
+    profile_fio = case((json_type(ClientProfile.custom_fields) == "object", json_text(ClientProfile.custom_fields["custom_fio"])))
+    ordinary = func.coalesce(snapshot_fio, case(
+        (or_(Ticket.call_center_employee_lookup_at.is_not(None), json_type(snapshot) == "object"), snapshot_name),
+        else_=profile_fio,
+    ), normalized(TelegramContact.external_display_name), normalized(Client.display_name), normalized(TelegramContact.external_username))
+    rop = ClientProfile.custom_fields[TEMPORARY_ROP_FIELD]
+    rop_enabled = and_(json_type(rop).in_(["true", "boolean"]), rop.as_boolean().is_(True))
+    ordinary = case((and_(rop_enabled, ~ordinary.endswith(TEMPORARY_ROP_SUFFIX)), ordinary.concat(TEMPORARY_ROP_SUFFIX)),
+                    else_=func.coalesce(ordinary, "Клиент"))
+    return case((InternalTaskOccurrence.id.is_not(None), case(
+        (func.lower(normalized(InternalTaskOccurrence.display_author)).in_(["1", "true", "t", "yes", "y", "on"]),
+         func.coalesce(normalized(User.full_name), normalized(User.login), "Система")),
+        else_="Система",
+    )), else_=ordinary)
+
+
+def _requester_search_filter(db: Session, stmt: Select, query: str):
+    names = (stmt.with_only_columns(Ticket.id, maintain_column_froms=True)
+             .outerjoin(Client, Client.id == Ticket.client_id)
+             .outerjoin(ClientProfile, ClientProfile.client_id == Ticket.client_id)
+             .outerjoin(TelegramContact, TelegramContact.client_id == Ticket.client_id)
+             .outerjoin(InternalTaskOccurrence, InternalTaskOccurrence.ticket_id == Ticket.id)
+             .outerjoin(User, User.id == InternalTaskOccurrence.creator_admin_id)
+             .where(_casefold_search_expression(db, _requester_search_expression(db), query))
+             .correlate(None))
+    return Ticket.id.in_(names)
+
+
+def apply_search_filter(stmt: Select, query: str | None, db: Session):
     q = (query or "").strip()
     if not q:
         return stmt
@@ -89,14 +204,7 @@ def apply_search_filter(stmt: Select, query: str | None):
             Ticket.subject.ilike(pattern),
             Ticket.button_config_key.ilike(pattern),
             Ticket.instruction_button_key.ilike(pattern),
-            exists(
-                select(Client.id).where(
-                    and_(
-                        Client.id == Ticket.client_id,
-                        Client.display_name.ilike(pattern),
-                    )
-                )
-            ),
+            _requester_search_filter(db, stmt, q),
             exists(
                 select(BotButtonSetting.id).where(
                     and_(
@@ -121,14 +229,7 @@ def apply_search_filter(stmt: Select, query: str | None):
                     )
                 )
             ),
-            exists(
-                select(TicketMessage.id).where(
-                    and_(
-                        TicketMessage.ticket_id == Ticket.id,
-                        TicketMessage.body.ilike(pattern),
-                    )
-                )
-            ),
+            Ticket.id.in_(select(TicketMessage.ticket_id).where(TicketMessage.body.ilike(pattern))),
         )
     )
 
@@ -211,7 +312,12 @@ def _ordinary_requester_display_name(db: Session, ticket: Ticket) -> str:
 
 
 def _ordinary_requester_display_name_from_profile(db: Session, ticket: Ticket, profile: ClientProfile | None) -> str:
-    telegram_contact = _telegram_contact(db, ticket)
+    return _ordinary_requester_display_name_from_sources(ticket, profile, _telegram_contact(db, ticket))
+
+
+def _ordinary_requester_display_name_from_sources(
+    ticket: Ticket, profile: ClientProfile | None, telegram_contact: TelegramContact | None,
+) -> str:
     values = [_snapshot_custom_fio(ticket)]
     if _call_center_lookup_performed(ticket):
         last_name, first_name = _snapshot_name_parts(ticket)
@@ -349,7 +455,7 @@ def list_tickets_paginated(
     )
     if filter_admin_assignees:
         base_stmt = apply_admin_assignee_filter(base_stmt, user, admin_assignee_ids)
-    base_stmt = apply_search_filter(base_stmt, query)
+    base_stmt = apply_search_filter(base_stmt, query, db)
 
     total_stmt = select(func.count()).select_from(base_stmt.subquery())
     total = db.execute(total_stmt).scalar_one()
@@ -431,7 +537,7 @@ def list_special_tickets(
         Ticket.status != TicketStatus.CLOSED.value,
     ]
     base_stmt = select(Ticket).where(and_(*conditions))
-    base_stmt = apply_search_filter(base_stmt, query)
+    base_stmt = apply_search_filter(base_stmt, query, db)
     total_stmt = select(func.count()).select_from(base_stmt.subquery())
     total = db.execute(total_stmt).scalar_one()
     pages = max(1, (total + limit - 1) // limit)

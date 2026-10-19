@@ -84,9 +84,9 @@
         </div>
         <div class="display-settings">
           <label class="color-toggle" id="colorToggleLabel">
-            <input id="colorEnabledInput" type="checkbox" />
-            <span id="colorToggleText" tabindex="0">Цветные плашки</span>
-            <span id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true">
+            <input id="colorEnabledInput" type="checkbox" aria-describedby="colorLegend" />
+            <span id="colorToggleText" tabindex="0" aria-describedby="colorLegend">Цветные плашки</span>
+            <span id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true" popover="manual">
               <span class="color-legend-swatch color-legend-task">Задача</span>
               <span class="color-legend-swatch color-legend-request">Заявка</span>
               <span class="color-legend-swatch color-legend-group-task">Увольнение</span>

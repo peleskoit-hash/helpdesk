@@ -309,10 +309,8 @@ test("ticket color legend is available only while colors are enabled and has exa
   for (const name of ["task", "request", "group-task", "internal-task", "frozen", "closed"]) {
     assert.match(styles, new RegExp(`\\.color-legend-${name} \\{[\\s\\S]*background: rgba\\(`));
   }
-  assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\):has\(#colorToggleText:hover\) \.color-legend/);
-  assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\):has\(#colorToggleText:focus-visible\) \.color-legend/);
-  assert.match(styles, /\.color-toggle:not\(\.color-toggle-disabled\) \.color-legend:hover/);
-  assert.match(styles, /\.color-legend \{[\s\S]*left:\s*auto;[\s\S]*right:\s*0;/);
+  assert.match(legendSource, /popover="manual"/);
+  assert.match(styles, /\.color-legend:popover-open\s*\{\s*display: flex;/);
   assert.match(listSource, /el\.colorToggleLabel\.classList\.toggle\("color-toggle-disabled", !state\.colorEnabled\)/);
 });
 
