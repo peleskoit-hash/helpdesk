@@ -1,5 +1,38 @@
 (function () {
   const registry = new Map();
+  const saveConfirmations = new Map();
+
+  function showSaved(panel) {
+    if (!panel?.isConnected) return;
+    saveConfirmations.get(panel)?.();
+    const notice = document.createElement("div");
+    notice.className = "save-confirmation";
+    notice.textContent = "Сохранено";
+    notice.setAttribute("role", "status");
+    let timer;
+    function cleanup() {
+      clearTimeout(timer);
+      notice.remove();
+      window.removeEventListener("scroll", position, true);
+      window.removeEventListener("resize", position);
+      saveConfirmations.delete(panel);
+    }
+    function position() {
+      if (!panel.isConnected) {
+        cleanup();
+        return;
+      }
+      const rect = panel.getBoundingClientRect();
+      notice.style.left = `${rect.left + rect.width / 2}px`;
+      notice.style.top = `${rect.top + rect.height / 2}px`;
+    }
+    saveConfirmations.set(panel, cleanup);
+    document.body.appendChild(notice);
+    position();
+    window.addEventListener("scroll", position, true);
+    window.addEventListener("resize", position);
+    timer = setTimeout(cleanup, 1000);
+  }
   const current = {
     name: "",
     root: null,
@@ -26,7 +59,7 @@
         "/static/bot_buttons_files.js?v=20260629a",
         "/static/bot_buttons_level_view.js?v=20260520a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/bot_buttons_editor.js?v=20260629a",
+        "/static/bot_buttons_editor.js?v=20261020-save-feedback",
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20261005a",
@@ -125,6 +158,7 @@
   }
 
   function destroyCurrentPage() {
+    for (const cleanup of saveConfirmations.values()) cleanup();
     if (typeof current.destroy === "function") {
       try {
         current.destroy();
@@ -345,6 +379,7 @@
   }
 
   window.HelpdeskAppShell = {
+    showSaved,
     registerPage,
     navigate,
     goBack,

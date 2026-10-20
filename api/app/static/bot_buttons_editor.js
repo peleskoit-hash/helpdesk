@@ -441,6 +441,7 @@
 
     await refreshMenuStructure();
     setStatus("Сохранено");
+    global.HelpdeskAppShell?.showSaved?.(ctx.el?.content?.querySelector(".panel.bot-instruction-editor"));
   };
 
   // UI renderer kept in main for now? no - exported placeholder for orchestration compatibility.

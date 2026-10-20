@@ -1359,14 +1359,15 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261020-quotes"
+    app_shell_version = "20261020-save-feedback"
+    bot_buttons_editor_version = "20261020-save-feedback"
     ticket_message_view_version = "20261020-quotes"
     ticket_static_version = "20261020-quotes"
     ticket_attachments_template_version = "20261020-quotes"
     ticket_attachments_shell_version = "20261020-quotes"
     ticket_controls_version = "20261013a"
     ticket_page_version = "20261018-avatar"
-    ticket_styles_version = "20261020-quotes"
+    ticket_styles_version = "20261020-save-feedback-wide"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1385,6 +1386,8 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert 'formData.append("single_attachment", "true")' in composer
     assert app_shell_entrypoints
     assert all(f"/static/app_shell.js?v={app_shell_version}" in source for source in app_shell_entrypoints.values())
+    assert f"/static/bot_buttons_editor.js?v={bot_buttons_editor_version}" in template_sources["settings_bot_buttons.html"]
+    assert f"/static/bot_buttons_editor.js?v={bot_buttons_editor_version}" in app_shell
     assert all("/static/app_shell.js?v=20260821b" not in source for source in app_shell_entrypoints.values())
     assert all("/static/app_shell.js?v=20260826a" not in source for source in app_shell_entrypoints.values())
     assert f"/static/ticket_message_view.js?v={ticket_message_view_version}" in template
