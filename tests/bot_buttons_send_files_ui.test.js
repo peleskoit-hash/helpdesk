@@ -3843,3 +3843,40 @@ test('editor validation flags projection loss before save can wipe legacy rules'
   assert.equal(result.ok, false);
   assert.match(result.error, /Сохранение заблокировано/);
 });
+
+for (const [oldType, newType] of [['ticket', 'task'], ['task', 'ticket']]) {
+  test(`editor saves and reopens changed workflow ${oldType} -> ${newType} with the same key`, async () => {
+    const key = `menu-a|${oldType}|A`;
+    const leaf = { technical_key: key, workflow_type: oldType, label: 'A', full_path: 'A' };
+    const state = {
+      selectedMenu: 'menu-a', selectedLeaf: leaf,
+      savedWorkflowType: oldType, editorWorkflowType: newType,
+      editorBotLabel: 'A', automationTypeValue: 'none', availableAutomations: [],
+      selectedFiles: [], conditionalRules: [],
+    };
+    let savedWorkflow;
+    const ctx = {
+      state,
+      async api(url, options) {
+        if (options) {
+          const query = new URL(url, 'http://localhost').searchParams;
+          assert.equal(query.get('button_key'), key);
+          assert.equal(query.get('workflow_type'), newType);
+          savedWorkflow = query.get('workflow_type');
+          return { ok: true };
+        }
+        return { workflow_type: savedWorkflow, button_label: 'A', automation_type: 'none',
+                 files: [], conditional_files: [] };
+      },
+      setStatus() {}, render() {}, async refreshMenuStructure() {},
+      fieldMeta() { return null; }, fieldLabel(value) { return String(value || ''); },
+      normalizeConditionalRuleForState(rule) { return rule; },
+    };
+    await editorHelpers.saveInstruction(ctx);
+    assert.equal(savedWorkflow, newType);
+    await editorHelpers.openEditor(ctx, leaf);
+    assert.equal(state.savedWorkflowType, newType);
+    assert.equal(state.editorWorkflowType, newType);
+    assert.equal(state.selectedLeaf.technical_key, key);
+  });
+}

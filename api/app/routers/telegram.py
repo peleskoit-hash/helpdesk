@@ -1,5 +1,6 @@
 import json
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1746,6 +1747,14 @@ def _button_from_callback(db: Session, data: str, menu_name: str | None = None) 
         return _button_from_db_row(db, row, menu_name)
     txt_button = find_button(key)
     if txt_button is not None:
+        if menu_name and txt_button.kind in {"ticket", "task", "auto"}:
+            setting_key = _resolve_instruction_button_key(db, menu_name, key)
+            row = db.execute(
+                select(BotButtonSetting).where(BotButtonSetting.button_key == setting_key)
+            ).scalar_one_or_none() if setting_key else None
+            workflow = (row.workflow_type or "").strip().lower() if row is not None else ""
+            if workflow in {"ticket", "task", "auto"}:
+                txt_button = replace(txt_button, kind=workflow)
         if txt_button.kind == "group_task" and menu_name:
             full_path = _find_txt_group_button_path(menu_name, txt_button.key)
             return _with_db_group_task_children(db, txt_button, menu_name, full_path or txt_button.label)
@@ -2074,7 +2083,6 @@ def _resolve_instruction_button_key(db: Session, menu_name: str, button_key: str
         row = db.execute(
             select(BotButtonSetting).where(
                 BotButtonSetting.button_key == button_key,
-                BotButtonSetting.is_db_created.is_(True),
                 BotButtonSetting.currently_present.is_(True),
             )
         ).scalar_one_or_none()

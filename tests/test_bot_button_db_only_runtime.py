@@ -1821,6 +1821,98 @@ def test_submenu_save_rejects_type_change_when_query_workflow_differs(monkeypatc
         raise AssertionError("Expected submenu type transition rejection")
 
 
+@pytest.mark.parametrize("old_type,new_type", [("ticket", "task"), ("task", "ticket")])
+@pytest.mark.parametrize("callback_kind", ["source", "technical", "id", "db"])
+def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch, old_type, new_type, callback_kind):
+    session = _session()
+    key = f"menu-a|{old_type}|A"
+    row = _seed_row(session, button_key=key, workflow_type=old_type)
+    identity = (row.id, row.stable_button_id, row.button_key, row.legacy_button_key)
+    source = ButtonSpec(key="txt-a", label="A", kind=old_type)
+    refs = (TerminalButtonRef(
+        source_button_key=source.key, label="A", workflow_type=old_type,
+        full_path="A", technical_key=key,
+    ),)
+    config = ButtonConfig(
+        menus={"root": MenuSpec(key="root", title="menu-a", rows=((source.key,),))},
+        buttons={source.key: source}, root_menu_key="root",
+    )
+    _patch_layout_config(monkeypatch, config, refs)
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: callback_kind == "db")
+    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu: refs)
+    monkeypatch.setattr(telegram_router, "find_button", lambda button_key: source if button_key == source.key else None)
+
+    result = _save_button_instruction(session, {"instruction_text": "Saved instruction"}, button_key=key, workflow_type=new_type)
+    assert result["ok"] is True
+    session.expire_all()
+    structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
+    item = settings_bot_button_items.get_bot_button_item(key, menu_type="menu-a", db=session, user=object())
+    assert item["workflow_type"] == new_type
+    assert item["instruction_text"] == "Saved instruction"
+    assert structure.tree_rows[0]["buttons"][0]["workflow_type"] == new_type
+    row = session.query(BotButtonSetting).filter_by(button_key=key).one()
+    assert (row.id, row.stable_button_id, row.button_key, row.legacy_button_key) == identity
+
+    company = Company(id=str(uuid.uuid4()), name="Company")
+    client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
+    contact = TelegramContact(id=str(uuid.uuid4()), company_id=company.id, client_id=client.id,
+                              external_user_id="123", external_chat_id="456")
+    old_ticket = Ticket(id=str(uuid.uuid4()), company_id=company.id, client_id=client.id,
+                        subject="Old", workflow_type=old_type, status=TicketStatus.CLOSED.value,
+                        instruction_button_key=key)
+    session.add_all([company, client, contact, old_ticket])
+    session.commit()
+    monkeypatch.setattr(telegram_router, "_first_company", lambda db: company)
+    monkeypatch.setattr(telegram_router, "get_or_create_contact_from_user", lambda *args: contact)
+    monkeypatch.setattr(telegram_router, "_menu_name_for_contact", lambda db, contact: "menu-a")
+    monkeypatch.setattr(telegram_router, "schedule_avatar_refresh", lambda *args: None)
+    monkeypatch.setattr(telegram_router, "_remove_menu_keyboard", lambda *args, **kwargs: None)
+    callback_data = {
+        "source": "btn:txt-a", "technical": f"btn:{key}",
+        "id": f"btnid:{row.id}", "db": f"btn:{key}",
+    }[callback_kind]
+    button = telegram_router._button_from_callback(session, callback_data, "menu-a")
+    assert button.kind == new_type
+    assert button.key == (source.key if callback_kind == "source" else key)
+    response = telegram_router._process_problem_type_callback(
+        session, {"update_id": 1},
+        {"data": callback_data, "message": {"chat": {"id": 456}}, "from": {"id": 123}},
+        notify_client=False,
+    )
+    created = session.get(Ticket, response["ticket_id"])
+    assert created.id != old_ticket.id
+    assert created.workflow_type == new_type
+    assert created.instruction_button_key == key
+    assert created.task_kind == TicketTaskKind.NORMAL.value
+    assert bool(response.get("task_pending")) == (new_type == "task")
+    session.expire_all()
+    assert session.get(Ticket, old_ticket.id).workflow_type == old_type
+
+
+@pytest.mark.parametrize("workflow,kind", [
+    ("group_task", "group_parent"), ("group_task_child", "terminal"), ("system", "system"),
+])
+@pytest.mark.parametrize("requested", ["ticket", "task"])
+def test_existing_protected_button_rejects_workflow_change(monkeypatch, workflow, kind, requested):
+    session = _session()
+    key = f"menu-a|{workflow}|A"
+    row = _seed_row(session, button_key=key, workflow_type=workflow, button_kind=kind)
+    monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
+    monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
+    with pytest.raises(HTTPException) as error:
+        _save_button_instruction(session, {}, button_key=key, workflow_type=requested)
+    assert error.value.status_code == 422
+    assert error.value.detail["error"]["code"] == (
+        "system_button_type_change_forbidden" if kind == "system" else "button_type_change_forbidden"
+    )
+    session.expire_all()
+    assert row.workflow_type == workflow
+    assert row.button_kind == kind
+    assert row.button_key == key
+
+
 def test_existing_terminal_button_can_change_type_between_ticket_task_and_auto(monkeypatch):
     session = _session()
     _seed_row(session, button_key="menu-a|ticket|A", workflow_type="ticket", button_kind="terminal")
