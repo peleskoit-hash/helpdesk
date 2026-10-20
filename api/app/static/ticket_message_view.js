@@ -265,13 +265,43 @@
       cleanupStickerResources(currentAttachmentIds);
 
       el.messages.innerHTML = "";
-      for (const m of card.messages || []) {
+      let orderedMessages = card.messages || [];
+      const initialMessages = orderedMessages.filter((message) => message.is_initial_task_message && message.message_type === "client");
+      if (initialMessages.some((message) => (message.attachments || []).length)) {
+        const assignment = orderedMessages.find((message) => message.is_initial_task_assignment && message.message_type === "system");
+        const initialIds = new Set(initialMessages.map((message) => message.id));
+        if (assignment) initialIds.add(assignment.id);
+        const initialParts = [
+          ...initialMessages.flatMap((message) => (message.attachments || []).map((attachment) => ({
+            ...message, body: "", attachments: [attachment], sourceMessage: message,
+          }))),
+          ...initialMessages.filter((message) => message.is_initial_task_description && (message.body || "").trim())
+            .map((message) => ({ ...message, attachments: [], sourceMessage: message })),
+          ...(assignment ? [assignment] : []),
+        ];
+        let inserted = false;
+        orderedMessages = orderedMessages.flatMap((message) => {
+          if (!initialIds.has(message.id)) return [message];
+          if (inserted) return [];
+          inserted = true;
+          return initialParts;
+        });
+      }
+      const displayMessages = orderedMessages.flatMap((message) => {
+        if (!message.is_initial_task_description || message.message_type !== "client"
+            || !(message.body || "").trim() || !(message.attachments || []).length) return [message];
+        return [
+          { ...message, attachments: [], sourceMessage: message },
+          ...message.attachments.map((attachment) => ({ ...message, body: "", attachments: [attachment], sourceMessage: message })),
+        ];
+      });
+      for (const m of displayMessages) {
         const div = document.createElement("div");
         const cls = m.message_type || "";
         const stickerOnly = isStickerOnlyMessage(m);
         div.className = `message ${cls} ${stickerOnly ? "message-sticker-only" : ""} ${m.message_status && m.message_status !== "normal" ? `message-${m.message_status}` : ""}`.trim();
         if (["client", "agent", "internal"].includes(m.message_type)) {
-          div.addEventListener("contextmenu", (event) => showMessageContextMenu(ctx, event, m));
+          div.addEventListener("contextmenu", (event) => showMessageContextMenu(ctx, event, m.sourceMessage || m));
         }
         if (!stickerOnly) {
           const headerEl = document.createElement("div");

@@ -296,6 +296,26 @@ def _collecting_ticket_for_client(db: Session, company_id: str, client_id: str) 
     ).scalar_one_or_none()
 
 
+def _task_for_client_album(db: Session, contact: TelegramContact, attachment_data: dict | None) -> Ticket | None:
+    media_group_id = str((attachment_data or {}).get("media_group_id") or "").strip()
+    if not media_group_id:
+        return None
+    tickets = db.execute(
+        select(Ticket)
+        .where(
+            Ticket.company_id == contact.company_id,
+            Ticket.client_id == contact.client_id,
+            Ticket.workflow_type == TicketWorkflowType.TASK.value,
+            select(TicketAttachment.id).where(
+                TicketAttachment.ticket_id == Ticket.id,
+                TicketAttachment.telegram_media_group_id == media_group_id,
+            ).exists(),
+        )
+        .limit(2)
+    ).scalars().all()
+    return tickets[0] if len(tickets) == 1 else None
+
+
 def _create_collecting_ticket(db: Session, company_id: str, client_id: str, subject: str = "Выбор типа проблемы") -> Ticket:
     ticket = Ticket(
         id=str(uuid.uuid4()),
@@ -3275,7 +3295,8 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 db.commit()
         return {"ok": True, "command": "start", "ticket_id": ticket.id if ticket else None}
 
-    collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
+    album_task = _task_for_client_album(db, contact, attachment_data)
+    collecting_ticket = None if album_task is not None else _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
     if collecting_ticket is not None and collecting_ticket.workflow_type == TicketWorkflowType.TASK.value:
         if collecting_ticket.updated_at + timedelta(minutes=TASK_DESCRIPTION_TIMEOUT_MINUTES) <= _now_for(collecting_ticket.updated_at):
             collecting_ticket.intake_state = TicketIntakeState.CANCELLED.value
@@ -3397,7 +3418,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             "external_chat_id": external_chat_id,
         }
 
-    active_ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id)
+    active_ticket = album_task or _active_ticket_for_client(db, contact.company_id, contact.client_id)
     if active_ticket is None:
         collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
         db.commit()

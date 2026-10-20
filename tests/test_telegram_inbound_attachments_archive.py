@@ -6,11 +6,13 @@ import threading
 import time
 import uuid
 
+import pytest
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType
+from api.app.models import Client, ClientProfile, Company, MessageType, TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.routers import telegram as telegram_router
 from api.app.services import telegram_attachments as telegram_attachments_service
 
@@ -660,11 +662,23 @@ def test_single_video_inbound_file_archives_via_copy_message(monkeypatch, tmp_pa
     assert len(calls["copy_message"]) == 1
 
 
-def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch, tmp_path):
+@pytest.mark.parametrize("workflow,caption_index,file_count", [
+    ("ticket", 0, 8),
+    ("task", 0, 4),
+    ("task", 2, 4),
+])
+def test_media_group_finalizes_after_quiet_window(monkeypatch, tmp_path, workflow, caption_index, file_count):
     _engine, Session = _session_bundle(tmp_path)
     session = Session()
     ticket, contact = _seed_ticket_context(session)
-    _seed_existing_client_message(session, ticket.id)
+    if workflow == "task":
+        ticket.workflow_type = workflow
+        ticket.status = TicketStatus.UNASSIGNED.value
+        ticket.intake_state = TicketIntakeState.COLLECTING.value
+        session.commit()
+        monkeypatch.setattr(telegram_router, "_button_from_callback", lambda *_args: None)
+    else:
+        _seed_existing_client_message(session, ticket.id)
     monkeypatch.setattr(telegram_attachments_service.settings, "attachment_storage_dir", str(tmp_path))
     monkeypatch.setattr(
         telegram_attachments_service,
@@ -691,28 +705,61 @@ def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch, tm
         lambda *args, **kwargs: state["copy_message"].append((args, kwargs)) or {"result": {"message_id": 600 + len(state["copy_message"]) }},
     )
 
-    for index in range(8):
-        result = telegram_router.process_telegram_update(
-            session,
-            _document_payload(
-                update_id=2101 + index,
-                chat_id=contact.external_chat_id,
-                user_id=contact.external_user_id,
-                file_id=f"file-{index}",
-                filename=f"file-{index}.pdf",
-                media_group_id="mg-42",
-            ),
-            notify_client=False,
+    for index in range(file_count):
+        payload = _document_payload(
+            update_id=2101 + index,
+            chat_id=contact.external_chat_id,
+            user_id=contact.external_user_id,
+            file_id=f"file-{index}",
+            filename=f"file-{index}.pdf",
+            media_group_id="mg-42",
         )
+        if index == caption_index:
+            payload["message"]["caption"] = "Описание задачи клиента"
+        result = telegram_router.process_telegram_update(session, payload, notify_client=False)
         assert result["ok"] is True
+        assert result["ticket_id"] == ticket.id
+        assert telegram_router.process_telegram_update(session, payload, notify_client=False)["duplicate"] is True
+
+    assert len(session.execute(select(Ticket)).scalars().all()) == 1
+    bodies = session.execute(select(TicketMessage.body).where(TicketMessage.ticket_id == ticket.id)).scalars().all()
+    assert bodies.count("Описание задачи клиента") == 1
+    if workflow == "task":
+        assert ticket.intake_state == TicketIntakeState.READY.value
+        client_messages = session.execute(select(TicketMessage).where(
+            TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.CLIENT.value,
+        )).scalars().all()
+        assert len(client_messages) == file_count
+        assert {row.telegram_message_id for row in client_messages} == {str(2101 + index) for index in range(file_count)}
+        for index, group_id in enumerate(["another-album", None]):
+            payload = _document_payload(
+                update_id=2200 + index, chat_id=contact.external_chat_id,
+                user_id=contact.external_user_id, media_group_id=group_id,
+            )
+            assert telegram_router.process_telegram_update(session, payload, notify_client=False)["ignored"] == "problem_type_required"
+        text_payload = {
+            "update_id": 2203,
+            "message": {
+                "message_id": 2203, "chat": {"id": int(contact.external_chat_id), "type": "private"},
+                "from": {"id": int(contact.external_user_id)}, "text": "Another message", "media_group_id": "mg-42",
+            },
+        }
+        assert telegram_router.process_telegram_update(session, text_payload, notify_client=False)["ignored"] == "problem_type_required"
+        payload = _document_payload(update_id=2202, chat_id="200500", user_id="200500", media_group_id="mg-42")
+        assert telegram_router.process_telegram_update(session, payload, notify_client=False)["ignored"] == "problem_type_required"
+        assert len(session.execute(select(Ticket)).scalars().all()) == 1
 
     attachments = session.execute(
         select(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at, TicketAttachment.id)
     ).scalars().all()
-    assert len(attachments) == 8
+    assert len(attachments) == file_count
     assert {row.telegram_media_group_id for row in attachments} == {"mg-42"}
-    assert len(_ManualTimer.instances) == 8
-    assert [timer.interval for timer in _ManualTimer.instances] == [30.0] * 8
+    caption_message = session.execute(select(TicketMessage).where(
+        TicketMessage.ticket_id == ticket.id, TicketMessage.body == "Описание задачи клиента",
+    )).scalar_one()
+    assert next(row for row in attachments if row.message_id == caption_message.id).telegram_file_id == f"file-{caption_index}"
+    assert len(_ManualTimer.instances) == file_count
+    assert [timer.interval for timer in _ManualTimer.instances] == [30.0] * file_count
     assert _ManualTimer.instances[:-1]
     assert all(timer.cancelled for timer in _ManualTimer.instances[:-1])
     assert len(state["send_message"]) == 0
@@ -727,10 +774,40 @@ def test_media_group_of_eight_files_finalizes_after_quiet_window(monkeypatch, tm
     assert attachments[0].telegram_archive_info_message_id == "501"
     assert all(str(row.telegram_archive_message_id or "").strip() for row in attachments)
     assert len(state["send_message"]) == 1
-    assert len(state["copy_message"]) == 8
+    assert len(state["copy_message"]) == file_count
     assert all(kwargs.get("caption") == "" for _args, kwargs in state["copy_message"])
     final_info_text = state["edit_message_text"][-1][0][2]
-    assert all(f"• <code>file-{index}.pdf</code>" in final_info_text for index in range(8))
+    assert all(f"• <code>file-{index}.pdf</code>" in final_info_text for index in range(file_count))
+
+
+def test_task_album_requires_unambiguous_ticket_match(tmp_path):
+    engine, Session = _session_bundle(tmp_path)
+    with Session() as session:
+        ticket, contact = _seed_ticket_context(session)
+        ticket.workflow_type = TicketWorkflowType.TASK.value
+        message = telegram_router._append_client_message(session, ticket, "Album", schedule_notification=False)
+        for index in range(2):
+            session.add(TicketAttachment(
+                id=str(uuid.uuid4()), ticket_id=ticket.id, message_id=message.id,
+                source="telegram", local_path="unused", telegram_media_group_id="album",
+            ))
+        session.commit()
+        assert telegram_router._task_for_client_album(session, contact, {"media_group_id": "album"}).id == ticket.id
+
+        other = Ticket(
+            id=str(uuid.uuid4()), company_id=ticket.company_id, client_id=ticket.client_id,
+            subject="Other task", workflow_type=TicketWorkflowType.TASK.value,
+        )
+        session.add(other)
+        session.flush()
+        other_message = telegram_router._append_client_message(session, other, "Other album", schedule_notification=False)
+        session.add(TicketAttachment(
+            id=str(uuid.uuid4()), ticket_id=other.id, message_id=other_message.id,
+            source="telegram", local_path="unused", telegram_media_group_id="album",
+        ))
+        session.commit()
+        assert telegram_router._task_for_client_album(session, contact, {"media_group_id": "album"}) is None
+    engine.dispose()
 
 
 def test_media_group_archives_ten_files_under_one_info_card(monkeypatch, tmp_path):

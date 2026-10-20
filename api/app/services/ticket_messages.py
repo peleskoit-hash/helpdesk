@@ -27,6 +27,53 @@ QUICK_ACTION_TEXTS = {
 logger = logging.getLogger(__name__)
 
 
+def initial_task_message_ids(
+    ticket: Ticket, messages: list[TicketMessage], attachments_by_message: dict[str, list[TicketAttachment]],
+) -> set[str]:
+    if ticket.workflow_type != TicketWorkflowType.TASK.value or ticket.channel != "telegram":
+        return set()
+    first = next((message for message in messages if message.message_type == MessageType.CLIENT.value), None)
+    if first is None or not first.telegram_message_id:
+        return set()
+    initial_group_ids = {
+        attachment.telegram_media_group_id
+        for attachment in attachments_by_message.get(first.id, [])
+        if attachment.telegram_media_group_id
+    }
+    return {
+        message.id for message in messages
+        if message.message_type == MessageType.CLIENT.value
+        and message.telegram_message_id
+        and (
+            message.id == first.id
+            or (len(initial_group_ids) == 1 and any(
+                attachment.telegram_media_group_id in initial_group_ids
+                for attachment in attachments_by_message.get(message.id, [])
+            ))
+        )
+    }
+
+
+def initial_task_description_ids(
+    ticket: Ticket, messages: list[TicketMessage], attachments_by_message: dict[str, list[TicketAttachment]],
+) -> set[str]:
+    initial_ids = initial_task_message_ids(ticket, messages, attachments_by_message)
+    return {message.id for message in messages if message.id in initial_ids and (message.body or "").strip()}
+
+
+def first_task_assignment_id(messages: list[TicketMessage]) -> str | None:
+    prefix = "Ответственный изменён: "
+    for message in messages:
+        if message.message_type != MessageType.SYSTEM.value or not (message.body or "").startswith(prefix):
+            continue
+        old, separator, new = message.body[len(prefix):].partition(" -> ")
+        if not separator or not old or not new:
+            continue
+        # Only the first assignment event can belong to the initial appeal.
+        return message.id if old == "нераспределён" and new != "нераспределён" else None
+    return None
+
+
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 

@@ -67,7 +67,7 @@ from ..services.statistics_lifecycle import (
 )
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
-from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
+from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, first_task_assignment_id, initial_task_description_ids, initial_task_message_ids, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
 from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
@@ -1087,6 +1087,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         ).scalars().all()
         for attachment in attachments:
             attachments_by_message.setdefault(attachment.message_id, []).append(attachment)
+    description_ids = initial_task_description_ids(t, messages, attachments_by_message)
+    initial_message_ids = initial_task_message_ids(t, messages, attachments_by_message)
+    initial_assignment_id = first_task_assignment_id(messages) if initial_message_ids else None
     active_preload_threshold = datetime.utcnow() - timedelta(hours=24)
     active_attachment_preloads = [
         {
@@ -1167,6 +1170,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         messages=[
             {
                 "id": m.id,
+                "is_initial_task_description": m.id in description_ids,
+                "is_initial_task_message": m.id in initial_message_ids,
+                "is_initial_task_assignment": m.id == initial_assignment_id,
                 "message_type": m.message_type,
                 "body": m.body,
                 "author_user_id": m.author_user_id,

@@ -52,6 +52,9 @@
     return JSON.stringify((messages || []).map((message) => ({
       id: message.id,
       body: message.body || "",
+      is_initial_task_description: Boolean(message.is_initial_task_description),
+      is_initial_task_message: Boolean(message.is_initial_task_message),
+      is_initial_task_assignment: Boolean(message.is_initial_task_assignment),
       message_type: message.message_type || "",
       message_status: message.message_status || "",
       status_note: message.status_note || "",

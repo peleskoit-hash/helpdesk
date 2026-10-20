@@ -128,6 +128,9 @@ class TicketAttachmentOut(BaseModel):
 
 class TicketMessageOut(BaseModel):
     id: str
+    is_initial_task_description: bool = False
+    is_initial_task_message: bool = False
+    is_initial_task_assignment: bool = False
     message_type: str
     body: str
     author_user_id: str | None
