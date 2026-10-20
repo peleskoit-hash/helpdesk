@@ -278,7 +278,7 @@
     }
 
     el.content.innerHTML = `
-      <p class="bot-buttons-description">Здесь настраиваются кнопки Telegram-бота на основе текущих txt-файлов.</p>
+      <p class="bot-buttons-description">Здесь настраиваются кнопки Telegram-бота из базы данных.</p>
       <div class="bot-buttons-split-layout">
         <div class="bot-buttons-split-left">
           <div class="bot-layout-toolbar">

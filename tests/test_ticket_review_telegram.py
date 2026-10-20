@@ -1116,7 +1116,7 @@ def test_start_command_cleans_review_states_and_continues_start_flow(monkeypatch
         deleted = []
         sent = []
         monkeypatch.setattr(telegram_router, "delete_message", lambda chat_id, message_id: deleted.append((chat_id, message_id)) or {"ok": True})
-        monkeypatch.setattr(telegram_router, "send_problem_menu", lambda *args, **kwargs: sent.append(("menu", args, kwargs)) or {"ok": True, "result": {"message_id": 140}})
+        monkeypatch.setattr(telegram_router, "_send_problem_menu_with_visibility", lambda *args, **kwargs: sent.append(("menu", args, kwargs)) or {"ok": True, "result": {"message_id": 140}})
         monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: sent.append(("message", args, kwargs)) or {"ok": True, "result": {"message_id": 141}})
 
         result = telegram_router.process_telegram_update(
@@ -1551,7 +1551,7 @@ def test_start_command_cleans_feedback_input_without_saving(monkeypatch):
     session.add(input_state)
     session.commit()
     monkeypatch.setattr(telegram_router, "delete_message", lambda *args, **kwargs: {"ok": True})
-    monkeypatch.setattr(telegram_router, "send_problem_menu", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 223}})
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_with_visibility", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 223}})
     monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: {"ok": True, "result": {"message_id": 224}})
 
     result = telegram_router.process_telegram_update(

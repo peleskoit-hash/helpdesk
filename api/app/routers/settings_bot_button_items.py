@@ -24,12 +24,7 @@ from ..services.button_automation_types import (
     normalize_automation_type,
     normalize_workflow_type,
 )
-from ..services.button_config import (
-    BUTTON_CONFIG_DIR,
-    find_button,
-    list_terminal_buttons,
-    load_button_config,
-)
+from ..services.button_config import BUTTON_CONFIG_DIR
 from ..services.telegram_automation import get_automation_registry
 from ..services.system_tickets import (
     FEEDBACK_SYSTEM_BUTTONS,
@@ -144,67 +139,6 @@ def _error(status_code: int, code: str, message: str):
 def _require_admin(user: CurrentUser) -> None:
     if not is_admin(user):
         _error(403, "admin_only", "Настройки доступны только администратору")
-
-
-def _fallback_system_text(menu_type: str, button_key: str) -> str | None:
-    button = _fallback_source_button(menu_type, button_key)
-    if button is None:
-        return None
-    return button.system_text
-
-
-def _fallback_source_button(menu_type: str, button_key: str):
-    menu_name = (menu_type or "").strip()
-    key = (button_key or "").strip()
-    if not menu_name or not key:
-        return None
-    try:
-        refs = list_terminal_buttons(menu_name)
-    except Exception:
-        refs = ()
-    source_button_key = None
-    for ref in refs:
-        if ref.technical_key == key:
-            source_button_key = ref.source_button_key
-            break
-    if source_button_key:
-        return find_button(source_button_key)
-
-    # group_task parent is not part of list_terminal_buttons, resolve it from encoded technical key
-    # format: {menu_name}|group_task|{label_or_path}
-    parts = key.split("|", 2)
-    if len(parts) == 3 and parts[0] == menu_name and parts[1] == "group_task":
-        target = parts[2]
-        try:
-            config = load_button_config(menu_name)
-            root = config.menus.get(config.root_menu_key)
-            if root is None:
-                return None
-            for row in root.rows:
-                for bkey in row:
-                    button = config.buttons.get(bkey)
-                    if button is None or button.kind != "group_task":
-                        continue
-                    if button.label == target:
-                        return button
-        except Exception:
-            return None
-    return None
-
-
-def _fallback_client_text(menu_type: str, button_key: str) -> str | None:
-    button = _fallback_source_button(menu_type, button_key)
-    if button is None:
-        return None
-    return button.text
-
-
-def _fallback_automation_key(menu_type: str, button_key: str) -> str | None:
-    button = _fallback_source_button(menu_type, button_key)
-    if button is None:
-        return None
-    value = (button.automation_key or "").strip()
-    return value or None
 
 
 def _normalize_relative_button_file_path(raw_path: str) -> str | None:
@@ -405,60 +339,6 @@ def _list_available_button_files() -> list[str]:
         if normalized:
             items.append(normalized)
     return sorted(set(items), key=lambda x: x.lower())
-
-
-def _fallback_direct_files(menu_type: str, button_key: str) -> list[str]:
-    try:
-        refs = list_terminal_buttons(menu_type)
-    except Exception:
-        return []
-    source_button_key = None
-    for ref in refs:
-        if ref.technical_key == button_key:
-            source_button_key = ref.source_button_key
-            break
-    if not source_button_key:
-        return []
-    button = find_button(source_button_key)
-    if button is None:
-        return []
-    raw = (button.file_path or "").strip()
-    normalized = _normalize_relative_button_file_path(raw) if raw else None
-    return [normalized] if normalized else []
-
-
-def _fallback_conditional_files(db: Session, menu_type: str, button_key: str) -> list[dict]:
-    try:
-        refs = list_terminal_buttons(menu_type)
-    except Exception:
-        return []
-    source_button_key = None
-    for ref in refs:
-        if ref.technical_key == button_key:
-            source_button_key = ref.source_button_key
-            break
-    if not source_button_key:
-        return []
-    button = find_button(source_button_key)
-    if button is None or not button.file_rules:
-        return []
-    catalog = _build_conditional_field_catalog(db, menu_type=menu_type)
-    result: list[dict] = []
-    for rule in button.file_rules:
-        field_name = (rule.get("field") or "").strip()
-        file_name = _normalize_relative_button_file_path((rule.get("file") or "").strip())
-        equals = (rule.get("equals") or "").strip()
-        if not field_name or not file_name:
-            continue
-        if field_name not in catalog:
-            continue
-        result.append(
-            {
-                "conditions": [{"field": field_name, "operator": "eq", "value": equals}],
-                "files": [file_name],
-            }
-        )
-    return result
 
 
 def _normalize_conditional_rules(raw_rules: list[dict], available_files: set[str], catalog: dict[str, dict]) -> list[dict]:
@@ -806,7 +686,7 @@ def get_bot_button_item(
             "label_override": None,
             "label_overridden": False,
             "button_label_effective": "",
-            "button_label_from": "txt",
+            "button_label_from": "db",
             "removed": False,
             "currently_present": True,
             "instruction_text": None,
@@ -875,7 +755,7 @@ def get_bot_button_item(
         "label_override": row.label_override,
         "label_overridden": bool(row.label_overridden),
         "button_label_effective": ((row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label),
-        "button_label_from": ("db" if bool(row.label_overridden) and (row.label_override or "").strip() else "txt"),
+        "button_label_from": "db",
         "removed": not bool(row.currently_present),
         "currently_present": bool(row.currently_present),
         "is_db_created": bool(row.is_db_created),
@@ -1218,7 +1098,7 @@ def save_bot_button_instruction(
         "label_overridden": bool(row.label_overridden),
         "button_style": _button_style_out(row.button_style),
         "button_label_effective": ((row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else row.button_label),
-        "button_label_from": ("db" if bool(row.label_overridden) and (row.label_override or "").strip() else "txt"),
+        "button_label_from": "db",
     }
 
 

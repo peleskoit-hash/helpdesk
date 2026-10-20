@@ -20,7 +20,6 @@ from ..schemas import (
     BotButtonStructureLeafOut,
     ClientCardFieldConfigOut,
 )
-from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, available_menu_names, build_level_layout_key, build_terminal_button_key, build_visibility_button_key, find_button, list_terminal_buttons, load_button_config
 from ..services.telegram_automation import get_automation_registry
 
 
@@ -90,10 +89,8 @@ NUMBER_OPERATORS = {"eq", "ne", "gt", "lt", "gte", "lte", "empty", "not_empty"}
 BOOL_OPERATORS = {"eq", "is_true", "is_false"}
 
 
-
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message, "details": {}}})
-
 
 
 def _require_admin(user: CurrentUser) -> None:
@@ -231,81 +228,3 @@ def list_bot_button_assignees(
         }
         for u in users
     ]
-
-
-@router.post("/bot-buttons/migrate-instructions")
-def migrate_bot_button_instructions(
-    overwrite_existing: bool = False,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    created = 0
-    updated = 0
-    skipped_existing = 0
-    skipped_empty = 0
-    errors: list[str] = []
-    now = datetime.utcnow()
-
-    for menu_name in available_menu_names():
-        try:
-            refs = list_terminal_buttons(menu_name)
-        except Exception as exc:  # pragma: no cover
-            errors.append(f"{menu_name}: {exc}")
-            continue
-        for ref in refs:
-            text_value = (ref.instruction_text or "").strip()
-            if not text_value:
-                skipped_empty += 1
-                continue
-            row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == ref.technical_key)).scalar_one_or_none()
-            if row is None:
-                row = BotButtonSetting(
-                    id=str(uuid.uuid4()),
-                    stable_button_id=str(uuid.uuid4()),
-                    button_key=ref.technical_key,
-                    legacy_button_key=None,
-                    menu_type=menu_name,
-                    workflow_type=ref.workflow_type,
-                    button_path=ref.full_path,
-                    button_label=ref.label,
-                    label_override=None,
-                    label_overridden=False,
-                    currently_present=True,
-                    instruction_text=text_value,
-                    system_text=None,
-                    system_text_overridden=False,
-                    created_at=now,
-                    updated_at=now,
-                )
-                db.add(row)
-                created += 1
-                continue
-            existing_text = (row.instruction_text or "").strip()
-            if existing_text and not overwrite_existing:
-                skipped_existing += 1
-                continue
-            if existing_text == text_value:
-                skipped_existing += 1
-                continue
-            row.menu_type = menu_name
-            row.workflow_type = ref.workflow_type
-            row.button_path = ref.full_path
-            row.button_label = ref.label
-            row.currently_present = True
-            if not row.stable_button_id:
-                row.stable_button_id = str(uuid.uuid4())
-            row.instruction_text = text_value
-            row.updated_at = now
-            updated += 1
-
-    db.commit()
-    return {
-        "ok": True,
-        "created": created,
-        "updated": updated,
-        "skipped_existing": skipped_existing,
-        "skipped_empty": skipped_empty,
-        "errors": errors,
-        "overwrite_existing": overwrite_existing,
-    }

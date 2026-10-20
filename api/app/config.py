@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     session_cookie_name: str = "esdesk_session"
     session_cookie_secure: bool = False
     disable_admin_idle_timeout: bool = False
-    use_db_buttons: bool = False
     integration_api_key: str | None = None
 
     @property

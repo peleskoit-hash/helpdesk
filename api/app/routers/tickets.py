@@ -31,7 +31,7 @@ from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile,
 from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
-from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message, send_problem_menu
+from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message
 from ..services.telegram_post_close import cleanup_feedback_flow_for_ticket_reopen, cleanup_review_flow_for_ticket_reopen
 from ..services.telegram_outbound_delivery import (
     _discard_preload,
@@ -472,8 +472,9 @@ def _send_problem_menu_to_telegram_client(db: Session, ticket: Ticket):
     contact = _telegram_contact_for_client(db, ticket.client_id)
     if contact is not None:
         try:
-            send_problem_menu(
-                contact.external_chat_id,
+            from .telegram import _send_problem_menu_with_visibility
+            _send_problem_menu_with_visibility(
+                db, contact.external_chat_id,
                 menu_name=menu_name_for_ticket_client(
                     db,
                     ticket,

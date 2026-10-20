@@ -7,7 +7,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..config import settings
-from .button_config import load_button_config
 from .telegram_text_format import strip_telegram_html
 
 
@@ -173,10 +172,6 @@ def set_bot_commands(commands: list[dict] | None = None, *, bot_token: str | Non
         },
         bot_token=bot_token,
     )
-
-
-def problem_menu_markup(menu_name: str | None = None, menu_key: str | None = None) -> dict:
-    return load_button_config(menu_name or "Руководство").menu_markup(menu_key)
 
 
 def client_close_markup() -> dict:
@@ -496,14 +491,3 @@ def download_file(file_path: str, destination_path: str | Path, chat_id: str | i
 
 def remove_reply_keyboard(chat_id: str) -> dict:
     return fake_telegram_response("removeReplyKeyboardSkipped", {"chat_id": chat_id})
-
-
-def send_problem_menu(
-    chat_id: str,
-    menu_key: str | None = None,
-    text: str | None = None,
-    menu_name: str | None = None,
-) -> dict:
-    config = load_button_config(menu_name or "Руководство")
-    menu = config.menus[menu_key or config.root_menu_key]
-    return send_message(chat_id, text or menu.text or "Выберите тип проблемы", reply_markup=config.menu_markup(menu.key))

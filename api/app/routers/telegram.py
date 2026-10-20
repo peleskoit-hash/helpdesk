@@ -40,9 +40,8 @@ from ..services.telegram_bot import (
     remove_inline_keyboard,
     send_document,
     send_message,
-    send_problem_menu,
 )
-from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, DEFAULT_MENU_NAME, ButtonSpec, build_level_layout_key, build_terminal_button_key, build_visibility_button_key, find_button, find_menu, list_terminal_buttons, load_button_config
+from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, DEFAULT_MENU_NAME, ButtonSpec, build_level_layout_key, build_visibility_button_key, available_menu_names, resolve_button_row
 from ..services.assignment import append_system_message, notify_client_about_assignee
 from ..services.assignment import assignee_change_message, assignee_label
 from ..services.assignment import resolve_forced_assignee
@@ -238,8 +237,6 @@ def _automatic_telegram_text(
         return fallback, None
 
 
-def _use_db_buttons() -> bool:
-    return bool(settings.use_db_buttons)
 
 
 def _first_company(db: Session) -> Company | None:
@@ -473,21 +470,11 @@ def _menu_name_for_contact(db: Session, contact: TelegramContact) -> str:
             binding = db.execute(
                 select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
             ).scalar_one_or_none()
-            if binding is not None:
-                if settings.use_db_buttons:
-                    return binding.menu_type
-                try:
-                    load_button_config(binding.menu_type)
-                    return binding.menu_type
-                except Exception:
-                    pass
-            try:
-                load_button_config(destination)
+            names = available_menu_names(db)
+            if binding is not None and binding.menu_type in names:
+                return binding.menu_type
+            if destination in names:
                 return destination
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
     return BASIC_MENU_NAME
 
 
@@ -503,21 +490,11 @@ def _menu_name_for_ticket_client(db: Session, ticket: Ticket) -> str:
             binding = db.execute(
                 select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
             ).scalar_one_or_none()
-            if binding is not None:
-                if settings.use_db_buttons:
-                    return binding.menu_type
-                try:
-                    load_button_config(binding.menu_type)
-                    return binding.menu_type
-                except Exception:
-                    pass
-            try:
-                load_button_config(destination)
+            names = available_menu_names(db)
+            if binding is not None and binding.menu_type in names:
+                return binding.menu_type
+            if destination in names:
                 return destination
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
     return BASIC_MENU_NAME
 
 
@@ -723,210 +700,7 @@ def _apply_layout_to_markup_rows(rows: list[list[dict]], layout_rows: list[dict]
 
 
 def _send_problem_menu_with_visibility(db: Session, chat_id: str, *, menu_name: str, menu_key: str | None = None, text: str | None = None) -> dict:
-    if _use_db_buttons():
-        return _send_problem_menu_db_only(db, chat_id, menu_name=menu_name, menu_key=menu_key, text=text)
-
-    config = load_button_config(menu_name)
-    menu = config.menus.get(menu_key or config.root_menu_key)
-    is_txt_submenu = bool(menu_key and find_menu(menu_key) is not None)
-    if menu_key and not is_txt_submenu and menu is None:
-        parent_path = _submenu_path_by_key_or_db(db, menu_name, menu_key)
-        if not parent_path:
-            return send_problem_menu(chat_id, menu_name=menu_name, menu_key=None, text=text)
-        menu = config.menus.get(config.root_menu_key)
-    if menu is None:
-        return send_problem_menu(chat_id, menu_name=menu_name, menu_key=None, text=text)
-    refs = list_terminal_buttons(menu_name)
-    terminal_by_source = {ref.source_button_key: ref for ref in refs}
-    settings_map = _button_settings_map(db, menu_name)
-    level_layout_map: dict[str, list[dict]] = {}
-    for row in db.execute(select(BotMenuLevelLayout).where(BotMenuLevelLayout.menu_type == menu_name)).scalars().all():
-        level_layout_map[row.level_key] = _normalize_layout_rows(row.layout_json)
-    db_rows_by_parent: dict[str, list[BotButtonSetting]] = {}
-    for row in settings_map.values():
-        if not bool(row.is_db_created) or not bool(row.currently_present):
-            continue
-        parent = (row.parent_path or "").strip()
-        db_rows_by_parent.setdefault(parent, []).append(row)
-    for bucket in db_rows_by_parent.values():
-        bucket.sort(key=lambda item: ((item.updated_at or item.created_at), item.button_label))
-
-    def _effective_label(setting_key: str, fallback: str) -> str:
-        row = settings_map.get(setting_key)
-        if row is not None and bool(row.label_overridden):
-            name = (row.label_override or "").strip()
-            if name:
-                return name
-        return fallback
-
-    def is_terminal_enabled(source_key: str) -> bool:
-        ref = terminal_by_source.get(source_key)
-        if ref is None:
-            return True
-        if not _button_visibility_enabled(settings_map.get(ref.technical_key)):
-            return False
-        segments = ref.full_path.split("/")
-        parent = ""
-        for segment in segments[:-1]:
-            parent = f"{parent}/{segment}" if parent else segment
-            if not _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "submenu", parent))):
-                return False
-            if not _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "group_task", parent))):
-                return False
-        return True
-
-    def is_submenu_enabled(full_path: str) -> bool:
-        return _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "submenu", full_path)))
-
-    def is_group_enabled(full_path: str) -> bool:
-        return _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "group_task", full_path)))
-
-    def button_style_for_key(button_key: str) -> str | None:
-        return _button_style_value(settings_map.get(button_key))
-
-    def add_button_style(item: dict, style: str | None) -> dict:
-        if style:
-            item["style"] = style
-        return item
-
-    def build_markup_rows(current_menu_key: str | None, parent_path: str = "") -> list[list[dict]]:
-        current_menu = config.menus.get(current_menu_key) if current_menu_key else None
-        result_rows: list[list[dict]] = []
-        current_level_key = build_level_layout_key(menu_name, parent_path)
-        if current_menu is not None:
-            for row in current_menu.rows:
-                rendered_row: list[dict] = []
-                for button_key in row:
-                    button = config.buttons.get(button_key)
-                    if button is None:
-                        continue
-                    if button.kind == "submenu" and button.submenu_key:
-                        full_path = f"{parent_path}/{button.label}" if parent_path else button.label
-                        if not is_submenu_enabled(full_path):
-                            continue
-                        child_rows = build_markup_rows(button.submenu_key, full_path)
-                        has_visible_children = any(child_rows)
-                        if not has_visible_children:
-                            continue
-                        submenu_key_for_visibility = build_visibility_button_key(menu_name, "submenu", full_path)
-                        rendered_row.append(
-                            add_button_style({
-                                "text": _effective_label(submenu_key_for_visibility, button.label),
-                                "callback_data": f"menu:{button.submenu_key}",
-                                "__layout_key": submenu_key_for_visibility,
-                            }, button_style_for_key(submenu_key_for_visibility))
-                        )
-                        continue
-                    if button.kind == "group_task":
-                        full_path = f"{parent_path}/{button.label}" if parent_path else button.label
-                        if not is_group_enabled(full_path):
-                            continue
-                        any_child_visible = any(is_terminal_enabled(child.key) for child in button.subtasks)
-                        if not any_child_visible:
-                            continue
-                        group_key_for_visibility = build_visibility_button_key(menu_name, "group_task", full_path)
-                        rendered_row.append(
-                            add_button_style({
-                                "text": _effective_label(group_key_for_visibility, button.label),
-                                "callback_data": f"btn:{button.key}",
-                                "__layout_key": group_key_for_visibility,
-                            }, button_style_for_key(group_key_for_visibility))
-                        )
-                        continue
-                    if not is_terminal_enabled(button.key):
-                        continue
-                    terminal_ref = terminal_by_source.get(button.key)
-                    terminal_key = terminal_ref.technical_key if terminal_ref is not None else ""
-                    rendered_row.append(
-                        add_button_style({
-                            "text": _effective_label(terminal_key, button.label),
-                            "callback_data": f"btn:{button.key}",
-                            "__layout_key": terminal_key,
-                        }, button_style_for_key(terminal_key))
-                    )
-                if rendered_row:
-                    result_rows.append(rendered_row)
-        for row in db_rows_by_parent.get(parent_path, []):
-            if not _button_visibility_enabled(row):
-                continue
-            row_kind = (row.button_kind or "").strip().lower()
-            row_workflow = (row.workflow_type or "").strip().lower()
-            effective_label = _effective_label(row.button_key, row.button_label)
-            if row_workflow == "group_task" and not bool(row.is_db_created):
-                # Imported txt group_task parents must behave as terminal group_task buttons.
-                # They should trigger task flow (btnid), not open DB submenu level (menuid).
-                result_rows.append(
-                    [
-                        add_button_style({
-                            "text": effective_label,
-                            "callback_data": f"btnid:{row.id}",
-                            "__layout_key": row.button_key,
-                        }, _button_style_value(row))
-                    ]
-                )
-                continue
-            if row_kind in {"section", "group_parent"}:
-                child_rows = build_markup_rows(None, row.button_path)
-                if not any(child_rows):
-                    continue
-                result_rows.append(
-                    [
-                        add_button_style({
-                            "text": effective_label,
-                            "callback_data": f"menuid:{row.id}",
-                            "__layout_key": row.button_key,
-                        }, _button_style_value(row))
-                    ]
-                )
-                continue
-            result_rows.append(
-                [
-                    add_button_style({
-                        "text": effective_label,
-                        "callback_data": f"btnid:{row.id}",
-                        "__layout_key": row.button_key,
-                    }, _button_style_value(row))
-                ]
-            )
-        laid_out = _apply_layout_to_markup_rows(result_rows, level_layout_map.get(current_level_key))
-        clean_rows: list[list[dict]] = []
-        for row in laid_out:
-            clean_row: list[dict] = []
-            for item in row:
-                clean_item = {"text": item.get("text"), "callback_data": item.get("callback_data")}
-                if item.get("style"):
-                    clean_item["style"] = item.get("style")
-                clean_row.append(clean_item)
-            clean_rows.append(clean_row)
-        return clean_rows
-
-    parent_path = _submenu_path_by_key_or_db(db, menu_name, menu_key) if menu_key else ""
-    inline_keyboard = build_markup_rows(menu.key if (menu_key is None or is_txt_submenu) else None, parent_path or "")
-    back_callback: str | None = None
-    if menu_key:
-        if is_txt_submenu:
-            parent_menu_key = _find_parent_submenu_key(menu_name, menu_key)
-            back_callback = f"menu:{parent_menu_key}" if parent_menu_key else "menu:__root__"
-        else:
-            if parent_path and "/" in parent_path:
-                parent_parent_path = parent_path.rsplit("/", 1)[0]
-                parent_row = db.execute(
-                    select(BotButtonSetting).where(
-                        BotButtonSetting.menu_type == menu_name,
-                        BotButtonSetting.button_path == parent_parent_path,
-                        BotButtonSetting.button_kind.in_(["section", "group_parent"]),
-                        BotButtonSetting.currently_present.is_(True),
-                    )
-                ).scalar_one_or_none()
-                back_callback = f"menuid:{parent_row.id}" if parent_row is not None else "menu:__root__"
-            elif parent_path:
-                back_callback = "menu:__root__"
-    if back_callback:
-        inline_keyboard.append([{"text": "⬅ Назад", "callback_data": back_callback}])
-    reply_markup = {"inline_keyboard": inline_keyboard}
-    submenu_text = _resolve_submenu_client_text(db, menu_name, menu_key=menu_key, parent_path=parent_path) if menu_key else None
-    message_text = text if text is not None else (submenu_text if menu_key else menu.text)
-    return send_message(chat_id, message_text or "Выберите тип проблемы", reply_markup=reply_markup)
+    return _send_problem_menu_db_only(db, chat_id, menu_name=menu_name, menu_key=menu_key, text=text)
 
 
 def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, menu_key: str | None = None, text: str | None = None) -> dict:
@@ -1641,23 +1415,6 @@ def _handle_edited_client_message(
     return ticket
 
 def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | None = None) -> ButtonSpec:
-    txt_button = None
-    if not (_use_db_buttons() and (row.workflow_type in {"group_task", "group_task_child"} or row.button_kind == "group_parent")):
-        try:
-            if menu_name:
-                for ref in list_terminal_buttons(menu_name):
-                    if ref.technical_key == row.button_key:
-                        txt_button = find_button(ref.source_button_key)
-                        break
-            if txt_button is None:
-                txt_button = find_button(row.button_key)
-            if txt_button is None and menu_name and (row.workflow_type or "").strip().lower() == "group_task":
-                full_path = (row.button_path or "").strip()
-                if full_path:
-                    txt_button = _find_txt_group_button_by_full_path(menu_name, full_path)
-        except Exception:
-            txt_button = None
-
     row_kind = (row.button_kind or "").strip().lower()
     workflow = (row.workflow_type or "ticket").strip().lower()
     if row_kind == "group_parent" or workflow == "group_task":
@@ -1676,28 +1433,6 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
     if isinstance(row.files_json, list) and row.files_json:
         file_path = str(row.files_json[0] or "").strip() or None
     file_rules = tuple(rule for rule in (row.conditional_files_json or []) if isinstance(rule, dict)) if isinstance(row.conditional_files_json, list) else ()
-
-    if txt_button is not None:
-        button = ButtonSpec(
-            key=row.button_key,
-            label=final_label or txt_button.label,
-            kind=kind or txt_button.kind,
-            text=txt_button.text,
-            confirmation_text=(row.confirmation_text if bool(row.confirmation_overridden) else txt_button.confirmation_text),
-            system_text=(row.system_text if bool(row.system_text_overridden) else txt_button.system_text),
-            instruction_text=row.instruction_text or txt_button.instruction_text,
-            automation_key=(row.automation_key if bool(row.automation_overridden) else txt_button.automation_key),
-            forced_assignee_type=forced_type or txt_button.forced_assignee_type,
-            forced_assignee_value=forced_value or txt_button.forced_assignee_value,
-            suppress_client_answer=bool(row.suppress_client_answer),
-            file_path=file_path or txt_button.file_path,
-            file_rules=file_rules or txt_button.file_rules,
-            submenu_key=txt_button.submenu_key,
-            subtasks=txt_button.subtasks,
-        )
-        if button.kind == "group_task":
-            return _with_db_group_task_children(db, button, row.menu_type, (row.button_path or "").strip())
-        return button
 
     button = ButtonSpec(
         key=row.button_key,
@@ -1719,120 +1454,45 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
 
 
 def _button_from_callback(db: Session, data: str, menu_name: str | None = None) -> ButtonSpec | None:
-
-    id_prefix = "btnid:"
-    if data.startswith(id_prefix):
-        id_raw = data.removeprefix(id_prefix).strip()
-        if not id_raw:
-            return None
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.id == id_raw)).scalar_one_or_none()
-        if row is None or not bool(row.currently_present) or bool(row.is_archived):
+    if data.startswith("btnid:"):
+        row = db.get(BotButtonSetting, data.removeprefix("btnid:").strip())
+        if row is None or not row.currently_present or row.is_archived:
             return None
         if menu_name and row.menu_type != menu_name:
             return None
-        return _button_from_db_row(db, row, menu_name)
-
-    prefix = "btn:"
-    if not data.startswith(prefix):
+    elif data.startswith("btn:") and menu_name:
+        row = resolve_button_row(db, data.removeprefix("btn:"), menu_name)
+    else:
         return None
-    key = data.removeprefix(prefix)
-    if _use_db_buttons():
-        if not menu_name:
-            return None
-        row = db.execute(
-            select(BotButtonSetting).where(
-                BotButtonSetting.menu_type == menu_name,
-                BotButtonSetting.button_key == key,
-                BotButtonSetting.currently_present.is_(True),
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return None
-        return _button_from_db_row(db, row, menu_name)
-    txt_button = find_button(key)
-    if txt_button is not None:
-        if menu_name and txt_button.kind in {"ticket", "task", "auto"}:
-            setting_key = _resolve_instruction_button_key(db, menu_name, key)
-            row = db.execute(
-                select(BotButtonSetting).where(BotButtonSetting.button_key == setting_key)
-            ).scalar_one_or_none() if setting_key else None
-            workflow = (row.workflow_type or "").strip().lower() if row is not None else ""
-            if workflow in {"ticket", "task", "auto"}:
-                txt_button = replace(txt_button, kind=workflow)
-        if txt_button.kind == "group_task" and menu_name:
-            full_path = _find_txt_group_button_path(menu_name, txt_button.key)
-            return _with_db_group_task_children(db, txt_button, menu_name, full_path or txt_button.label)
-        return txt_button
-    if not menu_name:
-        return None
-    row = db.execute(
-        select(BotButtonSetting).where(
-            BotButtonSetting.menu_type == menu_name,
-            BotButtonSetting.button_key == key,
-        )
-    ).scalar_one_or_none()
-    if row is None or not bool(row.currently_present):
-        return None
-    return _button_from_db_row(db, row, menu_name)
+    return _button_from_db_row(db, row, menu_name) if row is not None else None
 
 
 def _is_callback_button_enabled(db: Session, *, menu_name: str, button: ButtonSpec) -> bool:
-    if _use_db_buttons():
-        row = db.execute(
+    row = db.execute(
+        select(BotButtonSetting).where(
+            BotButtonSetting.menu_type == menu_name,
+            BotButtonSetting.button_key == button.key,
+        )
+    ).scalar_one_or_none()
+    if row is None or not bool(row.currently_present) or bool(row.is_archived):
+        return False
+    if row.visibility_overridden and not bool(row.is_enabled):
+        return False
+    parent_path = (row.parent_path or "").strip()
+    while parent_path:
+        parent = db.execute(
             select(BotButtonSetting).where(
                 BotButtonSetting.menu_type == menu_name,
-                BotButtonSetting.button_key == button.key,
+                BotButtonSetting.button_path == parent_path,
+                BotButtonSetting.button_kind.in_(["section", "group_parent"]),
+                BotButtonSetting.currently_present.is_(True),
             )
         ).scalar_one_or_none()
-        if row is None or not bool(row.currently_present) or bool(row.is_archived):
+        if parent is None:
+            break
+        if parent.visibility_overridden and not bool(parent.is_enabled):
             return False
-        if row.visibility_overridden and not bool(row.is_enabled):
-            return False
-        parent_path = (row.parent_path or "").strip()
-        while parent_path:
-            parent = db.execute(
-                select(BotButtonSetting).where(
-                    BotButtonSetting.menu_type == menu_name,
-                    BotButtonSetting.button_path == parent_path,
-                    BotButtonSetting.button_kind.in_(["section", "group_parent"]),
-                    BotButtonSetting.currently_present.is_(True),
-                )
-            ).scalar_one_or_none()
-            if parent is None:
-                break
-            if parent.visibility_overridden and not bool(parent.is_enabled):
-                return False
-            parent_path = (parent.parent_path or "").strip()
-        return True
-
-    settings_map = _button_settings_map(db, menu_name)
-    direct_setting = settings_map.get(button.key)
-    if direct_setting is not None:
-        if not bool(direct_setting.currently_present):
-            return False
-        if not _button_visibility_enabled(direct_setting):
-            return False
-    refs = list_terminal_buttons(menu_name)
-    terminal_ref = next((ref for ref in refs if ref.source_button_key == button.key), None)
-    if terminal_ref is not None:
-        if not _button_visibility_enabled(settings_map.get(terminal_ref.technical_key)):
-            return False
-        parent = ""
-        segments = terminal_ref.full_path.split("/")
-        for segment in segments[:-1]:
-            parent = f"{parent}/{segment}" if parent else segment
-            if not _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "submenu", parent))):
-                return False
-            if not _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "group_task", parent))):
-                return False
-        return True
-    if button.kind == "submenu":
-        submenu_key = button.submenu_key or ""
-        menu = load_button_config(menu_name).menus.get(submenu_key)
-        submenu_title = menu.title if menu is not None else button.label
-        return _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "submenu", submenu_title)))
-    if button.kind == "group_task":
-        return _button_visibility_enabled(settings_map.get(build_visibility_button_key(menu_name, "group_task", button.label)))
+        parent_path = (parent.parent_path or "").strip()
     return True
 
 
@@ -1853,76 +1513,16 @@ def _menu_key_from_callback(db: Session, data: str, menu_name: str | None = None
     if not data.startswith(prefix):
         return None
     menu_key = data.removeprefix(prefix).strip()
-    return menu_key or None
+    if menu_key == "__root__":
+        return menu_key
+    row = resolve_button_row(db, menu_key, menu_name, submenu=True) if menu_key else None
+    return row.button_key if row is not None else None
 
 
-def _submenu_path_by_key(menu_name: str, submenu_key: str) -> str | None:
-    config = load_button_config(menu_name)
-    def walk(menu_key: str, parent_path: str = "") -> str | None:
-        menu = config.menus.get(menu_key)
-        if menu is None:
-            return None
-        for row in menu.rows:
-            for button_key in row:
-                button = config.buttons.get(button_key)
-                if button is None or button.kind != "submenu" or not button.submenu_key:
-                    continue
-                full_path = f"{parent_path}/{button.label}" if parent_path else button.label
-                if button.submenu_key == submenu_key:
-                    return full_path
-                found = walk(button.submenu_key, full_path)
-                if found:
-                    return found
-        return None
-    return walk(config.root_menu_key, "")
 
 
-def _find_txt_group_button_path(menu_name: str, group_button_key: str) -> str | None:
-    config = load_button_config(menu_name)
-
-    def walk(menu_key: str, parent_path: str = "") -> str | None:
-        menu = config.menus.get(menu_key)
-        if menu is None:
-            return None
-        for row in menu.rows:
-            for button_key in row:
-                button = config.buttons.get(button_key)
-                if button is None:
-                    continue
-                current_path = f"{parent_path}/{button.label}" if parent_path else button.label
-                if button.kind == "group_task" and button.key == group_button_key:
-                    return current_path
-                if button.kind == "submenu" and button.submenu_key:
-                    found = walk(button.submenu_key, current_path)
-                    if found is not None:
-                        return found
-        return None
-
-    return walk(config.root_menu_key, "")
 
 
-def _find_txt_group_button_by_full_path(menu_name: str, full_path: str) -> ButtonSpec | None:
-    config = load_button_config(menu_name)
-
-    def walk(menu_key: str, parent_path: str = "") -> ButtonSpec | None:
-        menu = config.menus.get(menu_key)
-        if menu is None:
-            return None
-        for row in menu.rows:
-            for button_key in row:
-                button = config.buttons.get(button_key)
-                if button is None:
-                    continue
-                current_path = f"{parent_path}/{button.label}" if parent_path else button.label
-                if button.kind == "group_task" and current_path == full_path:
-                    return button
-                if button.kind == "submenu" and button.submenu_key:
-                    found = walk(button.submenu_key, current_path)
-                    if found is not None:
-                        return found
-        return None
-
-    return walk(config.root_menu_key, "")
 
 
 def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str | None, parent_path: str | None) -> ButtonSpec:
@@ -1942,10 +1542,6 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
     ).scalars().all()
     if not rows:
         return button
-    existing_keys = {
-        _resolve_instruction_button_key(db, menu, child.key) or child.key
-        for child in button.subtasks
-    } if not _use_db_buttons() else set()
     layout = db.execute(select(BotMenuLevelLayout).where(
         BotMenuLevelLayout.menu_type == menu,
         BotMenuLevelLayout.level_key == build_level_layout_key(menu, parent),
@@ -1955,14 +1551,12 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
     rank = {key: index for index, key in enumerate(ordered_keys)}
     db_children: list[ButtonSpec] = []
     for row in sorted(rows, key=lambda item: (rank.get(item.button_key, len(rank)), (item.updated_at or item.created_at or datetime.utcnow()), item.button_label)):
-        if row.button_key in existing_keys or not _button_visibility_enabled(row):
+        if not _button_visibility_enabled(row):
             continue
         child = _button_from_db_row(db, row, menu)
         if not (child.label or "").strip():
             continue
         db_children.append(child)
-    if not db_children and not _use_db_buttons():
-        return button
     return ButtonSpec(
         key=button.key,
         label=button.label,
@@ -1978,57 +1572,17 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
         file_path=button.file_path,
         file_rules=button.file_rules,
         submenu_key=button.submenu_key,
-        subtasks=tuple(db_children) if _use_db_buttons() else (*button.subtasks, *db_children),
+        subtasks=tuple(db_children),
     )
 
 
-def _find_parent_submenu_key(menu_name: str, submenu_key: str) -> str | None:
-    config = load_button_config(menu_name)
-
-    def walk(menu_key: str) -> str | None:
-        menu = config.menus.get(menu_key)
-        if menu is None:
-            return None
-        for row in menu.rows:
-            for button_key in row:
-                button = config.buttons.get(button_key)
-                if button is None or button.kind != "submenu" or not button.submenu_key:
-                    continue
-                if button.submenu_key == submenu_key:
-                    return menu_key
-                found = walk(button.submenu_key)
-                if found is not None:
-                    return found
-        return None
-
-    return walk(config.root_menu_key)
 
 
 def _submenu_path_by_key_or_db(db: Session, menu_name: str, submenu_key: str) -> str | None:
-    if _use_db_buttons():
-        row = db.execute(
-            select(BotButtonSetting).where(
-                BotButtonSetting.menu_type == menu_name,
-                BotButtonSetting.button_key == submenu_key,
-                BotButtonSetting.button_kind.in_(["section", "group_parent"]),
-                BotButtonSetting.currently_present.is_(True),
-            )
-        ).scalar_one_or_none()
-        return row.button_path if row is not None else None
-
-    from_txt = _submenu_path_by_key(menu_name, submenu_key)
-    if from_txt:
-        return from_txt
-    row = db.execute(
-        select(BotButtonSetting).where(
-            BotButtonSetting.menu_type == menu_name,
-            BotButtonSetting.button_key == submenu_key,
-            BotButtonSetting.is_db_created.is_(True),
-            BotButtonSetting.button_kind.in_(["section", "group_parent"]),
-            BotButtonSetting.currently_present.is_(True),
-        )
-    ).scalar_one_or_none()
-    return (row.button_path if row is not None else None)
+    row = resolve_button_row(db, submenu_key, menu_name, submenu=True)
+    if row is not None and row.button_kind in {"section", "group_parent"}:
+        return row.button_path
+    return None
 
 
 def _resolve_submenu_client_text(
@@ -2069,37 +1623,8 @@ def _resolve_submenu_client_text(
 
 
 def _resolve_instruction_button_key(db: Session, menu_name: str, button_key: str) -> str | None:
-    if _use_db_buttons():
-        row = db.execute(
-            select(BotButtonSetting).where(
-                BotButtonSetting.menu_type == menu_name,
-                BotButtonSetting.button_key == button_key,
-                BotButtonSetting.currently_present.is_(True),
-            )
-        ).scalar_one_or_none()
-        if row is not None and (row.button_kind or "") not in {"section", "group_parent"}:
-            return row.button_key
-        return None
-
-    for ref in list_terminal_buttons(menu_name):
-        if ref.source_button_key == button_key:
-            return ref.technical_key
-    row = db.execute(
-        select(BotButtonSetting).where(
-            BotButtonSetting.menu_type == menu_name,
-            BotButtonSetting.button_key == button_key,
-            BotButtonSetting.is_db_created.is_(True),
-            BotButtonSetting.currently_present.is_(True),
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        row = db.execute(
-            select(BotButtonSetting).where(
-                BotButtonSetting.button_key == button_key,
-                BotButtonSetting.currently_present.is_(True),
-            )
-        ).scalar_one_or_none()
-    if row is not None and (row.button_kind or "") not in {"section", "group_parent"}:
+    row = resolve_button_row(db, button_key, menu_name)
+    if row is not None and row.button_kind not in {"section", "group_parent"}:
         return row.button_key
     return None
 
@@ -2450,81 +1975,14 @@ def _on_group_parent_assigned(db: Session, ticket: Ticket, agent: User) -> None:
         return
     if (ticket.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
         return
-    key = (ticket.button_config_key or "").strip()
-    if _use_db_buttons():
-        key = (ticket.instruction_button_key or "").strip() or key
+    key = (ticket.instruction_button_key or ticket.button_config_key or "").strip()
     if not key:
         return
-    if _use_db_buttons():
-        row = db.execute(select(BotButtonSetting).where(
-            BotButtonSetting.button_key == key,
-            BotButtonSetting.currently_present.is_(True),
-            BotButtonSetting.is_archived.is_(False),
-        )).scalar_one_or_none()
-        if row is not None:
-            button = _button_from_db_row(db, row, row.menu_type)
-            if button.kind == "group_task":
-                _create_group_children_from_collecting(db, ticket, button, _group_parent_client_body(db, ticket), agent)
-        return
-    button = find_button(key)
-    if button is not None and button.kind == "group_task":
-        parent_row = db.execute(
-            select(BotButtonSetting).where(
-                and_(
-                    BotButtonSetting.button_key == key,
-                    BotButtonSetting.currently_present.is_(True),
-                    BotButtonSetting.is_archived.is_(False),
-                )
-            )
-        ).scalar_one_or_none()
-        menu_name = parent_row.menu_type if parent_row is not None else _menu_name_for_ticket_client(db, ticket)
-        parent_path = (parent_row.button_path or "").strip() if parent_row is not None else _find_txt_group_button_path(menu_name, button.key)
-        button = _with_db_group_task_children(db, button, menu_name, parent_path or button.label)
-    if button is None or button.kind != "group_task":
-        parent_row = db.execute(
-            select(BotButtonSetting).where(
-                and_(
-                    BotButtonSetting.button_key == key,
-                    BotButtonSetting.currently_present.is_(True),
-                    BotButtonSetting.is_archived.is_(False),
-                )
-            )
-        ).scalar_one_or_none()
-        if parent_row is None:
-            return
-        child_rows = db.execute(
-            select(BotButtonSetting).where(
-                and_(
-                    BotButtonSetting.menu_type == parent_row.menu_type,
-                    BotButtonSetting.parent_path == (parent_row.button_path or ""),
-                    BotButtonSetting.currently_present.is_(True),
-                    BotButtonSetting.is_archived.is_(False),
-                )
-            )
-            .order_by(asc(BotButtonSetting.created_at), asc(BotButtonSetting.button_label))
-        ).scalars().all()
-        subtasks: list[ButtonSpec] = []
-        for row in child_rows:
-            row_kind = (row.button_kind or "").strip().lower()
-            if row_kind in {"section", "group_parent"}:
-                continue
-            workflow = (row.workflow_type or "").strip().lower()
-            if workflow not in {"task", "group_task_child"}:
-                continue
-            label = (row.label_override or "").strip() if bool(row.label_overridden) and (row.label_override or "").strip() else (row.button_label or "")
-            if not label:
-                continue
-            subtasks.append(ButtonSpec(key=row.button_key, label=label, kind="task"))
-        if not subtasks:
-            return
-        button = ButtonSpec(key=parent_row.button_key, label=parent_row.button_label or ticket.subject, kind="group_task", subtasks=tuple(subtasks))
-    _create_group_children_from_collecting(
-        db,
-        ticket,
-        button,
-        _group_parent_client_body(db, ticket),
-        agent,
-    )
+    row = resolve_button_row(db, key)
+    if row is not None:
+        button = _button_from_db_row(db, row, row.menu_type)
+        if button.kind == "group_task":
+            _create_group_children_from_collecting(db, ticket, button, _group_parent_client_body(db, ticket), agent)
 
 
 set_group_parent_assigned_hook(_on_group_parent_assigned)

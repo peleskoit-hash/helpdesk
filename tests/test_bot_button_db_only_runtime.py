@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -16,7 +17,6 @@ from api.app.routers import settings_bot_menu_profiles
 from api.app.routers import settings_bot_button_structure
 from api.app.routers import telegram as telegram_router
 from api.app.schemas import BotButtonInstructionUpdate
-from api.app.services import bot_button_materialization as materialization
 from api.app.services import button_automation_types
 from api.app.services import saved_files
 from api.app.services import telegram_menu_flow
@@ -127,7 +127,6 @@ def _seed_menu_client(session, *, destination="Отдел Продаж", tempora
 def test_menu_name_for_contact_uses_real_destination_without_temporary_rop(monkeypatch):
     session = _session()
     profile, contact, _ticket = _seed_menu_client(session, temporary_rop=False)
-    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
 
     assert telegram_router._menu_name_for_contact(session, contact) == "Отдел Продаж"
     assert profile.destination == "Отдел Продаж"
@@ -136,7 +135,6 @@ def test_menu_name_for_contact_uses_real_destination_without_temporary_rop(monke
 def test_menu_name_for_contact_uses_management_menu_for_temporary_rop(monkeypatch):
     session = _session()
     profile, contact, _ticket = _seed_menu_client(session, temporary_rop=True)
-    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
 
     assert telegram_router._menu_name_for_contact(session, contact) == "Руководство"
     assert profile.destination == "Отдел Продаж"
@@ -149,7 +147,6 @@ def test_menu_name_for_contact_ignores_non_boolean_temporary_rop(monkeypatch):
     profile, contact, _ticket = _seed_menu_client(session, temporary_rop=False)
     profile.custom_fields = {"custom_vremennyy_rop": "true"}
     session.commit()
-    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
 
     assert telegram_router._menu_name_for_contact(session, contact) == "Отдел Продаж"
 
@@ -157,7 +154,6 @@ def test_menu_name_for_contact_ignores_non_boolean_temporary_rop(monkeypatch):
 def test_menu_name_for_contact_keeps_real_management_destination(monkeypatch):
     session = _session()
     profile, contact, _ticket = _seed_menu_client(session, destination="Руководство", temporary_rop=False)
-    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
 
     assert telegram_router._menu_name_for_contact(session, contact) == "Руководство"
     assert profile.custom_fields == {}
@@ -168,7 +164,6 @@ def test_menu_name_for_ticket_client_uses_management_menu_for_temporary_rop_with
     profile, contact, ticket = _seed_menu_client(session, temporary_rop=True)
     session.delete(contact)
     session.commit()
-    monkeypatch.setattr(telegram_router.settings, "use_db_buttons", True)
 
     assert telegram_router._menu_name_for_ticket_client(session, ticket) == "Руководство"
     assert profile.destination == "Отдел Продаж"
@@ -441,7 +436,7 @@ def test_bot_button_style_save_get_and_validation():
 
 def _txt_submenu_config():
     child = ButtonSpec(key="child-a", label="Leaf A", kind="ticket", text="TXT child text")
-    submenu = ButtonSpec(key="submenu-a", label="Submenu", kind="submenu", submenu_key="submenu-key")
+    submenu = ButtonSpec(key="submenu-a", label="Submenu", kind="submenu", submenu_key="menu-a|submenu|Submenu")
     config = ButtonConfig(
         menus={
             "root": MenuSpec(key="root", title="menu-a", rows=((submenu.key,),)),
@@ -1446,11 +1441,6 @@ def test_editor_payload_returns_db_only_values(monkeypatch):
     )
 
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_client_text", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_system_text", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_automation_key", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_direct_files", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_conditional_files", _fail_fallback)
     monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
 
     payload = settings_bot_button_items.get_bot_button_item(
@@ -1474,11 +1464,6 @@ def test_editor_payload_without_row_stays_empty(monkeypatch):
     session = _session()
 
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_client_text", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_system_text", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_automation_key", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_direct_files", _fail_fallback)
-    monkeypatch.setattr(settings_bot_button_items, "_fallback_conditional_files", _fail_fallback)
     monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: {})
 
     payload = settings_bot_button_items.get_bot_button_item(
@@ -1495,36 +1480,9 @@ def test_editor_payload_without_row_stays_empty(monkeypatch):
     assert payload["conditional_files_effective"] == []
 
 
-def test_txt_structure_and_group_task_materialization_still_load(monkeypatch):
-    child = ButtonSpec(key="child-a", label="Child", kind="task", text="Child text")
-    parent = ButtonSpec(key="parent-a", label="Parent", kind="group_task", subtasks=(child,))
-    config = ButtonConfig(
-        menus={"root": MenuSpec(key="root", title="menu-a", rows=((parent.key,),))},
-        buttons={parent.key: parent},
-        root_menu_key="root",
-    )
-    refs = (
-        TerminalButtonRef(
-            source_button_key="missing-child-key",
-            label="Child",
-            workflow_type="group_task_child",
-            full_path="Parent/Child",
-            technical_key="menu-a|group_task_child|Parent/Child",
-            instruction_text=None,
-        ),
-    )
-    monkeypatch.setattr(materialization, "available_menu_names", lambda: ("menu-a",))
-    monkeypatch.setattr(materialization, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(materialization, "list_terminal_buttons", lambda menu_name: refs)
-
-    sources, warnings = materialization.collect_materialization_sources()
-
-    assert len(sources) == 2
-    assert warnings == []
-    assert any(source.workflow_type == "group_task_child" for source in sources)
 
 
-def test_txt_submenu_runtime_uses_db_text_instead_of_txt(monkeypatch):
+def test_db_submenu_runtime_uses_db_text_instead_of_txt(monkeypatch):
     session = _session()
     _seed_row(
         session,
@@ -1536,28 +1494,26 @@ def test_txt_submenu_runtime_uses_db_text_instead_of_txt(monkeypatch):
         client_text="DB submenu text",
         parent_path="",
     )
+    _seed_row(session, button_key="menu-a|ticket|Submenu/Leaf A", button_label="Leaf A",
+              button_path="Submenu/Leaf A", parent_path="Submenu")
     config, refs = _txt_submenu_config()
     sent = {}
 
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
         "menu-a|submenu|Submenu": db.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
     })
     monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
     monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"chat_id": chat_id, "text": text, "reply_markup": reply_markup}) or sent)
 
-    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="menu-a|submenu|Submenu")
 
     assert sent["text"] == "DB submenu text"
     assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
-    assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "btn:child-a"
+    assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "btnid:" + session.query(BotButtonSetting).filter_by(button_key="menu-a|ticket|Submenu/Leaf A").one().id
     assert "style" not in sent["reply_markup"]["inline_keyboard"][0][0]
 
 
-def test_txt_backed_runtime_adds_saved_button_style(monkeypatch):
+def test_db_runtime_adds_saved_button_style(monkeypatch):
     session = _session()
     submenu_row = _seed_row(
         session,
@@ -1582,10 +1538,6 @@ def test_txt_backed_runtime_adds_saved_button_style(monkeypatch):
     config, refs = _txt_submenu_config()
     sent = {}
 
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
         submenu_row.button_key: submenu_row,
         child_row.button_key: child_row,
@@ -1593,15 +1545,15 @@ def test_txt_backed_runtime_adds_saved_button_style(monkeypatch):
     monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
     monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
 
-    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="menu-a|submenu|Submenu")
 
     button = sent["reply_markup"]["inline_keyboard"][0][0]
     assert button["text"] == "Leaf A"
-    assert button["callback_data"] == "btn:child-a"
+    assert button["callback_data"] == "btnid:" + session.query(BotButtonSetting).filter_by(button_key="menu-a|ticket|Submenu/Leaf A").one().id
     assert button["style"] == "success"
 
 
-def test_txt_submenu_runtime_empty_db_text_does_not_fallback_to_txt(monkeypatch):
+def test_db_submenu_runtime_empty_db_text_does_not_fallback_to_txt(monkeypatch):
     session = _session()
     _seed_row(
         session,
@@ -1616,38 +1568,30 @@ def test_txt_submenu_runtime_empty_db_text_does_not_fallback_to_txt(monkeypatch)
     config, refs = _txt_submenu_config()
     sent = {}
 
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {
         "menu-a|submenu|Submenu": db.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|submenu|Submenu").one()
     })
     monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
     monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
 
-    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="menu-a|submenu|Submenu")
 
     assert sent["text"] == "Выберите тип проблемы"
 
 
-def test_txt_submenu_runtime_without_db_row_does_not_fallback_to_txt(monkeypatch):
+def test_db_submenu_runtime_without_db_row_does_not_fallback_to_txt(monkeypatch):
     session = _session()
     config, refs = _txt_submenu_config()
     sent = {}
 
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: ("menu-a", config.menus["submenu-key"]) if menu_key == "submenu-key" else None)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {})
     monkeypatch.setattr(telegram_router, "_submenu_path_by_key_or_db", lambda db, menu_name, menu_key: "Submenu")
     monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
 
-    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="submenu-key")
+    telegram_router._send_problem_menu_with_visibility(session, "chat-1", menu_name="menu-a", menu_key="menu-a|submenu|Submenu")
 
-    assert sent["text"] == "Выберите тип проблемы"
-    assert sent["reply_markup"]["inline_keyboard"][0][0]["text"] == "Leaf A"
+    assert "больше недоступна" in sent["text"]
+    assert sent["reply_markup"] is None
 
 
 @pytest.mark.parametrize("button_style", ["primary", "success", "danger"])
@@ -1837,12 +1781,9 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
         menus={"root": MenuSpec(key="root", title="menu-a", rows=((source.key,),))},
         buttons={source.key: source}, root_menu_key="root",
     )
-    _patch_layout_config(monkeypatch, config, refs)
+    _patch_layout_config(monkeypatch, config, refs, session)
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
     monkeypatch.setattr(settings_bot_button_items, "_list_available_button_files", lambda: [])
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: callback_kind == "db")
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu: refs)
-    monkeypatch.setattr(telegram_router, "find_button", lambda button_key: source if button_key == source.key else None)
 
     result = _save_button_instruction(session, {"instruction_text": "Saved instruction"}, button_key=key, workflow_type=new_type)
     assert result["ok"] is True
@@ -1870,12 +1811,12 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     monkeypatch.setattr(telegram_router, "schedule_avatar_refresh", lambda *args: None)
     monkeypatch.setattr(telegram_router, "_remove_menu_keyboard", lambda *args, **kwargs: None)
     callback_data = {
-        "source": "btn:txt-a", "technical": f"btn:{key}",
+        "source": "btn:" + hashlib.sha1(b"menu-a|A").hexdigest()[:12], "technical": f"btn:{key}",
         "id": f"btnid:{row.id}", "db": f"btn:{key}",
     }[callback_kind]
     button = telegram_router._button_from_callback(session, callback_data, "menu-a")
     assert button.kind == new_type
-    assert button.key == (source.key if callback_kind == "source" else key)
+    assert button.key == key
     response = telegram_router._process_problem_type_callback(
         session, {"update_id": 1},
         {"data": callback_data, "message": {"chat": {"id": 456}}, "from": {"id": 123}},
@@ -1969,8 +1910,6 @@ def test_structure_build_keeps_saved_editable_workflow_type_override(monkeypatch
         ),
     )
     monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
 
     structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
@@ -2340,7 +2279,7 @@ def test_delete_submenu_archives_descendants(monkeypatch):
     assert child.is_archived is True
 
 
-def test_txt_submenu_can_be_deleted_via_backend_and_archives_recursive_descendants(monkeypatch):
+def test_db_submenu_can_be_deleted_via_backend_and_archives_recursive_descendants(monkeypatch):
     session = _session()
     parent = _seed_row(
         session,
@@ -2398,7 +2337,7 @@ def test_txt_submenu_can_be_deleted_via_backend_and_archives_recursive_descendan
     assert result["deleted"] is True
 
 
-def test_deleted_txt_submenu_disappears_from_telegram_runtime_but_txt_config_stays(monkeypatch):
+def test_deleted_db_submenu_disappears_from_telegram_runtime_but_txt_config_stays(monkeypatch):
     session = _session()
     parent = _seed_row(
         session,
@@ -2414,10 +2353,6 @@ def test_deleted_txt_submenu_disappears_from_telegram_runtime_but_txt_config_sta
     config, refs = _txt_submenu_config()
     sent = {}
 
-    monkeypatch.setattr(telegram_router, "_use_db_buttons", lambda: False)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "find_menu", lambda menu_key: None)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
     monkeypatch.setattr(telegram_router, "_button_settings_map", lambda db, menu_name: {parent.button_key: parent})
     monkeypatch.setattr(telegram_router, "send_message", lambda chat_id, text, reply_markup=None, **kwargs: sent.update({"text": text, "reply_markup": reply_markup}) or sent)
 
@@ -2428,7 +2363,7 @@ def test_deleted_txt_submenu_disappears_from_telegram_runtime_but_txt_config_sta
     assert sent["reply_markup"]["inline_keyboard"] == []
 
 
-def test_deleted_txt_submenu_disappears_from_active_settings_tree_recursively(monkeypatch):
+def test_deleted_db_submenu_disappears_from_active_settings_tree_recursively(monkeypatch):
     session = _session()
     config, refs = _nested_txt_submenu_config()
     parent = _seed_row(
@@ -2480,8 +2415,6 @@ def test_deleted_txt_submenu_disappears_from_active_settings_tree_recursively(mo
     )
 
     monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
 
     structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
     labels = []
@@ -2492,7 +2425,7 @@ def test_deleted_txt_submenu_disappears_from_active_settings_tree_recursively(mo
                 labels.append(node.get("label"))
                 walk(node.get("children_rows", []))
 
-    walk(structure.tree_rows)
+    walk([row for row in structure.tree_rows if row["buttons"][0]["kind"] != "removed_folder"])
 
     assert config.menus["submenu-key-a"].text == "TXT submenu text"
     assert "Submenu" not in labels
@@ -2501,7 +2434,7 @@ def test_deleted_txt_submenu_disappears_from_active_settings_tree_recursively(mo
     assert "Leaf B" not in labels
 
 
-def test_txt_submenu_restore_restores_recursive_descendants(monkeypatch):
+def test_db_submenu_restore_restores_recursive_descendants(monkeypatch):
     session = _session()
     parent = _seed_row(
         session,
@@ -2563,15 +2496,14 @@ def test_db_created_group_task_child_survives_rebuild_archive_and_restore(monkey
             instruction_text=None,
         ),
     )
+    _seed_row(session, button_key="menu-a|group_task|Parent", workflow_type="group_task",
+              button_kind="group_parent", button_path="Parent", button_label="Parent", legacy_button_key="source-parent")
+    _seed_row(session, button_key="menu-a|group_task_child|Parent/Source child", workflow_type="group_task_child",
+              button_path="Parent/Source child", parent_path="Parent", button_label="Source child", legacy_button_key="source-child")
     admin = SimpleNamespace(id="admin-1", role="admin")
 
     monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
-    monkeypatch.setattr(telegram_router, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(telegram_router, "list_terminal_buttons", lambda menu_name: refs)
-    monkeypatch.setattr(telegram_router, "find_button", lambda key: source_parent if key == source_parent.key else (source_child if key == source_child.key else None))
 
     created = settings_bot_button_structure.create_bot_button_item(
         {
@@ -2697,20 +2629,6 @@ def test_group_task_child_creation_snapshots_suppress_client_answer_for_source_a
     session.add(parent)
     session.commit()
     monkeypatch.setattr(telegram_router, "_menu_name_for_ticket_client", lambda db, ticket: "menu-a")
-    monkeypatch.setattr(
-        telegram_router,
-        "list_terminal_buttons",
-        lambda menu_name: (
-            TerminalButtonRef(
-                source_button_key="source-child",
-                label="Source child",
-                workflow_type="group_task_child",
-                full_path="Parent/Source child",
-                technical_key=source_key,
-                instruction_text=None,
-            ),
-        ),
-    )
 
     source_child = ButtonSpec(key="source-child", label="Source child", kind="task")
     db_child = telegram_router._button_from_db_row(session, session.query(BotButtonSetting).filter(BotButtonSetting.button_key == db_key).one(), "menu-a")
@@ -2932,8 +2850,6 @@ def test_menu_types_list_excludes_system_menu_after_first_connection_materializa
         root_menu_key="root",
     )
     monkeypatch.setattr(settings_bot_menu_profiles, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_menu_profiles, "available_menu_names", lambda: ("menu-a", "menu-b"))
-    monkeypatch.setattr(settings_bot_menu_profiles, "load_button_config", lambda menu_name: config)
 
     items = settings_bot_menu_profiles.list_bot_button_menu_types(db=session, user=admin)
     menu_names = [item.menu_name for item in items]
@@ -2991,16 +2907,19 @@ def _layout_config():
     return config, refs
 
 
-def _patch_layout_config(monkeypatch, config, refs):
+def _patch_layout_config(monkeypatch, config, refs, session=None):
+    if session is not None:
+        for ref in refs:
+            if session.query(BotButtonSetting).filter_by(button_key=ref.technical_key).first() is None:
+                _seed_row(session, button_key=ref.technical_key, workflow_type=ref.workflow_type,
+                          button_path=ref.full_path, button_label=ref.label)
     monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
-    monkeypatch.setattr(settings_bot_button_structure, "load_button_config", lambda menu_name: config)
-    monkeypatch.setattr(settings_bot_button_structure, "list_terminal_buttons", lambda menu_name: refs)
 
 
 def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
     session = _session()
     config, refs = _layout_config()
-    _patch_layout_config(monkeypatch, config, refs)
+    _patch_layout_config(monkeypatch, config, refs, session)
     level_key = "menu-a|level|__root__"
 
     result = settings_bot_button_structure.save_bot_button_level_layout(
@@ -3027,7 +2946,7 @@ def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
 def test_bot_button_layout_rejects_unknown_duplicate_and_too_wide_rows(monkeypatch):
     session = _session()
     config, refs = _layout_config()
-    _patch_layout_config(monkeypatch, config, refs)
+    _patch_layout_config(monkeypatch, config, refs, session)
     level_key = "menu-a|level|__root__"
     cases = [
         ({"rows": [{"columns": 1, "button_keys": ["menu-a|ticket|Z"]}]}, "unknown_button_key"),
@@ -3059,7 +2978,7 @@ def test_bot_button_layout_rejects_unknown_duplicate_and_too_wide_rows(monkeypat
 def test_bot_button_layout_normalizes_empty_rows(monkeypatch):
     session = _session()
     config, refs = _layout_config()
-    _patch_layout_config(monkeypatch, config, refs)
+    _patch_layout_config(monkeypatch, config, refs, session)
 
     result = settings_bot_button_structure.save_bot_button_level_layout(
         menu_type="menu-a",

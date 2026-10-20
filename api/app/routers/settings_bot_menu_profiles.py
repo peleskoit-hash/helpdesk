@@ -10,7 +10,7 @@ from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, BotMenuProfile, ClientCardFieldConfig, ClientProfile
 from ..schemas import BotButtonMenuTypeOut, BotMenuCreatePayload, BotMenuDestinationPayload
-from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, available_menu_names, load_button_config
+from ..services.button_config import BASIC_MENU_NAME, available_menu_names
 from ..services.system_tickets import is_system_menu_type
 
 
@@ -54,7 +54,7 @@ def _destination_options(db: Session) -> list[str]:
         if row[0]
     )
     values.extend(DEFAULT_DESTINATION_VALUES)
-    values.extend(name for name in available_menu_names() if name != BASIC_MENU_NAME)
+    values.extend(name for name in available_menu_names(db) if name != BASIC_MENU_NAME)
     result = []
     seen = set()
     for raw in values:
@@ -109,27 +109,6 @@ def _ensure_menu_profile(db: Session, menu_type: str, *, display_name: str | Non
     return row
 
 
-def _bootstrap_menu_profiles(db: Session) -> None:
-    for menu_name in available_menu_names():
-        profile = _ensure_menu_profile(db, menu_name, is_fallback=(menu_name == BASIC_MENU_NAME))
-        if menu_name == BASIC_MENU_NAME:
-            continue
-        exists = db.execute(
-            select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == menu_name)
-        ).scalar_one_or_none()
-        if exists is None:
-            db.add(
-                BotMenuDestinationBinding(
-                    id=str(uuid.uuid4()),
-                    destination_value=menu_name,
-                    menu_type=profile.menu_type,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
-                )
-            )
-    db.flush()
-
-
 def _unique_menu_type(db: Session, display_name: str) -> str:
     base = re.sub(r"\s+", " ", display_name.strip()) or "Меню"
     candidate = base
@@ -141,93 +120,21 @@ def _unique_menu_type(db: Session, display_name: str) -> str:
 
 
 @router.get("/bot-buttons/menu-types", response_model=list[BotButtonMenuTypeOut])
-def list_bot_button_menu_types(
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
+def list_bot_button_menu_types(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _require_admin(user)
-    _bootstrap_menu_profiles(db)
-    db.commit()
     profiles = _menu_profile_map(db)
     bindings = _menu_bindings_map(db)
-    result: list[BotButtonMenuTypeOut] = []
-    menu_names: list[str] = []
-    seen_menu_names: set[str] = set()
-    for name in available_menu_names():
-        if name and not is_system_menu_type(name) and name not in seen_menu_names:
-            menu_names.append(name)
-            seen_menu_names.add(name)
-    extra_names = set(profiles.keys())
-    extra_names.update(
-        row[0]
-        for row in db.execute(select(BotButtonSetting.menu_type).distinct()).all()
-        if row[0] and not is_system_menu_type(row[0])
-    )
-    for name in sorted(extra_names):
-        if name and not is_system_menu_type(name) and name not in seen_menu_names:
-            menu_names.append(name)
-            seen_menu_names.add(name)
-    for menu_name in menu_names:
-        if is_system_menu_type(menu_name):
-            continue
+    result = []
+    for menu_name in available_menu_names(db):
         profile = profiles.get(menu_name)
-        if profile is not None and not bool(profile.is_active):
-            continue
-        display_name = profile.display_name if profile is not None else menu_name
-        source_file = f"{menu_name}.txt"
-        if menu_name == BASIC_MENU_NAME:
-            source_file = "built-in"
-        try:
-            config = load_button_config(menu_name)
-            result.append(
-                BotButtonMenuTypeOut(
-                    menu_name=menu_name,
-                    display_name=display_name,
-                    destinations=bindings.get(menu_name, []),
-                    source_file=source_file,
-                    ok=True,
-                    buttons_count=len(config.buttons),
-                    menus_count=len(config.menus),
-                )
-            )
-        except FileNotFoundError:
-            if profile is not None:
-                buttons_count = db.execute(
-                    select(BotButtonSetting.id).where(BotButtonSetting.menu_type == menu_name)
-                ).all()
-                result.append(
-                    BotButtonMenuTypeOut(
-                        menu_name=menu_name,
-                        display_name=display_name,
-                        destinations=bindings.get(menu_name, []),
-                        source_file="DB",
-                        ok=True,
-                        buttons_count=len(buttons_count),
-                        menus_count=0,
-                    )
-                )
-                continue
-            result.append(
-                BotButtonMenuTypeOut(
-                    menu_name=menu_name,
-                    display_name=display_name,
-                    destinations=bindings.get(menu_name, []),
-                    source_file=source_file,
-                    ok=False,
-                    error=f"Файл не найден: {BUTTON_CONFIG_DIR / source_file}",
-                )
-            )
-        except Exception as exc:  # pragma: no cover
-            result.append(
-                BotButtonMenuTypeOut(
-                    menu_name=menu_name,
-                    display_name=display_name,
-                    destinations=bindings.get(menu_name, []),
-                    source_file=source_file,
-                    ok=False,
-                    error=f"Ошибка парсинга: {exc}",
-                )
-            )
+        rows = db.execute(select(BotButtonSetting).where(
+            BotButtonSetting.menu_type == menu_name, BotButtonSetting.currently_present.is_(True),
+            BotButtonSetting.is_archived.is_(False),
+        )).scalars().all()
+        result.append(BotButtonMenuTypeOut(menu_name=menu_name,
+            display_name=profile.display_name if profile else menu_name, destinations=bindings.get(menu_name, []),
+            source_file="DB", ok=True, buttons_count=len(rows),
+            menus_count=1 + sum(row.button_kind == "section" for row in rows)))
     return result
 
 
