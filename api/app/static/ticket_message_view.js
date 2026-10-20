@@ -34,6 +34,11 @@
   }
 
   function messageStatusNote(state, card, message) {
+    if (["agent", "internal"].includes(message.message_type)
+        && ["edited", "deleted"].includes(message.message_status)
+        && (message.status_note || "").trim()) {
+      return message.status_note;
+    }
     if (message.message_status === "edited") {
       return `${messageAuthorLabel(state, card, message)} исправил сообщение`;
     }
@@ -44,7 +49,9 @@
   }
 
   function canEditAgentMessage(state, message) {
-    return state.role !== "chiki_piki" && message.message_type === "agent" && message.message_status !== "deleted" && state.card?.status !== "closed";
+    const canEdit = state.role === "admin" || (["agent", "trainee"].includes(state.role)
+      && Boolean(message.author_user_id) && message.author_user_id === state.userId);
+    return canEdit && ["agent", "internal"].includes(message.message_type) && message.message_status !== "deleted" && state.card?.status !== "closed";
   }
 
   function hideMessageContextMenu(ctx) {
@@ -193,7 +200,10 @@
 
   async function deleteAgentMessage(ctx, message) {
     const { state, api, setStatus, loadCard, showError } = ctx;
-    if (!window.confirm("Пометить сообщение удалённым и удалить его в Telegram, если возможно?")) return;
+    const confirmation = message.message_type === "internal"
+      ? "Удалить внутренний комментарий?"
+      : "Пометить сообщение удалённым и удалить его в Telegram, если возможно?";
+    if (!window.confirm(confirmation)) return;
     try {
       setStatus("Удаляю сообщение...");
       await api(`/api/v1/tickets/${state.ticketId}/messages/${message.id}`, { method: "DELETE" });
@@ -232,12 +242,12 @@
     const menu = el.messageContextMenu;
     menu.innerHTML = "";
     addContextMenuItem(ctx, menu, "Копировать", () => copyMessageText(ctx, message));
-    if (state.role !== "chiki_piki") {
+    if (state.role !== "chiki_piki" && message.message_type !== "internal") {
       addContextMenuItem(ctx, menu, "Цитировать", () => quoteMessage(message));
     }
 
     if (canEditAgentMessage(state, message)) {
-      addContextMenuItem(ctx, menu, "Исправить", () => editAgentMessage(ctx, message));
+      addContextMenuItem(ctx, menu, "Редактировать", () => editAgentMessage(ctx, message));
       addContextMenuItem(ctx, menu, "Удалить", () => deleteAgentMessage(ctx, message));
     }
 
@@ -252,11 +262,13 @@
   function renderMessages(ctx, card, lastSignature, quoteMessageId) {
     const { state, el, fmtMessageStamp, linkifyText, isStickerOnlyMessage, messageRenderSignature, cleanupAttachmentObjectUrls, cleanupStickerResources, renderAttachments } = ctx;
 
+    const visibleMessages = (card.messages || []).filter((message) =>
+      message.message_type !== "internal" || message.message_status !== "deleted");
     const wasNearBottom = el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 80;
-    const currentSignature = messageRenderSignature(card.messages || []);
+    const currentSignature = messageRenderSignature(visibleMessages);
     if (currentSignature !== lastSignature) {
       const currentAttachmentIds = new Set();
-      for (const message of card.messages || []) {
+      for (const message of visibleMessages) {
         for (const attachment of message.attachments || []) {
           if (attachment?.id) currentAttachmentIds.add(attachment.id);
         }
@@ -265,7 +277,7 @@
       cleanupStickerResources(currentAttachmentIds);
 
       el.messages.innerHTML = "";
-      let orderedMessages = card.messages || [];
+      let orderedMessages = visibleMessages;
       const initialMessages = orderedMessages.filter((message) => message.is_initial_task_message && message.message_type === "client");
       if (initialMessages.some((message) => (message.attachments || []).length)) {
         const assignment = orderedMessages.find((message) => message.is_initial_task_assignment && message.message_type === "system");
@@ -339,7 +351,7 @@
       cleanupStickerResources(currentAttachmentIds);
     }
 
-    const quoteMissing = Boolean(quoteMessageId && !(card.messages || []).some((m) => m.id === quoteMessageId));
+    const quoteMissing = Boolean(quoteMessageId && !visibleMessages.some((m) => m.id === quoteMessageId && m.message_type !== "internal"));
     return {
       signature: currentSignature,
       quoteMissing,

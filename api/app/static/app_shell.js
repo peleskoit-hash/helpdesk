@@ -86,7 +86,7 @@
         "/static/ticket_client_card.js?v=20261018-web-empty-autofill",
         "/static/ticket_composer.js?v=20261010b",
         "/static/ticket_controls.js?v=20261013a",
-        "/static/ticket_message_view.js?v=20260810b",
+        "/static/ticket_message_view.js?v=20261020-comments",
         "/static/ticket.js?v=20261018-avatar",
       ],
     },

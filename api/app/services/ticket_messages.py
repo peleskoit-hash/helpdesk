@@ -327,6 +327,8 @@ async def reply_to_ticket(
     if quote_message_id:
         quoted = db.get(TicketMessage, quote_message_id)
         if quoted is not None and quoted.ticket_id == ticket.id:
+            if not is_internal_comment and quoted.message_type == MessageType.INTERNAL.value:
+                _error(409, "internal_quote_forbidden", "Нельзя цитировать внутренний комментарий в ответе клиенту")
             quote_telegram_message_id = quoted.telegram_message_id
 
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
@@ -606,11 +608,14 @@ def edit_agent_message(
     message = db.get(TicketMessage, message_id)
     if message is None or message.ticket_id != ticket.id:
         _error(404, "message_not_found", "Сообщение не найдено")
-    if message.message_type != MessageType.AGENT.value:
+    if message.message_type not in {MessageType.AGENT.value, MessageType.INTERNAL.value}:
         _error(409, "only_agent_message_edit", "Редактировать можно только сообщения сотрудника")
+    if user.role != "admin" and (not message.author_user_id or message.author_user_id != user.id):
+        _error(403, "message_author_required", "Можно редактировать только свои сообщения")
     if message.message_status == "deleted":
         _error(409, "message_deleted", "Удалённое сообщение нельзя редактировать")
-    if ticket.channel != "web" and not message.telegram_message_id:
+    is_internal_comment = message.message_type == MessageType.INTERNAL.value
+    if not is_internal_comment and ticket.channel != "web" and not message.telegram_message_id:
         _error(
             409,
             "telegram_message_id_missing",
@@ -623,7 +628,7 @@ def edit_agent_message(
         .order_by(asc(TicketAttachment.created_at))
     ).scalars().all()
 
-    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id) if ticket.channel != "web" else None
+    external_chat_id = telegram_chat_id_by_client_id(db, ticket.client_id) if not is_internal_comment and ticket.channel != "web" else None
     if external_chat_id:
         try:
             if _message_uses_single_attachment_caption(message, attachments):
@@ -659,8 +664,18 @@ def delete_agent_message(
     message = db.get(TicketMessage, message_id)
     if message is None or message.ticket_id != ticket.id:
         _error(404, "message_not_found", "Сообщение не найдено")
-    if message.message_type != MessageType.AGENT.value:
+    if message.message_type not in {MessageType.AGENT.value, MessageType.INTERNAL.value}:
         _error(409, "only_agent_message_delete", "Удалять можно только сообщения сотрудника")
+    if user.role != "admin" and (not message.author_user_id or message.author_user_id != user.id):
+        _error(403, "message_author_required", "Можно удалять только свои сообщения")
+    if message.message_type == MessageType.INTERNAL.value:
+        if message.message_status == "deleted":
+            _error(409, "message_deleted", "Комментарий уже удалён")
+        message.message_status = "deleted"
+        message.status_note = f"{actor_display_name(db, user)} удалил сообщение"
+        ticket.updated_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True}
     already_deleted = message.message_status == "deleted"
     if already_deleted and ticket.workflow_type != TicketWorkflowType.TASK.value:
         return {"ok": True}

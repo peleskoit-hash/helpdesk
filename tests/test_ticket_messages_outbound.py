@@ -301,7 +301,8 @@ def test_text_channel_preserves_access_checks(text_channel_case, operation, reas
 def test_text_channel_edit_requires_telegram_id_only_for_telegram(text_channel_case, telegram_id):
     case = text_channel_case
     message = TicketMessage(id=str(uuid.uuid4()), ticket_id=case.ticket.id,
-                            message_type=MessageType.AGENT.value, body="Original", telegram_message_id=telegram_id)
+                            message_type=MessageType.AGENT.value, body="Original", telegram_message_id=telegram_id,
+                            author_user_id=case.user.id)
     case.db.add(message)
     case.db.commit()
     if case.ticket.channel == "telegram" and telegram_id is None:
@@ -1358,11 +1359,13 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261018c"
+    app_shell_version = "20261020-comments"
+    ticket_message_view_version = "20261020-comments"
     ticket_static_version = "20261010b"
-    ticket_attachments_version = "20260828a"
+    ticket_attachments_template_version = "20261020-initial-order"
+    ticket_attachments_shell_version = "20261018-avatar"
     ticket_controls_version = "20261013a"
-    ticket_page_version = "20261018b"
+    ticket_page_version = "20261018-avatar"
     ticket_styles_version = "20261017a"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
@@ -1384,10 +1387,12 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert all(f"/static/app_shell.js?v={app_shell_version}" in source for source in app_shell_entrypoints.values())
     assert all("/static/app_shell.js?v=20260821b" not in source for source in app_shell_entrypoints.values())
     assert all("/static/app_shell.js?v=20260826a" not in source for source in app_shell_entrypoints.values())
+    assert f"/static/ticket_message_view.js?v={ticket_message_view_version}" in template
+    assert f"/static/ticket_message_view.js?v={ticket_message_view_version}" in app_shell
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in template
     assert f"/static/ticket_composer.js?v={ticket_static_version}" in app_shell
-    assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in template
-    assert f"/static/ticket_attachments.js?v={ticket_attachments_version}" in app_shell
+    assert f"/static/ticket_attachments.js?v={ticket_attachments_template_version}" in template
+    assert f"/static/ticket_attachments.js?v={ticket_attachments_shell_version}" in app_shell
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in template
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in app_shell
     assert f'/static/styles.css?v={ticket_styles_version}' in template
