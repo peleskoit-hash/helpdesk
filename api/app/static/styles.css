@@ -3277,6 +3277,34 @@ button.action {
   white-space: pre-wrap;
 }
 
+.message-quote {
+  padding: 5px 8px;
+  margin-bottom: 5px;
+  min-width: 0;
+}
+
+.quote-thumbnail-host {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  vertical-align: middle;
+  overflow: hidden;
+  border-radius: 4px;
+  font-size: 9px;
+}
+
+.quote-thumbnail,
+.quote-thumbnail-host svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.quote-photo-count {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
 .quote-clear {
   position: absolute;
   top: 6px;

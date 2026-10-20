@@ -60,6 +60,8 @@
       status_note: message.status_note || "",
       created_at: message.created_at || "",
       replaced_message_id: message.replaced_message_id || "",
+      quote_message_id: message.quote_message_id || "",
+      author_name: message.author_name || "",
       attachments: (message.attachments || []).map((attachment) => ({
         id: attachment.id,
         mime_type: attachment.mime_type || "",
@@ -93,7 +95,7 @@
 
   function cleanupStickerResources(currentAttachmentIds = new Set()) {
     for (const [attachmentId, value] of stickerLottieInstances.entries()) {
-      const stale = !currentAttachmentIds.has(attachmentId) || !value?.container?.isConnected;
+      const stale = (currentAttachmentIds && !currentAttachmentIds.has(value.attachmentId || attachmentId)) || !value?.container?.isConnected;
       if (!stale) continue;
       try {
         value.animation?.destroy?.();
@@ -103,7 +105,7 @@
       stickerLottieInstances.delete(attachmentId);
     }
     for (const [attachmentId, video] of stickerVideoElements.entries()) {
-      const stale = !currentAttachmentIds.has(attachmentId) || !video?.isConnected;
+      const stale = (currentAttachmentIds && !currentAttachmentIds.has(video.dataset?.attachmentId || attachmentId)) || !video?.isConnected;
       if (!stale) continue;
       try {
         video.pause();
@@ -200,9 +202,10 @@
     }
   }
 
-  async function renderTgsStickerInline(attachment, container) {
+  async function renderTgsStickerInline(attachment, container, thumbnail = false) {
     await ensureStickerDeps();
-    const existing = stickerLottieInstances.get(attachment.id);
+    const resourceKey = thumbnail ? container : attachment.id;
+    const existing = stickerLottieInstances.get(resourceKey);
     if (existing && existing.container === container) return;
     if (existing && existing.container !== container) {
       try {
@@ -210,7 +213,7 @@
       } catch {
         // noop
       }
-      stickerLottieInstances.delete(attachment.id);
+      stickerLottieInstances.delete(resourceKey);
     }
 
     let animationData = stickerAnimationDataCache.get(attachment.id);
@@ -223,15 +226,42 @@
       stickerAnimationDataCache.set(attachment.id, animationData);
     }
 
+    if (thumbnail && !container.isConnected) return;
     container.innerHTML = "";
     const animation = window.lottie.loadAnimation({
       container,
       renderer: "svg",
-      loop: true,
-      autoplay: true,
-      animationData,
+      loop: !thumbnail,
+      autoplay: !thumbnail,
+      animationData: thumbnail ? JSON.parse(JSON.stringify(animationData)) : animationData,
     });
-    stickerLottieInstances.set(attachment.id, { container, animation });
+    stickerLottieInstances.set(resourceKey, { attachmentId: attachment.id, container, animation });
+  }
+
+  function renderQuoteThumbnail(attachment, container) {
+    const unavailable = () => {
+      if (container.isConnected) container.textContent = "Миниатюра недоступна";
+    };
+    if (isTgsSticker(attachment)) {
+      renderTgsStickerInline(attachment, container, true).catch(unavailable);
+      return;
+    }
+    const media = document.createElement(isVideoSticker(attachment) ? "video" : "img");
+    media.className = "quote-thumbnail";
+    if (isVideoSticker(attachment)) {
+      media.muted = true;
+      media.playsInline = true;
+      media.preload = "auto";
+      media.dataset.attachmentId = attachment.id;
+      stickerVideoElements.set(media, media);
+    } else {
+      media.alt = "Миниатюра цитаты";
+    }
+    media.addEventListener("error", unavailable, { once: true });
+    container.appendChild(media);
+    getAttachmentObjectUrl(attachment).then((url) => {
+      if (media.isConnected) media.src = url;
+    }).catch(unavailable);
   }
 
   function ensureImagePreviewModal(ctx) {
@@ -516,6 +546,7 @@
   }
 
   global.TicketAttachments = {
+    renderQuoteThumbnail,
     openClientAvatarPreview,
     renderAttachments,
     cleanupAttachmentObjectUrls,

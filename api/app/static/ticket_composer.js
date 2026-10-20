@@ -210,14 +210,14 @@
   function refreshComposerActions(ctx) {
     const { el } = ctx;
     const quoted = quotedMessage(ctx);
-    if (quoted) {
-      el.quotePreviewAuthor.textContent = ctx.messageAuthorLabel(quoted);
-      el.quotePreviewText.textContent = quoted.body || "";
+    if (ctx.state.quoteMessageId) {
+      global.TicketMessageView.renderQuote(el.quotePreviewAuthor, el.quotePreviewText, quoted, ctx.messageAuthorLabel);
       el.quotePreview.classList.remove("hidden");
     } else {
       el.quotePreview.classList.add("hidden");
       el.quotePreviewAuthor.textContent = "";
       el.quotePreviewText.textContent = "";
+      global.TicketAttachments?.cleanupStickerResources?.(null);
     }
   }
 

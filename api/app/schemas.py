@@ -139,6 +139,7 @@ class TicketMessageOut(BaseModel):
     message_status: str = "normal"
     status_note: str | None = None
     replaced_message_id: str | None = None
+    quote_message_id: str | None = None
     created_at: datetime
     attachments: list[TicketAttachmentOut] = Field(default_factory=list)
 

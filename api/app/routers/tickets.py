@@ -1182,6 +1182,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
                 "message_status": m.message_status or "normal",
                 "status_note": m.status_note,
                 "replaced_message_id": m.replaced_message_id,
+                "quote_message_id": m.quote_message_id,
                 "created_at": m.created_at,
                 "attachments": [_attachment_out(t.id, attachment) for attachment in attachments_by_message.get(m.id, [])],
             }

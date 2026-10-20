@@ -54,6 +54,47 @@
     return canEdit && ["agent", "internal"].includes(message.message_type) && message.message_status !== "deleted" && state.card?.status !== "closed";
   }
 
+  function renderQuote(author, content, message, authorLabel) {
+    author.textContent = "";
+    content.textContent = "";
+    global.TicketAttachments?.cleanupStickerResources?.(null);
+    if (!message || message.message_type === "internal" || message.message_status === "deleted") {
+      content.textContent = "Исходное сообщение недоступно";
+      return;
+    }
+    author.textContent = authorLabel(message);
+    const body = (message.body || "").trim();
+    if (body) {
+      const characters = Array.from(body);
+      content.textContent = characters.slice(0, 100).join("") + (characters.length > 100 ? "…" : "");
+      return;
+    }
+    const attachments = message.attachments || [];
+    const first = attachments[0];
+    if (!first) {
+      content.textContent = "Сообщение без текста";
+      return;
+    }
+    const sticker = /sticker|webp|webm/i.test(first.mime_type || "") || /\.(webp|webm|tgs)$/i.test(first.original_filename || "");
+    if (first.is_image || sticker) {
+      const thumbnail = document.createElement("span");
+      thumbnail.className = "quote-thumbnail-host";
+      content.appendChild(thumbnail);
+      global.TicketAttachments.renderQuoteThumbnail(first, thumbnail);
+      if (!sticker) {
+        const more = attachments.filter((attachment) => attachment.is_image).length - 1;
+        if (more > 0) {
+          const count = document.createElement("span");
+          count.className = "quote-photo-count";
+          count.textContent = `+${more}`;
+          content.appendChild(count);
+        }
+      }
+    } else {
+      content.textContent = first.original_filename || "Файл";
+    }
+  }
+
   function hideMessageContextMenu(ctx) {
     const { el } = ctx;
     if (!el.messageContextMenu) return;
@@ -315,6 +356,18 @@
         if (["client", "agent", "internal"].includes(m.message_type)) {
           div.addEventListener("contextmenu", (event) => showMessageContextMenu(ctx, event, m.sourceMessage || m));
         }
+        if (m.quote_message_id) {
+          const quote = document.createElement("div");
+          quote.className = "quote-preview message-quote";
+          const author = document.createElement("div");
+          author.className = "quote-preview-author";
+          const content = document.createElement("div");
+          content.className = "quote-preview-text";
+          quote.append(author, content);
+          div.appendChild(quote);
+          renderQuote(author, content, (card.messages || []).find((source) => source.id === m.quote_message_id),
+            (source) => messageAuthorLabel(state, card, source));
+        }
         if (!stickerOnly) {
           const headerEl = document.createElement("div");
           headerEl.className = "message-header";
@@ -360,6 +413,7 @@
   }
 
   global.TicketMessageView = {
+    renderQuote,
     renderMessages,
     showMessageContextMenu,
     hideMessageContextMenu,

@@ -1729,6 +1729,7 @@ def ensure_ticket_message_columns() -> None:
         "message_status": "VARCHAR(20)",
         "status_note": "VARCHAR(255)",
         "replaced_message_id": "VARCHAR(36)",
+        "quote_message_id": "VARCHAR(36)",
     }
 
     with engine.begin() as conn:

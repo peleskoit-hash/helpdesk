@@ -360,6 +360,7 @@ class TicketMessage(Base):
     message_status: Mapped[str] = mapped_column(String(20), default="normal")
     status_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
     replaced_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    quote_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     ticket: Mapped[Ticket] = relationship(back_populates="messages")

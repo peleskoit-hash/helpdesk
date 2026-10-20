@@ -185,6 +185,7 @@ def add_message(
     message_status: str = "normal",
     status_note: str | None = None,
     replaced_message_id: str | None = None,
+    quote_message_id: str | None = None,
 ) -> TicketMessage:
     if agent_visible is None:
         agent_visible = message_type != MessageType.SYSTEM
@@ -199,6 +200,7 @@ def add_message(
         message_status=message_status,
         status_note=status_note,
         replaced_message_id=replaced_message_id,
+        quote_message_id=quote_message_id,
     )
     db.add(msg)
     ticket.updated_at = datetime.utcnow()
@@ -324,12 +326,15 @@ async def reply_to_ticket(
         _mark_quick_action_used(ticket, quick_action)
 
     quote_telegram_message_id = None
+    saved_quote_message_id = None
     if quote_message_id:
         quoted = db.get(TicketMessage, quote_message_id)
         if quoted is not None and quoted.ticket_id == ticket.id:
             if not is_internal_comment and quoted.message_type == MessageType.INTERNAL.value:
                 _error(409, "internal_quote_forbidden", "Нельзя цитировать внутренний комментарий в ответе клиенту")
             quote_telegram_message_id = quoted.telegram_message_id
+            if not is_internal_comment:
+                saved_quote_message_id = quoted.id
 
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
     is_plain_ticket = workflow_type == TicketWorkflowType.TICKET.value
@@ -352,6 +357,7 @@ async def reply_to_ticket(
             body=text or "",
             author_user_id=user.id,
             telegram_message_id=None,
+            quote_message_id=saved_quote_message_id,
         )
 
         attachments: list[TicketAttachment] = []
@@ -457,6 +463,7 @@ async def reply_to_ticket(
         body=text or "",
         author_user_id=user.id,
         telegram_message_id=sent_message_id,
+        quote_message_id=saved_quote_message_id,
     )
 
     attachments: list[TicketAttachment] = []
