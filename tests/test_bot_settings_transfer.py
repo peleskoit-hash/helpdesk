@@ -381,3 +381,23 @@ def test_export_never_overwrites_an_existing_file(case, monkeypatch, tmp_path, c
     assert output.read_text() == "keep"
     assert not list(tmp_path.glob(".bot-settings-*"))
     assert "staff@example.invalid" not in capsys.readouterr().out
+
+
+
+def test_import_preserves_existing_db_legacy_key_after_type_change(case):
+    source = next(row for row in case.data["tables"][transfer.BUTTONS] if row["id"] == uid("dev-button-2"))
+    with Session(case.prod) as db:
+        target = db.get(BotButtonSetting, uid("prod-button-2"))
+        target.stable_button_id = source["stable_button_id"]
+        target.button_key = "menu-0|task|Folder/Leaf"
+        target.legacy_button_key = "menu-0|db|Folder/Leaf"
+        layout = db.get(BotMenuLevelLayout, uid("prod-layout-5"))
+        layout.layout_json = [{"columns": 1, "button_keys": [target.button_key]}]
+        db.commit()
+    report = run(case, apply=True)
+    assert report["applied"] and not report["conflicts"], report["conflicts"]
+    with Session(case.prod) as db:
+        target = db.get(BotButtonSetting, uid("prod-button-2"))
+        assert target.legacy_button_key == "menu-0|db|Folder/Leaf"
+        assert target.button_key == "menu-0|task|Folder/Leaf"
+        assert db.get(BotMenuLevelLayout, uid("prod-layout-5")).layout_json[0]["button_keys"] == ["menu-0|db|Folder/Inner", target.button_key]

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models import BotButtonSetting, BotMenuLevelLayout, BotMenuProfile, BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
 from .automatic_messages import render_automatic_message_text
-from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, ButtonSpec, build_level_layout_key
+from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, ButtonSpec, build_level_layout_key, resolve_button_row
 from .statistics_lifecycle import sync_work_interval_after_unfreeze
 from .ticket_messages import persist_client_delivery_failure
 from .telegram_text_format import strip_telegram_html
@@ -43,9 +43,7 @@ def menu_name_for_ticket_client(
     for key in (ticket.instruction_button_key, ticket.button_config_key):
         if not key:
             continue
-        row = db.execute(select(BotButtonSetting).where(
-            (BotButtonSetting.button_key == key) | (BotButtonSetting.legacy_button_key == key),
-        )).scalar_one_or_none()
+        row = resolve_button_row(db, key, include_inactive=True)
         if row is not None and row.menu_type in available:
             return row.menu_type
 
@@ -213,9 +211,11 @@ def get_problem_menu_for_ticket(
     config = _db_button_config(db, menu_name)
     root_menu = config.menus[config.root_menu_key]
     rows = button_tree_for_menu(config, root_menu)
+    current_key = (ticket.instruction_button_key or ticket.button_config_key or "").strip()
+    current = resolve_button_row(db, current_key, menu_name, include_inactive=True)
     rows = filter_problem_tree_excluding_current(
         rows,
-        exclude_key=(ticket.instruction_button_key or ticket.button_config_key or "").strip() or None,
+        exclude_key=current.button_key if current else current_key or None,
         exclude_label=(ticket.subject or "").strip() or None,
     )
     return {
@@ -254,7 +254,8 @@ def apply_wrong_problem(
         get_or_create_client_profile_fn=get_or_create_client_profile_fn,
     )
     config = _db_button_config(db, menu_name)
-    button = config.buttons.get(payload.button_key)
+    target = resolve_button_row(db, payload.button_key, menu_name)
+    button = config.buttons.get(target.button_key) if target is not None else None
     if button is None:
         _error(404, "button_not_found", "Кнопка меню не найдена")
     if button.kind == "submenu":

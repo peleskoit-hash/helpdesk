@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
@@ -24,7 +25,8 @@ from ..services.button_automation_types import (
     normalize_automation_type,
     normalize_workflow_type,
 )
-from ..services.button_config import BUTTON_CONFIG_DIR
+from ..services.button_config import BUTTON_CONFIG_DIR, resolve_button_row
+from ..services.bot_button_keys import change_button_workflow_key, lock_button_keys, check_button_key_collisions
 from ..services.telegram_automation import get_automation_registry
 from ..services.system_tickets import (
     FEEDBACK_SYSTEM_BUTTONS,
@@ -666,7 +668,7 @@ def get_bot_button_item(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
-    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+    row = resolve_button_row(db, button_key, include_inactive=True, strict=True)
     automation_registry = get_automation_registry()
     db_automation_key = (row.automation_key or "").strip() if row is not None else ""
     automation_type = automation_type_from_key(db_automation_key)
@@ -929,13 +931,18 @@ def save_bot_button_instruction(
     conditional_catalog = _build_conditional_field_catalog(db, menu_type=menu_type)
     if payload_conditional is not None:
         normalized_conditional = _normalize_conditional_rules(payload_conditional, available_files, conditional_catalog)
-    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+    lock_button_keys(db)
+    row = resolve_button_row(db, button_key, include_inactive=True, strict=True)
     now = datetime.utcnow()
     workflow_type_changed = False
     if row is not None:
         effective_workflow_type = _validate_existing_button_workflow_transition(row, requested_workflow_type)
         is_submenu_request = effective_workflow_type == "submenu"
         workflow_type_changed = normalize_workflow_type(row.workflow_type) != normalize_workflow_type(effective_workflow_type)
+        if workflow_type_changed and effective_workflow_type in EDITABLE_EXISTING_WORKFLOW_TYPES:
+            if menu_type != row.menu_type or button_path != row.button_path:
+                _error(409, "button_identity_changed", "Нельзя одновременно менять путь и тип кнопки")
+            change_button_workflow_key(db, row, effective_workflow_type)
     if row is None:
         row = BotButtonSetting(
             id=str(uuid.uuid4()),
@@ -1001,7 +1008,8 @@ def save_bot_button_instruction(
                 row.button_label = button_label
             elif not (row.label_override or "").strip():
                 _error(422, "label_override_required", "Название в боте не может быть пустым")
-        row.instruction_text = text_value
+        if "instruction_text" in fields_set:
+            row.instruction_text = text_value
         if payload.client_text is not None:
             row.client_text = client_text_value
         if payload.client_text_overridden is not None:
@@ -1070,11 +1078,17 @@ def save_bot_button_instruction(
             if not row.visibility_overridden:
                 row.is_enabled = True
         row.updated_at = now
-    db.commit()
+    check_button_key_collisions(db, row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _error(409, "button_key_collision", "Ключ кнопки уже занят")
     return {
         "ok": True,
-        "button_key": button_key,
-        "has_instruction": bool(text_value),
+        "button_key": row.button_key,
+        "workflow_type": row.workflow_type,
+        "has_instruction": bool(row.instruction_text),
         "client_text": row.client_text,
         "client_text_overridden": bool(row.client_text_overridden),
         "system_text_overridden": bool(row.system_text_overridden),
@@ -1112,7 +1126,7 @@ def delete_bot_button_setting(
     _require_admin(user)
     if button_key == FIRST_CONNECTION_BUTTON_KEY:
         _error(422, "system_button_not_deletable", "System ticket cannot be deleted through regular bot button endpoint")
-    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+    row = resolve_button_row(db, button_key, include_inactive=True, strict=True)
     if row is None:
         return {"ok": True, "deleted": False}
     if hard:
@@ -1153,7 +1167,7 @@ def restore_bot_button_setting(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
-    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+    row = resolve_button_row(db, button_key, include_inactive=True, strict=True)
     if row is None:
         _error(404, "button_setting_not_found", "Запись кнопки не найдена")
     row_kind = (row.button_kind or "").strip().lower()

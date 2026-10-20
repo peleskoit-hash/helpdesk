@@ -21,6 +21,7 @@ from ..schemas import (
     ClientCardFieldConfigOut,
 )
 from ..services.telegram_automation import get_automation_registry
+from ..services.button_config import resolve_button_row
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -113,7 +114,7 @@ def rebind_bot_button_setting(
     if old_button_key == new_button_key:
         return {"ok": True, "moved": False, "reason": "same_key"}
 
-    source = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == old_button_key)).scalar_one_or_none()
+    source = resolve_button_row(db, old_button_key, include_inactive=True, strict=True)
     if source is None:
         _error(404, "button_setting_not_found", "Исходная запись кнопки не найдена")
 
@@ -136,7 +137,9 @@ def rebind_bot_button_setting(
     source_visibility_overridden = bool(source.visibility_overridden)
     source_label_override = (source.label_override or "").strip() or None
     source_label_overridden = bool(source.label_overridden)
-    target = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == new_button_key)).scalar_one_or_none()
+    target = resolve_button_row(db, new_button_key, include_inactive=True, strict=True)
+    if target is source:
+        return {"ok": True, "moved": False, "reason": "same_key"}
     now = datetime.utcnow()
 
     if target is None:

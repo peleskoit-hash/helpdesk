@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import BotButtonSetting, Ticket, TicketTaskKind
+from .button_config import resolve_button_row, button_rows_by_key
 
 
 EMOJI_RE = re.compile(
@@ -66,10 +67,8 @@ def resolve_ticket_subject(db: Session, ticket: Ticket) -> str:
     if (ticket.button_config_key or "").strip():
         key_candidates.append(ticket.button_config_key.strip())
 
-    if key_candidates:
-        row = db.execute(
-            select(BotButtonSetting).where(BotButtonSetting.button_key.in_(key_candidates))
-        ).scalars().first()
+    for key in key_candidates:
+        row = resolve_button_row(db, key, include_inactive=True)
         if row is not None:
             path = _normalize_path(row.button_path or "")
             if path:
@@ -104,9 +103,9 @@ def build_ticket_subject_map(db: Session, tickets: list[Ticket]) -> dict[str, st
     rows_by_key: dict[str, BotButtonSetting] = {}
     if all_keys:
         rows = db.execute(
-            select(BotButtonSetting).where(BotButtonSetting.button_key.in_(all_keys))
+            select(BotButtonSetting)
         ).scalars().all()
-        rows_by_key = {row.button_key: row for row in rows}
+        rows_by_key = button_rows_by_key(rows)
 
     subject_map: dict[str, str] = {}
     for ticket in tickets:

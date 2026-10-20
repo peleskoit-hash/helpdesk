@@ -11,6 +11,7 @@ from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .temporary_rop import TEMPORARY_ROP_FIELD, TEMPORARY_ROP_SUFFIX, with_temporary_rop_suffix
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
+from .button_config import button_key_matches
 
 
 def _error(status_code: int, code: str, message: str):
@@ -36,7 +37,7 @@ def apply_role_filter(stmt: Select, user: CurrentUser):
             exists(
                 select(BotButtonSetting.id).where(
                     and_(
-                        BotButtonSetting.button_key == Ticket.button_config_key,
+                        button_key_matches(Ticket.button_config_key),
                         func.lower(func.trim(BotButtonSetting.menu_type)) == "колл центр",
                     )
                 )
@@ -44,7 +45,7 @@ def apply_role_filter(stmt: Select, user: CurrentUser):
             exists(
                 select(BotButtonSetting.id).where(
                     and_(
-                        BotButtonSetting.button_key == Ticket.instruction_button_key,
+                        button_key_matches(Ticket.instruction_button_key),
                         func.lower(func.trim(BotButtonSetting.menu_type)) == "колл центр",
                     )
                 )
@@ -208,7 +209,7 @@ def apply_search_filter(stmt: Select, query: str | None, db: Session):
             exists(
                 select(BotButtonSetting.id).where(
                     and_(
-                        BotButtonSetting.button_key == Ticket.button_config_key,
+                        button_key_matches(Ticket.button_config_key),
                         or_(
                             BotButtonSetting.button_path.ilike(pattern),
                             BotButtonSetting.button_label.ilike(pattern),
@@ -220,7 +221,7 @@ def apply_search_filter(stmt: Select, query: str | None, db: Session):
             exists(
                 select(BotButtonSetting.id).where(
                     and_(
-                        BotButtonSetting.button_key == Ticket.instruction_button_key,
+                        button_key_matches(Ticket.instruction_button_key),
                         or_(
                             BotButtonSetting.button_path.ilike(pattern),
                             BotButtonSetting.button_label.ilike(pattern),

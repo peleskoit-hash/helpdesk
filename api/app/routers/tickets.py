@@ -41,7 +41,7 @@ from ..services.telegram_outbound_delivery import (
     deliver_attachment_preload,
     deliver_ticket_attachment,
 )
-from ..services.button_config import DEFAULT_MENU_NAME
+from ..services.button_config import DEFAULT_MENU_NAME, resolve_button_row
 from ..services.ticket_attachments import (
     _attachment_out,
     _ensure_local_attachment_file,
@@ -489,7 +489,7 @@ def _instruction_for_ticket(db: Session, ticket: Ticket) -> tuple[str | None, st
     key = (ticket.instruction_button_key or "").strip()
     if not key:
         return None, None
-    row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
+    row = resolve_button_row(db, key, include_inactive=True)
     if row is None:
         return None, None
     text = (row.instruction_text or "").strip()

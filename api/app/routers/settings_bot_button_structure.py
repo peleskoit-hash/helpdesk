@@ -4,12 +4,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuLevelLayout
 from ..schemas import BotButtonGroupOut, BotButtonMenuStructureOut, BotButtonStructureLeafOut
-from ..services.button_config import build_level_layout_key, build_visibility_button_key
+from ..services.button_config import build_level_layout_key, build_visibility_button_key, build_terminal_button_key
+from ..services.bot_button_keys import lock_button_keys, check_button_key_collisions, change_button_workflow_key
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -314,8 +316,16 @@ def create_bot_button_item(
         _error(422, "invalid_workflow_type", "Недопустимый workflow_type")
 
     full_path = f"{parent_path}/{label}" if parent_path else label
-    button_key = build_visibility_button_key(menu_type, "db", full_path)
-    exists = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == button_key)).scalar_one_or_none()
+    ordinary = workflow_type in {"ticket", "task", "auto"}
+    button_key = (build_terminal_button_key(menu_type, workflow_type, full_path) if ordinary
+                  else build_visibility_button_key(menu_type, "db", full_path))
+    lock_button_keys(db)
+    candidates = db.execute(select(BotButtonSetting).where(
+        BotButtonSetting.menu_type == menu_type, BotButtonSetting.button_path == full_path,
+    )).scalars().all()
+    if len(candidates) > 1:
+        _error(409, "ambiguous_button_key", "По этому пути найдено несколько кнопок")
+    exists = candidates[0] if candidates else None
     if exists is not None and bool(exists.currently_present):
         _error(409, "button_already_exists", "Кнопка с таким названием уже существует на этом уровне")
 
@@ -346,6 +356,8 @@ def create_bot_button_item(
         )
         db.add(row)
     else:
+        if ordinary and exists.workflow_type in {"ticket", "task", "auto"} and exists.workflow_type != workflow_type:
+            change_button_workflow_key(db, exists, workflow_type)
         exists.menu_type = menu_type
         exists.workflow_type = workflow_type
         exists.button_path = full_path
@@ -364,7 +376,12 @@ def create_bot_button_item(
         exists.updated_at = now
         row = exists
 
-    db.commit()
+    check_button_key_collisions(db, row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _error(409, "button_key_collision", "Ключ кнопки уже занят")
     return {
         "ok": True,
         "button_key": row.button_key,

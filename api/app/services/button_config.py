@@ -6,7 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import and_, or_, select, literal_column
 from sqlalchemy.orm import Session
 
 from ..models import BotButtonSetting, BotMenuProfile, BotMenuDestinationBinding
@@ -100,25 +101,64 @@ def available_menu_names(db: Session) -> tuple[str, ...]:
     return tuple(sorted(name for name in names if name and not is_system_menu_type(name)))
 
 
-def resolve_button_row(db: Session, key: str, menu_name: str | None = None, *, submenu: bool = False) -> BotButtonSetting | None:
-    query = select(BotButtonSetting).where(
-        BotButtonSetting.currently_present.is_(True), BotButtonSetting.is_archived.is_(False),
-    )
-    if menu_name:
-        query = query.where(BotButtonSetting.menu_type == menu_name)
-    rows = db.execute(query).scalars().all()
-    for row in rows:
-        if key == row.button_key or key == row.legacy_button_key:
-            return row
-    # Old Telegram keyboards and old tickets may carry the original hashed key.
-    # Reconstruct it from the unchanged DB path; never read a TXT configuration.
-    matches = []
-    for row in rows:
-        if row.is_db_created:
-            continue
+ORDINARY_WORKFLOW_TYPES = ("ticket", "task", "auto")
+
+
+def ordinary_button_keys(row: BotButtonSetting) -> set[str]:
+    if row.button_kind != "terminal" or row.workflow_type not in ORDINARY_WORKFLOW_TYPES or is_system_menu_type(row.menu_type):
+        return set()
+    return {build_terminal_button_key(row.menu_type, workflow, row.button_path) for workflow in ORDINARY_WORKFLOW_TYPES}
+
+
+def button_key_aliases(row: BotButtonSetting, *, submenu: bool = False) -> set[str]:
+    aliases = {row.button_key}
+    if row.legacy_button_key:
+        aliases.add(row.legacy_button_key)
+    typed = ordinary_button_keys(row)
+    if row.button_key in typed | {build_visibility_button_key(row.menu_type, "db", row.button_path)}:
+        aliases.update(typed)
+    if not row.is_db_created and (not submenu or row.button_kind == "section"):
         path = (row.button_path or row.button_label).split("/")
         parts = [row.menu_type, path[-1], "submenu"] if submenu else [row.menu_type, *path[-2:]]
-        alias = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
-        if key == alias:
-            matches.append(row)
-    return matches[0] if len(matches) == 1 else None
+        aliases.add(hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12])
+    return aliases
+
+
+def button_rows_by_key(rows: list[BotButtonSetting], *, submenu: bool = False) -> dict[str, BotButtonSetting | None]:
+    result = {}
+    for row in rows:
+        for key in button_key_aliases(row, submenu=submenu):
+            if key in result and result[key] is not row:
+                result[key] = None
+            else:
+                result[key] = row
+    return result
+
+
+def resolve_button_row(db: Session, key: str, menu_name: str | None = None, *, submenu: bool = False,
+                       include_inactive: bool = False, strict: bool = False) -> BotButtonSetting | None:
+    if not key:
+        return None
+    query = select(BotButtonSetting)
+    if menu_name:
+        query = query.where(BotButtonSetting.menu_type == menu_name)
+    by_key = button_rows_by_key(db.execute(query).scalars().all(), submenu=submenu)
+    row = by_key.get(key)
+    if strict and key in by_key and row is None:
+        raise HTTPException(409, detail={"error": {"code": "ambiguous_button_key", "message": "Ключ кнопки неоднозначен"}})
+    if row is not None and not include_inactive and (not row.currently_present or row.is_archived):
+        return None
+    return row
+
+
+def button_key_matches(key):
+    """SQL equivalent for historical ticket search and access filters."""
+    typed = [BotButtonSetting.menu_type + literal_column(f"'|{workflow}|'") + BotButtonSetting.button_path
+             for workflow in ORDINARY_WORKFLOW_TYPES]
+    old_db = BotButtonSetting.menu_type + literal_column("'|db|'") + BotButtonSetting.button_path
+    ordinary = and_(BotButtonSetting.button_kind == "terminal",
+                    BotButtonSetting.workflow_type.in_([literal_column(f"'{workflow}'") for workflow in ORDINARY_WORKFLOW_TYPES]),
+                    ~BotButtonSetting.menu_type.startswith("__system__", autoescape=True),
+                    or_(*(BotButtonSetting.button_key == candidate for candidate in [*typed, old_db])))
+    return or_(BotButtonSetting.button_key == key, BotButtonSetting.legacy_button_key == key,
+               and_(ordinary, or_(*(key == candidate for candidate in typed))))

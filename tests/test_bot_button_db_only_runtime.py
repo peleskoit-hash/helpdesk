@@ -1771,7 +1771,7 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     session = _session()
     key = f"menu-a|{old_type}|A"
     row = _seed_row(session, button_key=key, workflow_type=old_type)
-    identity = (row.id, row.stable_button_id, row.button_key, row.legacy_button_key)
+    identity = (row.id, row.stable_button_id, row.legacy_button_key)
     source = ButtonSpec(key="txt-a", label="A", kind=old_type)
     refs = (TerminalButtonRef(
         source_button_key=source.key, label="A", workflow_type=old_type,
@@ -1793,8 +1793,10 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     assert item["workflow_type"] == new_type
     assert item["instruction_text"] == "Saved instruction"
     assert structure.tree_rows[0]["buttons"][0]["workflow_type"] == new_type
-    row = session.query(BotButtonSetting).filter_by(button_key=key).one()
-    assert (row.id, row.stable_button_id, row.button_key, row.legacy_button_key) == identity
+    row = session.get(BotButtonSetting, identity[0])
+    assert (row.id, row.stable_button_id, row.legacy_button_key) == identity
+    new_key = f"menu-a|{new_type}|A"
+    assert row.button_key == new_key
 
     company = Company(id=str(uuid.uuid4()), name="Company")
     client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Client")
@@ -1816,7 +1818,7 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     }[callback_kind]
     button = telegram_router._button_from_callback(session, callback_data, "menu-a")
     assert button.kind == new_type
-    assert button.key == key
+    assert button.key == new_key
     response = telegram_router._process_problem_type_callback(
         session, {"update_id": 1},
         {"data": callback_data, "message": {"chat": {"id": 456}}, "from": {"id": 123}},
@@ -1825,7 +1827,7 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     created = session.get(Ticket, response["ticket_id"])
     assert created.id != old_ticket.id
     assert created.workflow_type == new_type
-    assert created.instruction_button_key == key
+    assert created.instruction_button_key == new_key
     assert created.task_kind == TicketTaskKind.NORMAL.value
     assert bool(response.get("task_pending")) == (new_type == "task")
     session.expire_all()
@@ -1878,7 +1880,7 @@ def test_existing_terminal_button_can_change_type_between_ticket_task_and_auto(m
         user=SimpleNamespace(id="admin-1"),
     )
 
-    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|ticket|A").one()
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|task|A").one()
     assert payload["ok"] is True
     assert row.workflow_type == "task"
     assert row.button_kind == "terminal"
@@ -2089,7 +2091,7 @@ def test_type_change_clears_incompatible_existing_automation_when_frontend_does_
         user=SimpleNamespace(id="admin-1"),
     )
 
-    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|auto|A").one()
+    row = session.query(BotButtonSetting).filter(BotButtonSetting.button_key == "menu-a|ticket|A").one()
     assert row.workflow_type == "ticket"
     assert row.automation_key is None
     assert payload["automation_type"] == "none"

@@ -395,7 +395,7 @@
       requestBody.confirmation_overridden = true;
     }
 
-    await api(
+    const saved = await api(
       `/api/v1/settings/bot-buttons/item/instruction?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(requestWorkflowType)}&button_path=${encodeURIComponent(leaf.full_path || leaf.label)}&button_label=${encodeURIComponent(leaf.label)}`,
       {
         method: "PUT",
@@ -432,6 +432,7 @@
     state.editorWorkflowType = requestWorkflowType;
     state.selectedLeaf = {
       ...state.selectedLeaf,
+      technical_key: saved?.button_key || leaf.technical_key,
       workflow_type: requestWorkflowType,
       editor_mode: isSubmenu ? "submenu" : "default",
     };

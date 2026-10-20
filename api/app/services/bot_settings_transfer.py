@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import tempfile
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,7 +23,8 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import (AutomaticMessageTemplate, BotButtonSetting, BotMenuDestinationBinding,
                       BotMenuLevelLayout, BotMenuProfile, SavedFile, User)
-from .button_config import build_level_layout_key
+from .button_config import build_level_layout_key, button_key_aliases, ordinary_button_keys
+from .bot_button_keys import lock_button_keys
 from .system_tickets import is_system_menu_type
 
 TABLES = {
@@ -94,6 +96,12 @@ def _index(rows, key, *, optional=False):
 def _structure(tables):
     buttons = tables[BUTTONS]
     by_key = _index(buttons, "button_key")
+    alias_owners = {}
+    for row in buttons:
+        for alias in button_key_aliases(SimpleNamespace(**row)):
+            if alias in alias_owners and alias_owners[alias] != row["button_key"]:
+                raise BotSettingsTransferError("button_key_alias_collision")
+            alias_owners[alias] = row["button_key"]
     _index(buttons, "stable_button_id", optional=True)
     menus = {row["menu_type"] for row in tables[PROFILES]}
     paths = {}
@@ -362,6 +370,10 @@ def _plan(db, source, references, report, *, lock):
                 values["button_key"] = aliases[original["button_key"]]
                 if existing is not None and existing.stable_button_id is not None:
                     values["stable_button_id"] = existing.stable_button_id
+                if existing is not None and existing.legacy_button_key:
+                    if values["legacy_button_key"] not in {None, existing.legacy_button_key} | ordinary_button_keys(existing):
+                        raise BotSettingsTransferError("button_legacy_key_conflict")
+                    values["legacy_button_key"] = existing.legacy_button_key
             elif name == LAYOUTS:
                 for item in values["layout_json"] or []:
                     item["button_keys"] = [aliases[ref] for ref in item["button_keys"]]
@@ -390,6 +402,8 @@ def import_bot_settings(db: Session, data: dict, *, apply=False):
               **{action: dict.fromkeys(TABLES, 0) for action in ("created", "updated", "unchanged")}}
     try:
         with db.begin() as transaction, db.no_autoflush:
+            if apply:
+                lock_button_keys(db)
             try:
                 operations = _plan(db, source, data["references"], report, lock=apply)
             except BotSettingsTransferError as error:

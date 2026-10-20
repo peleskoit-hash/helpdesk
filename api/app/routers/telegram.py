@@ -1633,7 +1633,7 @@ def _button_setting_for_ticket(db: Session, ticket: Ticket) -> BotButtonSetting 
     key = (ticket.instruction_button_key or "").strip()
     if not key:
         return None
-    return db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
+    return resolve_button_row(db, key, include_inactive=True)
 
 
 def _resolve_button_setting_row(db: Session, ticket: Ticket, button: ButtonSpec | None = None) -> BotButtonSetting | None:
@@ -1646,7 +1646,7 @@ def _resolve_button_setting_row(db: Session, ticket: Ticket, button: ButtonSpec 
         if candidate and candidate not in keys:
             keys.append(candidate)
     for key in keys:
-        row = db.execute(select(BotButtonSetting).where(BotButtonSetting.button_key == key)).scalar_one_or_none()
+        row = resolve_button_row(db, key, include_inactive=True)
         if row is not None:
             return row
     return None
