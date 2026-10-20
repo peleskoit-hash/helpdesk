@@ -6,12 +6,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
+from ..models import BotButtonSetting, BotMenuLevelLayout, BotMenuProfile, BotMenuDestinationBinding, MessageType, Ticket, TicketStatus, TicketTaskKind, TicketWorkflowType
 from .automatic_messages import render_automatic_message_text
-from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, available_menu_names, find_button, load_button_config
+from .button_config import BASIC_MENU_NAME, ButtonConfig, MenuSpec, ButtonSpec, build_level_layout_key
 from .statistics_lifecycle import sync_work_interval_after_unfreeze
 from .ticket_messages import persist_client_delivery_failure
 from .telegram_text_format import strip_telegram_html
+from .system_tickets import is_system_menu_type
 
 
 def _error(status_code: int, code: str, message: str):
@@ -31,34 +32,87 @@ def menu_name_for_ticket_client(
     *,
     get_or_create_client_profile_fn,
 ) -> str:
-    button_key = (ticket.button_config_key or "").strip()
-    if button_key:
-        for menu_name in available_menu_names():
-            config = load_button_config(menu_name)
-            if button_key in config.buttons:
-                return menu_name
+    profiles = db.execute(select(BotMenuProfile)).scalars().all()
+    inactive = {row.menu_type for row in profiles if not row.is_active}
+    available = {row[0] for row in db.execute(select(BotButtonSetting.menu_type).where(
+        BotButtonSetting.currently_present.is_(True), BotButtonSetting.is_archived.is_(False),
+    )).all()} - inactive
+    available.update(row.menu_type for row in profiles if row.is_active)
+    available = {name for name in available if not is_system_menu_type(name)}
+    fallback = next((row.menu_type for row in profiles if row.is_active and row.is_fallback and row.menu_type in available), BASIC_MENU_NAME)
+    for key in (ticket.instruction_button_key, ticket.button_config_key):
+        if not key:
+            continue
+        row = db.execute(select(BotButtonSetting).where(
+            (BotButtonSetting.button_key == key) | (BotButtonSetting.legacy_button_key == key),
+        )).scalar_one_or_none()
+        if row is not None and row.menu_type in available:
+            return row.menu_type
 
     profile = get_or_create_client_profile_fn(db, ticket.client_id)
     if profile.is_verified and profile.destination:
         destination = profile.destination.strip()
-        if destination:
-            binding = db.execute(
-                select(BotMenuDestinationBinding).where(BotMenuDestinationBinding.destination_value == destination)
-            ).scalar_one_or_none()
-            if binding is not None:
-                try:
-                    load_button_config(binding.menu_type)
-                    return binding.menu_type
-                except Exception:
-                    return BASIC_MENU_NAME
-            try:
-                load_button_config(destination)
-                return destination
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
-    return BASIC_MENU_NAME
+        binding = db.execute(select(BotMenuDestinationBinding).where(
+            BotMenuDestinationBinding.destination_value == destination,
+        )).scalar_one_or_none()
+        if binding is not None:
+            return binding.menu_type if binding.menu_type in available else fallback
+        if destination in available:
+            return destination
+    return fallback
+
+
+def _db_button_config(db: Session, menu_name: str) -> ButtonConfig:
+    rows = db.execute(select(BotButtonSetting).where(
+        BotButtonSetting.menu_type == menu_name,
+        BotButtonSetting.currently_present.is_(True),
+        BotButtonSetting.is_archived.is_(False),
+    ).order_by(BotButtonSetting.updated_at, BotButtonSetting.button_label)).scalars().all()
+    by_parent: dict[str, list[BotButtonSetting]] = {}
+    for row in rows:
+        if row.visibility_overridden and not row.is_enabled:
+            continue
+        if row.workflow_type == "group_task_child":
+            continue
+        by_parent.setdefault((row.parent_path or "").strip(), []).append(row)
+    layouts = {row.level_key: row.layout_json for row in db.execute(select(BotMenuLevelLayout).where(
+        BotMenuLevelLayout.menu_type == menu_name,
+    )).scalars().all()}
+    config = ButtonConfig()
+
+    def build(parent: str, menu_key: str, ancestors: set[str]) -> None:
+        items: dict[str, BotButtonSetting] = {}
+        for row in by_parent.get(parent, []):
+            kind = "submenu" if row.button_kind == "section" and row.workflow_type != "group_task" else row.workflow_type
+            if kind == "submenu":
+                if row.button_path in ancestors:
+                    continue
+                build(row.button_path, row.button_key, ancestors | {row.button_path})
+                if not config.menus[row.button_key].rows:
+                    continue
+            label = row.label_override if row.label_overridden and (row.label_override or "").strip() else row.button_label
+            config.buttons[row.button_key] = ButtonSpec(
+                key=row.button_key, label=label, kind=kind,
+                submenu_key=row.button_key if kind == "submenu" else None,
+            )
+            items[row.button_key] = row
+        menu_rows = []
+        used = set()
+        for layout_row in layouts.get(build_level_layout_key(menu_name, parent)) or []:
+            if not isinstance(layout_row, dict) or not isinstance(layout_row.get("button_keys"), list):
+                continue
+            keys = []
+            for key in layout_row["button_keys"]:
+                if key in items and key not in used:
+                    keys.append(key)
+                    used.add(key)
+            if keys:
+                menu_rows.append(tuple(keys))
+        menu_rows.extend((key,) for key in items if key not in used)
+        config.menus[menu_key] = MenuSpec(key=menu_key, title=menu_name, rows=tuple(menu_rows))
+
+    build("", config.root_menu_key, {""})
+    return config
 
 
 def button_tree_for_menu(config: ButtonConfig, menu: MenuSpec) -> list[dict]:
@@ -156,12 +210,12 @@ def get_problem_menu_for_ticket(
         ticket,
         get_or_create_client_profile_fn=get_or_create_client_profile_fn,
     )
-    config = load_button_config(menu_name)
+    config = _db_button_config(db, menu_name)
     root_menu = config.menus[config.root_menu_key]
     rows = button_tree_for_menu(config, root_menu)
     rows = filter_problem_tree_excluding_current(
         rows,
-        exclude_key=(ticket.button_config_key or "").strip() or None,
+        exclude_key=(ticket.instruction_button_key or ticket.button_config_key or "").strip() or None,
         exclude_label=(ticket.subject or "").strip() or None,
     )
     return {
@@ -199,8 +253,8 @@ def apply_wrong_problem(
         ticket,
         get_or_create_client_profile_fn=get_or_create_client_profile_fn,
     )
-    config = load_button_config(menu_name)
-    button = config.buttons.get(payload.button_key) or find_button(payload.button_key)
+    config = _db_button_config(db, menu_name)
+    button = config.buttons.get(payload.button_key)
     if button is None:
         _error(404, "button_not_found", "Кнопка меню не найдена")
     if button.kind == "submenu":

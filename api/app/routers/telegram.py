@@ -1642,20 +1642,21 @@ def _handle_edited_client_message(
 
 def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | None = None) -> ButtonSpec:
     txt_button = None
-    try:
-        if menu_name:
-            for ref in list_terminal_buttons(menu_name):
-                if ref.technical_key == row.button_key:
-                    txt_button = find_button(ref.source_button_key)
-                    break
-        if txt_button is None:
-            txt_button = find_button(row.button_key)
-        if txt_button is None and menu_name and (row.workflow_type or "").strip().lower() == "group_task":
-            full_path = (row.button_path or "").strip()
-            if full_path:
-                txt_button = _find_txt_group_button_by_full_path(menu_name, full_path)
-    except Exception:
-        txt_button = None
+    if not (_use_db_buttons() and (row.workflow_type in {"group_task", "group_task_child"} or row.button_kind == "group_parent")):
+        try:
+            if menu_name:
+                for ref in list_terminal_buttons(menu_name):
+                    if ref.technical_key == row.button_key:
+                        txt_button = find_button(ref.source_button_key)
+                        break
+            if txt_button is None:
+                txt_button = find_button(row.button_key)
+            if txt_button is None and menu_name and (row.workflow_type or "").strip().lower() == "group_task":
+                full_path = (row.button_path or "").strip()
+                if full_path:
+                    txt_button = _find_txt_group_button_by_full_path(menu_name, full_path)
+        except Exception:
+            txt_button = None
 
     row_kind = (row.button_kind or "").strip().lower()
     workflow = (row.workflow_type or "ticket").strip().lower()
@@ -1698,7 +1699,7 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
             return _with_db_group_task_children(db, button, row.menu_type, (row.button_path or "").strip())
         return button
 
-    return ButtonSpec(
+    button = ButtonSpec(
         key=row.button_key,
         label=final_label or row.button_label,
         kind=kind,
@@ -1712,6 +1713,9 @@ def _button_from_db_row(db: Session, row: BotButtonSetting, menu_name: str | Non
         file_path=file_path,
         file_rules=file_rules,
     )
+    if button.kind == "group_task":
+        return _with_db_group_task_children(db, button, row.menu_type, (row.button_path or "").strip())
+    return button
 
 
 def _button_from_callback(db: Session, data: str, menu_name: str | None = None) -> ButtonSpec | None:
@@ -1932,23 +1936,32 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
             BotButtonSetting.parent_path == parent,
             BotButtonSetting.workflow_type == "group_task_child",
             BotButtonSetting.button_kind == "terminal",
-            BotButtonSetting.is_db_created.is_(True),
             BotButtonSetting.currently_present.is_(True),
             BotButtonSetting.is_archived.is_(False),
         )
     ).scalars().all()
     if not rows:
         return button
-    existing_keys = {child.key for child in button.subtasks}
+    existing_keys = {
+        _resolve_instruction_button_key(db, menu, child.key) or child.key
+        for child in button.subtasks
+    } if not _use_db_buttons() else set()
+    layout = db.execute(select(BotMenuLevelLayout).where(
+        BotMenuLevelLayout.menu_type == menu,
+        BotMenuLevelLayout.level_key == build_level_layout_key(menu, parent),
+    )).scalar_one_or_none()
+    ordered_keys = [key for item in _normalize_layout_rows(layout.layout_json if layout else None)
+                    for key in item["button_keys"]]
+    rank = {key: index for index, key in enumerate(ordered_keys)}
     db_children: list[ButtonSpec] = []
-    for row in sorted(rows, key=lambda item: ((item.updated_at or item.created_at or datetime.utcnow()), item.button_label)):
-        if row.button_key in existing_keys:
+    for row in sorted(rows, key=lambda item: (rank.get(item.button_key, len(rank)), (item.updated_at or item.created_at or datetime.utcnow()), item.button_label)):
+        if row.button_key in existing_keys or not _button_visibility_enabled(row):
             continue
         child = _button_from_db_row(db, row, menu)
         if not (child.label or "").strip():
             continue
         db_children.append(child)
-    if not db_children:
+    if not db_children and not _use_db_buttons():
         return button
     return ButtonSpec(
         key=button.key,
@@ -1965,7 +1978,7 @@ def _with_db_group_task_children(db: Session, button: ButtonSpec, menu_name: str
         file_path=button.file_path,
         file_rules=button.file_rules,
         submenu_key=button.submenu_key,
-        subtasks=(*button.subtasks, *db_children),
+        subtasks=tuple(db_children) if _use_db_buttons() else (*button.subtasks, *db_children),
     )
 
 
@@ -2438,7 +2451,20 @@ def _on_group_parent_assigned(db: Session, ticket: Ticket, agent: User) -> None:
     if (ticket.task_kind or TicketTaskKind.NORMAL.value) != TicketTaskKind.GROUP_PARENT.value:
         return
     key = (ticket.button_config_key or "").strip()
+    if _use_db_buttons():
+        key = (ticket.instruction_button_key or "").strip() or key
     if not key:
+        return
+    if _use_db_buttons():
+        row = db.execute(select(BotButtonSetting).where(
+            BotButtonSetting.button_key == key,
+            BotButtonSetting.currently_present.is_(True),
+            BotButtonSetting.is_archived.is_(False),
+        )).scalar_one_or_none()
+        if row is not None:
+            button = _button_from_db_row(db, row, row.menu_type)
+            if button.kind == "group_task":
+                _create_group_children_from_collecting(db, ticket, button, _group_parent_client_body(db, ticket), agent)
         return
     button = find_button(key)
     if button is not None and button.kind == "group_task":
