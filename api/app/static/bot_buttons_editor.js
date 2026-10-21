@@ -40,8 +40,8 @@
     if (!Editor.isEditableWorkflowType(workflow) || automation === "none") return true;
     if (automation === "telegram_group") return true;
     if (workflow === "ticket") return automation === "send_files";
-    if (workflow === "task") return automation === "send_files" || automation === "bitrix_deal_phone_lookup";
-    if (workflow === "auto") return automation === "send_files" || automation === "message_only";
+    if (workflow === "task") return automation === "send_files" || automation === "bitrix_deal_phone_lookup" || automation === "client_origin";
+    if (workflow === "auto") return automation === "send_files" || automation === "message_only" || automation === "client_origin";
     return true;
   };
 

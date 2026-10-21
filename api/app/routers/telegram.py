@@ -45,6 +45,7 @@ from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, DEFAULT
 from ..services.assignment import append_system_message, notify_client_about_assignee
 from ..services.telegram_group_registry import is_group_registration, register_group
 from ..services import telegram_group_automation
+from ..services import telegram_client_origin
 from ..services.assignment import assignee_change_message, assignee_label
 from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
@@ -2192,6 +2193,9 @@ def _process_problem_type_callback(
         return {"ok": True, "ticket_id": collecting_ticket.id, "awaiting_confirmation": True, "button": button.label}
 
     _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
+    origin_wait = _begin_client_origin_wait(db, collecting_ticket, external_chat_id, notify_client, callback_id)
+    if origin_wait is not None:
+        return origin_wait
     group_wait = _begin_group_message_wait(db, collecting_ticket, button, external_chat_id, notify_client, callback_id)
     if group_wait is not None:
         return group_wait
@@ -2309,6 +2313,25 @@ def _group_automation_callbacks():
     }
 
 
+def _origin_callbacks():
+    return {
+        **_group_automation_callbacks(),
+        "append_client": lambda db, ticket, body, message_id: _append_client_message(
+            db, ticket, body, message_id, schedule_notification=False),
+        "store_attachment": _store_telegram_attachment,
+        "store_close": lambda ticket, response: store_client_close_button(ticket, response, response_message_id_fn=_response_message_id),
+    }
+
+
+def _begin_client_origin_wait(db, ticket, chat, notify, callback_id):
+    setting = _button_setting_for_ticket(db, ticket)
+    if setting is None or setting.automation_key != telegram_client_origin.KEY:
+        return None
+    if notify and callback_id:
+        answer_callback_query(callback_id, "Отправьте номер сделки")
+    return telegram_client_origin.begin(db, ticket, chat, notify, _origin_callbacks())
+
+
 def recover_incomplete_group_automations(db: Session) -> int:
     return telegram_group_automation.recover(db, callbacks=_group_automation_callbacks())
 
@@ -2348,12 +2371,12 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             selected_setting = db.get(BotButtonSetting, callback_data.removeprefix("btnid:"))
         elif callback_data.startswith("btn:") or confirmation is not None:
             selected_setting = resolve_button_row(db, callback_data.removeprefix("btn:"))
-        selects_group = selected_setting is not None and selected_setting.automation_key == "telegram_group"
+        selects_group = selected_setting is not None and selected_setting.automation_key in {"telegram_group", telegram_client_origin.KEY}
         candidates = db.scalars(select(Ticket).join(
             TelegramContact, and_(TelegramContact.client_id == Ticket.client_id, TelegramContact.company_id == Ticket.company_id),
         ).where(TelegramContact.external_chat_id == chat_id, Ticket.status != TicketStatus.CLOSED.value,
                 Ticket.intake_state.in_([TicketIntakeState.COLLECTING.value, TicketIntakeState.TELEGRAM_GROUP_COPYING.value]))).all()
-        if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) for ticket in candidates):
+        if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket) for ticket in candidates):
             with telegram_group_automation.chat_lock(db, chat_id):
                 # End the read-only discovery snapshot before rechecking a concurrent update.
                 if not db.new and not db.dirty and not db.deleted:
@@ -2411,6 +2434,24 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 return {"ok": True, "blocked": True, "ignored": "blocked_contact"}
         data = callback.get("data") or ""
         if data == "client_close":
+            contact = telegram_contact_by_chat_id(db, external_chat_id)
+            pending_origin = _collecting_ticket_for_client(db, contact.company_id, contact.client_id) if contact else None
+            if telegram_client_origin.waiting(pending_origin) or telegram_client_origin.owns_close_button(db, contact, message.get("message_id")):
+                db.add(callback_update)
+                if (not telegram_client_origin.waiting(pending_origin)
+                        or str(message.get("message_id")) != pending_origin.client_close_message_id
+                        or not client_can_close_ticket(db, pending_origin)):
+                    db.commit()
+                    if notify_client:
+                        if callback.get("id"):
+                            answer_callback_query(callback["id"], "Эта кнопка закрытия устарела")
+                        if isinstance(message.get("message_id"), int):
+                            _safe_remove_inline_keyboard(external_chat_id, message["message_id"])
+                    return {"ok": True, "closed": False, "ignored": "stale_client_close"}
+                result = telegram_client_origin.finish(db, pending_origin, external_chat_id, "closed", notify_client, _origin_callbacks())
+                if notify_client and callback.get("id"):
+                    answer_callback_query(callback["id"], "Обращение закрыто" if result["closed"] else "Не удалось завершить закрытие")
+                return result
             return process_client_close_callback(
                 db,
                 payload,
@@ -2521,6 +2562,9 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 return {"ok": True, "ticket_id": collecting_ticket.id, "confirmation": "no"}
 
             _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
+            origin_wait = _begin_client_origin_wait(db, collecting_ticket, external_chat_id, notify_client, callback_id)
+            if origin_wait is not None:
+                return origin_wait
             group_wait = _begin_group_message_wait(db, collecting_ticket, button, external_chat_id, notify_client, callback_id)
             if group_wait is not None:
                 return group_wait
@@ -2717,6 +2761,22 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
         if edited_ticket is not None:
             return {"ok": True, "edited": True, "ticket_id": edited_ticket.id}
         return {"ok": True, "edited": True, "ignored": "original_message_not_found"}
+
+    pending_origin = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
+    if telegram_client_origin.waiting(pending_origin):
+        if text.startswith("/start") or text.startswith("/close"):
+            result = telegram_client_origin.finish(db, pending_origin, external_chat_id, "closed", notify_client, _origin_callbacks())
+            if text.startswith("/start") and result["closed"]:
+                draft = _create_collecting_ticket(db, contact.company_id, contact.client_id)
+                if notify_client:
+                    _send_problem_menu_for_contact(db, contact, draft)
+                db.commit()
+            return result
+        return telegram_client_origin.incoming(
+            db, pending_origin, raw_text, telegram_message_id,
+            attachment_data if not attachment_too_large and forbidden_attachment_type is None else None,
+            external_chat_id, notify_client, _origin_callbacks(),
+        )
 
     if text.startswith("/start"):
         cleanup_feedback_flow_for_contact(
@@ -3103,6 +3163,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
 
 
 def cleanup_expired_task_intents(db: Session) -> int:
+    origin_closed = telegram_client_origin.cleanup(db, _origin_callbacks())
     tickets = db.execute(
         select(Ticket).where(
             and_(
@@ -3115,7 +3176,7 @@ def cleanup_expired_task_intents(db: Session) -> int:
     ).scalars().all()
     expired = []
     for ticket in tickets:
-        if _is_group_automation(db, ticket):
+        if _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket):
             continue
         timeout_minutes = TASK_DESCRIPTION_TIMEOUT_MINUTES if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_MINUTES
         if ticket.updated_at + timedelta(minutes=timeout_minutes) <= _now_for(ticket.updated_at):
@@ -3140,4 +3201,4 @@ def cleanup_expired_task_intents(db: Session) -> int:
             timeout_text, timeout_parse_mode = _automatic_telegram_text(db, timeout_key, timeout_fallback, ticket=ticket, contact=contact, extra={"timeout_minutes": timeout_minutes})
             send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
     db.commit()
-    return len(expired)
+    return len(expired) + origin_closed

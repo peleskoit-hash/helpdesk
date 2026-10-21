@@ -35,6 +35,10 @@ def _is_phone_payload_allowed(phone_text: str | None) -> bool:
 def get_automation_registry() -> dict[str, dict]:
     bitrix_available = bool((settings.bitrix_webhook_base or "").strip())
     return {
+        "client_origin": {
+            "available": bool((settings.bitrix_deal_mark_webhook_base or "").strip()),
+            "enabled": True,
+        },
         BITRIX_LOOKUP_AUTOMATION_KEY: {
             "key": BITRIX_LOOKUP_AUTOMATION_KEY,
             "title": "Расшифровка номера Bitrix",

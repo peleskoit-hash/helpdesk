@@ -5,6 +5,7 @@ from copy import deepcopy
 AUTOMATION_TYPE_NONE = "none"
 AUTOMATION_TYPE_SEND_FILES = "send_files"
 AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP = "bitrix_deal_phone_lookup"
+AUTOMATION_TYPE_CLIENT_ORIGIN = "client_origin"
 AUTOMATION_TYPE_MESSAGE_ONLY = "message_only"
 AUTOMATION_TYPE_TELEGRAM_GROUP = "telegram_group"
 
@@ -19,6 +20,15 @@ TARGET_WORKFLOW_TYPES = {
 }
 
 _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
+    AUTOMATION_TYPE_CLIENT_ORIGIN: {
+        "key": AUTOMATION_TYPE_CLIENT_ORIGIN,
+        "title": "Откуда клиент",
+        "description": "Возвращает UF_CRM_MARK по номеру сделки Bitrix без распределения сотрудникам.",
+        "workflow_types": [WORKFLOW_TYPE_TASK, WORKFLOW_TYPE_AUTO],
+        "behavior_kind": "registry",
+        "ui_visible": True,
+        "handler": "client_origin",
+    },
     AUTOMATION_TYPE_NONE: {
         "key": AUTOMATION_TYPE_NONE,
         "title": "Не использовать",
@@ -172,10 +182,12 @@ def is_automation_allowed_for_workflow(
         return normalized_key in {
             AUTOMATION_TYPE_SEND_FILES,
             AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
+            AUTOMATION_TYPE_CLIENT_ORIGIN,
         }
     if workflow == WORKFLOW_TYPE_AUTO:
         return normalized_key in {
             AUTOMATION_TYPE_SEND_FILES,
             AUTOMATION_TYPE_MESSAGE_ONLY,
+            AUTOMATION_TYPE_CLIENT_ORIGIN,
         }
     return False

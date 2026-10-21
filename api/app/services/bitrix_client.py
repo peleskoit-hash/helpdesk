@@ -23,7 +23,10 @@ class BitrixConfigError(BitrixLookupError):
 
 
 class BitrixApiError(BitrixLookupError):
-    pass
+    def __init__(self, message, *, http_status=None, description=None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.description = description
 
 
 @dataclass
@@ -60,8 +63,8 @@ def _webhook_base() -> str:
     return base if base.endswith("/") else f"{base}/"
 
 
-def bitrix_get(method: str, params: dict[str, Any]) -> dict[str, Any]:
-    base = _webhook_base()
+def bitrix_get(method: str, params: dict[str, Any], *, webhook_base: str | None = None) -> dict[str, Any]:
+    base = _webhook_base() if webhook_base is None else webhook_base.rstrip("/") + "/"
     query = urlencode({key: value for key, value in params.items() if value is not None})
     url = f"{base}{method}"
     if query:
@@ -71,7 +74,16 @@ def bitrix_get(method: str, params: dict[str, Any]) -> dict[str, Any]:
         with urlopen(request, timeout=20) as response:
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
-        raise BitrixApiError(f"HTTP {exc.code} при вызове {method}") from exc
+        description = None
+        if webhook_base is not None:
+            try:
+                error = json.loads(exc.read().decode("utf-8"))
+                if isinstance(error, dict):
+                    description = error.get("error_description")
+            except (ValueError, OSError):
+                pass
+        raise BitrixApiError(f"HTTP {exc.code} при вызове {method}",
+                            http_status=exc.code, description=description) from exc
     except URLError as exc:
         raise BitrixApiError(f"Ошибка сети при вызове {method}: {exc.reason}") from exc
     except TimeoutError as exc:

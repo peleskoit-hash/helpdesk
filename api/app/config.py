@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     avatar_storage_dir: str = "/app/storage/avatars"
     telegram_client_avatar_storage_dir: str = "/app/storage/telegram_client_avatars"
     bitrix_webhook_base: str | None = None
+    bitrix_deal_mark_webhook_base: str | None = None
     bitrix_kc_webhook_base: str | None = None
     bitrix_kc_department_ids: str = "60"
     bitrix_kc_refresh_interval_seconds: int = 3600

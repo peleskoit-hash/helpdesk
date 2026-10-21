@@ -59,6 +59,22 @@ class SafeTelegramHtml:
 
 
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
+    *(AutomaticMessageDefinition(
+        key=f"telegram.client_origin.{key}", title=title, description=title,
+        category="client_origin", category_title="Откуда клиент", sort_order=index * 10,
+        default_text=body, explicit_variables=("deal_id", "client_origin"), runtime_enabled=True,
+    ) for index, (key, title, body) in enumerate((
+        ("prompt", "Запрос номера сделки", "Отправьте номер сделки Bitrix одним текстовым сообщением."),
+        ("checking", "Проверка сделки", "Проверяю сделку {{deal_id}}…"),
+        ("invalid", "Некорректный ввод / отсутствие номера", "Нужен положительный номер сделки, состоящий только из цифр. Попробуйте ещё раз."),
+        ("not_found", "Сделка не найдена", "Сделка не найдена. Проверьте номер и отправьте другой."),
+        ("empty", "Поле UF_CRM_MARK пустое", "В сделке не заполнено поле UF_CRM_MARK. Можно отправить другой номер."),
+        ("error", "Ошибка обращения к Bitrix", "Не удалось получить данные Bitrix. Попробуйте отправить номер ещё раз."),
+        ("result", "Успешный результат", "{{client_origin}}"),
+        ("success", "Успешное завершение", "Проверка завершена, обращение закрыто. Для нового обращения нажмите /start."),
+        ("closed", "Закрытие по инициативе клиента", "Обращение «Откуда клиент» закрыто."),
+        ("timeout", "Закрытие по таймауту", "Ответ не получен в течение 10 минут. Обращение закрыто. Для нового обращения нажмите /start."),
+    ), 1)),
     AutomaticMessageDefinition(
         key="telegram.onboarding.first_connection.client",
         title="Первое подключение клиента",
