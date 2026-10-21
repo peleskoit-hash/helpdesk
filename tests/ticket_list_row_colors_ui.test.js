@@ -82,7 +82,7 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
   assert.match(template, /list\.js\?v=20261021-all-save-feedback/);
-  assert.match(template, /styles\.css\?v=20261021-chat-file-input/);
+  assert.match(template, /styles\.css\?v=20261021-task-checkboxes/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);

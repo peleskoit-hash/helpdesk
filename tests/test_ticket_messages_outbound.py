@@ -1367,7 +1367,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_attachments_shell_version = "20261020-quotes"
     ticket_controls_version = "20261013a"
     ticket_page_version = "20261018-avatar"
-    ticket_styles_version = "20261021-chat-file-input"
+    ticket_styles_version = "20261021-task-checkboxes"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
