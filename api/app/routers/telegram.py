@@ -43,6 +43,7 @@ from ..services.telegram_bot import (
 )
 from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, DEFAULT_MENU_NAME, ButtonSpec, build_level_layout_key, build_visibility_button_key, available_menu_names, resolve_button_row
 from ..services.assignment import append_system_message, notify_client_about_assignee
+from ..services.telegram_group_registry import is_group_registration, register_group
 from ..services.assignment import assignee_change_message, assignee_label
 from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
@@ -1082,6 +1083,18 @@ def _dispatch_builtin_button_automation(
         return None
 
     workflow_type = (ticket.workflow_type or TicketWorkflowType.TICKET.value).strip().lower()
+
+    if effective_automation_key == "telegram_group":
+        if workflow_type == TicketWorkflowType.AUTO.value:
+            _fallback_auto_to_support(
+                db, ticket, "Пересылка в Telegram-группу пока не реализована", external_chat_id, notify_client,
+                client_message_key="telegram.automation.fallback_created",
+                client_message_fallback="Заявка создана и передана в работу.",
+            )
+        else:
+            append_system_message(db, ticket, "Пересылка в Telegram-группу пока не реализована", agent_visible=True)
+        db.commit()
+        return {"ok": True, "ticket_id": ticket.id, "automation_pending": True, "status": ticket.status}
 
     if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
         if workflow_type == TicketWorkflowType.AUTO.value:
@@ -2191,7 +2204,7 @@ def _process_problem_type_callback(
         )
         if builtin_result is not None:
             if notify_client and callback_id:
-                answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
+                answer_callback_query(callback_id, "Заявка передана сотруднику" if builtin_result.get("automation_pending") else "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
             return builtin_result
         direct_file_ok = True
         direct_file_error = None
@@ -2451,7 +2464,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 )
                 if builtin_result is not None:
                     if notify_client and callback_id:
-                        answer_callback_query(callback_id, "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
+                        answer_callback_query(callback_id, "Заявка передана сотруднику" if builtin_result.get("automation_pending") else "\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u0430")
                     return builtin_result
                 direct_file_ok = True
                 direct_file_error = None
@@ -2573,15 +2586,24 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
     forbidden_attachment_type = None if is_edited_message else _forbidden_attachment_type(message)
 
     external_chat_id = str(chat.get("id", ""))
+    group_registration = not is_edited_message and is_group_registration(message)
     db.add(
         TelegramUpdate(
             id=str(uuid.uuid4()),
             update_id=update_id_str,
             external_chat_id=external_chat_id or None,
-            payload_json=json.dumps(payload, ensure_ascii=False),
+            payload_json=json.dumps(
+                {"update_id": update_id, "group_registration": True, "chat_id": external_chat_id}
+                if is_group_registration(message) else payload, ensure_ascii=False,
+            ),
             created_at=datetime.utcnow(),
         )
     )
+
+    if group_registration:
+        result = register_group(db, message)
+        db.commit()
+        return result
 
     if not _is_private_telegram_chat(chat):
         db.commit()

@@ -38,6 +38,7 @@
     const workflow = Editor.normalizeWorkflowType(workflowType);
     const automation = String(automationType || "none").trim() || "none";
     if (!Editor.isEditableWorkflowType(workflow) || automation === "none") return true;
+    if (automation === "telegram_group") return true;
     if (workflow === "ticket") return automation === "send_files";
     if (workflow === "task") return automation === "send_files" || automation === "bitrix_deal_phone_lookup";
     if (workflow === "auto") return automation === "send_files" || automation === "message_only";
@@ -140,7 +141,8 @@
       || JSON.stringify(state.conditionalRules || []) !== JSON.stringify(state.savedConditionalRules || [])
       || state.isEnabled !== state.savedIsEnabled
       || Editor.normalizeWorkflowType(state.editorWorkflowType) !== Editor.normalizeWorkflowType(state.savedWorkflowType)
-      || (state.automationTypeValue || "none") !== (state.savedAutomationTypeValue || "none");
+      || (state.automationTypeValue || "none") !== (state.savedAutomationTypeValue || "none")
+      || (state.telegramGroupId || "") !== (state.savedTelegramGroupId || "");
   };
 
   Editor.confirmDiscard = function confirmDiscard(ctx) {
@@ -168,6 +170,7 @@
     state.isEnabled = !!state.savedIsEnabled;
     state.editorWorkflowType = state.savedWorkflowType || Editor.resolveLeafWorkflowType(state.selectedLeaf);
     state.automationTypeValue = state.savedAutomationTypeValue || "none";
+    state.telegramGroupId = state.savedTelegramGroupId || "";
     Editor.syncAutomationSelectionMeta(ctx);
   };
 
@@ -259,6 +262,10 @@
         : (hasLegacyFiles ? "send_files" : "none"));
     state.savedAutomationTypeValue = String(inferredAutomationType || "none");
     state.automationTypeValue = state.savedAutomationTypeValue;
+    state.savedTelegramGroupId = String(payload?.telegram_group_id || "");
+    state.telegramGroupId = state.savedTelegramGroupId;
+    state.telegramGroupCommand = null;
+    if (state.automationTypeValue === "telegram_group") await global.BotTelegramGroups?.load(ctx);
     Editor.syncAutomationSelectionMeta(ctx);
     const projectionCheck = Editor.validateSendFilesProjection(ctx, state.savedSelectedFiles, normalizedConditional);
     state.loadedSendFilesSnapshot = projectionCheck.snapshot;
@@ -280,6 +287,12 @@
     } = ctx;
     const leaf = state.selectedLeaf;
     if (!leaf || !state.selectedMenu) return;
+    if (state.automationTypeValue === "telegram_group" && !(state.telegramGroups || []).some(
+      group => group.id === state.telegramGroupId && group.status === "verified"
+    )) {
+      alert("Выберите проверенную Telegram-группу.");
+      return;
+    }
     const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || Editor.resolveLeafWorkflowType(leaf));
     const isSubmenu = requestWorkflowType === "submenu";
     const isGroupTaskChild = Editor.isGroupTaskChildWorkflow(requestWorkflowType);
@@ -383,6 +396,7 @@
           conditional_files: conditionalPayload,
           automation_overridden: true,
           automation_type: state.automationTypeValue || "none",
+          telegram_group_id: state.automationTypeValue === "telegram_group" ? state.telegramGroupId : null,
           is_enabled: state.isEnabled,
           visibility_overridden: true,
         };
@@ -438,6 +452,7 @@
     };
     state.savedAutomationTypeValue = state.automationTypeValue;
     state.savedAutomationKeyValue = state.automationKeyValue;
+    state.savedTelegramGroupId = state.telegramGroupId || "";
 
     await refreshMenuStructure();
     setStatus("Сохранено");

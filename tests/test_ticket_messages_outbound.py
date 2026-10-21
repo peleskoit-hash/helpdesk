@@ -1359,8 +1359,8 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261021-chat-file-input"
-    bot_buttons_editor_version = "20261020-save-feedback"
+    app_shell_version = "20261021-telegram-groups"
+    bot_buttons_editor_version = "20261021-telegram-groups"
     ticket_message_view_version = "20261021-all-save-feedback"
     ticket_static_version = "20261021-chat-file-input"
     ticket_attachments_template_version = "20261020-quotes"

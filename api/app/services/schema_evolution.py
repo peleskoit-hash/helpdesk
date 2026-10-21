@@ -1088,6 +1088,16 @@ def ensure_ticket_columns() -> None:
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tickets_ticket_number_unique ON tickets(ticket_number) WHERE ticket_number IS NOT NULL"))
 
 
+def ensure_telegram_group_registry_tables() -> None:
+    from ..models import TelegramAutomationGroup, TelegramGroupRegistrationCode
+
+    with engine.begin() as conn:
+        TelegramAutomationGroup.__table__.create(conn, checkfirst=True)
+        TelegramGroupRegistrationCode.__table__.create(conn, checkfirst=True)
+        if "telegram_group_id" not in {col["name"] for col in inspect(conn).get_columns("bot_button_settings")}:
+            conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN telegram_group_id VARCHAR(36) REFERENCES telegram_automation_groups(id)"))
+
+
 def ensure_bot_button_settings_table() -> None:
     with engine.begin() as conn:
         dialect = conn.dialect.name

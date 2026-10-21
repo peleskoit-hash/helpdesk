@@ -15,6 +15,7 @@ from ..schemas import BotButtonInstructionUpdate
 from ..services.button_automation_types import (
     AUTOMATION_TYPE_NONE,
     AUTOMATION_TYPE_SEND_FILES,
+    AUTOMATION_TYPE_TELEGRAM_GROUP,
     TARGET_WORKFLOW_TYPES,
     automation_type_from_key,
     canonical_automation_key_from_type,
@@ -28,6 +29,8 @@ from ..services.button_automation_types import (
 from ..services.button_config import BUTTON_CONFIG_DIR, resolve_button_row
 from ..services.bot_button_keys import change_button_workflow_key, lock_button_keys, check_button_key_collisions
 from ..services.telegram_automation import get_automation_registry
+from ..services import telegram_group_registry
+from ..services.telegram_bot import TelegramApiError
 from ..services.system_tickets import (
     FEEDBACK_SYSTEM_BUTTONS,
     FIRST_CONNECTION_BUTTON_KEY,
@@ -774,6 +777,7 @@ def get_bot_button_item(
         "system_text_effective": effective_system_text,
         "system_text_from": "db",
         "automation_type": effective_automation_type,
+        "telegram_group_id": row.telegram_group_id,
         "automation_key_effective": effective_automation_key,
         "automation_key": db_automation_key or None,
         "automation_overridden": bool(row.automation_overridden),
@@ -871,6 +875,10 @@ def save_bot_button_instruction(
     effective_workflow_type = "submenu" if is_submenu_request else requested_workflow_type
     button_path_value = (button_path or "").strip()
     parent_path_value = button_path_value.rsplit("/", 1)[0] if "/" in button_path_value else ""
+    if button_path_value == button_label:
+        parent_path_value = ""
+    elif button_label and button_path_value.endswith(f"/{button_label}"):
+        parent_path_value = button_path_value[:-(len(button_label) + 1)]
     override_label_value = (payload.label_override or "").strip() if payload.label_override is not None else None
     override_label_enabled = bool(payload.label_overridden) if payload.label_overridden is not None else None
     fields_set = _payload_fields_set(payload)
@@ -903,6 +911,26 @@ def save_bot_button_instruction(
         confirmation_text_value = None
     system_value = (payload.system_text or "").strip() or None if payload.system_text is not None else None
     automation_type_requested, automation_key_value = _resolve_requested_automation_key(payload)
+    existing_row = resolve_button_row(db, button_key, include_inactive=True, strict=True)
+    requested_group_id = payload.telegram_group_id if "telegram_group_id" in fields_set else (
+        existing_row.telegram_group_id if existing_row else None
+    )
+    effective_automation = automation_key_value if automation_type_requested else (
+        existing_row.automation_key if existing_row else None
+    )
+    if payload.automation_overridden is False and not automation_type_requested:
+        effective_automation = None
+    if effective_automation == AUTOMATION_TYPE_TELEGRAM_GROUP:
+        if effective_workflow_type not in TARGET_WORKFLOW_TYPES:
+            _error(422, "automation_not_allowed_for_workflow", "Эта автоматизация недоступна для выбранного типа кнопки")
+        try:
+            admin = telegram_group_registry.require_admin(db, user.id)
+            group = telegram_group_registry.group_for_admin(db, admin, requested_group_id or "")
+            bot = telegram_group_registry._request("getMe")
+            if group.status != "verified" or str(bot["id"]) != group.bot_id:
+                raise ValueError()
+        except (PermissionError, ValueError, TelegramApiError):
+            _error(422, "verified_telegram_group_required", "Выберите проверенную Telegram-группу")
     if automation_type_requested:
         registry = get_automation_registry()
         if not is_known_button_automation_key(automation_key_value, registry):
@@ -991,7 +1019,7 @@ def save_bot_button_instruction(
             row.button_kind = "section"
         elif effective_workflow_type in EDITABLE_EXISTING_WORKFLOW_TYPES:
             row.button_kind = "terminal"
-        row.parent_path = parent_path_value
+        # Settings do not relocate a button: '/' may be part of its label.
         if not bool(row.label_overridden):
             row.button_label = button_label
         row.currently_present = True
@@ -1078,6 +1106,10 @@ def save_bot_button_instruction(
             if not row.visibility_overridden:
                 row.is_enabled = True
         row.updated_at = now
+    if row.automation_key == AUTOMATION_TYPE_TELEGRAM_GROUP:
+        row.telegram_group_id = requested_group_id
+    elif automation_type_requested or "telegram_group_id" in fields_set:
+        row.telegram_group_id = None
     check_button_key_collisions(db, row)
     try:
         db.commit()

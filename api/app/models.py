@@ -831,6 +831,36 @@ class CallCenterEmployeeResolverState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class TelegramAutomationGroup(Base):
+    __tablename__ = "telegram_automation_groups"
+    __table_args__ = (UniqueConstraint("environment", "bot_id", "chat_id", name="uq_telegram_automation_group"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
+    environment: Mapped[str] = mapped_column(String(10))
+    bot_id: Mapped[str] = mapped_column(String(30))
+    chat_id: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(255))
+    registered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    status: Mapped[str] = mapped_column(String(30), default="unavailable")
+    last_error: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class TelegramGroupRegistrationCode(Base):
+    __tablename__ = "telegram_group_registration_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    environment: Mapped[str] = mapped_column(String(10))
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    bot_id: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class BotButtonSetting(Base):
     __tablename__ = "bot_button_settings"
 
@@ -863,6 +893,7 @@ class BotButtonSetting(Base):
     conditional_files_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
     conditional_files_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     automation_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    telegram_group_id: Mapped[str | None] = mapped_column(ForeignKey("telegram_automation_groups.id"), nullable=True)
     automation_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     visibility_overridden: Mapped[bool] = mapped_column(Boolean, default=False)

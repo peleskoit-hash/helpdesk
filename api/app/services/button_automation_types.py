@@ -6,6 +6,7 @@ AUTOMATION_TYPE_NONE = "none"
 AUTOMATION_TYPE_SEND_FILES = "send_files"
 AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP = "bitrix_deal_phone_lookup"
 AUTOMATION_TYPE_MESSAGE_ONLY = "message_only"
+AUTOMATION_TYPE_TELEGRAM_GROUP = "telegram_group"
 
 WORKFLOW_TYPE_TICKET = "ticket"
 WORKFLOW_TYPE_TASK = "task"
@@ -52,6 +53,16 @@ _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
         "workflow_types": [WORKFLOW_TYPE_AUTO],
         "behavior_kind": "builtin",
         "ui_visible": True,
+        "handler": None,
+    },
+    AUTOMATION_TYPE_TELEGRAM_GROUP: {
+        "key": AUTOMATION_TYPE_TELEGRAM_GROUP,
+        "title": "Отправка в Telegram-группу",
+        "description": "Регистрация назначения. Пересылка пока не реализована; обращение передаётся сотруднику.",
+        "workflow_types": [WORKFLOW_TYPE_TICKET, WORKFLOW_TYPE_TASK, WORKFLOW_TYPE_AUTO],
+        "behavior_kind": "builtin",
+        "ui_visible": True,
+        "available": False,
         "handler": None,
     },
 }
@@ -102,7 +113,7 @@ def list_button_automation_types(
             item["enabled"] = bool(meta.get("enabled", True))
             item["handler"] = meta.get("handler") or item.get("handler")
         else:
-            item["available"] = True
+            item["available"] = bool(item.get("available", True))
             item["enabled"] = True
         items.append(item)
     return items
@@ -153,6 +164,8 @@ def is_automation_allowed_for_workflow(
     normalized_key = canonical_automation_key_from_type(automation_key)
     if normalized_key is None:
         return workflow != WORKFLOW_TYPE_AUTO or allow_auto_none
+    if normalized_key == AUTOMATION_TYPE_TELEGRAM_GROUP:
+        return True
     if workflow == WORKFLOW_TYPE_TICKET:
         return normalized_key == AUTOMATION_TYPE_SEND_FILES
     if workflow == WORKFLOW_TYPE_TASK:

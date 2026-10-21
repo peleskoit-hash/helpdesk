@@ -626,6 +626,7 @@
                     : "не задана"))
             )}</div>
             ${state.automationHandler ? `<div class="status">Handler: <code>${escapeHtml(state.automationHandler)}</code></div>` : ""}
+            ${global.BotTelegramGroups?.html(ctx, escapeHtml) || ""}
             ${showSendFilesSettings ? `
               <div class="bot-automation-settings">
                 <label class="field-label">Файлы</label>
@@ -829,10 +830,18 @@
     suppressClientAnswerEl?.addEventListener("change", () => {
       state.suppressClientAnswer = !!suppressClientAnswerEl.checked;
     });
-    automationKeySelectEl?.addEventListener("change", () => {
+    global.BotTelegramGroups?.bind(ctx);
+    automationKeySelectEl?.addEventListener("change", async () => {
       state.automationTypeValue = String(automationKeySelectEl.value || "none");
       if (global.BotButtonsEditor?.syncAutomationSelectionMeta) {
         global.BotButtonsEditor.syncAutomationSelectionMeta(ctx);
+      }
+      if (state.automationTypeValue === "telegram_group") {
+        try {
+          await global.BotTelegramGroups?.load(ctx);
+        } catch (_) {
+          ctx.setStatus("Не удалось загрузить Telegram-группы");
+        }
       }
       EditorView.renderEditor(ctx);
     });

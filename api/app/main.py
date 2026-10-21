@@ -40,6 +40,7 @@ from .routers.settings_client_card import router as settings_client_card_router
 from .routers.settings_notification_bot_basic import router as settings_notification_bot_basic_router
 from .routers.settings_users import router as settings_users_router
 from .routers.telegram import router as telegram_router
+from .routers.telegram_groups import router as telegram_groups_router
 from .routers.tickets import router as tickets_router
 from .routers.ticket_client_avatars import router as ticket_client_avatars_router
 from .routers.users import router as users_router
@@ -51,6 +52,7 @@ from .services.schema_evolution import (
     ensure_bot_menu_level_layouts_table,
     ensure_bot_menu_profiles_tables,
     ensure_bot_button_settings_table,
+    ensure_telegram_group_registry_tables,
     ensure_automatic_message_templates_table,
     ensure_client_card_field_config_columns,
     ensure_call_center_employee_resolver_state_table,
@@ -96,6 +98,7 @@ app.add_middleware(
 app.include_router(tickets_router)
 app.include_router(ticket_client_avatars_router)
 app.include_router(telegram_router)
+app.include_router(telegram_groups_router)
 app.include_router(users_router)
 app.include_router(web_auth_router)
 app.include_router(settings_router)
@@ -147,6 +150,7 @@ async def on_startup():
             ensure_ticket_reviews_tables()
             ensure_ticket_feedback_tables()
             ensure_bot_button_settings_table()
+            ensure_telegram_group_registry_tables()
             ensure_automatic_message_templates_table()
             ensure_bot_menu_level_layouts_table()
             ensure_bot_menu_profiles_tables()

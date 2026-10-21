@@ -1048,6 +1048,7 @@ class BotButtonInstructionUpdate(BaseModel):
     conditional_files_overridden: bool | None = None
     conditional_files: list[dict] | None = None
     automation_type: str | None = None
+    telegram_group_id: str | None = None
     automation_key: str | None = None
     automation_overridden: bool | None = None
     is_enabled: bool | None = None
