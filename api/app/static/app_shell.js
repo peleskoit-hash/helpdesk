@@ -115,7 +115,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20260904a"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261021-all-save-feedback"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261021-task-panel-refresh"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -129,7 +129,7 @@
         "/static/ticket_composer.js?v=20261021-chat-file-input",
         "/static/ticket_controls.js?v=20261013a",
         "/static/ticket_message_view.js?v=20261021-all-save-feedback",
-        "/static/ticket.js?v=20261018-avatar",
+        "/static/ticket.js?v=20261021-task-panel-refresh",
       ],
     },
   ];

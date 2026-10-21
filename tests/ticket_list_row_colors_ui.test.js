@@ -81,8 +81,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261021-all-save-feedback/);
-  assert.match(template, /styles\.css\?v=20261021-task-checkboxes/);
+  assert.match(template, /list\.js\?v=20261021-task-panel-refresh/);
+  assert.match(template, /styles\.css\?v=20261021-task-panel-refresh/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -180,8 +180,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261021-all-save-feedback"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261021-all-save-feedback/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261021-task-panel-refresh"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261021-task-panel-refresh/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});
@@ -255,7 +255,7 @@ test("ticket task panel is role-gated without clearing saved preference", () => 
   const renderSource = sourceBetween(listSource, "function renderTaskPanel", "async function loadTaskPanel");
   assert.match(renderSource, /const canUse = canUseTaskPanel\(\)/);
   assert.match(renderSource, /const items = canUse && state\.taskPanelEnabled \? \(state\.taskPanelItems \|\| \[\]\) : \[\]/);
-  assert.match(renderSource, /const shouldShow = canUse && state\.taskPanelEnabled && items\.length > 0/);
+  assert.match(renderSource, /const shouldShow = canUse && state\.taskPanelEnabled/);
 
   const loadPanelSource = sourceBetween(listSource, "async function loadTaskPanel", "function closeOnBackdropClick");
   assert.match(loadPanelSource, /await fetchTaskPanelItems\(options\)/);

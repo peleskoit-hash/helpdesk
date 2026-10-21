@@ -109,11 +109,11 @@ test('group widget is absent for existing automation types', async t => {
 });
 
 test('direct and shell loading agree; every shell HTML entrypoint has the new shell version', () => {
-  const version = '20261021-group-copy';
+  const version = '20261021-task-panel-refresh';
   const template = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   for (const file of ['bot_telegram_groups.js', 'bot_buttons_editor.js', 'bot_buttons_editor_view.js']) {
-    const resourceVersion = file === 'bot_telegram_groups.js' ? version : '20261021-telegram-groups';
+    const resourceVersion = file === 'bot_telegram_groups.js' ? '20261021-group-copy' : '20261021-telegram-groups';
     assert.ok(template.includes(`/static/${file}?v=${resourceVersion}`), file);
     assert.ok(shell.includes(`/static/${file}?v=${resourceVersion}`), file);
   }

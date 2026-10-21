@@ -1585,6 +1585,14 @@ body[data-sidebar-ready="0"] .admin-select-col {
   grid-template-columns: minmax(0, 1fr) 44px;
 }
 
+.main:is([data-shell-page="tickets-list"], [data-shell-page="ticket-card"]) > .task-panel {
+  margin-top: 3px;
+}
+
+.main:is([data-shell-page="tickets-list"], [data-shell-page="ticket-card"]) > .task-panel:not(.hidden) + .content {
+  padding-top: 3px;
+}
+
 .task-panel-slots {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));

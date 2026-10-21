@@ -70,6 +70,7 @@ const state = {
   quickReplyUseInFlight: false,
   quickReplyUseSeq: 0,
   taskPanelEnabled: false,
+  taskPanelStatus: "loading",
   taskPanelItems: [],
   taskPanelDropdownOpen: false,
 };
@@ -337,7 +338,16 @@ function renderTaskPanel() {
   if (!el.taskPanel || !el.taskPanelSlots || !el.taskPanelMoreBtn || !el.taskPanelDropdown) return;
   const canUse = canUseTaskPanel();
   const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
-  const shouldShow = canUse && state.taskPanelEnabled && items.length > 0;
+  const shouldShow = canUse && state.taskPanelEnabled;
+  const visibleItems = items.slice(0, 8);
+  const overflowItems = items.slice(8);
+  const slotsHtml = !shouldShow ? "" : items.length
+    ? visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("")
+    : `<span class="task-panel-chip"><span class="task-panel-subject">${state.taskPanelStatus === "ready" ? "Нет заявок" : state.taskPanelStatus === "error" ? "Не удалось загрузить панель задач" : "Загрузка…"}</span></span>`;
+  const dropdownHtml = overflowItems.map((item) => taskPanelItemHtml(item, "task-panel-menu-item")).join("");
+  const renderKey = JSON.stringify([shouldShow, slotsHtml, dropdownHtml]);
+  if (el.taskPanel._taskPanelRenderKey === renderKey) return;
+  el.taskPanel._taskPanelRenderKey = renderKey;
   el.taskPanel.classList.toggle("hidden", !shouldShow);
   if (!shouldShow) {
     el.taskPanelSlots.innerHTML = "";
@@ -346,12 +356,10 @@ function renderTaskPanel() {
     closeTaskPanelDropdown();
     return;
   }
-  const visibleItems = items.slice(0, 8);
-  const overflowItems = items.slice(8);
   el.taskPanel.classList.toggle("has-overflow", overflowItems.length > 0);
-  el.taskPanelSlots.innerHTML = visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("");
+  el.taskPanelSlots.innerHTML = slotsHtml;
   el.taskPanelMoreBtn.classList.toggle("hidden", overflowItems.length === 0);
-  el.taskPanelDropdown.innerHTML = overflowItems.map((item) => taskPanelItemHtml(item, "task-panel-menu-item")).join("");
+  el.taskPanelDropdown.innerHTML = dropdownHtml;
   if (overflowItems.length === 0) closeTaskPanelDropdown();
 }
 
@@ -361,11 +369,14 @@ async function loadTaskPanel(options = {}) {
     renderTaskPanel();
     return;
   }
+  renderTaskPanel();
   try {
     state.taskPanelItems = await api("/api/v1/tickets/task-panel");
+    state.taskPanelStatus = "ready";
     renderTaskPanel();
   } catch (e) {
     state.taskPanelItems = [];
+    state.taskPanelStatus = "error";
     renderTaskPanel();
     if (!options.silent) showError(`Не удалось загрузить панель задач.\n\n${e.message || "Неизвестная ошибка"}`);
   }
