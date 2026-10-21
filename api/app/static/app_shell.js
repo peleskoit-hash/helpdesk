@@ -78,7 +78,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/settings_notification_bot_basic.js?v=20261013b",
+        "/static/settings_notification_bot_basic.js?v=20261021-save-feedback",
       ],
     }],
     ["/profile/notification-bot", {
@@ -86,7 +86,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/profile_notification_bot.js?v=20261013b",
+        "/static/profile_notification_bot.js?v=20261021-save-feedback",
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261013b"] }],

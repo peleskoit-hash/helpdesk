@@ -360,9 +360,10 @@ test("notification bot basic dirty guard tracks baseline save and page label", (
 test("notification bot basic SPA route loads current script and saves active fifth type", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "settings_notification_bot_basic.js"), "utf8");
   const template = fs.readFileSync(path.join(__dirname, "..", "api", "app", "templates", "settings_notification_bot_basic.html"), "utf8");
-  const templateScript = template.match(/settings_notification_bot_basic\.js\?v=([0-9a-z]+)/)?.[1];
-  const shellScript = appShellSource.match(/settings_notification_bot_basic\.js\?v=([0-9a-z]+)/)?.[1];
+  const templateScript = template.match(/settings_notification_bot_basic\.js\?v=([0-9a-z-]+)"/)?.[1];
+  const shellScript = appShellSource.match(/settings_notification_bot_basic\.js\?v=([0-9a-z-]+)"/)?.[1];
 
+  assert.equal(templateScript, "20261021-save-feedback");
   assert.equal(shellScript, templateScript);
   assert.match(source, /const draft = normalizeDraft\(item\);[\s\S]+state\.drafts\.set\(item\.type, draft\);[\s\S]+state\.baselines\.set\(item\.type, snapshotDraft\(draft\)\);/);
   assert.match(source, /state\.activeType = button\.getAttribute\("data-tab-type"\) \|\| state\.activeType/);

@@ -281,6 +281,7 @@
         state.items = state.items.map((item) => item.type === normalized.type ? { ...item, ...updated } : item);
         render();
         setStatus("Сохранено");
+        window.HelpdeskAppShell?.showSaved?.(el.root?.closest(".panel.notification-bot-basic-panel"));
       } catch (error) {
         draft.isSaving = false;
         draft.error = error.message || "Ошибка сохранения";

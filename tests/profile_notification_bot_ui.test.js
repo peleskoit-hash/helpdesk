@@ -26,6 +26,15 @@ function loadTestHooks() {
   return context.window.__profileNotificationBotTest;
 }
 
+test("profile notification bot direct and shell loading use the current script version", () => {
+  const template = fs.readFileSync(path.join(__dirname, "..", "api", "app", "templates", "profile_notification_bot.html"), "utf8");
+  const shell = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "app_shell.js"), "utf8");
+  const templateVersion = template.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
+  const shellVersion = shell.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
+  assert.equal(templateVersion, "20261021-save-feedback");
+  assert.equal(shellVersion, templateVersion);
+});
+
 test("profile notification bot uses one config-driven renderer for two tabs", () => {
   assert.match(source, /const PERSONAL_NOTIFICATION_TAB_CONFIG = \{/);
   assert.match(source, /new_assignment: \{/);

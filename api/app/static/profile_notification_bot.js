@@ -471,6 +471,7 @@
         applyPayload(payload);
         render();
         setStatus("Сохранено");
+        if (!options.quiet) window.HelpdeskAppShell?.showSaved?.(el.root?.closest(".panel.notification-bot-basic-panel"));
       } catch (error) {
         window.HelpdeskErrorDialog?.show?.({ title: "Ошибка сохранения", message: "Не удалось сохранить настройки.", error });
         render();
