@@ -58,11 +58,11 @@ _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
     AUTOMATION_TYPE_TELEGRAM_GROUP: {
         "key": AUTOMATION_TYPE_TELEGRAM_GROUP,
         "title": "Отправка в Telegram-группу",
-        "description": "Регистрация назначения. Пересылка пока не реализована; обращение передаётся сотруднику.",
+        "description": "Копирует одно сообщение клиента в выбранную группу и закрывает обращение после подтверждения отправки.",
         "workflow_types": [WORKFLOW_TYPE_TICKET, WORKFLOW_TYPE_TASK, WORKFLOW_TYPE_AUTO],
         "behavior_kind": "builtin",
         "ui_visible": True,
-        "available": False,
+        "available": True,
         "handler": None,
     },
 }

@@ -256,7 +256,7 @@ def process_collecting_ticket_automation(
     if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
         return None
     if effective_automation_key == "telegram_group":
-        return None  # Registration only; the regular workflow keeps the request open for staff.
+        return None  # Handled before the ordinary intake and its timeouts in telegram.py.
     if is_builtin_button_automation_key(effective_automation_key):
         append_system_message_fn(
             db,

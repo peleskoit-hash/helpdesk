@@ -278,9 +278,9 @@ def test_auto_button_callback_keeps_request_open_without_false_success(case, mon
         "from": {"id": int(contact.external_user_id)},
         "message": {"message_id": 1, "chat": {"id": int(contact.external_chat_id), "type": "private"}}}}
     result = telegram.process_telegram_update(case.db, update, notify_client=True)
-    assert result.get("automation_pending") is True, result
+    assert result.get("group_waiting") is True, result
     assert case.db.get(Ticket, result["ticket_id"]).status != "closed"
-    assert answered.call_args.args[1] == "Заявка передана сотруднику"
+    assert answered.call_args.args[1] == "Отправьте одно сообщение"
     assert not any("обработана" in str(call) for call in sent.call_args_list)
 
 
@@ -299,7 +299,7 @@ def test_prepared_automation_never_reports_success_or_closes_ticket(case, monkey
     assert result["automation_pending"] is True
     case.db.refresh(ticket)
     assert ticket.status != "closed" and ticket.closed_at is None
-    assert any("пока не реализована" in message.body for message in case.db.scalars(select(TicketMessage)))
+    assert any("Не удалось начать ожидание" in message.body for message in case.db.scalars(select(TicketMessage)))
     sent.assert_not_called()
     assert not any(call.args[0] == "sendMessage" for call in case.api.call_args_list)
 

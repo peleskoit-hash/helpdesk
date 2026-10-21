@@ -47,6 +47,8 @@ async function setup(t) {
 
 test('group selector escapes titles, disables unverified groups and retains selection on redraw', async t => {
   const page = await setup(t);
+  assert.match(await page.locator('#widget').textContent(), /После подтверждённой отправки/);
+  assert.doesNotMatch(await page.locator('#widget').textContent(), /пока не реализована/);
   assert.equal(await page.locator('#botTelegramGroup option[value="bad"]').isDisabled(), true);
   assert.equal(await page.locator('#botTelegramGroup b').count(), 0);
   assert.match(await page.locator('#botTelegramGroup option[value="ok"]').textContent(), /<b>Тестовая группа<\/b>/);
@@ -107,12 +109,13 @@ test('group widget is absent for existing automation types', async t => {
 });
 
 test('direct and shell loading agree; every shell HTML entrypoint has the new shell version', () => {
-  const version = '20261021-telegram-groups';
+  const version = '20261021-group-copy';
   const template = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   for (const file of ['bot_telegram_groups.js', 'bot_buttons_editor.js', 'bot_buttons_editor_view.js']) {
-    assert.ok(template.includes(`/static/${file}?v=${version}`), file);
-    assert.ok(shell.includes(`/static/${file}?v=${version}`), file);
+    const resourceVersion = file === 'bot_telegram_groups.js' ? version : '20261021-telegram-groups';
+    assert.ok(template.includes(`/static/${file}?v=${resourceVersion}`), file);
+    assert.ok(shell.includes(`/static/${file}?v=${resourceVersion}`), file);
   }
   for (const file of fs.readdirSync('api/app/templates').filter(name => name.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');

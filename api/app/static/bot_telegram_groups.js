@@ -19,7 +19,7 @@
         ${!selected && state.telegramGroupId ? `<option value="${escapeHtml(state.telegramGroupId)}" selected disabled>Группа недоступна</option>` : ""}
         ${groups.map(group => `<option value="${escapeHtml(group.id)}" ${group.id === state.telegramGroupId ? "selected" : ""} ${group.status === "verified" ? "" : "disabled"}>${escapeHtml(group.title)} (${escapeHtml(group.chat_id)}) — ${group.status === "verified" ? "Проверена" : "Нет доступа"}</option>`).join("")}
       </select>
-      <div class="status">Пересылка пока не реализована. Обращение будет передано сотруднику.</div>
+      <div class="status">Одно сообщение клиента будет скопировано в группу. После подтверждённой отправки обращение закроется; при ошибке будет передано сотруднику.</div>
       ${selected?.last_error ? `<div class="status">${selected.last_error === "probe_cleanup_failed" ? "Проверка отправки успешна, но тестовое сообщение не удалось удалить." : "Проверьте доступ бота к группе повторно."}</div>` : ""}
       <button id="botTelegramGroupAdd" type="button" class="action">Добавить группу</button>
       <button id="botTelegramGroupRefresh" type="button" class="action">Обновить список</button>

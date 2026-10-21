@@ -79,7 +79,7 @@ def _check_group(chat_id: str, *, expected_bot_id: str, sender_id: str | None = 
         raise ValueError("bot_cannot_send")
     sent = _request("sendMessage", {
         "chat_id": chat_id, "disable_notification": True,
-        "text": f"ES DESK {settings.app_env.upper()}: проверка подключения группы. Пересылка обращений пока не включена.",
+        "text": f"ES DESK {settings.app_env.upper()}: проверка подключения группы.",
     })
     if not isinstance(sent, dict) or not sent.get("message_id"):
         raise ValueError("send_check_failed")
@@ -173,3 +173,17 @@ def group_out(group: TelegramAutomationGroup) -> dict:
     return {key: getattr(group, key) for key in (
         "id", "chat_id", "title", "registered_at", "checked_at", "status", "last_error", "environment",
     )}
+
+
+def group_for_ticket(db: Session, ticket, group_id: str | None) -> TelegramAutomationGroup:
+    group = db.scalar(select(TelegramAutomationGroup).where(
+        TelegramAutomationGroup.id == group_id,
+        TelegramAutomationGroup.company_id == ticket.company_id,
+        TelegramAutomationGroup.environment == settings.app_env,
+        TelegramAutomationGroup.status == "verified",
+    ))
+    if group is None or _is_archive(group.chat_id):
+        raise ValueError("Группа недоступна")
+    if str(_request("getMe")["id"]) != group.bot_id:
+        raise ValueError("Группа зарегистрирована для другого бота")
+    return group

@@ -67,7 +67,7 @@
         "/static/bot_buttons_files.js?v=20260629a",
         "/static/bot_buttons_level_view.js?v=20261021-all-save-feedback",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/bot_telegram_groups.js?v=20261021-telegram-groups",
+        "/static/bot_telegram_groups.js?v=20261021-group-copy",
         "/static/bot_buttons_editor.js?v=20261021-telegram-groups",
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",

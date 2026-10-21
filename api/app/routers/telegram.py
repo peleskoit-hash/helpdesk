@@ -44,6 +44,7 @@ from ..services.telegram_bot import (
 from ..services.button_config import BASIC_MENU_NAME, BUTTON_CONFIG_DIR, DEFAULT_MENU_NAME, ButtonSpec, build_level_layout_key, build_visibility_button_key, available_menu_names, resolve_button_row
 from ..services.assignment import append_system_message, notify_client_about_assignee
 from ..services.telegram_group_registry import is_group_registration, register_group
+from ..services import telegram_group_automation
 from ..services.assignment import assignee_change_message, assignee_label
 from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
@@ -96,6 +97,7 @@ from ..services.button_automation_types import (
     AUTOMATION_TYPE_SEND_FILES,
 )
 from ..services.telegram_automation import (
+    _handoff_automation_task_to_agent,
     AUTOMATION_FALLBACK_CLIENT_TEXT,
     process_collecting_ticket_automation,
     resolve_effective_automation_key,
@@ -1087,12 +1089,12 @@ def _dispatch_builtin_button_automation(
     if effective_automation_key == "telegram_group":
         if workflow_type == TicketWorkflowType.AUTO.value:
             _fallback_auto_to_support(
-                db, ticket, "Пересылка в Telegram-группу пока не реализована", external_chat_id, notify_client,
+                db, ticket, "Не удалось начать ожидание сообщения для Telegram-группы", external_chat_id, notify_client,
                 client_message_key="telegram.automation.fallback_created",
                 client_message_fallback="Заявка создана и передана в работу.",
             )
         else:
-            append_system_message(db, ticket, "Пересылка в Telegram-группу пока не реализована", agent_visible=True)
+            append_system_message(db, ticket, "Не удалось начать ожидание сообщения для Telegram-группы", agent_visible=True)
         db.commit()
         return {"ok": True, "ticket_id": ticket.id, "automation_pending": True, "status": ticket.status}
 
@@ -2190,6 +2192,9 @@ def _process_problem_type_callback(
         return {"ok": True, "ticket_id": collecting_ticket.id, "awaiting_confirmation": True, "button": button.label}
 
     _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
+    group_wait = _begin_group_message_wait(db, collecting_ticket, button, external_chat_id, notify_client, callback_id)
+    if group_wait is not None:
+        return group_wait
 
     if button.kind == "auto":
         collecting_ticket.intake_state = TicketIntakeState.READY.value
@@ -2288,7 +2293,78 @@ def _process_problem_type_callback(
 
     return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
 
+def _group_automation_callbacks():
+    return {
+        "append_system": append_system_message,
+        "append_client": _append_client_message,
+        "store_attachment": _store_telegram_attachment_and_schedule_employee_notification,
+        "archive": start_background_archive_inbound_attachment,
+        "remove_close": lambda db, ticket: remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard),
+        "complete": _complete_auto_ticket,
+        "send": send_message,
+        "handoff": lambda db, ticket, button, chat, notify: _handoff_automation_task_to_agent(
+            db, ticket, button, chat, notify, append_button_system_text_fn=_store_button_system_text,
+            ready_ticket_for_distribution_fn=_ready_ticket_for_distribution, send_message_fn=send_message,
+        ),
+    }
+
+
+def recover_incomplete_group_automations(db: Session) -> int:
+    return telegram_group_automation.recover(db, callbacks=_group_automation_callbacks())
+
+
+def _is_group_automation(db, ticket):
+    setting = _button_setting_for_ticket(db, ticket)
+    return setting is not None and setting.automation_key == "telegram_group"
+
+
+def _begin_group_message_wait(db, ticket, button, chat_id, notify_client, callback_id):
+    if not _is_group_automation(db, ticket):
+        return None
+    ticket.intake_state = TicketIntakeState.COLLECTING.value
+    ticket.load_counted = False
+    db.commit()
+    if notify_client:
+        if callback_id:
+            answer_callback_query(callback_id, "Отправьте одно сообщение")
+        text, mode = _render_client_text_for_telegram(
+            db, ticket, button, "Отправьте одним сообщением текст и/или вложение с подписью",
+        )
+        send_message(chat_id, text, parse_mode=mode)
+    return {"ok": True, "ticket_id": ticket.id, "group_waiting": True}
+
+
 def process_telegram_update(db: Session, payload: dict, notify_client: bool = False) -> dict:
+    message = payload.get("message") or payload.get("edited_message") or (payload.get("callback_query") or {}).get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = str(chat.get("id", ""))
+    if payload.get("update_id") is not None and _is_private_telegram_chat(chat):
+        callback_data = (payload.get("callback_query") or {}).get("data") or ""
+        confirmation = _parse_confirm_callback_data(callback_data)
+        if confirmation is not None:
+            callback_data = confirmation[0]
+        selected_setting = None
+        if callback_data.startswith("btnid:"):
+            selected_setting = db.get(BotButtonSetting, callback_data.removeprefix("btnid:"))
+        elif callback_data.startswith("btn:") or confirmation is not None:
+            selected_setting = resolve_button_row(db, callback_data.removeprefix("btn:"))
+        selects_group = selected_setting is not None and selected_setting.automation_key == "telegram_group"
+        candidates = db.scalars(select(Ticket).join(
+            TelegramContact, and_(TelegramContact.client_id == Ticket.client_id, TelegramContact.company_id == Ticket.company_id),
+        ).where(TelegramContact.external_chat_id == chat_id, Ticket.status != TicketStatus.CLOSED.value,
+                Ticket.intake_state.in_([TicketIntakeState.COLLECTING.value, TicketIntakeState.TELEGRAM_GROUP_COPYING.value]))).all()
+        if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) for ticket in candidates):
+            with telegram_group_automation.chat_lock(db, chat_id):
+                # End the read-only discovery snapshot before rechecking a concurrent update.
+                if not db.new and not db.dirty and not db.deleted:
+                    db.rollback()
+                db.expire_all()
+                telegram_group_automation.recover(db, callbacks=_group_automation_callbacks(), chat_id=chat_id, already_locked=True)
+                return _process_telegram_update(db, payload, notify_client)
+    return _process_telegram_update(db, payload, notify_client)
+
+
+def _process_telegram_update(db: Session, payload: dict, notify_client: bool = False) -> dict:
     update_id = payload.get("update_id")
     if update_id is None:
         return {"ok": True, "ignored": "missing_update_id"}
@@ -2445,6 +2521,9 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
                 return {"ok": True, "ticket_id": collecting_ticket.id, "confirmation": "no"}
 
             _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
+            group_wait = _begin_group_message_wait(db, collecting_ticket, button, external_chat_id, notify_client, callback_id)
+            if group_wait is not None:
+                return group_wait
             _remove_menu_keyboard(
                 db,
                 collecting_ticket,
@@ -2678,6 +2757,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         )
         if feedback_result is not None:
             return feedback_result
+
+    if not (text.startswith("/start") or text.startswith("/close")):
+        group_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
+        if group_ticket is not None and _is_group_automation(db, group_ticket):
+            setting = _button_setting_for_ticket(db, group_ticket)
+            button = _button_from_callback(db, f"btn:{setting.button_key}", setting.menu_type)
+            return telegram_group_automation.process_message(
+                db, group_ticket, button, setting, raw_text, telegram_message_id, attachment_data,
+                external_chat_id, notify_client, callbacks=_group_automation_callbacks(),
+                attachment_too_large=attachment_too_large, forbidden_attachment=forbidden_attachment_type is not None,
+            )
 
     if forbidden_attachment_type is not None:
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id) or _collecting_ticket_for_client(
@@ -3025,6 +3115,8 @@ def cleanup_expired_task_intents(db: Session) -> int:
     ).scalars().all()
     expired = []
     for ticket in tickets:
+        if _is_group_automation(db, ticket):
+            continue
         timeout_minutes = TASK_DESCRIPTION_TIMEOUT_MINUTES if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_MINUTES
         if ticket.updated_at + timedelta(minutes=timeout_minutes) <= _now_for(ticket.updated_at):
             expired.append(ticket)

@@ -59,6 +59,7 @@ class InternalTaskDefinitionState(str, Enum):
 
 
 class TicketIntakeState(str, Enum):
+    TELEGRAM_GROUP_COPYING = "telegram_group_copy"
     COLLECTING = "collecting"
     READY = "ready"
     CANCELLED = "cancelled"

@@ -168,6 +168,9 @@ async def on_startup():
                 db.commit()
             ensure_system_seed_data()
             cleanup_old_integration_logs_on_startup()
+            from .routers.telegram import recover_incomplete_group_automations
+            with SessionLocal() as db:
+                recover_incomplete_group_automations(db)
             last_error = None
             break
         except OperationalError as exc:
