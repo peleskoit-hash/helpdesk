@@ -156,9 +156,10 @@ def sanitize_telegram_html(text: str) -> str:
 
 
 class _TelegramHtmlValidator(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, allow_ticket_link_placeholder: bool = False) -> None:
         super().__init__(convert_charrefs=False)
         self.stack: list[tuple[str, str]] = []
+        self.allow_ticket_link_placeholder = allow_ticket_link_placeholder
 
     def _fail(self, message: str) -> None:
         raise TelegramHtmlValidationError(message)
@@ -171,7 +172,10 @@ class _TelegramHtmlValidator(HTMLParser):
         normalized = _TAG_NORMALIZE.get(raw, raw)
         if normalized == "a":
             href_values = [value for key, value in attrs if (key or "").lower() == "href"]
-            if len(href_values) != 1 or not _is_safe_href(href_values[0] or ""):
+            if len(href_values) != 1 or not (
+                (self.allow_ticket_link_placeholder and href_values[0] == "[Ссылка на заявку]")
+                or _is_safe_href(href_values[0] or "")
+            ):
                 self._fail(f"Некорректная ссылка в {fragment}")
             extra_attrs = [key for key, _ in attrs if (key or "").lower() != "href"]
             if extra_attrs:
@@ -207,9 +211,9 @@ class _TelegramHtmlValidator(HTMLParser):
             self._fail(f"Незакрытый Telegram-тег {fragment}")
 
 
-def validate_telegram_html(text: str) -> None:
+def validate_telegram_html(text: str, *, allow_ticket_link_placeholder: bool = False) -> None:
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-    parser = _TelegramHtmlValidator()
+    parser = _TelegramHtmlValidator(allow_ticket_link_placeholder=allow_ticket_link_placeholder)
     try:
         parser.feed(raw)
         parser.close()

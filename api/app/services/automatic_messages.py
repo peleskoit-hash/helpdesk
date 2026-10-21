@@ -1192,7 +1192,7 @@ def validate_notification_bot_basic_template(*, enabled: bool, template: str | N
     if enabled and body is None:
         raise ValueError("Добавьте текст уведомления или отключите этот тип")
     try:
-        validate_telegram_html(body or "")
+        validate_telegram_html(body or "", allow_ticket_link_placeholder=True)
     except TelegramHtmlValidationError as exc:
         raise ValueError(str(exc) or "Некорректная Telegram-разметка") from exc
     return body

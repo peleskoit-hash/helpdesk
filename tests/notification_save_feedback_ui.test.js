@@ -3,11 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-async function loadPage(personal) {
+async function loadPage(personal, editedTemplate = 'Edited') {
   const file = personal ? 'profile_notification_bot.js' : 'settings_notification_bot_basic.js';
   const calls = [], confirmations = [], errors = [];
   const panel = {name: 'notification panel'};
-  const textarea = {value: 'Edited', addEventListener() {}};
+  const textarea = {value: editedTemplate, addEventListener() {}};
   const pane = {
     querySelector(selector) {
       if (selector === '[data-template-textarea]') return textarea;
@@ -37,16 +37,21 @@ async function loadPage(personal) {
       registerPage(name, fn) { factory = fn; },
       showSaved(target) {
         confirmations.push({target, renders: root.renders});
-        assert.equal(hooks.state.drafts.get('new_assignment').template, 'Edited');
-        if (!personal) assert.equal(hooks.state.baselines.get('new_assignment').template, 'Edited');
+        assert.equal(hooks.state.drafts.get('new_assignment').template, editedTemplate);
+        if (!personal) assert.equal(hooks.state.baselines.get('new_assignment').template, editedTemplate);
       },
     },
     HelpdeskSidebar: {init: () => new Promise(() => {})},
     HelpdeskErrorDialog: {show: error => errors.push(error)},
     addEventListener() {}, removeEventListener() {}, confirm: () => true,
   };
+  const editorWindow = {location: {origin: 'https://desk.example'}};
+  vm.runInNewContext(fs.readFileSync('api/app/static/telegram_text_editor.js', 'utf8'), {
+    window: editorWindow, URL, document: {},
+  });
+  window.TelegramTextEditor = {validateTelegramHtml: editorWindow.TelegramTextEditor.validateTelegramHtml};
   let write = async () => {
-    const saved = items.map(item => ({...item, template: 'Edited'}));
+    const saved = items.map(item => ({...item, template: editedTemplate}));
     return personal ? {items: saved, role: 'agent'} : saved[0];
   };
   const context = vm.createContext({window, document,
@@ -72,6 +77,27 @@ async function loadPage(personal) {
 
 for (const personal of [false, true]) {
   const name = personal ? 'personal' : 'basic';
+  for (const template of ['<a href="[Ссылка на заявку]">[Задача]</a>', '<a href="https://example.com/task">Задача</a>']) {
+    test(`${name}: real editor validation permits saving ${template}`, async () => {
+      const page = await loadPage(personal, template);
+      await page.hooks.save();
+      const request = page.calls.find(call => call.method === 'PUT');
+      assert.ok(request);
+      const payload = JSON.parse(request.body);
+      const item = personal ? payload.items.find(item => item.type === 'new_assignment') : payload;
+      assert.equal(item.template, template);
+      if (personal) assert.equal(item.use_base_settings, false);
+      assert.equal(page.errors.length, 0);
+    });
+  }
+  for (const template of ['<a href="javascript:alert(1)">Задача</a>', '<b>Незакрытый тег']) {
+    test(`${name}: real editor blocks unsafe URL or broken HTML ${template}`, async () => {
+      const page = await loadPage(personal, template);
+      await page.hooks.save();
+      assert.equal(page.calls.some(call => call.method === 'PUT'), false);
+      assert.equal(page.confirmations.length, 0);
+    });
+  }
   test(`${name}: saved feedback follows PUT, state update and render`, async () => {
     const page = await loadPage(personal);
     let finish;
