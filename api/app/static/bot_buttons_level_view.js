@@ -328,6 +328,7 @@
       }
       ctx.render();
       ctx.setStatus("\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d");
+      global.HelpdeskAppShell?.showSaved?.(ctx.el?.content?.closest(".panel.bot-buttons-panel"));
     });
 
     document.getElementById("addDestinationBtn")?.addEventListener("click", async () => {

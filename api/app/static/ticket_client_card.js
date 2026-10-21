@@ -1383,6 +1383,9 @@
       closeClientModal(ctx, { force: true });
       if (editor) fillClientPanel(ctx, ctx.state.currentClientProfile);
       ctx.setStatus("Профиль клиента сохранён");
+      global.HelpdeskAppShell?.showSaved?.(ctx.el.clientDynamicCard?.closest(".panel.ticket-client-side"), {
+        position: "top", scrollContainer: ctx.el.clientDynamicCard, anchor: ctx.el.editClientBtn,
+      });
     } catch (e) {
       if (!ctx.isDestroyed?.()) ctx.showError(e.message);
     } finally {

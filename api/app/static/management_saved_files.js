@@ -242,6 +242,7 @@
         closeRenameModal();
         render();
         setStatus("Файл переименован");
+        window.HelpdeskAppShell?.showSaved?.(el.TableBody?.closest(".panel.management-saved-files-panel"));
       } catch (error) {
         el.RenameError.textContent = error.message || "Не удалось переименовать файл";
         el.RenameError.hidden = false;

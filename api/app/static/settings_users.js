@@ -189,6 +189,7 @@ async function saveUser() {
     closeUserModal();
     await loadUsers();
     setStatus("Пользователь сохранён");
+    window.HelpdeskAppShell?.showSaved?.(el.usersTableBody?.closest(".panel"));
   } catch (e) {
     showError(e.message);
   }

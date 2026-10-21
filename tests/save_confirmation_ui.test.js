@@ -16,7 +16,7 @@ function load() {
     body, scripts: [], readyState: 'loading', addEventListener() {},
     createElement() {
       return {
-        style: {}, attributes: {},
+        style: {}, attributes: {}, offsetHeight: 44,
         setAttribute(name, value) { this.attributes[name] = value; },
         remove() {
           body.children = body.children.filter(node => node !== this);
@@ -101,6 +101,37 @@ test('repeat save restarts the entire animation and page teardown removes pendin
   app.window.HelpdeskAppShell.destroyCurrentPage();
   assert.equal(app.body.children.length, 0);
   assert.equal(app.timers.size, 0);
+});
+
+test('top confirmation uses the scroller viewport and stays below the edit button on scroll and resize', () => {
+  const app = load();
+  const card = panel();
+  const scroller = {clientLeft: 0, clientWidth: 582, scrollLeft: 0, scrollTop: 120,
+    rect: {left: 101, top: 250}, getBoundingClientRect() {return this.rect;}};
+  const anchor = {bottom: 240, getBoundingClientRect() {return {bottom: this.bottom};}};
+  app.window.HelpdeskAppShell.showSaved(card, {position: 'top', scrollContainer: scroller, anchor});
+  const notice = app.body.children[0];
+  assert.equal(notice.style.left, '391.5px'); // (panel left 100 + scrollbar start 683) / 2.
+  assert.equal(notice.style.top, '270px'); // 8px below the button, including half the label height.
+  scroller.scrollTop = 500;
+  scroller.scrollLeft = 100;
+  for (const listener of app.listeners.get('scroll')) listener();
+  assert.equal(notice.style.left, '391.5px');
+  assert.equal(notice.style.top, '270px');
+  card.rect.left = 20;
+  scroller.rect.left = 21;
+  scroller.clientLeft = 1;
+  scroller.clientWidth = 280;
+  anchor.bottom = 140;
+  for (const listener of app.listeners.get('resize')) listener();
+  assert.equal(notice.style.left, '161px');
+  assert.equal(notice.style.top, '170px');
+  scroller.clientWidth = 290; // Native scrollbar disappears; use the new actual viewport width.
+  for (const listener of app.listeners.get('scroll')) listener();
+  assert.equal(notice.style.left, '166px');
+  assert.deepEqual(card.children, ['existing content']);
+  app.advance(1000);
+  assert.equal(app.body.children.length, 0);
 });
 
 test('disconnected panels do not retain notifications or listeners', () => {

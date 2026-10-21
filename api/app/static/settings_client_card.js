@@ -806,6 +806,7 @@ async function saveSourceFromModal() {
     closeSourceModal();
     await loadClientCardConfig();
     setStatus(uiText.sourceSaved);
+    window.HelpdeskAppShell?.showSaved?.(el.clientCardSettings?.closest(".panel.client-card-work-panel"));
   } catch (e) {
     showError(e.message);
   }
@@ -1189,6 +1190,7 @@ async function saveRuleFromModal() {
     closeRuleModal();
     await loadClientCardConfig();
     setStatus(uiText.rulesSaved);
+    window.HelpdeskAppShell?.showSaved?.(el.clientCardSettings?.closest(".panel.client-card-work-panel"));
   } catch (e) {
     showError(e.message);
   }
@@ -1418,6 +1420,7 @@ async function saveFieldFromModal() {
     closeEditFieldModal();
     await loadClientCardConfig();
     setStatus("Поле сохранено");
+    window.HelpdeskAppShell?.showSaved?.(el.clientCardSettings?.closest(".panel.client-card-work-panel"));
   } catch (e) {
     showError(e.message);
   }

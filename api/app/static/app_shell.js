@@ -2,7 +2,7 @@
   const registry = new Map();
   const saveConfirmations = new Map();
 
-  function showSaved(panel) {
+  function showSaved(panel, options = {}) {
     if (!panel?.isConnected) return;
     saveConfirmations.get(panel)?.();
     const notice = document.createElement("div");
@@ -25,6 +25,14 @@
       const rect = panel.getBoundingClientRect();
       notice.style.left = `${rect.left + rect.width / 2}px`;
       notice.style.top = `${rect.top + rect.height / 2}px`;
+      if (options.position === "top") {
+        const scroller = options.scrollContainer || panel;
+        const viewport = scroller.getBoundingClientRect();
+        const right = viewport.left + scroller.clientLeft + scroller.clientWidth;
+        const anchor = options.anchor?.getBoundingClientRect();
+        notice.style.left = `${(rect.left + right) / 2}px`;
+        notice.style.top = `${(anchor?.bottom ?? rect.top) + 8 + notice.offsetHeight / 2}px`;
+      }
     }
     saveConfirmations.set(panel, cleanup);
     document.body.appendChild(notice);
@@ -47,23 +55,23 @@
     ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20260913a"] }],
-    ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261015a"] }],
-    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016c"] }],
+    ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261021-all-save-feedback"] }],
+    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261013b"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261013b"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261021-all-save-feedback"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261021-all-save-feedback"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
         "/static/bot_buttons_api.js?v=20260520a",
         "/static/bot_buttons_files.js?v=20260629a",
-        "/static/bot_buttons_level_view.js?v=20260520a",
+        "/static/bot_buttons_level_view.js?v=20261021-all-save-feedback",
         "/static/telegram_text_editor.js?v=20261005a",
         "/static/bot_buttons_editor.js?v=20261020-save-feedback",
         "/static/bot_buttons_menu_view.js?v=20260708a",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20261005a",
-        "/static/settings_bot_buttons.js?v=20261015a",
+        "/static/settings_bot_buttons.js?v=20261021-all-save-feedback",
       ],
     }],
     ["/settings/automatic-messages", {
@@ -98,15 +106,15 @@
       page: "management-users",
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261018-web-empty-autofill",
-        "/static/management_users.js?v=20261018-web-roles",
+        "/static/ticket_client_card.js?v=20261021-client-save-position",
+        "/static/management_users.js?v=20261021-all-save-feedback",
       ],
     }],
     ["/management/integrations", {
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20260904a"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261013d"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261021-all-save-feedback"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -116,10 +124,10 @@
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20261020-quotes",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261018-web-empty-autofill",
+        "/static/ticket_client_card.js?v=20261021-client-save-position",
         "/static/ticket_composer.js?v=20261020-quotes",
         "/static/ticket_controls.js?v=20261013a",
-        "/static/ticket_message_view.js?v=20261020-quotes",
+        "/static/ticket_message_view.js?v=20261021-all-save-feedback",
         "/static/ticket.js?v=20261018-avatar",
       ],
     },

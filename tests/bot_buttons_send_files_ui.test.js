@@ -207,14 +207,14 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261013b/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20261013b/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261018c/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261018c/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20261018c/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261021-all-save-feedback/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20261021-all-save-feedback/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261021-client-save-position/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261021-client-save-position/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261021-client-save-position/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261018b/);
   assert.match(appShellSource, /ticket\.js\?v=20261018b/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261015a/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261021-all-save-feedback/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -1863,7 +1863,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261013d/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261021-all-save-feedback/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);

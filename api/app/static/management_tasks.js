@@ -709,6 +709,7 @@
       closeModal(root, { force: true });
       await loadData(root);
       setStatus(root, "Сохранено");
+      window.HelpdeskAppShell?.showSaved?.(root.querySelector(".panel.management-tasks-panel"));
     } catch (error) {
       setFormError(root, error.message || "Ошибка сохранения");
     } finally {

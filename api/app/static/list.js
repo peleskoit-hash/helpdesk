@@ -1145,6 +1145,7 @@ async function saveColumnsModal() {
     renderTable();
     await loadTaskPanel();
     setStatus("Настройка списка сохранена");
+    window.HelpdeskAppShell?.showSaved?.(el.ticketsTable?.closest(".panel"));
   } catch (e) {
     showError(`Ошибка настройки списка: ${e.message}`);
   }

@@ -160,6 +160,16 @@ test('CSS is ticket scoped; fields scroll, footer and header do not shrink, bord
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*animation: none/);
 });
 
+test('only the client card scroll viewport uses native thin scrollbars with cache-busted scoped CSS', () => {
+  const selector = '[data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard';
+  const rule = css.slice(css.indexOf(selector)).split('}')[0];
+  assert.ok(css.includes(selector));
+  assert.equal(rule.slice(rule.indexOf('{') + 1).trim(), 'scrollbar-width: thin;');
+  assert.equal([...css.matchAll(/scrollbar-width:/g)].length, 1);
+  assert.doesNotMatch(css, /::-webkit-scrollbar|scrollbar-color:/);
+  assert.match(template, /appContent[\s\S]*ticket_client_card\.css\?v=20261021-client-scroll-thin"/);
+});
+
 test('open and clean cancel switch modes without confirm or PATCH; fields retain identity', async () => {
   const f = fixture();
   const originalInput = f.el.fContactName;
@@ -355,7 +365,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261018d' : resource === 'ticket_client_card.js' ? '20261018-web' : '20261018-avatar']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' || resource === 'ticket_client_card.js' ? '20261021-client-save-position' : '20261018-avatar']);
   }
 });
 

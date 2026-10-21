@@ -40,7 +40,7 @@ def test_management_saved_files_page_is_admin_only(monkeypatch, role):
         return
     assert response.status_code == 200
     assert 'data-shell-page="management-saved-files"' in response.text
-    assert "/static/management_saved_files.js?v=20261016c" in response.text
+    assert "/static/management_saved_files.js?v=20261021-all-save-feedback" in response.text
     assert 'id="managementSavedFilesTableBody"' in response.text
 
 
@@ -53,7 +53,7 @@ def test_management_saved_files_page_redirects_anonymous_to_login(monkeypatch):
 def test_management_saved_files_navigation_contract():
     shell = (ROOT / "api/app/static/app_shell.js").read_text(encoding="utf-8")
     management = (ROOT / "api/app/templates/management.html").read_text(encoding="utf-8")
-    assert '["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261016c"] }]' in shell
+    assert '["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }]' in shell
     assert 'href="/management/saved-files">Сохранённые файлы</a>' in management
 
 

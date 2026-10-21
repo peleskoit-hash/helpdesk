@@ -81,7 +81,7 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261013d/);
+  assert.match(template, /list\.js\?v=20261021-all-save-feedback/);
   assert.match(template, /styles\.css\?v=20261020-save-feedback-wide/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
@@ -180,8 +180,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261013d"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261013d/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261021-all-save-feedback"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261021-all-save-feedback/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});

@@ -313,6 +313,7 @@
     closeClientModal(root);
     await loadUsers(root);
     setStatus(root, "\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e");
+    window.HelpdeskAppShell?.showSaved?.(root.querySelector(".panel.management-users-table"));
   }
 
   async function toggleClientBlock(root) {

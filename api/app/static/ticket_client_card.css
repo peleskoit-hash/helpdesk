@@ -8,6 +8,10 @@
   flex: 0 0 auto;
 }
 
+[data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard {
+  scrollbar-width: thin;
+}
+
 [data-shell-page="ticket-card"] #clientDynamicCard .client-card-block-title {
   font-size: 13px;
 }

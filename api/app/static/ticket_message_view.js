@@ -234,6 +234,7 @@
       });
       await loadCard();
       setStatus("Сообщение исправлено");
+      global.HelpdeskAppShell?.showSaved?.(ctx.el.messages?.closest(".panel.ticket-card"));
     } catch (e) {
       showError(e.message);
     }

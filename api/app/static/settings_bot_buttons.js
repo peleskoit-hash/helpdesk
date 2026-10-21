@@ -675,6 +675,7 @@ function renderSystemFirstConnectionEditor() {
         body: JSON.stringify(payload),
       });
       await loadSystemFirstConnectionEditorState({ api, state, render, setStatus });
+      window.HelpdeskAppShell?.showSaved?.(el.content?.closest(".panel.bot-buttons-panel"));
       setStatus("\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0430");
     } catch (error) {
       setStatus(`\u041e\u0448\u0438\u0431\u043a\u0430: ${error?.message || "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}`);
@@ -751,6 +752,7 @@ function renderSystemButtonGroupEditor() {
         body: JSON.stringify({ buttons }),
       });
       await loadSystemButtonGroupEditorState({ api, state, render, setStatus }, group.key);
+      window.HelpdeskAppShell?.showSaved?.(el.content?.closest(".panel.bot-buttons-panel"));
       setStatus("\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u043a\u043d\u043e\u043f\u043a\u0438 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b");
     } catch (error) {
       setStatus(`\u041e\u0448\u0438\u0431\u043a\u0430: ${error?.message || "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}`);
