@@ -1,5 +1,6 @@
 (function initTicketComposer(global) {
   const { formatFileSize } = global.TicketApi || {};
+  const fileTransferBindings = new WeakMap();
 
   function quotedMessage(ctx) {
     const { state } = ctx;
@@ -767,8 +768,76 @@
     }
   }
 
+  function bindFileTransferHandlers(ctx) {
+    const { state, el } = ctx;
+    const input = el.messageInput;
+    fileTransferBindings.get(input)?.();
+    const panel = input.closest?.(".panel.ticket-card");
+    if (!panel) return;
+    let dragDepth = 0;
+    const listeners = [];
+    const listen = (node, type, handler) => {
+      node.addEventListener(type, handler);
+      listeners.push(() => node.removeEventListener(type, handler));
+    };
+    const canAddFiles = () => state.card && state.card.status !== "closed"
+      && state.role !== "chiki_piki" && !input.disabled && !input.readOnly && !el.addFilesBtn?.disabled;
+    const hasFiles = (data) => Array.from(data?.types || []).includes("Files")
+      || Array.from(data?.items || []).some((item) => item.kind === "file") || Boolean(data?.files?.length);
+    const filesFrom = (data) => {
+      const files = Array.from(data?.files || []);
+      return files.length ? files : Array.from(data?.items || [])
+        .filter((item) => item.kind === "file").map((item) => item.getAsFile()).filter(Boolean);
+    };
+    const clearDrag = () => {
+      dragDepth = 0;
+      panel.classList.remove("file-drop-active");
+    };
+    listen(panel, "dragenter", (event) => {
+      if (!hasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      if (canAddFiles()) {
+        dragDepth += 1;
+        panel.classList.add("file-drop-active");
+      } else clearDrag();
+    });
+    listen(panel, "dragover", (event) => {
+      if (!hasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = canAddFiles() ? "copy" : "none";
+      if (canAddFiles()) {
+        dragDepth = Math.max(1, dragDepth);
+        panel.classList.add("file-drop-active");
+      } else clearDrag();
+    });
+    listen(panel, "dragleave", () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) clearDrag();
+    });
+    listen(panel, "dragend", clearDrag);
+    listen(panel, "drop", (event) => {
+      clearDrag();
+      if (!hasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      if (canAddFiles()) queueSelectedFiles(ctx, filesFrom(event.dataTransfer));
+    });
+    listen(input, "paste", (event) => {
+      if (document.activeElement !== input || !canAddFiles()) return;
+      const files = filesFrom(event.clipboardData);
+      if (!files.length) return;
+      event.preventDefault();
+      queueSelectedFiles(ctx, files);
+    });
+    fileTransferBindings.set(input, () => {
+      for (const remove of listeners) remove();
+      clearDrag();
+      fileTransferBindings.delete(input);
+    });
+  }
+
   function bindComposerHandlers(ctx) {
     const { state, el } = ctx;
+    bindFileTransferHandlers(ctx);
     el.modeReplyBtn.addEventListener("click", () => {
       state.composeMode = "reply";
       applyComposeModeUi(ctx);
@@ -819,6 +888,7 @@
   }
 
   function destroyComposerState(ctx) {
+    fileTransferBindings.get(ctx.el?.messageInput)?.();
     cleanupPreloadRuntimeState(ctx.state);
   }
 
