@@ -571,6 +571,11 @@ def _remove_client_close_button(db: Session, ticket: Ticket):
 
 
 def _is_support_visible_system_message(message: TicketMessage) -> bool:
+    if (
+        message.body == "Клиент нажал /start и пытается создать новое обращение"
+        and message.agent_visible is True
+    ):
+        return True
     text = (message.body or "").strip()
     if not text:
         return False

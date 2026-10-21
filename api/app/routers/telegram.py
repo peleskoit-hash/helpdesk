@@ -2715,6 +2715,14 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
 
     if text.startswith("/start"):
         ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id)
+        if ticket is not None:
+            append_system_message(
+                db,
+                ticket,
+                "Клиент нажал /start и пытается создать новое обращение",
+                agent_visible=True,
+            )
+            db.commit()
         profile = _client_profile(db, contact.client_id)
         has_destination = bool((profile.destination or "").strip()) if profile is not None else False
         needs_onboarding = bool(profile is None or not profile.is_verified or not has_destination)
