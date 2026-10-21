@@ -89,10 +89,10 @@
         "/static/profile_notification_bot.js?v=20261021-save-feedback",
       ],
     }],
-    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261013b"] }],
+    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261021-profile-quick-save"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261011a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
-    ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261011b"] }],
+    ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261021-profile-quick-save"] }],
     ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],
     ["/management/users", {
       page: "management-users",

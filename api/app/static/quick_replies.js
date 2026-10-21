@@ -260,6 +260,7 @@
         });
         closeModal();
         await load();
+        window.HelpdeskAppShell?.showSaved?.(el.list?.closest(".panel.quick-replies-workspace"));
       } catch (e) {
         window.HelpdeskErrorDialog?.show?.({ title: "Ошибка страницы", message: "Не удалось выполнить действие.", error: e });
         renderDraftFiles();

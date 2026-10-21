@@ -429,6 +429,7 @@ async function saveAvatarCrop() {
     syncSidebarAvatar(profile, bustedUrl);
     showAvatarMessage("");
     setStatus("Аватар обновлён");
+    window.HelpdeskAppShell?.showSaved?.(el.root?.closest(".panel.profile-panel"));
   } catch (error) {
     showModalError(el.avatarCropError, avatarErrorMessage(error));
   } finally {
