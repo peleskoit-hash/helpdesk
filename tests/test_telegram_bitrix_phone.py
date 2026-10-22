@@ -260,6 +260,15 @@ def test_lookup_prefers_original_lead_phone_to_encrypted_contact_and_ignores_mul
     assert not any("ID=666" in call.args[0].full_url for call in http.call_args_list)
 
 
+@pytest.mark.parametrize("value, expected", [
+    ("89991234567", "89991234567"),
+    ("+79991234567", "+79991234567"),
+    ("79991234567", "+79991234567"),
+])
+def test_original_phone_prefix_normalization(value, expected):
+    assert bitrix_client._first_original_phone({"PHONE": [{"VALUE": value}]}) == expected
+
+
 def test_send_rich_message_adapter_uses_real_method_and_keeps_keyboard(monkeypatch):
     request = Mock(return_value={"ok": True, "result": {"message_id": 42}})
     monkeypatch.setattr(telegram_bot, "telegram_request", request)

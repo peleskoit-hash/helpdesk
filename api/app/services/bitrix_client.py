@@ -102,7 +102,7 @@ def _first_original_phone(payload):
         if isinstance(item, dict):
             value = str(item.get("VALUE") or "").strip()
             if value and "_enc" not in value.lower():
-                return value if value.startswith("+") else "+" + value
+                return value if value.startswith(("+", "8")) else "+" + value
     return None
 
 
