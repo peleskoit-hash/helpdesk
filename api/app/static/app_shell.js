@@ -79,7 +79,7 @@
       page: "settings-automatic-messages",
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/settings_automatic_messages.js?v=20261013b",
+        "/static/settings_automatic_messages.js?v=20261022-auto-message-sections",
       ],
     }],
     ["/settings/notification-bot-basic", {

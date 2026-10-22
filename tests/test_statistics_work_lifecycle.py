@@ -657,29 +657,19 @@ def test_real_telegram_automation_direct_close_closes_work_interval(monkeypatch)
         status=TicketStatus.NEW.value,
     )
     open_work_interval_if_current(session, ticket, now=datetime(2026, 9, 12, 9, 0, 0))
-    monkeypatch.setattr(
-        telegram_automation,
-        "get_deal_phone_lookup",
-        lambda deal_id: BitrixDealPhoneLookupResult(deal_id=deal_id, phone="+79990000000", source="deal"),
-    )
-
-    result = telegram_automation._process_bitrix_deal_phone_lookup_task(
-        db=session,
-        ticket=ticket,
-        button=SimpleNamespace(label="Bitrix"),
-        client_body="12345",
-        telegram_message_id=None,
-        attachment_data=None,
-        external_chat_id="chat-1",
-        notify_client=False,
-        append_client_message_fn=_append_client_message,
-        store_telegram_attachment_fn=lambda *_args, **_kwargs: None,
-        append_system_message_fn=_append_system_message,
-        handoff_automation_task_to_agent_fn=lambda *_args, **_kwargs: {"handoff": True},
-        remove_client_close_button_fn=lambda *_args, **_kwargs: None,
-        send_message_fn=lambda *_args, **_kwargs: {"ok": True},
-    )
-
+    from api.app.services import telegram_bitrix_phone as phone
+    ticket.intake_state = TicketIntakeState.COLLECTING.value
+    ticket.quick_action_state_json = {phone.KEY: {"phase": "processing", "deadline": 9999999999,
+        "rows": [{"id": "12345", "phone": "+79990000000"}], "finish": "success"}}
+    session.commit()
+    def complete(db, item, *args):
+        item.status = TicketStatus.CLOSED.value
+        item.closed_at = datetime.utcnow()
+        sync_work_interval_after_close(db, item, now=item.closed_at)
+    result = phone.finish(session, ticket, "chat-1", "success", True, {
+        "send": lambda *args, **kwargs: {"ok": True, "result": {"message_id": 50}},
+        "remove_close": lambda *args: None, "complete": complete, "append_system": _append_system_message,
+    })
     assert result["automation_completed"] is True
     rows = _work_rows(session, ticket)
     assert [(row.user_id, row.ended_at is None, row.end_reason) for row in rows] == [

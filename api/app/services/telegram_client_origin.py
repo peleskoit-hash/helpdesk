@@ -1,14 +1,15 @@
 """One deal lookup per client attempt; never hands an automation to staff."""
 from datetime import datetime, timezone
-import re
+from html import escape, unescape
 
 from sqlalchemy import select
 
 from ..config import settings
 from ..models import TelegramContact, Ticket, TicketIntakeState, TicketStatus
-from .automatic_messages import render_automatic_message_for_telegram
+from .automatic_messages import render_automatic_message_for_telegram, get_effective_automatic_message_text
 from .bitrix_client import BitrixApiError, BitrixConfigError, bitrix_get
 from .telegram_bot import client_close_markup
+from .bitrix_deal_input import extract_deal_id
 from .telegram_group_automation import chat_lock
 
 KEY = "client_origin"
@@ -34,6 +35,11 @@ def send(db, ticket, chat, key, notify, callbacks, *, terminal=False, **extra):
     if not notify:
         return
     text, mode = render_automatic_message_for_telegram(db, f"telegram.client_origin.{key}", ticket=ticket, extra=extra)
+    if key == "result" and mode is None:
+        text = unescape(text)
+    if key == "result" and "{{client_origin}}" not in get_effective_automatic_message_text(db, "telegram.client_origin.result"):
+        value = str(extra.get("client_origin") or "")
+        text += "\n\n" + (escape(value) if mode == "HTML" else value)
     response = callbacks["send"](chat, text, parse_mode=mode,
                                  reply_markup=None if terminal else client_close_markup())
     if not terminal:
@@ -129,12 +135,6 @@ def lookup(deal_id):
     if not isinstance(mark, str):
         raise BitrixApiError("Unexpected UF_CRM_MARK type")
     return ("success", mark) if mark.strip() else ("empty", None)
-
-
-def extract_deal_id(body):
-    match = re.fullmatch(r"([0-9]+)|https://crm\.elitesochi\.com/crm/deal/(?:show|edit|details)/([0-9]+)/", body)
-    value = (match.group(1) or match.group(2)) if match else None
-    return value if value and value.strip("0") else None
 
 
 def incoming(db, ticket, body, message_id, attachment, chat, notify, callbacks):

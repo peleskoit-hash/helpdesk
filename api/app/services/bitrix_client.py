@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -9,9 +8,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..config import settings
-
-
-DEAL_LINK_RE = re.compile(r"/crm/deal/show/(\d+)/?")
+from .bitrix_deal_input import extract_deal_id
 
 
 class BitrixLookupError(Exception):
@@ -42,18 +39,8 @@ class BitrixDealPhoneLookupResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def extract_deal_id(text: str) -> str | None:
-    value = (text or "").strip()
-    if value.isdigit():
-        return value
-    match = DEAL_LINK_RE.search(value)
-    if match:
-        return match.group(1)
-    return None
-
-
 def validate_deal_id(deal_id: str) -> bool:
-    return bool(re.fullmatch(r"\d{5,7}", deal_id or ""))
+    return extract_deal_id(deal_id or "") == deal_id
 
 
 def _webhook_base() -> str:
@@ -75,13 +62,12 @@ def bitrix_get(method: str, params: dict[str, Any], *, webhook_base: str | None 
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
         description = None
-        if webhook_base is not None:
-            try:
-                error = json.loads(exc.read().decode("utf-8"))
-                if isinstance(error, dict):
-                    description = error.get("error_description")
-            except (ValueError, OSError):
-                pass
+        try:
+            error = json.loads(exc.read().decode("utf-8"))
+            if isinstance(error, dict):
+                description = error.get("error_description")
+        except (ValueError, OSError):
+            pass
         raise BitrixApiError(f"HTTP {exc.code} при вызове {method}",
                             http_status=exc.code, description=description) from exc
     except URLError as exc:
@@ -111,10 +97,28 @@ def _first_multi_value(payload: dict[str, Any], field_name: str) -> str | None:
     return str(value).strip() if value else None
 
 
+def _first_original_phone(payload):
+    for item in payload.get("PHONE") or []:
+        if isinstance(item, dict):
+            value = str(item.get("VALUE") or "").strip()
+            if value and "_enc" not in value.lower():
+                return value if value.startswith("+") else "+" + value
+    return None
+
+
 def _full_name(payload: dict[str, Any]) -> str | None:
     parts = [payload.get("LAST_NAME"), payload.get("NAME")]
     name = " ".join(str(part).strip() for part in parts if part)
     return name or None
+
+
+def _lookup_entity(method, entity_id):
+    try:
+        return bitrix_get(method, {"ID": entity_id}).get("result") or {}
+    except BitrixApiError as exc:
+        if exc.http_status == 400 and exc.description == "Not found":
+            return {}
+        raise
 
 
 def get_deal_phone_lookup(deal_id: str) -> BitrixDealPhoneLookupResult:
@@ -122,7 +126,10 @@ def get_deal_phone_lookup(deal_id: str) -> BitrixDealPhoneLookupResult:
         raise BitrixLookupError("Некорректный deal_id")
 
     result = BitrixDealPhoneLookupResult(deal_id=deal_id)
-    deal_payload = bitrix_get("crm.deal.get.json", {"ID": deal_id}).get("result") or {}
+    deal_payload = _lookup_entity("crm.deal.get.json", deal_id)
+    if not deal_payload:
+        result.errors.append("deal_not_found")
+        return result
     if not isinstance(deal_payload, dict):
         raise BitrixApiError("crm.deal.get.json вернул неожиданный result")
 
@@ -133,11 +140,11 @@ def get_deal_phone_lookup(deal_id: str) -> BitrixDealPhoneLookupResult:
 
     lead_payload: dict[str, Any] | None = None
     if result.lead_id:
-        lead_payload_raw = bitrix_get("crm.lead.get.json", {"ID": result.lead_id}).get("result") or {}
+        lead_payload_raw = _lookup_entity("crm.lead.get.json", result.lead_id)
         if not isinstance(lead_payload_raw, dict):
             raise BitrixApiError("crm.lead.get.json вернул неожиданный result")
         lead_payload = lead_payload_raw
-        lead_phone = _first_multi_value(lead_payload, "PHONE")
+        lead_phone = _first_original_phone(lead_payload)
         lead_email = _first_multi_value(lead_payload, "EMAIL")
         lead_name = _full_name(lead_payload)
         if lead_phone:
@@ -159,13 +166,13 @@ def get_deal_phone_lookup(deal_id: str) -> BitrixDealPhoneLookupResult:
     )
     contact_payload: dict[str, Any] | None = None
     if needs_contact_fallback:
-        contact_payload_raw = bitrix_get("crm.contact.get.json", {"ID": result.contact_id}).get("result") or {}
+        contact_payload_raw = _lookup_entity("crm.contact.get.json", result.contact_id)
         if isinstance(contact_payload_raw, dict):
             contact_payload = contact_payload_raw
             contact_lead_id = contact_payload.get("LEAD_ID")
             if not result.lead_id and contact_lead_id:
                 result.lead_id = str(contact_lead_id).strip()
-            contact_phone = _first_multi_value(contact_payload, "PHONE")
+            contact_phone = _first_original_phone(contact_payload)
             contact_email = _first_multi_value(contact_payload, "EMAIL")
             contact_name = _full_name(contact_payload)
             if not result.phone and contact_phone:
@@ -180,11 +187,11 @@ def get_deal_phone_lookup(deal_id: str) -> BitrixDealPhoneLookupResult:
 
     # contact fallback may provide LEAD_ID when deal had no lead; retry lead as primary source
     if result.lead_id and lead_payload is None:
-        lead_payload_raw = bitrix_get("crm.lead.get.json", {"ID": result.lead_id}).get("result") or {}
+        lead_payload_raw = _lookup_entity("crm.lead.get.json", result.lead_id)
         if not isinstance(lead_payload_raw, dict):
             raise BitrixApiError("crm.lead.get.json вернул неожиданный result")
         lead_payload = lead_payload_raw
-        lead_phone = _first_multi_value(lead_payload, "PHONE")
+        lead_phone = _first_original_phone(lead_payload)
         lead_email = _first_multi_value(lead_payload, "EMAIL")
         lead_name = _full_name(lead_payload)
         if lead_phone:

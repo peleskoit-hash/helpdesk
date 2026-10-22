@@ -289,10 +289,10 @@ def test_file_without_number_is_archived_but_never_notifies_or_assigns_staff(flo
     assert "Нужен положительный номер" in flow.sent.call_args.args[1]
 
 
-def test_ten_templates_are_independent_editable_and_html_safe(flow):
+def test_origin_templates_are_independent_editable_and_html_safe(flow):
     payload = settings_automatic_messages.list_automatic_messages(db=flow.db, user=flow.admin)
     category = next(c for c in payload["categories"] if c["category"] == "client_origin")
-    assert category["category_title"] == "Откуда клиент" and len(category["items"]) == 10
+    assert category["category_title"] == "Откуда клиент" and len(category["items"]) == 14
     for item in category["items"]:
         settings_automatic_messages.update_automatic_message(item["key"],
             settings_automatic_messages.AutomaticMessageUpdatePayload(body="<b>Тест</b> {{client_origin}}", html_enabled=True),
@@ -300,6 +300,66 @@ def test_ten_templates_are_independent_editable_and_html_safe(flow):
         flow.db.expire_all()
         text, mode = render_automatic_message_for_telegram(flow.db, item["key"], extra={"client_origin": "<script>&"})
         assert text == "<b>Тест</b> &lt;script&gt;&amp;" and mode == "HTML"
+
+
+def test_all_origin_callback_replies_use_saved_templates(flow):
+    for key in ["selection_hint", "stale_close", "closed_callback", "close_pending_callback"]:
+        settings_automatic_messages.update_automatic_message(f"telegram.client_origin.{key}",
+            settings_automatic_messages.AutomaticMessageUpdatePayload(body="<b>Настроено: " + key + "</b>", html_enabled=True),
+            db=flow.db, user=flow.admin)
+    choose(flow)
+    assert telegram.answer_callback_query.call_args.args[1] == "Настроено: selection_hint"
+    def close(update_id, message_id):
+        return telegram.process_telegram_update(flow.db, {"update_id": update_id, "callback_query": {
+            "id": "close", "data": "client_close", "from": {"id": int(flow.contact.external_user_id)},
+            "message": {"message_id": message_id, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}},
+        }}, notify_client=True)
+    current_id = int(flow.ticket.client_close_message_id)
+    assert close(11, current_id + 1)["ignored"]
+    assert telegram.answer_callback_query.call_args.args[1] == "Настроено: stale_close"
+    flow.sent.side_effect = TimeoutError()
+    assert not close(12, current_id)["closed"]
+    assert telegram.answer_callback_query.call_args.args[1] == "Настроено: close_pending_callback"
+    flow.sent.side_effect = None
+    assert close(13, current_id)["closed"]
+    assert telegram.answer_callback_query.call_args.args[1] == "Настроено: closed_callback"
+
+
+@pytest.mark.parametrize("missing_placeholder", [False, True])
+@pytest.mark.parametrize("formatted", [False, True])
+def test_saved_origin_result_wrapper_cannot_lose_computed_mark(flow, missing_placeholder, formatted):
+    prefix, suffix = ("<b>До результата</b>", "<i>После результата</i>") if formatted else ("До результата", "После результата")
+    template = prefix + "\n" + ("" if missing_placeholder else "{{client_origin}}") + "\n" + suffix
+    key = "telegram.client_origin.result"
+    settings_automatic_messages.update_automatic_message(key,
+        settings_automatic_messages.AutomaticMessageUpdatePayload(body=template, html_enabled=True), db=flow.db, user=flow.admin)
+    mark = "Смотри подборку <b>квартир</b> & море"
+    flow.http.return_value = response({"result": {"UF_CRM_MARK": mark}})
+    choose(flow)
+    assert telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
+    call = next(call for call in flow.sent.call_args_list if "До результата" in call.args[1])
+    text = call.args[1]
+    assert prefix in text and suffix in text
+    expected = "Смотри подборку &lt;b&gt;квартир&lt;/b&gt; &amp; море" if formatted or not missing_placeholder else mark
+    assert expected in text
+    position = text.index("Смотри подборку")
+    assert (text.index("После результата") < position) if missing_placeholder else (text.index("До результата") < position < text.index("После результата"))
+    stored = settings_automatic_messages.get_automatic_message(key, db=flow.db, user=flow.admin)
+    assert stored["effective_text"] == template
+    sent = flow.sent.call_count
+    with flow.factory() as restarted:
+        telegram.cleanup_expired_task_intents(restarted)
+    assert flow.sent.call_count == sent
+    flow.http.assert_called_once()
+
+
+def test_plain_origin_result_keeps_ampersands_without_html_entities(flow):
+    settings_automatic_messages.update_automatic_message("telegram.client_origin.result",
+        settings_automatic_messages.AutomaticMessageUpdatePayload(body="До: {{client_origin}} :после"), db=flow.db, user=flow.admin)
+    flow.http.return_value = response({"result": {"UF_CRM_MARK": "A & B"}})
+    choose(flow)
+    assert telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
+    assert any(call.args[1] == "До: A & B :после" and call.kwargs["parse_mode"] is None for call in flow.sent.call_args_list)
 
 
 @pytest.mark.parametrize("workflow", ["task", "auto"])

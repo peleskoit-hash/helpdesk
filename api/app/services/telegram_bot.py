@@ -45,7 +45,7 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
         "method": method,
         "payload": payload or {},
     }
-    if method in {"sendMessage", "sendDocument", "sendPhoto", "copyMessage"}:
+    if method in {"sendMessage", "sendDocument", "sendPhoto", "copyMessage", "sendRichMessage"}:
         result["message_id"] = 1
     if document is not None:
         result["document"] = document
@@ -253,6 +253,15 @@ def send_message(
             fallback_payload["text"] = strip_telegram_html(text)
             return telegram_request("sendMessage", payload=fallback_payload, bot_token=bot_token)
         raise
+
+
+def send_rich_message(chat_id: str, rich_message: dict, reply_markup: dict | None = None) -> dict:
+    payload = {"chat_id": chat_id, "rich_message": rich_message}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    if is_test_chat_id(chat_id):
+        return fake_telegram_response("sendRichMessage", payload)
+    return telegram_request("sendRichMessage", payload=payload)
 
 
 def edit_message_text(chat_id: str, message_id: str | int, text: str, parse_mode: str | None = None) -> dict:

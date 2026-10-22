@@ -54,7 +54,7 @@ _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
         "workflow_types": [WORKFLOW_TYPE_TASK],
         "behavior_kind": "registry",
         "ui_visible": True,
-        "handler": "_process_bitrix_deal_phone_lookup_task",
+        "handler": "telegram_bitrix_phone",
     },
     AUTOMATION_TYPE_MESSAGE_ONLY: {
         "key": AUTOMATION_TYPE_MESSAGE_ONLY,

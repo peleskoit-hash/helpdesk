@@ -74,7 +74,7 @@ test("notification bot basic settings panel has inner spacing", () => {
   );
 });
 
-test("automatic messages panel fills content height while preserving inner scroll", () => {
+test("automatic messages panel grows with expanded categories without inner scroll", () => {
   const panelScope = sourceBetween(
     stylesSource,
     ".automatic-messages-panel {",
@@ -93,11 +93,12 @@ test("automatic messages panel fills content height while preserving inner scrol
 
   assert.match(
     panelScope,
-    /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;[\s\S]*padding:\s*0;/,
+    /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*height:\s*auto;[\s\S]*overflow:\s*hidden;[\s\S]*padding:\s*0;/,
   );
+  assert.match(panelScope, /min-height:\s*max-content;/);
   assert.match(
     rootScope,
-    /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*auto;[\s\S]*padding:\s*18px 22px 22px;/,
+    /display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*visible;[\s\S]*padding:\s*18px 22px 22px;/,
   );
   assert.doesNotMatch(rootScope, /display:s*grid;/);
   assert.match(sectionScope, /flex:\s*0 0 auto;/);

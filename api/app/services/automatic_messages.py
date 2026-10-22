@@ -59,22 +59,6 @@ class SafeTelegramHtml:
 
 
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
-    *(AutomaticMessageDefinition(
-        key=f"telegram.client_origin.{key}", title=title, description=title,
-        category="client_origin", category_title="Откуда клиент", sort_order=index * 10,
-        default_text=body, explicit_variables=("deal_id", "client_origin"), runtime_enabled=True,
-    ) for index, (key, title, body) in enumerate((
-        ("prompt", "Запрос номера сделки", "Отправьте номер сделки Bitrix одним текстовым сообщением."),
-        ("checking", "Проверка сделки", "Проверяю сделку {{deal_id}}…"),
-        ("invalid", "Некорректный ввод / отсутствие номера", "Нужен положительный номер сделки, состоящий только из цифр. Попробуйте ещё раз."),
-        ("not_found", "Сделка не найдена", "Сделка не найдена. Проверьте номер и отправьте другой."),
-        ("empty", "Поле UF_CRM_MARK пустое", "В сделке не заполнено поле UF_CRM_MARK. Можно отправить другой номер."),
-        ("error", "Ошибка обращения к Bitrix", "Не удалось получить данные Bitrix. Попробуйте отправить номер ещё раз."),
-        ("result", "Успешный результат", "{{client_origin}}"),
-        ("success", "Успешное завершение", "Проверка завершена, обращение закрыто. Для нового обращения нажмите /start."),
-        ("closed", "Закрытие по инициативе клиента", "Обращение «Откуда клиент» закрыто."),
-        ("timeout", "Закрытие по таймауту", "Ответ не получен в течение 10 минут. Обращение закрыто. Для нового обращения нажмите /start."),
-    ), 1)),
     AutomaticMessageDefinition(
         key="telegram.onboarding.first_connection.client",
         title="Первое подключение клиента",
@@ -513,19 +497,62 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         explicit_variables=("reason",),
         runtime_enabled=True,
     ),
+    *(AutomaticMessageDefinition(
+        key=f"telegram.client_origin.{key}", title=title, description=title,
+        category="client_origin", category_title="Откуда клиент", sort_order=index * 10,
+        default_text=body, explicit_variables=("deal_id", "client_origin"), runtime_enabled=True,
+    ) for index, (key, title, body) in enumerate((
+        ("prompt", "Запрос номера сделки", "Отправьте номер сделки Bitrix одним текстовым сообщением."),
+        ("checking", "Проверка сделки", "Проверяю сделку {{deal_id}}…"),
+        ("invalid", "Некорректный ввод / отсутствие номера", "Нужен положительный номер сделки, состоящий только из цифр. Попробуйте ещё раз."),
+        ("not_found", "Сделка не найдена", "Сделка не найдена. Проверьте номер и отправьте другой."),
+        ("empty", "Поле UF_CRM_MARK пустое", "В сделке не заполнено поле UF_CRM_MARK. Можно отправить другой номер."),
+        ("error", "Ошибка обращения к Bitrix", "Не удалось получить данные Bitrix. Попробуйте отправить номер ещё раз."),
+        ("result", "Успешный результат", "{{client_origin}}"),
+        ("success", "Успешное завершение", "Проверка завершена, обращение закрыто. Для нового обращения нажмите /start."),
+        ("closed", "Закрытие по инициативе клиента", "Обращение «Откуда клиент» закрыто."),
+        ("timeout", "Закрытие по таймауту", "Ответ не получен в течение 10 минут. Обращение закрыто. Для нового обращения нажмите /start."),
+        ("selection_hint", "Ответ на выбор кнопки", "Отправьте номер сделки"),
+        ("stale_close", "Ответ на старую кнопку закрытия", "Эта кнопка закрытия устарела"),
+        ("closed_callback", "Подтверждение кнопки закрытия", "Обращение закрыто"),
+        ("close_pending_callback", "Кнопка закрытия: завершение не подтверждено", "Не удалось завершить закрытие"),
+    ), 1)),
+    *(AutomaticMessageDefinition(
+        key=f"telegram.bitrix_phone.{key}", title=title, description=title,
+        category="bitrix_phone", category_title="Расшифровка номера Bitrix", sort_order=index * 10,
+        default_text=body, explicit_variables=("line_number",) if key == "invalid_line" else
+        ("ответ", "пояснение") if key == "result_partial" else ("ответ",) if key == "result_full" else (), runtime_enabled=True,
+    ) for index, (key, title, body) in enumerate((
+        ("prompt", "Запрос сделок", "Отправьте от 1 до 30 сделок, каждую на отдельной строке: положительный ID или ссылку show/edit/details на crm.elitesochi.com. На ввод — 10 минут."),
+        ("checking", "Проверка сделок", "Проверяю сделки…"),
+        ("success", "Успешное завершение", "Расшифровка завершена. Обращение закрыто. Для нового обращения нажмите /start."),
+        ("closed", "Закрытие клиентом", "Обращение по расшифровке номера Bitrix закрыто."),
+        ("timeout_input", "Истёк срок ввода", "В течение 10 минут не получен список сделок. Обращение закрыто. Для нового обращения нажмите /start."),
+        ("timeout_results", "Истёк срок выбора после результата", "В течение 10 минут после результата не получен ответ. Обращение закрыто без передачи сотрудникам. Для нового обращения нажмите /start."),
+        ("unavailable", "Техническая недоступность", "В данный момент автоматическая расшифровка недоступна. Передаём заявку сотрудникам техподдержки"),
+        ("handoff", "Передача по просьбе клиента", "Передаём существующее обращение сотрудникам техподдержки вместе с результатами расшифровки."),
+        ("delivery_pending", "Доставка результата не подтверждена", "Не удалось подтвердить доставку результата. Повторно расшифровка не запускается. Можно связаться с сотрудником или закрыть обращение."),
+        ("not_found", "Сделка не найдена", "Сделка не найдена"),
+        ("phone_missing", "Исходный телефон отсутствует", "Исходный телефон не найден в лиде или контакте"),
+        ("invalid_line", "Некорректная строка списка", "Некорректная строка {{line_number}}. Нужен положительный ID или ссылка show/edit/details на crm.elitesochi.com."),
+        ("empty_input", "Не указан список сделок", "Не указаны сделки. Отправьте от 1 до 30 уникальных сделок."),
+        ("limit_exceeded", "Превышен лимит сделок", "Допускается не более 30 уникальных сделок."),
+        ("partial_result", "Пояснение после неполного результата", "Один или несколько номеров не удалось расшифровать. Для решения вопроса по оставшимся номерам нажмите „Связаться с сотрудником“"),
+        ("stale_action", "Ответ на старую кнопку", "Эта кнопка устарела"),
+        ("action_done", "Подтверждение действия кнопки", "Готово"),
+        ("result_full", "Полный результат расшифровки", "{{ответ}}"),
+        ("result_partial", "Неполный результат расшифровки", "{{ответ}}\n\n{{пояснение}}"),
+    ), 1)),
     AutomaticMessageDefinition(
         key="telegram.automation.bitrix_deal_format_error_client",
         title="Bitrix: сделка не распознана",
         description="Клиент отправил некорректный номер или ссылку сделки для автоматизации Bitrix",
-        category="automation",
-        category_title="Автоматизация",
+        category="bitrix_phone",
+        category_title="Расшифровка номера Bitrix",
         sort_order=30,
-        default_text=(
-            "Не удалось распознать сделку.\n\n"
-            "Отправьте одним сообщением номер сделки из 5–7 цифр или ссылку вида:\n"
-            "https://crm.elitesochi.com/crm/deal/show/2450346/"
-        ),
+        default_text="{{reason}}\nОтправьте от 1 до 30 уникальных сделок, по одной на строку: ID или ссылку show/edit/details на crm.elitesochi.com.",
         variable_scopes=("client", "ticket"),
+        explicit_variables=("reason",),
         runtime_enabled=True,
     ),
     AutomaticMessageDefinition(

@@ -11,6 +11,7 @@
   function initAutomaticMessagesPage() {
     const state = {
       categories: [],
+      openCategories: new Set(),
       itemsByKey: new Map(),
       activeTemplate: null,
       activeDraft: "",
@@ -501,7 +502,7 @@
 
     function renderTemplateRow(item) {
       return `
-        <div class="automatic-message-row">
+        <div class="automatic-message-row" role="button" tabindex="0" data-edit-template-key="${escapeHtml(item.key)}" aria-label="Редактировать: ${escapeHtml(item.title || item.key)}">
           <div class="automatic-message-row-main">
             <div class="automatic-message-title-line">
               <strong>${escapeHtml(item.title || item.key)}</strong>
@@ -511,7 +512,6 @@
             <div class="automatic-message-key">${escapeHtml(item.key)}</div>
             <div class="automatic-message-description">${escapeHtml(item.description || "")}</div>
           </div>
-          <button type="button" class="action" data-edit-template-key="${escapeHtml(item.key)}">Редактировать</button>
         </div>
       `;
     }
@@ -523,13 +523,19 @@
       for (const category of state.categories) {
         const items = Array.isArray(category.items) ? category.items : [];
         if (!items.length) continue;
-        const section = document.createElement("section");
+        const section = document.createElement("details");
         section.className = "automatic-message-section";
+        section.open = state.openCategories.has(category.category);
+        section.addEventListener("toggle", () => {
+          if (section.open) state.openCategories.add(category.category);
+          else state.openCategories.delete(category.category);
+        });
         section.innerHTML = `
-          <div class="automatic-message-section-head">
+          <summary class="automatic-message-section-head">
             <h3>${escapeHtml(category.category_title || category.category)}</h3>
             <span>${items.length}</span>
-          </div>
+            <i class="automatic-message-section-arrow" aria-hidden="true"></i>
+          </summary>
           <div class="automatic-message-list">
             ${items.map(renderTemplateRow).join("")}
           </div>
@@ -540,6 +546,12 @@
         button.addEventListener("click", () => {
           const item = state.itemsByKey.get(button.getAttribute("data-edit-template-key") || "");
           if (item) openEditorModal(item);
+        });
+        button.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (!event.repeat) button.click();
+          }
         });
       });
     }

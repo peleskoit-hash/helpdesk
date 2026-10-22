@@ -7251,15 +7251,22 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
 
 
 /* Automatic messages settings */
+.main[data-shell-page="settings-automatic-messages"] {
+  grid-template-rows: auto auto;
+  align-content: start;
+  overflow-y: auto;
+}
+
 .main[data-shell-page="settings-automatic-messages"] .content {
-  min-height: 0;
+  min-height: max-content;
+  overflow: visible;
 }
 
 .automatic-messages-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: max-content;
   overflow: hidden;
   padding: 0;
 }
@@ -7276,7 +7283,7 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   flex: 1 1 auto;
   gap: 18px;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
   padding: 18px 22px 22px;
 }
 
@@ -7301,11 +7308,34 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   padding: 14px 16px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(239, 246, 255, 0.58);
+  cursor: pointer;
+  list-style: none;
+}
+
+.automatic-message-section-head::-webkit-details-marker {
+  display: none;
+}
+
+.automatic-message-section-arrow::before {
+  content: "▼";
+  font-size: 12px;
+  font-style: normal;
+}
+
+.automatic-message-section[open] > summary .automatic-message-section-arrow::before {
+  content: "▲";
+}
+
+.automatic-message-section-head:focus-visible,
+.automatic-message-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
 }
 
 .automatic-message-section-head h3 {
   margin: 0;
   font-size: 18px;
+  flex: 1;
 }
 
 .automatic-message-section-head span {
@@ -7325,11 +7355,12 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
 
 .automatic-message-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 14px;
   padding: 14px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.16);
+  cursor: pointer;
 }
 
 .automatic-message-row:first-child {
