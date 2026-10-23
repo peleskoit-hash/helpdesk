@@ -183,7 +183,7 @@ def test_registry_api_is_admin_only(case, role):
         assert getattr(case.client, method)("/api/v1/settings/telegram-groups" + url).status_code == 403
 
 
-def save_button(case, group_id, *, workflow="ticket"):
+def save_button(case, group_id, *, workflow="auto"):
     return case.client.put("/api/v1/settings/bot-buttons/item/instruction", params={
         "button_key": "Menu|ticket|Request", "menu_type": "Menu", "workflow_type": workflow,
         "button_path": "Request", "button_label": "Request",
@@ -222,7 +222,7 @@ def test_non_registration_group_messages_still_ignored(case):
 @pytest.mark.parametrize("field", ["automation_type", "automation_key"])
 def test_override_flag_cannot_bypass_required_group(case, field):
     response = case.client.put("/api/v1/settings/bot-buttons/item/instruction", params={
-        "button_key": "Menu|ticket|Request", "menu_type": "Menu", "workflow_type": "ticket",
+        "button_key": "Menu|auto|Request", "menu_type": "Menu", "workflow_type": "auto",
         "button_path": "Request", "button_label": "Request",
     }, json={field: "telegram_group", "automation_overridden": False})
     assert response.status_code == 422

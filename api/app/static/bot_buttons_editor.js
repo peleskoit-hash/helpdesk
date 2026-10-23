@@ -2,6 +2,8 @@
   const Editor = {};
   const SYSTEM_FIRST_CONNECTION_BUTTON_KEY = "__system__|first_connection";
   const EDITABLE_WORKFLOW_TYPES = ["ticket", "task", "auto"];
+  const AUTO_ONLY_AUTOMATIONS = new Set(["bitrix_deal_phone_lookup", "bitrix_phone_deal_lookup", "client_origin", "telegram_group"]);
+  Editor.isAutoOnlyAutomation = (value) => AUTO_ONLY_AUTOMATIONS.has(value);
   const WORKFLOW_TYPE_LABELS = {
     ticket: "\u0417\u0430\u044f\u0432\u043a\u0430",
     task: "\u0417\u0430\u0434\u0430\u0447\u0430",
@@ -38,10 +40,10 @@
     const workflow = Editor.normalizeWorkflowType(workflowType);
     const automation = String(automationType || "none").trim() || "none";
     if (!Editor.isEditableWorkflowType(workflow) || automation === "none") return true;
-    if (automation === "telegram_group") return true;
+    if (AUTO_ONLY_AUTOMATIONS.has(automation)) return workflow === "auto";
     if (workflow === "ticket") return automation === "send_files";
-    if (workflow === "task") return automation === "send_files" || automation === "bitrix_deal_phone_lookup" || automation === "client_origin";
-    if (workflow === "auto") return automation === "send_files" || automation === "message_only" || automation === "client_origin";
+    if (workflow === "task") return automation === "send_files";
+    if (workflow === "auto") return automation === "send_files" || automation === "message_only";
     return true;
   };
 
@@ -364,6 +366,10 @@
       conditionalPayload = rules;
     }
 
+    if (AUTO_ONLY_AUTOMATIONS.has(state.automationTypeValue) && requestWorkflowType !== "auto") {
+      alert("Для этой автоматизации выберите тип «Автоматическая задача».");
+      return;
+    }
     setStatus("Сохранение...");
     if (!isSubmenu && !Editor.isAutomationAllowedForWorkflowType(requestWorkflowType, state.automationTypeValue)) {
       state.automationTypeValue = "none";

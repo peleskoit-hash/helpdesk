@@ -22,12 +22,12 @@ async function setup(t) {
     window.groups = [verified, unavailable];
     window.ctx = {
       state: {automationTypeValue: 'telegram_group', telegramGroupId: '', telegramGroups: [],
-        selectedLeaf: {technical_key: 'Menu|ticket|Request', full_path: 'Request', label: 'Request', workflow_type: 'ticket'},
-        selectedMenu: 'Menu', editorWorkflowType: 'ticket', editorBotLabel: 'Request', selectedFiles: [], conditionalRules: []},
+        selectedLeaf: {technical_key: 'Menu|auto|Request', full_path: 'Request', label: 'Request', workflow_type: 'auto'},
+        selectedMenu: 'Menu', editorWorkflowType: 'auto', editorBotLabel: 'Request', selectedFiles: [], conditionalRules: []},
       api: async (url, options = {}) => {
         window.calls.push({url, options});
         if (window.fail) throw Error('API failure');
-        if (url.includes('/instruction?')) return {button_key: 'Menu|ticket|Request'};
+        if (url.includes('/instruction?')) return {button_key: 'Menu|auto|Request'};
         if (url.endsWith('/registration-code')) return {command: '/register_group@dev_bot ONE_TIME_CODE', expires_at: '2099-01-01T00:10:00Z'};
         if (url.endsWith('/check')) { window.groups[0].status = 'unavailable'; return window.groups[0]; }
         return {items: window.groups};
@@ -108,18 +108,71 @@ test('group widget is absent for existing automation types', async t => {
   }
 });
 
-test('client origin automation is selectable for task and auto buttons', async t => {
+test('client origin automation is selectable only for auto buttons', async t => {
   const page = await setup(t);
   assert.deepEqual(await page.evaluate(() => ['task', 'ticket', 'auto'].map(type =>
-    window.BotButtonsEditor.isAutomationAllowedForWorkflowType(type, 'client_origin'))), [true, false, true]);
+    window.BotButtonsEditor.isAutomationAllowedForWorkflowType(type, 'client_origin'))), [false, false, true]);
 });
 
+test('phone to deal lookup is selectable and saved through the existing button editor', async t => {
+  const page = await setup(t);
+  assert.deepEqual(await page.evaluate(() => ['task', 'ticket', 'auto'].map(type =>
+    window.BotButtonsEditor.isAutomationAllowedForWorkflowType(type, 'bitrix_phone_deal_lookup'))), [false, false, true]);
+  await page.evaluate(async () => {
+    window.ctx.state.automationTypeValue = 'bitrix_phone_deal_lookup';
+    window.ctx.state.editorWorkflowType = 'auto';
+    await window.BotButtonsEditor.saveInstruction(window.ctx);
+  });
+  const saved = await page.evaluate(() => window.calls.find(call => call.options.method === 'PUT'));
+  assert.equal(JSON.parse(saved.options.body).automation_type, 'bitrix_phone_deal_lookup');
+  assert.deepEqual(await page.evaluate(() => window.errors), []);
+});
+
+for (const key of ['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'client_origin', 'telegram_group']) {
+  test(`${key}: real editor options follow task/auto switch and preserve legacy settings until explicit save`, async t => {
+    const page = await setup(t);
+    await page.addScriptTag({content: fs.readFileSync('api/app/static/bot_buttons_editor_view.js', 'utf8')});
+    await page.evaluate(key => {
+      const ctx = window.ctx;
+      window.confirm = () => true;
+      Object.assign(ctx.state, {editorWorkflowType: 'task', automationTypeValue: key, telegramGroupId: 'ok',
+        availableAutomations: [
+          {key: 'none', title: 'Нет', workflow_types: ['task', 'auto']},
+          {key: 'send_files', title: 'Файлы', workflow_types: ['task', 'auto']},
+          ...['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'client_origin', 'telegram_group'].map(key => ({key, title: key, workflow_types: ['auto']})),
+        ]});
+      ctx.state.selectedLeaf.workflow_type = 'task';
+      ctx.state.selectedLeaf.technical_key = 'Menu|task|Request';
+      Object.assign(ctx, {el: {content: document.querySelector('#widget')}, escapeHtml: String,
+        buildMoveCandidates: () => [], renderAssigneeOptions: () => '', renderSelectedFiles: () => '',
+        renderConditionalRules: () => '', hasAnyStoredSettings: () => false,
+        render: () => window.BotButtonsEditorView.renderEditor(ctx),
+        saveInstruction: () => window.BotButtonsEditor.saveInstruction(ctx)});
+      ctx.render();
+    }, key);
+    assert.equal(await page.locator(`#automationKeySelect option[value="${key}"]`).count(), 0);
+    await page.evaluate(() => window.BotButtonsEditor.saveInstruction(window.ctx));
+    assert.equal(await page.evaluate(() => window.calls.filter(call => call.options.method === 'PUT').length), 0);
+    assert.equal(await page.evaluate(() => window.ctx.state.automationTypeValue), key);
+    await page.selectOption('#editorWorkflowTypeSelect', 'auto');
+    assert.equal(await page.locator(`#automationKeySelect option[value="${key}"]`).count(), 1);
+    assert.equal(await page.locator('#automationKeySelect').inputValue(), key);
+    await page.evaluate(() => window.BotButtonsEditor.saveInstruction(window.ctx));
+    const saved = await page.evaluate(() => window.calls.find(call => call.options.method === 'PUT'));
+    assert.equal(JSON.parse(saved.options.body).automation_type, key);
+    assert.ok(saved.url.includes('workflow_type=auto'));
+    await page.selectOption('#editorWorkflowTypeSelect', 'task');
+    assert.equal(await page.locator(`#automationKeySelect option[value="${key}"]`).count(), 0);
+    assert.equal(await page.evaluate(() => window.ctx.state.automationTypeValue), 'none');
+  });
+}
+
 test('direct and shell loading agree; every shell HTML entrypoint has the new shell version', () => {
-  const version = '20261022-auto-message-sections';
+  const version = '20261023-auto-only';
   const template = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   for (const file of ['bot_telegram_groups.js', 'bot_buttons_editor.js', 'bot_buttons_editor_view.js']) {
-    const resourceVersion = file === 'bot_telegram_groups.js' ? '20261021-group-copy' : file === 'bot_buttons_editor.js' ? '20261021-client-origin-input' : '20261021-telegram-groups';
+    const resourceVersion = file === 'bot_telegram_groups.js' ? '20261021-group-copy' : file === 'bot_buttons_editor.js' ? '20261023-auto-only' : '20261023-auto-only';
     assert.ok(template.includes(`/static/${file}?v=${resourceVersion}`), file);
     assert.ok(shell.includes(`/static/${file}?v=${resourceVersion}`), file);
   }

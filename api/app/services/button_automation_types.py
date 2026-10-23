@@ -5,6 +5,7 @@ from copy import deepcopy
 AUTOMATION_TYPE_NONE = "none"
 AUTOMATION_TYPE_SEND_FILES = "send_files"
 AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP = "bitrix_deal_phone_lookup"
+AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP = "bitrix_phone_deal_lookup"
 AUTOMATION_TYPE_CLIENT_ORIGIN = "client_origin"
 AUTOMATION_TYPE_MESSAGE_ONLY = "message_only"
 AUTOMATION_TYPE_TELEGRAM_GROUP = "telegram_group"
@@ -20,11 +21,20 @@ TARGET_WORKFLOW_TYPES = {
 }
 
 _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
+    AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP: {
+        "key": AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP,
+        "title": "Поиск сделки по номеру телефона",
+        "description": "Ищет сделки контактов по одному телефону и показывает ответственных.",
+        "workflow_types": [WORKFLOW_TYPE_AUTO],
+        "behavior_kind": "registry",
+        "ui_visible": True,
+        "handler": "telegram_bitrix_phone",
+    },
     AUTOMATION_TYPE_CLIENT_ORIGIN: {
         "key": AUTOMATION_TYPE_CLIENT_ORIGIN,
         "title": "Откуда клиент",
         "description": "Возвращает UF_CRM_MARK по номеру сделки Bitrix без распределения сотрудникам.",
-        "workflow_types": [WORKFLOW_TYPE_TASK, WORKFLOW_TYPE_AUTO],
+        "workflow_types": [WORKFLOW_TYPE_AUTO],
         "behavior_kind": "registry",
         "ui_visible": True,
         "handler": "client_origin",
@@ -51,7 +61,7 @@ _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
         "key": AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
         "title": "Расшифровка номера Bitrix",
         "description": "Ищет сделку/контакт/лид в Bitrix по номеру и возвращает клиенту найденный телефон.",
-        "workflow_types": [WORKFLOW_TYPE_TASK],
+        "workflow_types": [WORKFLOW_TYPE_AUTO],
         "behavior_kind": "registry",
         "ui_visible": True,
         "handler": "telegram_bitrix_phone",
@@ -69,7 +79,7 @@ _AUTOMATION_TYPE_DEFS: dict[str, dict] = {
         "key": AUTOMATION_TYPE_TELEGRAM_GROUP,
         "title": "Отправка в Telegram-группу",
         "description": "Копирует одно сообщение клиента в выбранную группу и закрывает обращение после подтверждения отправки.",
-        "workflow_types": [WORKFLOW_TYPE_TICKET, WORKFLOW_TYPE_TASK, WORKFLOW_TYPE_AUTO],
+        "workflow_types": [WORKFLOW_TYPE_AUTO],
         "behavior_kind": "builtin",
         "ui_visible": True,
         "available": True,
@@ -174,20 +184,17 @@ def is_automation_allowed_for_workflow(
     normalized_key = canonical_automation_key_from_type(automation_key)
     if normalized_key is None:
         return workflow != WORKFLOW_TYPE_AUTO or allow_auto_none
-    if normalized_key == AUTOMATION_TYPE_TELEGRAM_GROUP:
-        return True
     if workflow == WORKFLOW_TYPE_TICKET:
         return normalized_key == AUTOMATION_TYPE_SEND_FILES
     if workflow == WORKFLOW_TYPE_TASK:
-        return normalized_key in {
-            AUTOMATION_TYPE_SEND_FILES,
-            AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
-            AUTOMATION_TYPE_CLIENT_ORIGIN,
-        }
+        return normalized_key == AUTOMATION_TYPE_SEND_FILES
     if workflow == WORKFLOW_TYPE_AUTO:
         return normalized_key in {
             AUTOMATION_TYPE_SEND_FILES,
             AUTOMATION_TYPE_MESSAGE_ONLY,
             AUTOMATION_TYPE_CLIENT_ORIGIN,
+            AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
+            AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP,
+            AUTOMATION_TYPE_TELEGRAM_GROUP,
         }
     return False

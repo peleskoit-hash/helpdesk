@@ -1,6 +1,7 @@
 """One deal lookup per client attempt; never hands an automation to staff."""
 from datetime import datetime, timezone
 from html import escape, unescape
+from urllib.error import HTTPError
 
 from sqlalchemy import select
 
@@ -13,6 +14,7 @@ from .bitrix_deal_input import extract_deal_id
 from .telegram_group_automation import chat_lock
 
 KEY = "client_origin"
+REPEAT_PREFIX = "origin_repeat:"
 
 
 def now():
@@ -31,7 +33,7 @@ def touch(ticket):
     ticket.quick_action_state_json = state
 
 
-def send(db, ticket, chat, key, notify, callbacks, *, terminal=False, **extra):
+def send(db, ticket, chat, key, notify, callbacks, *, terminal=False, repeat=False, **extra):
     if not notify:
         return
     text, mode = render_automatic_message_for_telegram(db, f"telegram.client_origin.{key}", ticket=ticket, extra=extra)
@@ -40,8 +42,11 @@ def send(db, ticket, chat, key, notify, callbacks, *, terminal=False, **extra):
     if key == "result" and "{{client_origin}}" not in get_effective_automatic_message_text(db, "telegram.client_origin.result"):
         value = str(extra.get("client_origin") or "")
         text += "\n\n" + (escape(value) if mode == "HTML" else value)
-    response = callbacks["send"](chat, text, parse_mode=mode,
-                                 reply_markup=None if terminal else client_close_markup())
+    markup = client_close_markup()
+    if repeat:
+        markup = {"inline_keyboard": [[{"text": "Запрос по другой сделке", "callback_data": REPEAT_PREFIX + ticket.id}],
+                                      [{"text": "Закрыть обращение", "callback_data": "client_close"}]]}
+    response = callbacks["send"](chat, text, parse_mode=mode, reply_markup=None if terminal else markup)
     if not terminal:
         callbacks["store_close"](ticket, response)
         state = dict(ticket.quick_action_state_json or {})
@@ -84,9 +89,16 @@ def begin(db, ticket, chat, notify, callbacks):
     return {"ok": True, "ticket_id": ticket.id, "automation_collecting": True}
 
 
-def finish(db, ticket, chat, key, notify, callbacks, *, mark=None):
+def finish(db, ticket, chat, key, notify, callbacks, *, mark=None, deal_id=None):
     if not waiting(ticket):
         return {"ok": True, "closed": False}
+    if key == "success":
+        return show_result(db, ticket, chat, mark, notify, callbacks, deal_id=deal_id)
+    if (ticket.quick_action_state_json[KEY].get("finish") or {}).get("key") == "success":
+        show_result(db, ticket, chat, mark, notify, callbacks, deal_id=deal_id)
+    current = ticket.quick_action_state_json[KEY]
+    if (current.get("result") or {}).get("message_id") and not current.get("result_logged"):
+        show_result(db, ticket, chat, mark, notify, callbacks, deal_id=deal_id)
     delivery = dict(ticket.quick_action_state_json[KEY].get("finish") or {})
     if not delivery:
         delivery = {"key": key, "mark": mark}
@@ -117,6 +129,66 @@ def finish(db, ticket, chat, key, notify, callbacks, *, mark=None):
         return {"ok": True, "ticket_id": ticket.id, "closed": ticket.status == TicketStatus.CLOSED.value,
                 "automation_delivery_pending": ticket.status != TicketStatus.CLOSED.value}
     return {"ok": True, "ticket_id": ticket.id, "closed": True}
+
+
+def show_result(db, ticket, chat, mark, notify, callbacks, *, deal_id=None):
+    current = ticket.quick_action_state_json[KEY]
+    result = dict(current.get("result") or {})
+    if not result:
+        legacy = current.get("finish") or {}
+        result = {"mark": legacy.get("mark", mark), "deal_id": deal_id,
+                  "message_id": legacy.get("result_message_id"), "status": "uncertain" if legacy else "new"}
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, KEY: {**current, "result": result, "finish": None}}
+        db.commit()
+    pending = {"ok": True, "ticket_id": ticket.id, "closed": False, "automation_collecting": True}
+    if not result.get("message_id"):
+        if not notify or result["status"] in {"sending", "uncertain"}:
+            return {**pending, "automation_delivery_pending": True}
+        result["status"] = "sending"
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, KEY: {**ticket.quick_action_state_json[KEY], "result": dict(result)}}
+        db.commit()
+        try:
+            response = send(db, ticket, chat, "result", True, callbacks, repeat=True, client_origin=result["mark"])
+            message_id = (response.get("result") or {}).get("message_id")
+            if response.get("ok") and type(message_id) is int and message_id > 0:
+                result.update(status="confirmed", message_id=message_id)
+            else:
+                result["status"] = "failed" if response.get("ok") is False else "uncertain"
+        except Exception as exc:
+            db.rollback()
+            db.refresh(ticket)
+            result["status"] = "failed" if isinstance(exc.__cause__, HTTPError) and exc.__cause__.code in {400, 404} else "uncertain"
+        current = ticket.quick_action_state_json[KEY]
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, KEY: {**current, "result": dict(result)}}
+        db.commit()
+        if not result.get("message_id"):
+            return {**pending, "automation_delivery_pending": True}
+    current = ticket.quick_action_state_json[KEY]
+    if current.get("phase") != "success":
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, KEY: {**current, "phase": "success", "deadline": now() + 600}}
+        db.commit()
+    if not ticket.quick_action_state_json[KEY].get("result_logged"):
+        callbacks["append_system"](db, ticket, f"Откуда клиент: {result.get('deal_id') or ''}\n{result['mark']}", agent_visible=True)
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, KEY: {**ticket.quick_action_state_json[KEY], "result_logged": True}}
+        db.commit()
+    return pending
+
+
+def repeat(db, ticket, chat, data, message_id, notify, callbacks):
+    current = (ticket.quick_action_state_json or {}).get(KEY, {}) if ticket is not None else {}
+    if (not waiting(ticket) or data != REPEAT_PREFIX + ticket.id or current.get("phase") != "success"
+            or str(message_id) != ticket.client_close_message_id or current.get("finish")):
+        db.commit()
+        return {"ok": True, "ignored": "stale_origin_repeat"}
+    if current["deadline"] <= now():
+        return finish(db, ticket, chat, "timeout", notify, callbacks)
+    show_result(db, ticket, chat, None, notify, callbacks)
+    callbacks["append_system"](db, ticket, "Повторный запуск автоматизации: Откуда клиент", agent_visible=True)
+    ticket.client_close_message_id = None
+    ticket.quick_action_state_json = {**ticket.quick_action_state_json,
+        KEY: {"deadline": now() + 600, "close_message_ids": ticket.quick_action_state_json[KEY].get("close_message_ids", [])}}
+    db.commit()
+    return begin(db, ticket, chat, notify, callbacks)
 
 
 def lookup(deal_id):
@@ -150,6 +222,8 @@ def incoming(db, ticket, body, message_id, attachment, chat, notify, callbacks):
     delivery = ticket.quick_action_state_json[KEY].get("finish")
     if delivery:
         return finish(db, ticket, chat, delivery["key"], notify, callbacks, mark=delivery.get("mark"))
+    if ticket.quick_action_state_json[KEY].get("result"):
+        return show_result(db, ticket, chat, None, notify, callbacks)
     value = extract_deal_id(body)
     if value is None:
         send(db, ticket, chat, "invalid", notify, callbacks)
@@ -162,7 +236,7 @@ def incoming(db, ticket, body, message_id, attachment, chat, notify, callbacks):
     except Exception:
         outcome, mark = "error", None
     if outcome == "success":
-        return finish(db, ticket, chat, "success", notify, callbacks, mark=mark)
+        return finish(db, ticket, chat, "success", notify, callbacks, mark=mark, deal_id=value)
     send(db, ticket, chat, outcome, notify, callbacks)
     return {"ok": True, "automation_collecting": True, "ticket_id": ticket.id}
 

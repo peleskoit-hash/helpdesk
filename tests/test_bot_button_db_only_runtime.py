@@ -666,9 +666,9 @@ def test_task_plus_message_only_is_rejected(monkeypatch):
         raise AssertionError("Expected workflow validation error")
 
 
-def test_task_plus_bitrix_is_allowed(monkeypatch):
+def test_auto_plus_bitrix_is_allowed(monkeypatch):
     session = _session()
-    _seed_row(session, button_key="menu-a|task|A", workflow_type="task")
+    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto")
 
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
     monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
@@ -679,8 +679,8 @@ def test_task_plus_bitrix_is_allowed(monkeypatch):
             "automation_type": "bitrix_deal_phone_lookup",
             "automation_overridden": True,
         },
-        button_key="menu-a|task|A",
-        workflow_type="task",
+        button_key="menu-a|auto|A",
+        workflow_type="auto",
     )
 
     assert payload["automation_type"] == "bitrix_deal_phone_lookup"
@@ -706,9 +706,9 @@ def test_auto_allowed_types_and_transitional_null(monkeypatch):
         assert payload["automation_type"] == automation_type
 
 
-def test_auto_plus_bitrix_is_rejected_with_workflow_error_code(monkeypatch):
+def test_task_plus_bitrix_is_rejected_with_workflow_error_code(monkeypatch):
     session = _session()
-    _seed_row(session, button_key="menu-a|auto|A", workflow_type="auto")
+    _seed_row(session, button_key="menu-a|task|A", workflow_type="task")
 
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
     monkeypatch.setattr(settings_bot_button_items, "get_automation_registry", lambda: telegram_automation.get_automation_registry())
@@ -720,8 +720,8 @@ def test_auto_plus_bitrix_is_rejected_with_workflow_error_code(monkeypatch):
                 "automation_type": "bitrix_deal_phone_lookup",
                 "automation_overridden": True,
             },
-            button_key="menu-a|auto|A",
-            workflow_type="auto",
+            button_key="menu-a|task|A",
+            workflow_type="task",
         )
     except Exception as exc:
         assert getattr(exc, "status_code", None) == 422
@@ -896,12 +896,12 @@ def test_empty_auto_button_without_files_stays_none(monkeypatch):
     assert item["automation_status"] == "available"
 
 
-def test_task_switching_automation_does_not_clear_existing_file_settings(monkeypatch):
+def test_auto_switching_automation_does_not_clear_existing_file_settings(monkeypatch):
     session = _session()
     _seed_row(
         session,
-        button_key="menu-a|task|A",
-        workflow_type="task",
+        button_key="menu-a|auto|A",
+        workflow_type="auto",
         automation_key="send_files",
         automation_overridden=True,
         files_overridden=True,
@@ -949,8 +949,8 @@ def test_task_switching_automation_does_not_clear_existing_file_settings(monkeyp
                 }
             ],
         },
-        button_key="menu-a|task|A",
-        workflow_type="task",
+        button_key="menu-a|auto|A",
+        workflow_type="auto",
     )
 
     assert payload["automation_type"] == "bitrix_deal_phone_lookup"
@@ -958,7 +958,7 @@ def test_task_switching_automation_does_not_clear_existing_file_settings(monkeyp
     assert payload["conditional_files"][0]["files"] == ["docs/b.pdf"]
 
     item = settings_bot_button_items.get_bot_button_item(
-        "menu-a|task|A",
+        "menu-a|auto|A",
         menu_type="menu-a",
         db=session,
         user=object(),

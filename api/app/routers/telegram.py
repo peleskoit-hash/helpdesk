@@ -2338,9 +2338,9 @@ def _phone_callbacks():
 
 def _begin_bitrix_phone_wait(db, ticket, chat, notify):
     row = _button_setting_for_ticket(db, ticket)
-    if row is None or row.automation_key != telegram_bitrix_phone.KEY:
+    if row is None or row.automation_key not in telegram_bitrix_phone.KEYS:
         return None
-    return telegram_bitrix_phone.begin(db, ticket, chat, notify, _phone_callbacks())
+    return telegram_bitrix_phone.begin(db, ticket, chat, notify, _phone_callbacks(), key=row.automation_key)
 
 
 def _automation_callback_text(db, key, ticket=None):
@@ -2396,13 +2396,13 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
             selected_setting = db.get(BotButtonSetting, callback_data.removeprefix("btnid:"))
         elif callback_data.startswith("btn:") or confirmation is not None:
             selected_setting = resolve_button_row(db, callback_data.removeprefix("btn:"))
-        selects_group = selected_setting is not None and selected_setting.automation_key in {"telegram_group", telegram_client_origin.KEY, telegram_bitrix_phone.KEY}
+        selects_group = selected_setting is not None and selected_setting.automation_key in {"telegram_group", telegram_client_origin.KEY, *telegram_bitrix_phone.KEYS}
         candidates = db.scalars(select(Ticket).join(
             TelegramContact, and_(TelegramContact.client_id == Ticket.client_id, TelegramContact.company_id == Ticket.company_id),
         ).where(TelegramContact.external_chat_id == chat_id, Ticket.status != TicketStatus.CLOSED.value,
                 Ticket.intake_state.in_([TicketIntakeState.COLLECTING.value, TicketIntakeState.TELEGRAM_GROUP_COPYING.value]))).all()
         if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket) or telegram_bitrix_phone.waiting(ticket)
-            or (getattr(_button_setting_for_ticket(db, ticket), "automation_key", None) == telegram_bitrix_phone.KEY) for ticket in candidates):
+            or (getattr(_button_setting_for_ticket(db, ticket), "automation_key", None) in telegram_bitrix_phone.KEYS) for ticket in candidates):
             with telegram_group_automation.chat_lock(db, chat_id):
                 # End the read-only discovery snapshot before rechecking a concurrent update.
                 if not db.new and not db.dirty and not db.deleted:
@@ -2459,7 +2459,18 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 db.commit()
                 return {"ok": True, "blocked": True, "ignored": "blocked_contact"}
         data = callback.get("data") or ""
-        if data.startswith(telegram_bitrix_phone.PREFIX):
+        if data.startswith(telegram_client_origin.REPEAT_PREFIX):
+            contact = telegram_contact_by_chat_id(db, external_chat_id)
+            ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id) if contact else None
+            db.add(callback_update)
+            if ticket is not None and not client_can_close_ticket(db, ticket):
+                db.commit()
+                return {"ok": True, "ignored": "close_not_allowed"}
+            result = telegram_client_origin.repeat(db, ticket, external_chat_id, data, message.get("message_id"), notify_client, _origin_callbacks())
+            if notify_client and callback.get("id"):
+                answer_callback_query(callback["id"])
+            return result
+        if data.startswith((telegram_bitrix_phone.PREFIX, telegram_bitrix_phone.PHONE_DEALS_PREFIX)):
             contact = telegram_contact_by_chat_id(db, external_chat_id)
             ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id) if contact else None
             db.add(callback_update)
@@ -2469,7 +2480,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
             result = telegram_bitrix_phone.callback(db, ticket, external_chat_id, data, message.get("message_id"), notify_client, _phone_callbacks())
             if notify_client and callback.get("id"):
                 answer_callback_query(callback["id"], _automation_callback_text(db,
-                    "telegram.bitrix_phone.stale_action" if result.get("ignored") else "telegram.bitrix_phone.action_done", ticket))
+                    f"{telegram_bitrix_phone.template_prefix(ticket, data=data)}.stale_action" if result.get("ignored") else f"{telegram_bitrix_phone.template_prefix(ticket, data=data)}.action_done", ticket))
             return result
         if data == "client_close":
             contact = telegram_contact_by_chat_id(db, external_chat_id)
@@ -2814,7 +2825,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
     pending_origin = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
     if pending_origin is not None and not telegram_bitrix_phone.waiting(pending_origin):
         row = _button_setting_for_ticket(db, pending_origin)
-        if row is not None and row.automation_key == telegram_bitrix_phone.KEY:
+        if row is not None and row.automation_key in telegram_bitrix_phone.KEYS:
             _begin_bitrix_phone_wait(db, pending_origin, external_chat_id, False)
     if telegram_bitrix_phone.waiting(pending_origin):
         if text.startswith("/start") or text.startswith("/close"):

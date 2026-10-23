@@ -58,8 +58,8 @@ def test_single_strict_link_keeps_original_history_and_closes_after_delivery(pho
     f = phone_flow
     assert choose(f)["automation_collecting"]
     body = f"https://crm.elitesochi.com/crm/deal/{path}/1/"
-    assert process(f, body)["closed"]
-    assert f.ticket.status == "closed" and f.ticket.assignee_id is None and not f.ticket.load_counted
+    assert not process(f, body)["closed"]
+    assert f.ticket.status != "closed" and f.ticket.assignee_id is None and not f.ticket.load_counted
     assert f.db.scalar(select(TicketMessage.body).where(TicketMessage.message_type == "client")) == body
     assert any(call.args[1] == "1 — +79990000000" for call in f.sent.call_args_list)
     assert f.http.call_args_list[0].args[0].full_url.endswith("crm.deal.get.json?ID=1")
@@ -84,7 +84,7 @@ def test_thirty_deals_and_duplicates_keep_order_and_use_real_two_column_table(ph
     f = phone_flow
     choose(f)
     ids = list(map(str, range(1, 31)))
-    assert process(f, "\n".join(["1", "0001", *ids]))["closed"]
+    assert not process(f, "\n".join(["1", "0001", *ids]))["closed"]
     deal_urls = [call.args[0].full_url for call in f.http.call_args_list if "crm.deal.get.json" in call.args[0].full_url]
     assert [parse_qs(urlparse(url).query)["ID"][0] for url in deal_urls] == ids
     html = f.rich.call_args.args[1]["html"]
@@ -128,21 +128,32 @@ def test_partial_success_and_not_found_400_are_not_technical(phone_flow):
 
 
 @pytest.mark.parametrize("exc", [URLError("offline"), TimeoutError(), HTTPError("https://phone.invalid", 500, "Server error", {}, io.BytesIO(b"{}"))])
-def test_technical_failure_distributes_once_preserving_input_and_prior_results(phone_flow, exc):
+def test_technical_failure_waits_for_explicit_support_preserving_input_and_results(phone_flow, exc):
     f = phone_flow
     choose(f)
     original = f.http.side_effect
     f.http.side_effect = lambda req, **kw: (_ for _ in ()).throw(exc) if "deal.get.json?ID=2" in req.full_url else original(req, **kw)
-    assert process(f, "1\n2")["automation_handoff"]
+    assert process(f, "1\n2")["automation_collecting"]
     assert phone.state(f.ticket)["rows"][0]["phone"] == "+79990000000"
-    f.ready.assert_called_once()
-    assert "В данный момент автоматическая расшифровка недоступна. Передаём заявку сотрудникам техподдержки" == f.sent.call_args.args[1]
+    assert phone.waiting(f.ticket) and not f.ticket.load_counted
+    f.ready.assert_not_called()
+    assert get_automatic_message_definition("telegram.bitrix_phone.error").default_text in f.rich.call_args.args[1]["html"]
+    buttons = f.rich.call_args.kwargs["reply_markup"]["inline_keyboard"]
+    assert [row[0]["text"] for row in buttons] == ["Связаться с сотрудником", "Закрыть обращение"]
     assert process(f, "1\n2")["duplicate"]
-    telegram.cleanup_expired_task_intents(f.db)
+    requests, deliveries = f.http.call_count, f.rich.call_count
+    assert process(f, "3", 12)["automation_collecting"]
+    with f.factory() as restarted:
+        telegram.cleanup_expired_task_intents(restarted)
+    f.db.expire_all()
+    assert f.http.call_count == requests and f.rich.call_count == deliveries
+    f.ready.assert_not_called()
+    assert action(f, "support")["automation_handoff"]
+    assert action(f, "support", 21)["ignored"] == "stale_bitrix_phone_button"
     f.ready.assert_called_once()
 
 
-@pytest.mark.parametrize("phase", ["input", "results"])
+@pytest.mark.parametrize("phase", ["input", "results", "technical_error"])
 def test_independent_ten_minute_timeouts_ignore_system_updates(phone_flow, monkeypatch, phase):
     f = phone_flow
     clock = [1000]
@@ -151,6 +162,9 @@ def test_independent_ten_minute_timeouts_ignore_system_updates(phone_flow, monke
     if phase == "results":
         clock[0] = 1200
         f.http.side_effect = lambda *args, **kwargs: response({"result": {}})
+        process(f, "1")
+    elif phase == "technical_error":
+        f.http.side_effect = URLError("offline")
         process(f, "1")
     deadline = phone.state(f.ticket)["deadline"]
     telegram.append_system_message(f.db, f.ticket, "system update")
@@ -162,6 +176,19 @@ def test_independent_ten_minute_timeouts_ignore_system_updates(phone_flow, monke
     assert f.ticket.status == "closed"
     assert telegram.cleanup_expired_task_intents(f.db) == 0
     f.ready.assert_not_called()
+
+
+def test_technical_failure_can_close_without_distribution(phone_flow):
+    f = phone_flow
+    choose(f)
+    f.http.side_effect = URLError("offline")
+    process(f, "1")
+    message_id = f.ticket.client_close_message_id
+    assert action(f, "close")["closed"]
+    assert action(f, "close", 21, message_id=message_id)["ignored"] == "stale_bitrix_phone_button"
+    f.ready.assert_not_called()
+    assert f.http.call_count == 1
+    assert len(summaries(f)) == 1
 
 
 @pytest.mark.parametrize("command", ["/start", "/close"])
@@ -178,7 +205,7 @@ def test_rich_explicit_rejection_uses_plain_fallback_with_same_buttons(phone_flo
     choose(f)
     f.rich.return_value = {"ok": False, "error_code": 400}
     f.rich.side_effect = None
-    assert process(f, "1\n2")["closed"]
+    assert not process(f, "1\n2")["closed"]
     f.rich.assert_called_once()
     assert any(call.args[1] == "1 — +79990000000\n2 — +79990000000" for call in f.sent.call_args_list)
 
@@ -203,6 +230,7 @@ def test_closing_failure_recovers_after_new_session_without_resending_results(ph
     complete = telegram._complete_auto_ticket
     monkeypatch.setattr(telegram, "_complete_auto_ticket", Mock(side_effect=RuntimeError("close failed")))
     assert not process(f, "1")["closed"]
+    assert not action(f, "close")["closed"]
     result_messages = [call for call in f.sent.call_args_list if "1 —" in call.args[1]]
     assert len(result_messages) == 1
     monkeypatch.setattr(telegram, "_complete_auto_ticket", complete)
@@ -236,7 +264,7 @@ def test_templates_order_editing_and_old_overrides_survive(phone_flow):
     pos = categories.index("automation")
     assert categories[pos:pos + 3] == ["automation", "client_origin", "bitrix_phone"]
     block = next(item for item in payload["categories"] if item["category"] == "bitrix_phone")
-    assert len(block["items"]) == 20
+    assert len(block["items"]) == 21
     assert "telegram.automation.bitrix_deal_format_error_client" in [item["key"] for item in block["items"]]
     assert len({item["key"] for item in payload["items"]}) == len(payload["items"])
     for item in block["items"]:
@@ -310,7 +338,7 @@ def test_parallel_updates_and_cleanup_do_not_repeat_queries(phone_flow, tmp_path
             with factory() as db:
                 assert telegram.cleanup_expired_task_intents(db) == 0
             release.set()
-            assert first.result(timeout=10)["closed"]
+            assert not first.result(timeout=10)["closed"]
             result = following.result(timeout=10)
             if second_kind == "duplicate":
                 assert result["duplicate"]
@@ -321,14 +349,20 @@ def test_parallel_updates_and_cleanup_do_not_repeat_queries(phone_flow, tmp_path
         engine.dispose()
 
 
-def test_interrupted_lookup_recovers_to_staff_without_repeating_http(phone_flow):
+def test_interrupted_lookup_recovers_to_customer_choice_without_repeating_http(phone_flow):
     f = phone_flow
     choose(f)
     phone.save(f.db, f.ticket, inflight="1", ids=["1"], phase="processing", rows=[])
     with f.factory() as restarted:
         telegram.cleanup_expired_task_intents(restarted)
     f.db.expire_all()
-    assert f.ticket.intake_state == "ready"
+    assert phone.waiting(f.ticket) and phone.state(f.ticket)["phase"] == "results"
+    buttons = f.sent.call_args.kwargs["reply_markup"]["inline_keyboard"]
+    assert [row[0]["text"] for row in buttons] == ["Связаться с сотрудником", "Закрыть обращение"]
+    f.ready.assert_not_called()
+    with f.factory() as restarted:
+        telegram.cleanup_expired_task_intents(restarted)
+    assert action(f, "support")["automation_handoff"]
     f.ready.assert_called_once()
     f.http.assert_not_called()
 
@@ -348,7 +382,7 @@ def test_no_notify_cannot_close_without_a_confirmed_result(phone_flow):
     result = telegram.process_telegram_update(f.db, incoming(f, "1"), notify_client=False)
     assert not result.get("closed") and phone.waiting(f.ticket)
     assert not phone.state(f.ticket)["deliveries"].get("text_result_0")
-    assert process(f, "1", 12)["closed"]
+    assert not process(f, "1", 12)["closed"]
     assert f.http.call_count == 2
 
 
@@ -389,13 +423,13 @@ def test_attachment_history_and_archive_are_kept_without_notifications(phone_flo
 
 
 @pytest.mark.parametrize("failure", ["timeout", "unconfirmed"])
-def test_unconfirmed_success_notice_keeps_request_open_without_repeated_delivery(phone_flow, failure):
+def test_unconfirmed_explicit_close_notice_keeps_request_open_without_repeated_delivery(phone_flow, failure):
     f = phone_flow
     choose(f)
     send = f.sent.side_effect
     attempts = []
     def sending(chat, text, **kwargs):
-        if "Расшифровка завершена" in text:
+        if "Обращение по расшифровке номера Bitrix закрыто" in text:
             attempts.append(text)
             if failure == "timeout":
                 raise TimeoutError()
@@ -403,15 +437,16 @@ def test_unconfirmed_success_notice_keeps_request_open_without_repeated_delivery
         return send(chat, text, **kwargs)
     f.sent.side_effect = sending
     assert not process(f, "1")["closed"]
+    assert not action(f, "close")["closed"]
     receipt = phone.state(f.ticket)["deliveries"]
     assert receipt["text_result_0"]["message_id"] > 0
-    assert receipt["success"]["status"] == "uncertain"
+    assert receipt["closed"]["status"] == "uncertain"
     assert phone.waiting(f.ticket) and f.ticket.closed_at is None
     calls = f.sent.call_count
     for update_id in [12, 13]:
         assert not process(f, "1", update_id).get("closed")
         assert telegram.cleanup_expired_task_intents(f.db) == 0
-        assert not phone.finish(f.db, f.ticket, f.contact.external_chat_id, "success", True, telegram._phone_callbacks())["closed"]
+        assert not phone.finish(f.db, f.ticket, f.contact.external_chat_id, "closed", True, telegram._phone_callbacks())["closed"]
     assert f.sent.call_count == calls
     assert len(attempts) == 1
     assert f.http.call_count == 2
@@ -425,7 +460,7 @@ def test_unconfirmed_plain_result_stays_open_and_retries_only_failed_delivery(ph
     f.sent.side_effect = lambda chat, text, **kwargs: {"ok": False, "error_code": 400} if "1 —" in text else send(chat, text, **kwargs)
     assert not process(f, "1")["closed"]
     f.sent.side_effect = send
-    assert process(f, "1", 12)["closed"]
+    assert not process(f, "1", 12)["closed"]
     assert f.http.call_count == 2
 
 
@@ -491,6 +526,7 @@ def test_plain_fallback_is_sticky_after_a_closing_failure(phone_flow, monkeypatc
     complete = telegram._complete_auto_ticket
     monkeypatch.setattr(telegram, "_complete_auto_ticket", Mock(side_effect=RuntimeError("close failed")))
     assert not process(f, "1\n2")["closed"]
+    assert not action(f, "close")["closed"]
     f.rich.return_value = {"ok": True, "result": {"message_id": 999}}
     monkeypatch.setattr(telegram, "_complete_auto_ticket", complete)
     assert telegram.cleanup_expired_task_intents(f.db) == 1
@@ -499,7 +535,7 @@ def test_plain_fallback_is_sticky_after_a_closing_failure(phone_flow, monkeypatc
 
 
 @pytest.mark.parametrize("body", ["1", "1\n2"])
-def test_success_requires_result_and_completion_receipts_before_closing(phone_flow, body):
+def test_success_requires_result_receipt_and_waits_without_completion_notice(phone_flow, body):
     f = phone_flow
     choose(f)
     send = f.sent.side_effect
@@ -510,27 +546,29 @@ def test_success_requires_result_and_completion_receipts_before_closing(phone_fl
             observed.append(text)
         return send(chat, text, **kwargs)
     f.sent.side_effect = sending
-    assert process(f, body)["closed"]
+    assert not process(f, body)["closed"]
     receipts = phone.state(f.ticket)["deliveries"]
-    assert receipts["success"]["message_id"] > 0
+    assert "success" not in receipts
+    assert phone.state(f.ticket)["phase"] == "success"
     assert receipts["text_result_0" if body == "1" else "rich_result"]["message_id"] > 0
-    assert any("Расшифровка завершена" in text for text in observed)
+    assert not any("Расшифровка завершена" in text for text in observed)
     calls, requests = f.sent.call_count, f.http.call_count
-    assert phone.finish(f.db, f.ticket, f.contact.external_chat_id, "success", True, telegram._phone_callbacks())["closed"]
+    assert not phone.finish(f.db, f.ticket, f.contact.external_chat_id, "success", True, telegram._phone_callbacks())["closed"]
     assert (f.sent.call_count, f.http.call_count) == (calls, requests)
 
 
 @pytest.mark.parametrize("body", ["1", "1\n2"])
-def test_explicit_success_rejection_resumes_only_final_notice_after_restart(phone_flow, body):
+def test_explicit_close_rejection_resumes_only_final_notice_after_restart(phone_flow, body):
     f = phone_flow
     choose(f)
     send = f.sent.side_effect
-    f.sent.side_effect = lambda chat, text, **kwargs: {"ok": False, "error_code": 400} if "Расшифровка завершена" in text else send(chat, text, **kwargs)
+    f.sent.side_effect = lambda chat, text, **kwargs: {"ok": False, "error_code": 400} if "Обращение по расшифровке номера Bitrix закрыто" in text else send(chat, text, **kwargs)
     assert not process(f, body)["closed"]
+    assert not action(f, "close")["closed"]
     assert phone.waiting(f.ticket) and f.ticket.closed_at is None
     receipts = phone.state(f.ticket)["deliveries"]
-    assert receipts["success"]["status"] == "failed"
-    assert phone.state(f.ticket)["finish"] == "success"
+    assert receipts["closed"]["status"] == "failed"
+    assert phone.state(f.ticket)["finish"] == "closed"
     result_calls, rich_calls, api_calls = len([call for call in f.sent.call_args_list if " — " in call.args[1]]), f.rich.call_count, f.http.call_count
     assert process(f, body)["duplicate"]
     f.sent.side_effect = send
@@ -539,7 +577,7 @@ def test_explicit_success_rejection_resumes_only_final_notice_after_restart(phon
         assert telegram.cleanup_expired_task_intents(restarted) == 0
     f.db.expire_all()
     assert f.ticket.status == "closed"
-    assert phone.state(f.ticket)["deliveries"]["success"]["message_id"] > 0
+    assert phone.state(f.ticket)["deliveries"]["closed"]["message_id"] > 0
     assert len([call for call in f.sent.call_args_list if " — " in call.args[1]]) == result_calls
     assert (f.rich.call_count, f.http.call_count) == (rich_calls, api_calls)
 
@@ -559,7 +597,7 @@ def test_editable_checking_is_sent_once_before_api_and_not_repeated_on_recovery(
     assert process(f, body)["automation_collecting"]
     calls = f.http.call_count
     assert process(f, body)["duplicate"]
-    process(f, body, 12)
+    telegram.cleanup_expired_task_intents(f.db)
     with f.factory() as restarted:
         restored = restarted.get(Ticket, f.ticket.id)
         phone.resume(restarted, restored, f.contact.external_chat_id, True, telegram._phone_callbacks())
@@ -574,7 +612,7 @@ def test_input_ignores_blank_lines_and_outer_whitespace_but_preserves_history(ph
     choose(f)
     ids, error = phone.parse_lines(body)
     assert error is None
-    assert process(f, body)["closed"]
+    assert not process(f, body)["closed"]
     assert f.db.scalar(select(TicketMessage.body).where(TicketMessage.message_type == "client")) == body
     assert f.http.call_count == len(ids) * 2
 
@@ -588,16 +626,17 @@ def test_blank_lines_do_not_change_unique_limit_and_nonempty_lines_remain_strict
 
 
 @pytest.mark.parametrize("body", ["1", "1\n2"])
-def test_checking_has_only_close_and_success_result_has_no_keyboard(phone_flow, body):
+def test_checking_has_only_close_and_success_result_offers_repeat(phone_flow, body):
     f = phone_flow
     choose(f)
-    assert process(f, body)["closed"]
+    assert not process(f, body)["closed"]
     checking = next(call for call in f.sent.call_args_list if call.args[1] == "Проверяю сделки…")
     assert [row[0]["text"] for row in checking.kwargs["reply_markup"]["inline_keyboard"]] == ["Закрыть обращение"]
     result = next(call for call in f.sent.call_args_list if call.args[1].startswith("1 —")) if body == "1" else f.rich.call_args
-    assert result.kwargs.get("reply_markup") is None
+    assert len(result.kwargs["reply_markup"]["inline_keyboard"]) == 2
     checking_id = phone.state(f.ticket)["deliveries"]["checking"]["message_id"]
-    telegram.remove_inline_keyboard.assert_called_with(f.contact.external_chat_id, checking_id)
+    assert str(checking_id) != f.ticket.client_close_message_id
+    assert action(f, "close", message_id=checking_id)["ignored"] == "stale_bitrix_phone_button"
 
 
 @pytest.mark.parametrize("status", [400, 404])
@@ -616,7 +655,7 @@ def test_real_telegram_http_rejection_falls_back_once_with_correct_result_keyboa
     monkeypatch.setattr(telegram_bot, "urlopen", transport)
     monkeypatch.setattr(telegram, "send_rich_message", telegram_bot.send_rich_message)
     result = process(f, "1\n2")
-    assert bool(result.get("closed")) is not partial
+    assert not result.get("closed")
     assert len(requests) == 1
     assert phone.state(f.ticket)["deliveries"]["rich_result"]["status"] == "failed"
     assert phone.state(f.ticket)["result_format"] == "text"
@@ -625,10 +664,12 @@ def test_real_telegram_http_rejection_falls_back_once_with_correct_result_keyboa
     if partial:
         assert [row[0]["text"] for row in texts[0].kwargs["reply_markup"]["inline_keyboard"]] == ["Связаться с сотрудником", "Закрыть обращение"]
         assert texts[0].kwargs["reply_markup"] == requests[0]["reply_markup"]
-        process(f, "1\n2", 12)
+        assert process(f, "1\n2")["duplicate"]
+        with f.factory() as restarted:
+            phone.resume(restarted, restarted.get(Ticket, f.ticket.id), f.contact.external_chat_id, True, telegram._phone_callbacks())
     else:
-        assert texts[0].kwargs.get("reply_markup") is None
-        assert "reply_markup" not in requests[0]
+        assert len(texts[0].kwargs["reply_markup"]["inline_keyboard"]) == 2
+        assert texts[0].kwargs["reply_markup"] == requests[0]["reply_markup"]
     assert len(requests) == 1
     assert len([call for call in f.sent.call_args_list if call.args[1].startswith("1 —")]) == 1
     f.ready.assert_not_called()
@@ -694,7 +735,7 @@ def test_success_result_has_no_partial_note(phone_flow, body, fallback):
     if fallback:
         f.rich.side_effect = None
         f.rich.return_value = {"ok": False, "error_code": 400}
-    assert process(f, body)["closed"]
+    assert not process(f, body)["closed"]
     assert all(PARTIAL_RESULT_NOTE not in call.args[1] for call in f.sent.call_args_list)
     if f.rich.call_args:
         assert PARTIAL_RESULT_NOTE not in f.rich.call_args.args[1]["html"]
@@ -703,6 +744,67 @@ def test_success_result_has_no_partial_note(phone_flow, body, fallback):
 def summaries(f):
     return f.db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == f.ticket.id,
         TicketMessage.message_type == "system", TicketMessage.body.like("Расшифровка%"))).all()
+
+
+@pytest.mark.parametrize("first_body", ["1", "1\n2"])
+@pytest.mark.parametrize("retry_body", ["3", "3\n4", "\n".join(map(str, range(3, 33)))])
+def test_missing_phones_accept_new_batch_in_same_ticket_preserving_history(phone_flow, monkeypatch, first_body, retry_body):
+    f = phone_flow
+    clock = [1000]
+    monkeypatch.setattr(phone, "now", lambda: clock[0])
+    choose(f)
+    original = f.http.side_effect
+    f.http.side_effect = lambda req, **kw: response({"result": {}}) if req.full_url.endswith("deal.get.json?ID=1") else original(req, **kw)
+    process(f, first_body)
+    first_message = f.ticket.client_close_message_id
+    assert phone.waiting(f.ticket) and phone.state(f.ticket)["deadline"] == 1600
+    clock[0] = 1100
+    assert not process(f, retry_body, 12)["closed"]
+    assert phone.state(f.ticket)["phase"] == "success" and phone.state(f.ticket)["deadline"] == 1700
+    assert f.ticket.workflow_type == "auto" and f.db.scalar(select(Ticket.id)) == f.ticket.id
+    assert [row["id"] for row in phone.state(f.ticket)["rows"]] == retry_body.splitlines()
+    assert "1 — Сделка не найдена" in summaries(f)[0].body
+    assert len(summaries(f)) == 2 and all(message.agent_visible for message in summaries(f))
+    result = f.rich.call_args if "\n" in retry_body else f.sent.call_args
+    assert [row[0]["text"] for row in result.kwargs["reply_markup"]["inline_keyboard"]] == ["Расшифр. другой номер", "Закрыть обращение"]
+    assert action(f, "support", 30, message_id=first_message)["ignored"] == "stale_bitrix_phone_button"
+    requests = f.http.call_count
+    assert process(f, retry_body, 12)["duplicate"]
+    assert f.http.call_count == requests and len(summaries(f)) == 2
+    bodies = f.db.scalars(select(TicketMessage.body).where(TicketMessage.message_type == "client").order_by(TicketMessage.created_at)).all()
+    assert bodies == [first_body, retry_body]
+    f.ready.assert_not_called()
+
+
+def test_missing_phones_allow_unlimited_retries_invalid_input_and_restart(phone_flow, monkeypatch):
+    f = phone_flow
+    clock = [1000]
+    monkeypatch.setattr(phone, "now", lambda: clock[0])
+    choose(f)
+    f.http.side_effect = lambda *a, **kw: response({"result": {}})
+    for attempt in range(4):
+        clock[0] += 100
+        assert process(f, str(attempt + 1), 11 + attempt)["automation_collecting"]
+        assert phone.state(f.ticket)["deadline"] == clock[0] + 600
+        buttons = f.sent.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert [row[0]["text"] for row in buttons] == ["Связаться с сотрудником", "Закрыть обращение"]
+        assert len(summaries(f)) == attempt
+        assert process(f, str(attempt + 1), 11 + attempt)["duplicate"]
+    assert f.http.call_count == 4
+    for update, invalid in enumerate(["bad", "\n".join(map(str, range(1, 32)))], 20):
+        assert process(f, invalid, update)["automation_collecting"]
+        assert f.http.call_count == 4 and len(summaries(f)) == 4
+        buttons = f.sent.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        assert [row[0]["text"] for row in buttons] == ["Связаться с сотрудником", "Закрыть обращение"]
+    with f.factory() as restarted:
+        telegram.cleanup_expired_task_intents(restarted)
+    f.db.expire_all()
+    assert process(f, "5", 22)["automation_collecting"]
+    assert phone.state(f.ticket)["ids"] == ["5"] and f.http.call_count == 5
+    assert len(summaries(f)) == 4
+    assert action(f, "support", 23)["automation_handoff"]
+    assert len(summaries(f)) == 5 and f.ticket.workflow_type == "task"
+    f.ready.assert_called_once()
 
 
 @pytest.mark.parametrize("key,body,expected", [
@@ -778,7 +880,7 @@ def test_custom_result_wrappers_preserve_answer_formatting_and_buttons(phone_flo
         f.rich.return_value = {"ok": False, "error_code": 400}
     choose(f)
     result = process(f, "1" if mode == "single" else "1\n2")
-    assert bool(result.get("closed")) is not partial
+    assert not result.get("closed")
     call = f.rich.call_args if mode == "rich" else next(call for call in f.sent.call_args_list if call.args[1].startswith("<b>До результата</b>"))
     text = call.args[1]["html"] if mode == "rich" else call.args[1]
     assert "<b>До результата</b>" in text and "<i>После результата</i>" in text
@@ -793,7 +895,7 @@ def test_custom_result_wrappers_preserve_answer_formatting_and_buttons(phone_flo
         assert "<u>Моё пояснение</u>" in text
         assert len(call.kwargs["reply_markup"]["inline_keyboard"]) == 2
     else:
-        assert call.kwargs.get("reply_markup") is None
+        assert len(call.kwargs["reply_markup"]["inline_keyboard"]) == 2
     if mode != "rich":
         assert call.kwargs["parse_mode"] == "HTML"
     assert get_effective_automatic_message_text(f.db, f"telegram.bitrix_phone.{key}") == template
@@ -824,7 +926,7 @@ def test_one_final_summary_preserves_all_rows_and_original_input_without_duplica
         clock[0] = phone.state(f.ticket)["deadline"]
         assert telegram.cleanup_expired_task_intents(f.db) == 1
     else:
-        assert first["closed"]
+        assert not first["closed"]
     rows = summaries(f)
     assert len(rows) == 1 and rows[0].agent_visible is True
     text = rows[0].body
@@ -853,9 +955,12 @@ def test_technical_summary_keeps_processed_missing_and_unprocessed_ids(phone_flo
             raise URLError("unavailable")
         return original(req, **kwargs)
     f.http.side_effect = request
-    assert process(f, "1\n2\n3\n4")["automation_handoff"]
+    assert process(f, "1\n2\n3\n4")["automation_collecting"]
+    assert summaries(f) == []
+    f.ready.assert_not_called()
+    assert action(f, "support")["automation_handoff"]
     text = summaries(f)[0].body
-    assert text.startswith("Расшифровка Bitrix передана сотрудникам: техническая ошибка API")
+    assert text.startswith("Расшифровка Bitrix передана сотрудникам: по просьбе клиента")
     assert "1 — +79990000000" in text and "2 — Сделка не найдена" in text
     assert "Сделка 3: техническая ошибка Bitrix" in text
     assert "Необработанные ID: 3, 4" in text
@@ -884,7 +989,7 @@ def test_summary_and_marker_roll_back_together_and_recovery_writes_only_one(phon
     assert not phone.state(f.ticket).get("summary_saved")
     monkeypatch.setattr(telegram, "_phone_callbacks", original)
     with f.factory() as restarted:
-        assert telegram.cleanup_expired_task_intents(restarted) == 1
+        assert telegram.cleanup_expired_task_intents(restarted) == 0
         assert telegram.cleanup_expired_task_intents(restarted) == 0
     f.db.expire_all()
     assert len(summaries(f)) == 1

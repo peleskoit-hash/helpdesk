@@ -16,7 +16,7 @@ for (const item of items) {
   category.items.push(item);
 }
 
-test('actual Bitrix templates form an independent block after origin and use the existing editor/save', async t => {
+test('actual Bitrix and phone search blocks use the existing editor/save', async t => {
   const browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true});
   t.after(() => browser.close());
   const page = await browser.newPage();
@@ -40,16 +40,18 @@ test('actual Bitrix templates form an independent block after origin and use the
   await page.locator('.automatic-message-section').last().waitFor();
   const titles = await page.locator('.automatic-message-section h3').allTextContents();
   const index = titles.indexOf('Автоматизация');
-  assert.deepEqual(titles.slice(index, index + 3), ['Автоматизация', 'Откуда клиент', 'Расшифровка номера Bitrix']);
-  const block = page.locator('.automatic-message-section').filter({has: page.locator('h3', {hasText: 'Расшифровка номера Bitrix'})});
-  assert.equal(await block.locator('[data-edit-template-key]').count(), 20);
+  assert.deepEqual(titles.slice(index, index + 4), ['Автоматизация', 'Откуда клиент', 'Расшифровка номера Bitrix', 'Поиск сделки по номеру телефона']);
+  for (const [category, title] of [['bitrix_phone', 'Расшифровка номера Bitrix'], ['bitrix_phone_deals', 'Поиск сделки по номеру телефона']]) {
+  const block = page.locator('.automatic-message-section').filter({has: page.locator('h3', {hasText: title})});
+  assert.equal(await block.locator('[data-edit-template-key]').count(), category === 'bitrix_phone' ? 21 : 20);
   await block.locator('summary').click();
-  for (const item of items.filter(item => item.category === 'bitrix_phone')) {
+  for (const item of items.filter(item => item.category === category)) {
     await block.locator(`[data-edit-template-key="${item.key}"]`).click();
     await page.locator('#automaticMessageTextarea').fill('Новый текст ' + item.title);
     await page.locator('#automaticMessageApplyBtn').click();
     await page.locator('#automaticMessageEditorModal').waitFor({state: 'detached'});
   }
-  assert.equal(await page.evaluate(() => window.saved.length), 20);
+  }
+  assert.equal(await page.evaluate(() => window.saved.length), 41);
   assert.equal(await page.locator('.automatic-message-section .automatic-message-section').count(), 0);
 });

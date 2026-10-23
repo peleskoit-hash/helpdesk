@@ -26,9 +26,9 @@ def flow(case, monkeypatch, tmp_path):
     company = case.db.scalar(select(Company))
     client, _, contact = _seed_contact(case.db, company=company)
     ticket = _seed_ticket(case.db, company_id=company.id, client_id=client.id,
-                          workflow_type="task", intake_state="collecting", status="unassigned")
-    button = BotButtonSetting(id="origin-button", button_key="Menu|task|Origin", menu_type="Menu",
-        workflow_type="task", button_path="Origin", button_label="Откуда клиент", automation_key="client_origin",
+                          workflow_type="auto", intake_state="collecting", status="unassigned")
+    button = BotButtonSetting(id="origin-button", button_key="Menu|auto|Origin", menu_type="Menu",
+        workflow_type="auto", button_path="Origin", button_label="Откуда клиент", automation_key="client_origin",
         automation_overridden=True, currently_present=True)
     case.db.add(button)
     case.db.commit()
@@ -98,13 +98,13 @@ def test_confirmed_success_one_request_separate_webhook_and_safe_result(flow, mo
     old_base = origin.settings.bitrix_webhook_base
     flow.http.return_value = response({"result": {"UF_CRM_MARK": "Смотри подборку квартир на побережье <b>&"}})
     result = telegram.process_telegram_update(flow.db, incoming(flow, "2528563"), notify_client=True)
-    assert result["closed"] and flow.ticket.status == "closed" and flow.ticket.assignee_id is None
+    assert not result["closed"] and flow.ticket.status != "closed" and flow.ticket.assignee_id is None
     flow.http.assert_called_once()
     assert flow.http.call_args.args[0].full_url == "https://mark.invalid/test/crm.deal.get.json?ID=2528563"
     assert origin.settings.bitrix_webhook_base == old_base
     texts = [call.args[1] for call in flow.sent.call_args_list]
     assert any("&lt;b&gt;&amp;" in text for text in texts)
-    assert "Проверка завершена" in texts[-1]
+    assert not any("Проверка завершена" in text for text in texts)
     assert len(flow.db.scalars(select(TicketMessage).where(TicketMessage.message_type == "client")).all()) == 1
     assert telegram.process_telegram_update(flow.db, incoming(flow, "2528563")) == {"ok": True, "duplicate": True}
     flow.http.assert_called_once()
@@ -140,9 +140,9 @@ def test_id_and_three_strict_links_close_both_workflows_and_preserve_original_me
     choose(flow)
     assert origin.waiting(flow.ticket) and flow.ticket.assignee_id is None
     result = telegram.process_telegram_update(flow.db, incoming(flow, body), notify_client=True)
-    assert result["closed"]
+    assert not result["closed"]
     flow.db.expire_all()
-    assert flow.ticket.status == "closed" and flow.ticket.workflow_type == workflow
+    assert flow.ticket.status != "closed" and flow.ticket.workflow_type == workflow
     assert flow.ticket.assignee_id is None and flow.ticket.load_counted is False
     assert flow.button.workflow_type == workflow and flow.button.button_key == key
     source = flow.db.scalars(select(TicketMessage).where(TicketMessage.message_type == "client")).one()
@@ -227,7 +227,7 @@ def test_unsuccessful_attempt_waits_for_next_number_then_succeeds(flow, monkeypa
     flow.http.reset_mock(side_effect=True)
     flow.http.return_value = response({"result": {"UF_CRM_MARK": "Смотри подборку квартир на побережье"}})
     monkeypatch.setattr(origin.settings, "bitrix_deal_mark_webhook_base", "https://mark.invalid/test/")
-    assert telegram.process_telegram_update(flow.db, incoming(flow, "2528563", 12), notify_client=True)["closed"]
+    assert not telegram.process_telegram_update(flow.db, incoming(flow, "2528563", 12), notify_client=True)["closed"]
     flow.http.assert_called_once()
 
 
@@ -336,7 +336,7 @@ def test_saved_origin_result_wrapper_cannot_lose_computed_mark(flow, missing_pla
     mark = "Смотри подборку <b>квартир</b> & море"
     flow.http.return_value = response({"result": {"UF_CRM_MARK": mark}})
     choose(flow)
-    assert telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
+    assert not telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
     call = next(call for call in flow.sent.call_args_list if "До результата" in call.args[1])
     text = call.args[1]
     assert prefix in text and suffix in text
@@ -358,11 +358,11 @@ def test_plain_origin_result_keeps_ampersands_without_html_entities(flow):
         settings_automatic_messages.AutomaticMessageUpdatePayload(body="До: {{client_origin}} :после"), db=flow.db, user=flow.admin)
     flow.http.return_value = response({"result": {"UF_CRM_MARK": "A & B"}})
     choose(flow)
-    assert telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
+    assert not telegram.process_telegram_update(flow.db, incoming(flow, "1"), notify_client=True)["closed"]
     assert any(call.args[1] == "До: A & B :после" and call.kwargs["parse_mode"] is None for call in flow.sent.call_args_list)
 
 
-@pytest.mark.parametrize("workflow", ["task", "auto"])
+@pytest.mark.parametrize("workflow", ["auto"])
 def test_origin_automation_is_saved_and_roundtrips_without_changing_existing_button(flow, workflow):
     from api.app.services.button_automation_types import is_automation_allowed_for_workflow
     set_workflow(flow, workflow)
@@ -376,7 +376,7 @@ def test_origin_automation_is_saved_and_roundtrips_without_changing_existing_but
     fields = ["id", "stable_button_id", "button_key", "workflow_type", "instruction_text", "client_text", "client_text_overridden"]
     before = {name: getattr(flow.button, name) for name in fields}
     catalog = flow.client.get("/api/v1/settings/bot-buttons/automations").json()["items"]
-    assert next(item for item in catalog if item["key"] == "client_origin")["workflow_types"] == ["task", "auto"]
+    assert next(item for item in catalog if item["key"] == "client_origin")["workflow_types"] == ["auto"]
     params = {"button_key": flow.button.button_key, "menu_type": "Menu", "workflow_type": workflow,
               "button_path": "Origin", "button_label": "Откуда клиент"}
     saved = flow.client.put("/api/v1/settings/bot-buttons/item/instruction", params=params,
@@ -408,7 +408,7 @@ def test_existing_phone_lookup_retains_its_webhook_and_contact_requests(monkeypa
     assert all(call.kwargs["timeout"] == 20 for call in http.call_args_list)
 
 
-@pytest.mark.parametrize("stage", ["result", "success", "closed", "timeout"])
+@pytest.mark.parametrize("stage", ["result", "closed", "timeout"])
 def test_telegram_failure_never_closes_origin_before_confirmed_reply(flow, monkeypatch, stage):
     choose(flow)
     def failed_send(chat, text, **kwargs):
@@ -444,80 +444,55 @@ def test_old_origin_close_button_cannot_close_current_origin(flow):
 def test_confirmed_result_is_not_repeated_when_final_message_is_retried_after_restart(flow):
     choose(flow)
     def fail_final(chat, text, **kwargs):
-        if "Проверка завершена" in text:
+        if "Откуда клиент» закрыто" in text:
             raise RuntimeError("final message failed")
         return {"ok": True, "result": {"message_id": 501}}
     flow.sent.side_effect = fail_final
     update = incoming(flow, "2528563")
-    assert telegram.process_telegram_update(flow.db, update, notify_client=True)["automation_delivery_pending"]
+    assert not telegram.process_telegram_update(flow.db, update, notify_client=True)["closed"]
+    assert telegram.process_telegram_update(flow.db, incoming(flow, "/close", 12), notify_client=True)["automation_delivery_pending"]
     flow.db.expire_all()
     assert origin.waiting(flow.ticket)
-    assert flow.ticket.quick_action_state_json[origin.KEY]["finish"]["result_message_id"] == 501
+    assert flow.ticket.quick_action_state_json[origin.KEY]["result"]["message_id"] == 501
     flow.sent.side_effect = None
     with flow.factory() as restarted_db:
-        retry = incoming(flow, "2528563", 12)
+        retry = incoming(flow, "2528563", 13)
         assert telegram.process_telegram_update(restarted_db, retry, notify_client=True)["closed"]
         assert telegram.process_telegram_update(restarted_db, retry) == {"ok": True, "duplicate": True}
         assert restarted_db.get(Ticket, flow.ticket.id).status == "closed"
-        assert len(restarted_db.scalars(select(TicketMessage).where(TicketMessage.body == "Откуда клиент: success")).all()) == 1
+        assert len(restarted_db.scalars(select(TicketMessage).where(TicketMessage.body.like("Откуда клиент: %\n%"))).all()) == 1
     assert sum(call.args[1] == "Смотри подборку квартир на побережье" for call in flow.sent.call_args_list) == 1
     flow.http.assert_called_once()
 
 
 @pytest.mark.parametrize("trigger", ["cleanup", "/start", "/close", "inline"])
-def test_started_success_cannot_be_replaced_by_timeout_or_client_close(flow, monkeypatch, trigger):
+def test_success_waits_for_explicit_close_or_timeout_without_resending_result(flow, monkeypatch, trigger):
     choose(flow)
     mark = "Смотри подборку квартир на побережье"
-    def fail_final(chat, text, **kwargs):
-        if "Проверка завершена" in text:
-            raise RuntimeError("final message failed")
-        return {"ok": True, "result": {"message_id": 501}}
-    flow.sent.side_effect = fail_final
-    assert telegram.process_telegram_update(flow.db, incoming(flow, "2528563"), notify_client=True)["automation_delivery_pending"]
-    flow.db.expire_all()
-    original = dict(flow.ticket.quick_action_state_json[origin.KEY]["finish"])
-    assert original == {"key": "success", "mark": mark, "result_message_id": 501}
+    assert not telegram.process_telegram_update(flow.db, incoming(flow, "2528563"), notify_client=True)["closed"]
+    assert flow.ticket.quick_action_state_json[origin.KEY]["phase"] == "success"
     if trigger == "cleanup":
         deadline = flow.ticket.quick_action_state_json[origin.KEY]["deadline"]
         monkeypatch.setattr(origin, "now", lambda: deadline + 1)
-        run = lambda update_id: telegram.cleanup_expired_task_intents(flow.db)
+        assert telegram.cleanup_expired_task_intents(flow.db) == 1
     else:
-        def run(update_id):
-            update = incoming(flow, trigger, update_id)
-            if trigger == "inline":
-                update = {"update_id": update_id, "callback_query": {"id": str(update_id), "data": "client_close",
-                    "from": update["message"]["from"], "message": update["message"]}}
-                update["callback_query"]["message"]["message_id"] = int(flow.ticket.client_close_message_id)
-            return telegram.process_telegram_update(flow.db, update, notify_client=True)
-    first_retry = run(12)
-    assert first_retry == 0 if trigger == "cleanup" else first_retry["closed"] is False
-    flow.db.expire_all()
-    assert origin.waiting(flow.ticket)
-    assert flow.ticket.quick_action_state_json[origin.KEY]["finish"] == original
-    telegram._send_problem_menu_for_contact.assert_not_called()
-    flow.sent.side_effect = None
-    completed = run(13)
-    assert completed == 1 if trigger == "cleanup" else completed["closed"] is True
-    flow.db.expire_all()
+        update = incoming(flow, trigger, 12)
+        if trigger == "inline":
+            update = {"update_id": 12, "callback_query": {"id": "close", "data": "client_close",
+                "from": update["message"]["from"], "message": update["message"]}}
+            update["callback_query"]["message"]["message_id"] = int(flow.ticket.client_close_message_id)
+        assert telegram.process_telegram_update(flow.db, update, notify_client=True)["closed"]
     assert flow.ticket.status == "closed"
-    delivery = flow.ticket.quick_action_state_json[origin.KEY]["finish"]
-    assert delivery["key"] == "success" and delivery["mark"] == mark
-    assert delivery["result_message_id"] == 501 and delivery["success_message_id"] == 500
-    texts = [call.args[1] for call in flow.sent.call_args_list]
-    assert texts.count(mark) == 1
-    assert not any("10 минут" in text or "Откуда клиент» закрыто" in text for text in texts)
-    notes = flow.db.scalars(select(TicketMessage).where(TicketMessage.body.like("Откуда клиент:%"))).all()
-    assert [note.body for note in notes] == ["Откуда клиент: success"]
+    assert sum(call.args[1] == mark for call in flow.sent.call_args_list) == 1
+    assert not any("Проверка завершена" in call.args[1] for call in flow.sent.call_args_list)
+    flow.http.assert_called_once()
     if trigger == "/start":
         telegram._send_problem_menu_for_contact.assert_called_once()
-    else:
-        telegram._send_problem_menu_for_contact.assert_not_called()
-    flow.http.assert_called_once()
 
 
 @pytest.mark.parametrize("reply", [{"ok": False}, {"ok": True}, {"ok": True, "result": {"message_id": 0}},
                                   {"ok": True, "result": {"message_id": True}}])
-@pytest.mark.parametrize("stage", ["result", "success"])
+@pytest.mark.parametrize("stage", ["result"])
 def test_unconfirmed_telegram_response_keeps_origin_open(flow, reply, stage):
     choose(flow)
     flow.sent.side_effect = lambda chat, text, **kwargs: reply if (
@@ -630,14 +605,14 @@ def test_parallel_updates_and_cleanup_cannot_repeat_lookup_or_double_close(flow,
                     assert telegram.cleanup_expired_task_intents(db) == 0
             finally:
                 release.set()
-            assert a.result(timeout=10)["closed"]
+            assert not a.result(timeout=10)["closed"]
             result = b.result(timeout=10)
             if second == "duplicate":
                 assert result == {"ok": True, "duplicate": True}
         flow.http.assert_called_once()
         with factory() as db:
-            assert db.get(Ticket, flow.ticket.id).status == "closed"
-            notes = db.scalars(select(TicketMessage).where(TicketMessage.body == "Откуда клиент: success")).all()
+            assert (db.get(Ticket, flow.ticket.id).status == "closed") == (second == "close")
+            notes = db.scalars(select(TicketMessage).where(TicketMessage.body.like("Откуда клиент: %\n%"))).all()
             assert len(notes) == 1
     finally:
         engine.dispose()

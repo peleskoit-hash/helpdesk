@@ -604,7 +604,7 @@
             <label class="field-label">Автоматизация</label>
             <select id="automationKeySelect" class="input">
 
-              ${!selectedAutomationKnown && state.automationTypeValue && state.automationTypeValue !== "none"
+              ${!selectedAutomationKnown && state.automationTypeValue && state.automationTypeValue !== "none" && !editorHelpers.isAutoOnlyAutomation?.(state.automationTypeValue)
                 ? `<option value="${escapeHtml(state.automationTypeValue)}" selected>${escapeHtml(state.automationKey || state.automationTypeValue)} (legacy)</option>`
                 : ""}
               ${visibleAutomations.map((a) => {

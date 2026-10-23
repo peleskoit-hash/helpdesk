@@ -7,6 +7,7 @@ from ..models import Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram
 from .button_automation_types import (
     AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
+    AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP,
     AUTOMATION_TYPE_SEND_FILES,
     get_button_automation_meta,
     is_builtin_button_automation_key,
@@ -19,6 +20,11 @@ AUTOMATION_FALLBACK_CLIENT_TEXT = "Заявка создана и передан
 def get_automation_registry() -> dict[str, dict]:
     bitrix_available = bool((settings.bitrix_webhook_base or "").strip())
     return {
+        AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP: {
+            "available": bitrix_available,
+            "enabled": True,
+            "handler": "telegram_bitrix_phone",
+        },
         "client_origin": {
             "available": bool((settings.bitrix_deal_mark_webhook_base or "").strip()),
             "enabled": True,
@@ -124,7 +130,7 @@ def process_collecting_ticket_automation(
         return None
     if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
         return None
-    if effective_automation_key in {"telegram_group", BITRIX_LOOKUP_AUTOMATION_KEY}:
+    if effective_automation_key in {"telegram_group", BITRIX_LOOKUP_AUTOMATION_KEY, AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP}:
         return None  # Handled before the ordinary intake and its timeouts in telegram.py.
     if is_builtin_button_automation_key(effective_automation_key):
         append_system_message_fn(
