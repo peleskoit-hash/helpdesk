@@ -1,0 +1,435 @@
+/* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
+   The import precedes legacy CSS; deliberate scope specificity wins in both themes. */
+@font-face {
+  font-family: Manrope;
+  src: url("/static/fonts/Manrope-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+body:has(.layout > .main) {
+  color-scheme: light;
+  --desk-bg: #f3f1f7;
+  --desk-surface: #fffefd;
+  --desk-soft: #f6f4f9;
+  --desk-hover: #eeebf5;
+  --desk-border: #e4e0ec;
+  --desk-text: #302c40;
+  --desk-muted: #746e84;
+  --desk-accent: #7760a8;
+  --desk-tint: #ece5f6;
+  --desk-on-tint: #624a91;
+  --desk-danger: #b13f59;
+  --desk-success: #35765d;
+  --desk-success-bg: #eaf4ef;
+  --desk-danger-bg: #faeaf0;
+  --desk-warning-bg: #f9f1e3;
+  --desk-warning-text: #87652b;
+  --desk-blue-bg: #eaf0fa;
+  --desk-blue-text: #486b9a;
+  --desk-counter-blue: #1667c8;
+  --desk-task-bg: #ffedd5;
+  --desk-task-text: #895221;
+  --desk-special-bg: #ccfbf1;
+  --desk-special-text: #21685f;
+  --desk-shadow: 0 3px 16px #33204d05;
+  --desk-font: Manrope, "Segoe UI", Tahoma, sans-serif;
+}
+
+body[data-theme="dark"]:has(.layout > .main) {
+  color-scheme: dark;
+  --desk-bg: #171b28;
+  --desk-surface: #202535;
+  --desk-soft: #262b3d;
+  --desk-hover: #30354b;
+  --desk-border: #363b50;
+  --desk-text: #edeaf5;
+  --desk-muted: #ada9bf;
+  --desk-accent: #b6a0e2;
+  --desk-tint: #3c3354;
+  --desk-on-tint: #dac7fa;
+  --desk-danger: #f39bb1;
+  --desk-success: #9dd3ba;
+  --desk-success-bg: #253c38;
+  --desk-danger-bg: #462e40;
+  --desk-warning-bg: #40382e;
+  --desk-warning-text: #e7c694;
+  --desk-blue-bg: #2a354e;
+  --desk-blue-text: #b0c9ef;
+  --desk-counter-blue: #8ecbff;
+  --desk-task-bg: #49392e;
+  --desk-task-text: #f2c08f;
+  --desk-special-bg: #243f3e;
+  --desk-special-text: #a0e5da;
+  --desk-shadow: none;
+}
+
+/* Shared sidebar and header, including pages reached through AppShell. */
+body:has(.layout > .main) .sidebar,
+body:has(.layout > .main) .toolbar {
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --accent: var(--desk-accent);
+  --border: var(--desk-border);
+  font-family: var(--desk-font);
+  color: var(--desk-text);
+  background: var(--desk-surface);
+  border-color: var(--desk-border);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body:has(.layout > .main) .sidebar {
+  padding: 18px 16px 16px;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+body:has(.layout > .main) :where(.sidebar) .sidebar-brand {
+  color: var(--desk-text);
+  text-shadow: none;
+  font-size: 34px;
+  text-align: left;
+  padding: 4px 12px;
+}
+body:has(.layout > .main) :where(.sidebar) .sidebar-title {
+  margin: 16px 12px 12px;
+  color: var(--desk-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .05em;
+}
+body:has(.layout > .main) :where(.sidebar) .tab-list { gap: 5px; }
+body:has(.layout > .main) :where(.sidebar) :is(.tab-btn, .settings-link, .admin-agent-item) {
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 11px 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  background: transparent;
+  color: var(--desk-text);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+body:has(.layout > .main) :where(.sidebar) :is(.tab-btn, .settings-link, .admin-agent-item):hover {
+  background: var(--desk-hover);
+  box-shadow: none;
+}
+body:has(.layout > .main) :where(.sidebar) :is(.tab-btn, .settings-link, .admin-agent-item).active {
+  background: var(--desk-tint);
+  color: var(--desk-on-tint);
+  border-color: transparent;
+  box-shadow: none;
+}
+body:has(.layout > .main) :where(.sidebar) .tab-btn-count {
+  background: var(--desk-soft);
+  color: var(--desk-muted);
+  min-width: 28px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0 7px;
+  line-height: 1;
+  text-align: center;
+  transform: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+body:has(.layout > .main) :where(.sidebar) .tab-btn.active .tab-btn-count {
+  background: var(--desk-surface);
+  color: var(--desk-on-tint);
+}
+body:has(.layout > .main) :where(.sidebar) :is(.admin-agent-filter, .status-panel, .sidebar-user-name, .sidebar-user-menu) {
+  background: var(--desk-soft);
+  color: var(--desk-text);
+  border: 1px solid var(--desk-border);
+  border-radius: 16px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+body:has(.layout > .main) :where(.sidebar) .admin-agent-filter { padding: 8px; }
+body:has(.layout > .main) :where(.sidebar) .tab-btn { padding-top: 9px; padding-bottom: 9px; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-list { max-height: 160px; overflow-y: auto; scrollbar-width: thin; grid-template-columns: minmax(0, 1fr); }
+body:has(.layout > .main) :where(.sidebar) .settings-link { margin-top: 3px; padding: 8px 12px; }
+body:has(.layout > .main) .sidebar > * { flex-shrink: 0; }
+body:has(.layout > .main) :where(.sidebar) .sidebar-bottom { background: var(--desk-surface); padding-top: 12px; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-header { color: var(--desk-muted); background: var(--desk-surface); border-color: var(--desk-border); box-shadow: none; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-header.pressed { color: var(--desk-on-tint); background: var(--desk-tint); border-color: var(--desk-accent); }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-item { padding: 8px; display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) 72px; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-counts {
+  display: grid; grid-column: 2; grid-template-columns: 28px 2px 2px 28px; column-gap: 4px;
+  flex: none; width: 72px; min-width: 0; align-items: center; justify-items: center; transform: none;
+}
+body:has(.layout > .main) :where(.sidebar) .admin-agent-count {
+  width: 100%; transform: none; padding: 0; line-height: 20px; text-align: center;
+}
+body:has(.layout > .main) :where(.sidebar) .admin-agent-count-active { text-align: right; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-count-frozen { text-align: left; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-count-divider {
+  display: block; width: 2px; height: 16px; padding: 0;
+  transform: none; font-size: 0; line-height: 1; background: currentColor; border-radius: 1px;
+}
+body:has(.layout > .main) :where(.sidebar) :is(.admin-agent-count-active, .admin-agent-count-divider) { color: var(--desk-text); }
+body:has(.layout > .main) :where(.sidebar) :is(.admin-agent-count-frozen, .admin-agent-count-divider-frozen) { color: var(--desk-counter-blue); }
+body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu { background: var(--desk-surface); padding: 8px; z-index: 80; }
+body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item { font-size: 14px; color: var(--desk-text); }
+body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item:hover { background: var(--desk-hover); }
+body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item-danger { color: var(--desk-danger); }
+body:has(.layout > .main) :where(.sidebar) .agent-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--desk-tint);
+  color: var(--desk-on-tint);
+  box-shadow: none;
+}
+body:has(.layout > .main) :where(.sidebar) .agent-status-btn {
+  font: 600 14px/1.4 var(--desk-font);
+  border-radius: 12px;
+  border-color: var(--desk-border);
+  box-shadow: none;
+  backdrop-filter: none;
+  color: var(--desk-text);
+  background: var(--desk-soft);
+}
+body:has(.layout > .main) :where(.sidebar) .agent-status-btn.active { background: var(--desk-tint); border-color: var(--desk-accent); box-shadow: none; color: var(--desk-on-tint); }
+body:has(.layout > .main) .toolbar { padding: 6px 24px; gap: 8px; min-height: 57px; }
+body:has(.layout > .main) .toolbar :is(input, select, button.action) {
+  font: 600 14px/1.4 var(--desk-font);
+  min-height: 38px;
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  color: var(--desk-text);
+  background: var(--desk-soft);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+body:has(.layout > .main) .toolbar input[type="checkbox"] { min-height: auto; padding: 0; accent-color: var(--desk-accent); }
+body:has(.layout > .main) .toolbar label { font-size: 13px; }
+body:has(.layout > .main) :where(.toolbar) :is(.display-settings, .bulk-admin-actions) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+body:has(.layout > .main) .toolbar button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+body:has(.layout > .main) .toolbar button.action.danger { color: var(--desk-danger); background: var(--desk-danger-bg); }
+
+/* Only the two requested workspaces receive the new surface and type system. */
+body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) {
+  --bg: var(--desk-bg);
+  --surface: var(--desk-surface);
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --accent: var(--desk-accent);
+  --border: var(--desk-border);
+  --internal: var(--desk-warning-bg);
+  --system: var(--desk-soft);
+  color: var(--desk-text);
+  font: 14px/1.5 var(--desk-font);
+  background: radial-gradient(ellipse at 85% 0%, var(--desk-tint), transparent 55%), var(--desk-bg);
+}
+body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]))::before { content: none; }
+
+body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) {
+  min-width: 0;
+  & > .content { padding: 20px 24px 24px; gap: 18px; }
+  & .panel { border-radius: 24px; background: var(--desk-surface); border: 1px solid var(--desk-border); box-shadow: var(--desk-shadow); backdrop-filter: none; }
+  & :is(button, input, select, textarea) { font-family: var(--desk-font); accent-color: var(--desk-accent); }
+  & :is(button.action, .mini-check-btn, .row-assignee-select, .wrong-problem-item) {
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    font-size: 14px;
+    line-height: 1.4;
+    padding: 9px 12px;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & :is(button.action, .wrong-problem-item):hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+  & button.action.primary, & .mini-check-btn.active { background: var(--desk-on-tint); border-color: var(--desk-on-tint); color: var(--desk-surface); }
+  & button.action.primary:hover:not(:disabled) { background: var(--desk-accent); }
+  & button.action.danger { color: var(--desk-danger); background: var(--desk-danger-bg); border-color: var(--desk-border); }
+  & :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+  & :is(button, a, input, select, textarea):focus-visible { outline: 2px solid var(--desk-accent); outline-offset: 3px; }
+  & :is(.status, .meta, .status-panel-title) { font-size: 13px; color: var(--desk-muted); }
+  & .card-head { padding: 18px; border-color: var(--desk-border); font-size: 15px; }
+  & .task-panel { margin: 12px 24px 0; background: var(--desk-surface); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; }
+  & :is(.task-panel-slot, .task-panel-more, .task-panel-dropdown) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); box-shadow: none; }
+  & .task-panel-slot.active { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: 0 24px 80px #00000026; backdrop-filter: none; }
+  & :is(.modal-head, .modal-foot) { padding: 18px 24px; border-color: var(--desk-border); }
+  & .modal-body { padding: 20px 24px; }
+  & .modal-body label { color: var(--desk-muted); font-size: 14px; }
+  & .modal-field-section { background: var(--desk-soft); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; backdrop-filter: none; }
+  & .modal { background: #14122166; backdrop-filter: blur(4px); }
+}
+
+body #appContent.main[data-shell-page="ticket-card"] {
+  & > .ticket-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr) minmax(230px, 260px); }
+  & .ticket-head-main { background: transparent; border: 0; border-radius: 0; padding: 0; contain: none; }
+  & .ticket-head-title-wrap { flex: 1; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px; }
+  & .ticket-head-title { min-width: 0; background: transparent; color: var(--desk-text); font-size: 23px; line-height: 1.3; letter-spacing: -.035em; padding: 0; font-weight: 800; }
+  & .ticket-status-badges { flex: 0 0 auto; margin-left: 0; gap: 6px; }
+  & .ticket-status-badge { padding: 6px 10px; font-size: 12px; line-height: 1.2; border: 0; color: var(--desk-on-tint); background: var(--desk-tint); }
+  & .ticket-badge-type-ticket { color: var(--desk-success); background: var(--desk-success-bg); }
+  & .ticket-badge-type-task { color: var(--desk-task-text); background: var(--desk-task-bg); }
+  & .ticket-badge-status-special { color: var(--desk-special-text); background: var(--desk-special-bg); }
+  & .ticket-badge-status-unassigned { color: var(--desk-muted); background: var(--desk-border); }
+  & .ticket-badge-status-active { color: var(--desk-on-tint); background: var(--desk-tint); }
+  & .ticket-badge-status-closed { color: var(--desk-danger); background: var(--desk-danger-bg); }
+  & .ticket-badge-frozen { color: var(--desk-blue-text); background: var(--desk-blue-bg); }
+  & .messages { padding: 28px clamp(20px, 2.2vw, 44px); gap: 22px; background: var(--desk-soft); scroll-padding: 24px; }
+  & .message { flex-shrink: 0; max-width: 86%; border: 1px solid var(--desk-border); border-radius: 18px; padding: 14px 16px; font-size: 18px; line-height: 1.55; box-shadow: none; backdrop-filter: none; }
+  & .message:is(.client, .agent) { width: fit-content; min-width: 0; max-width: 66.67%; overflow-wrap: anywhere; }
+  & .message.client { background: var(--desk-surface); color: var(--desk-text); border-bottom-left-radius: 6px; }
+  & .message.agent { background: var(--desk-blue-bg); color: var(--desk-text); border-color: transparent; border-bottom-right-radius: 6px; }
+  & .message.agent .status { color: var(--desk-muted); }
+  & .message.internal { background: var(--desk-warning-bg); color: var(--desk-text); border: 1px dashed var(--desk-warning-text); }
+  & .message.internal::before { content: "Комментарий"; display: block; margin-bottom: 8px; color: var(--desk-warning-text); font-size: 14px; font-weight: 800; }
+  & .message.system { background: var(--desk-tint); color: var(--desk-text); border: 1px solid var(--desk-accent); max-width: 94%; font-size: 15px; padding: 12px 16px; }
+  & .message-header { flex-wrap: wrap; gap: 4px 12px; font-size: 14px; }
+  & .message-date { font-size: 13px; }
+  & .message.system .message-date { opacity: 1; }
+  & .message-context-menu { background: var(--desk-surface); border-color: var(--desk-border); box-shadow: 0 8px 32px #00000020; backdrop-filter: none; border-radius: 16px; }
+  & .message-menu-item { color: var(--desk-text); font-size: 14px; }
+  & .message-menu-item:hover { background: var(--desk-hover); }
+  & .message-menu-item.danger { color: var(--desk-danger); }
+  & .card-actions { background: var(--desk-surface); border-color: var(--desk-border); padding: 16px 18px; box-shadow: none; backdrop-filter: none; gap: 12px; }
+  & textarea { font-size: 15px; min-height: 96px; max-height: 28vh; border-radius: 16px; padding: 14px; }
+  & textarea.comment-mode { background: var(--desk-warning-bg); border-color: var(--desk-warning-text); }
+  & .btn-row { gap: 8px; }
+  & .composer-enter-toggle { font-size: 13px; color: var(--desk-muted); }
+  & .composer-hotkey-hint { font-size: 12px; }
+  & .send-now { background: var(--desk-on-tint) !important; border-color: var(--desk-on-tint) !important; color: var(--desk-surface) !important; box-shadow: none; }
+  & :is(.quote-preview, .message-quote) { color: var(--desk-text); background: var(--desk-tint); border-color: var(--desk-accent); box-shadow: none; backdrop-filter: none; }
+  & :is(.quote-preview-author, .quote-preview-text) { color: var(--desk-text); }
+  & .ticket-client-info { padding: 14px; gap: 12px; }
+  & .ticket-client-side > .card-head { padding: 10px 18px; }
+  & .client-card-block { border-radius: 16px; padding: 12px; gap: 6px; border-color: var(--desk-border); box-shadow: none; }
+  & .client-card-block-title { font-size: 14px; color: var(--desk-text); }
+  & .client-card-field { font-size: 14px; line-height: 1.5; padding: 7px 0; border-color: var(--desk-border); overflow-wrap: anywhere; }
+  & .client-card-field-label { font-size: 13px; color: var(--desk-muted); font-weight: 500; }
+  & .client-card-field-value a { color: var(--desk-on-tint); }
+  & .client-card-field-external-link { background: var(--desk-tint); color: var(--desk-on-tint); border-radius: 9px; }
+  & .client-card-field-external-link:hover { background: var(--desk-hover); color: var(--desk-on-tint); }
+  & .client-card-field-external-link-disabled { background: var(--desk-soft); color: var(--desk-muted); }
+  & .client-card-block-blue { background: var(--desk-blue-bg); }
+  & .client-card-block-green { background: var(--desk-success-bg); }
+  & .client-card-block-yellow { background: var(--desk-warning-bg); }
+  & .client-card-block-red { background: var(--desk-danger-bg); }
+  & .client-card-block-gray { background: var(--desk-soft); }
+  & .client-card-block-purple { background: var(--desk-tint); }
+  & .client-card-telegram-avatar { width: 92px; height: 92px; margin: 8px auto 16px; border-radius: 50%; overflow: hidden; }
+  & .client-card-telegram-avatar img { object-fit: cover; border-radius: 50%; }
+  & .edit-client-btn { background: var(--desk-tint) !important; border-color: transparent !important; color: var(--desk-on-tint) !important; min-height: 34px; }
+  & #clientModal .modal-dialog { border-radius: 0; box-shadow: none; }
+  & #clientModal .modal-body { padding: 14px; }
+  & #clientModal .modal-foot { padding: 14px; }
+  & .client-edit-border { stroke: var(--desk-accent); border-radius: 24px; }
+  & .ticket-control-wrap { padding: 14px; gap: 14px; }
+  & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
+  & .freeze-box { background: var(--desk-blue-bg); }
+  & #freezeUntil { width: 100%; min-width: 0; padding: 8px 6px; font-size: 13px; }
+  & .admin-skip-client { font-size: 13px; }
+  & .ticket-right-actions .action { min-height: 42px; }
+  & .ticket-quick-actions .quick-action-btn { font-weight: 600; }
+  & .ticket-quick-actions .quick-action-ready:not(:disabled) { background: var(--desk-success-bg); color: var(--desk-success); border-color: var(--desk-border); }
+  & .close-wrap #closeBtn { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); font-size: 15px; }
+  & .close-wrap #closeBtn.close-action-ready:not(:disabled) { background: var(--desk-tint); color: var(--desk-on-tint); }
+  &:has(.ticket-badge-type-task) .close-wrap #closeBtn { font-size: 18px; font-weight: 800; min-height: 60px; padding: 14px 18px; border-width: 2px; }
+  &:has(.ticket-badge-type-task) .close-wrap #closeBtn.close-action-ready:not(:disabled) { border-color: var(--desk-accent); }
+}
+
+body #appContent.main[data-shell-page="tickets-list"] {
+  & .toolbar { flex-wrap: wrap; overflow: visible; }
+  & .toolbar > .search-input-wrap { flex: 1 1 300px; max-width: 560px; }
+  & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 8px 36px 8px 16px; font-size: 14px; }
+  & :is(.bulk-assign-btn, .bulk-freeze-btn) { width: auto; }
+  & button.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
+  & .table-scroll { padding: 8px 12px 0; }
+  & table { margin: 0; width: 100%; border-spacing: 0 6px; }
+  & th { padding: 14px 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); font-size: 13px; }
+  & .table-sort-btn { color: var(--desk-muted); font: 600 13px var(--desk-font); }
+  & button.mini-check-btn { display: inline-grid; place-items: center; padding: 0; line-height: 1; vertical-align: middle; }
+  & td { font-size: 16px; padding: 8px 12px; line-height: 1.5; color: var(--desk-text); }
+  & td.ticket-linked-cell { padding: 0; }
+  & .row-assignee-select { font-size: 16px; line-height: 1.5; padding: 6px 8px; }
+  & tr.ticket-row td { border-color: var(--desk-border); box-shadow: none; backdrop-filter: none; }
+  & tr.ticket-row td:first-child { border-radius: 14px 0 0 14px; }
+  & tr.ticket-row td:last-child { border-radius: 0 14px 14px 0; }
+  & tr.ticket-row { background: var(--desk-soft); }
+  & tr.ticket-row:hover { outline: 1px solid var(--desk-accent); outline-offset: -1px; }
+  & tr.ticket-color-request { background: linear-gradient(90deg, color-mix(in srgb, var(--desk-warning-bg) 80%, var(--desk-surface)), var(--desk-surface) 70%); }
+  & tr.ticket-color-task { background: linear-gradient(90deg, var(--desk-success-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-group-task { background: linear-gradient(90deg, var(--desk-tint), var(--desk-surface) 70%); }
+  & tr.ticket-color-internal-task { background: linear-gradient(90deg, var(--desk-warning-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-frozen { background: linear-gradient(90deg, var(--desk-blue-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-closed { background: linear-gradient(90deg, var(--desk-danger-bg), var(--desk-surface) 70%); }
+  & tr.ticket-row-seen { background-color: var(--desk-soft); }
+  & .ticket-row-link { color: var(--desk-text); min-height: 58px; padding: 16px 12px; }
+  & .table-pagination-footer { padding: 16px 20px; background: var(--desk-surface); border-color: var(--desk-border); }
+  & .table-pagination-total { color: var(--desk-muted); font-size: 14px; }
+  & .table-page-number { border-radius: 12px; min-height: 36px; min-width: 36px; background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); font: 600 14px var(--desk-font); }
+  & .table-page-number.active { background: var(--desk-tint); border-color: var(--desk-accent); color: var(--desk-on-tint); }
+  & :is(.columns-draft-item, .columns-draft-row) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); }
+}
+
+body.ticket-colors-disabled #appContent.main[data-shell-page="tickets-list"] tr.ticket-row { background: var(--desk-soft); }
+
+/* Legend retains the same semantic mapping as table rows in either theme. */
+body #appContent.main[data-shell-page="tickets-list"] .color-legend { background: var(--desk-surface); border-color: var(--desk-border); color: var(--desk-text); border-radius: 14px; box-shadow: 0 8px 32px #00000018; }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-task, .ticket-type-task) { background: var(--desk-success-bg); color: var(--desk-success); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-request, .ticket-type-request, .color-legend-internal-task, .ticket-type-internal-task) { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-group-task, .ticket-type-group-task) { background: var(--desk-tint); color: var(--desk-on-tint); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-frozen, .ticket-type-frozen) { background: var(--desk-blue-bg); color: var(--desk-blue-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-closed, .ticket-type-closed) { background: var(--desk-danger-bg); color: var(--desk-danger); }
+
+@media (min-width: 1201px) {
+  body:has(.layout > .main) .layout { grid-template-columns: 246px minmax(0, 1fr); }
+  /* Intrinsic width follows the actual agent names, only on the two ticket pages.
+     A bounded track leaves space for the chat; exceptional names wrap in full. */
+  body:has(#appContent:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) .layout:has(> .sidebar #adminAgentFilter:not(.hidden) .admin-agent-item) {
+    grid-template-columns: fit-content(min(30vw, 420px)) minmax(0, 1fr);
+    & > .sidebar { min-width: 246px; }
+    & > .sidebar :is(.admin-agent-filter, .admin-agent-list, .admin-agent-item) { min-width: 0; }
+    & > .sidebar .admin-agent-name { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  }
+}
+@media (min-width: 1201px) and (max-width: 1500px) {
+  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 240px minmax(0, 1fr) 230px; gap: 12px; padding: 16px; }
+  body #appContent.main[data-shell-page="ticket-card"] .messages { padding: 22px 16px; }
+}
+@media (max-width: 1200px) {
+  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 1fr; overflow-y: auto; grid-auto-rows: minmax(280px, auto); }
+  body #appContent.main[data-shell-page="ticket-card"] .ticket-card { min-height: 640px; }
+  body #appContent.main[data-shell-page="ticket-card"] .ticket-side { min-height: 320px; max-height: 600px; }
+}
+@media (max-width: 700px) {
+  body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) .layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 100dvh; }
+  body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) .sidebar { max-height: 360px; overflow-y: auto; }
+  body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) { min-height: 100dvh; }
+  body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) > .content { padding: 12px; }
+  body #appContent.main[data-shell-page="tickets-list"] .toolbar { padding: 12px; }
+  body #appContent.main[data-shell-page="tickets-list"] .bulk-admin-actions { flex-wrap: wrap; white-space: normal; }
+  body #appContent.main[data-shell-page="ticket-card"] .message { max-width: 94%; }
+  body #appContent.main[data-shell-page="ticket-card"] .ticket-head-main { flex-wrap: wrap; }
+  body #appContent.main[data-shell-page="ticket-card"] .ticket-head-title-wrap { flex-basis: 100%; flex-wrap: wrap; }
+}
