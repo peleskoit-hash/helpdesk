@@ -1,0 +1,123 @@
+/* V2 personal settings and their shared admin notification editor. */
+body #appContent.main:is([data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"]) {
+  --surface: var(--desk-surface);
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --border: var(--desk-border);
+  --accent: var(--desk-focus, var(--desk-accent));
+  background: var(--desk-bg);
+  color: var(--desk-text);
+
+  & :is(.content, .modal) { font: 14px/1.5 var(--desk-font); }
+  & .panel { background: var(--desk-surface); border-color: var(--desk-border); border-radius: 24px; box-shadow: var(--desk-shadow); backdrop-filter: none; }
+  & :is(.content, .modal) :is(button, input, textarea) { font-family: var(--desk-font); }
+  & :is(.content, .modal) :is(button.action, .profile-edit-btn, .notification-tab) {
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & :is(.content, .modal) :is(button.action, .profile-edit-btn, .notification-tab):hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+  & :is(.content, .modal) button.action:is(.primary, .action-primary) {
+    background: var(--desk-primary, var(--desk-on-tint));
+    color: var(--desk-on-accent, var(--desk-surface));
+    border-color: var(--desk-focus, var(--desk-accent));
+  }
+  & :is(.content, .modal) button.action:is(.primary, .action-primary):hover:not(:disabled) { background: var(--desk-primary, var(--desk-on-tint)); }
+  & :is(.content, .modal) button.action.danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
+  & :is(.content, .modal) :is(button, input, textarea):disabled { cursor: not-allowed; }
+  & :is(.content, .modal) :is(button, input, textarea, a):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: 0 24px 80px #00000026; backdrop-filter: none; }
+  & :is(.modal-head, .modal-foot) { border-color: var(--desk-border); }
+  & :is(.modal-body label, .field-label, .profile-label, .profile-login-hero, .notification-binding-status, .bot-telegram-preview-title) { color: var(--desk-muted); }
+  & :is(input:not([type="checkbox"]):not([type="file"]):not([type="range"]), textarea) {
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+  & textarea:disabled { opacity: 1; -webkit-text-fill-color: var(--desk-muted); }
+  & .profile-label { font-size: 14px; }
+  & .profile-value { font-size: 16px; }
+  & .profile-hero-text h1 { font-size: 28px; }
+  & .profile-login-hero { font-size: 16px; }
+  & .profile-row { background: var(--desk-soft); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; }
+  & .profile-avatar { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & .profile-edit-btn { color: var(--desk-on-tint); }
+  & :is(.profile-error, .profile-modal-error, .profile-avatar-message, .notification-validation) { color: var(--desk-danger); }
+  & .profile-success-message { background: var(--desk-success-bg); color: var(--desk-success); border-color: var(--desk-success); box-shadow: none; }
+  & input[type="range"] { accent-color: var(--desk-accent); }
+  & :is(.notification-control-card, .bot-telegram-preview-wrap) { background: var(--desk-soft); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; }
+  & .notification-tab.active { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & .notification-switch-disabled { color: var(--desk-muted); opacity: 1; }
+  /* Legacy .checkbox-label forces a fixed text color with !important. */
+  & .notification-enabled-row, & .telegram-editor-flags label { color: var(--desk-text) !important; }
+  & .bot-telegram-preview { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 12px; }
+  & .bot-telegram-preview :is(code, pre) { background: var(--desk-soft); color: var(--desk-text); }
+  & .bot-telegram-preview blockquote { background: var(--desk-tint); border-color: var(--desk-accent); }
+  & .bot-telegram-preview a, & .bot-telegram-preview blockquote.tg-preview-expandable::before { color: var(--desk-on-tint); }
+  & .bot-telegram-preview .tg-preview-spoiler { background: var(--desk-border); }
+  & .bot-emoji-picker { background: var(--desk-surface); border-color: var(--desk-border); color: var(--desk-text); }
+  & :is(.bot-emoji-tab, .bot-emoji-item) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); }
+  & :is(.bot-emoji-tab.active, .bot-emoji-tab:hover, .bot-emoji-item:hover) { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & .bot-emoji-category-title { color: var(--desk-muted); }
+  & .notification-tag-btn[data-tooltip]::before { border-bottom-color: var(--desk-text); }
+  & .notification-tag-btn[data-tooltip]::after { background: var(--desk-text); color: var(--desk-surface); }
+}
+
+/* Opt in with .desk-toggle. Existing settings use the same native checkbox skin;
+   selection and bulk-operation checkboxes are outside these selectors. */
+body input[type="checkbox"]:is(.desk-toggle, #appContent.main:is([data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"]) :is(.notification-enabled-row, .telegram-editor-flags) input) {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 40px !important; /* Overrides legacy .checkbox-label input. */
+  min-width: 40px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--desk-muted);
+  border-radius: 999px;
+  background: var(--desk-muted);
+  box-shadow: none;
+  vertical-align: middle;
+  transform: none;
+  cursor: pointer;
+  transition: background-color .15s, border-color .15s;
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px #00000026;
+    transition: transform .15s;
+  }
+  &:checked { background: var(--desk-accent); border-color: var(--desk-accent); }
+  &:checked::before { transform: translateX(16px); }
+  &:focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  &:disabled { cursor: not-allowed; opacity: .6; }
+  @media (prefers-reduced-motion: reduce) {
+    &, &::before { transition: none; }
+  }
+  @media (forced-colors: active) {
+    background: Canvas;
+    border-color: ButtonText;
+    &::before { background: ButtonText; }
+    &:checked { background: Highlight; border-color: Highlight; }
+    &:checked::before { background: HighlightText; }
+  }
+}

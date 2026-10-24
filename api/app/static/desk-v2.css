@@ -1,3 +1,5 @@
+@import url("/static/profile-settings-v2.css?v=20261024a");
+
 /* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
    The import precedes legacy CSS; deliberate scope specificity wins in both themes. */
 @font-face {
@@ -10,6 +12,7 @@
 
 body:has(.layout > .main) {
   color-scheme: light;
+  --desk-grid-ink: #000;
   --desk-bg: #f3f1f7;
   --desk-surface: #fffefd;
   --desk-soft: #f6f4f9;
@@ -42,6 +45,7 @@ body:has(.layout > .main) {
 
 body[data-theme="dark"]:has(.layout > .main) {
   color-scheme: dark;
+  --desk-grid-ink: #fff;
   --desk-bg: #171b28;
   --desk-surface: #202535;
   --desk-soft: #262b3d;
@@ -250,7 +254,6 @@ body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-lis
   font: 14px/1.5 var(--desk-font);
   background: radial-gradient(ellipse at 85% 0%, var(--desk-backdrop, var(--desk-tint)), transparent 55%), var(--desk-bg);
 }
-body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]))::before { content: none; }
 
 body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) {
   min-width: 0;
@@ -507,9 +510,9 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
 
 @media (min-width: 1201px) {
   body:has(.layout > .main) .layout { grid-template-columns: 246px minmax(0, 1fr); }
-  /* Intrinsic width follows the actual agent names, only on the two ticket pages.
+  /* Intrinsic width follows the actual agent names wherever the admin filter is visible.
      A bounded track leaves space for the chat; exceptional names wrap in full. */
-  body:has(#appContent:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) .layout:has(> .sidebar #adminAgentFilter:not(.hidden) .admin-agent-item) {
+  body:has(.layout > .main) .layout:has(> .sidebar #adminAgentFilter:not(.hidden) .admin-agent-item) {
     grid-template-columns: fit-content(min(30vw, 420px)) minmax(0, 1fr);
     & > .sidebar { min-width: 246px; }
     & > .sidebar :is(.admin-agent-filter, .admin-agent-list, .admin-agent-item) { min-width: 0; }
@@ -545,3 +548,19 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-head-main { flex-wrap: wrap; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-head-title-wrap { flex-basis: 100%; flex-wrap: wrap; }
 }
+
+/* One viewport-aligned grid, painted in backgrounds beneath content. Opaque
+   strokes replace the same aligned stroke beneath translucent legacy panels. */
+body:has(.layout > .main)::before { content: none; }
+body:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
+  --desk-grid-base: var(--desk-surface);
+  --desk-grid-line: color-mix(in srgb, var(--desk-grid-ink) 4%, var(--desk-grid-base));
+  background-image:
+    linear-gradient(var(--desk-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--desk-grid-line) 1px, transparent 1px);
+  background-size: 42px 42px;
+  background-position: 0 0;
+  background-attachment: fixed;
+}
+body:has(.layout > .main) #appContent.main[data-shell-page] { --desk-grid-base: transparent; }
+body:has(.layout > .main) #appContent.main .messages { --desk-grid-base: var(--desk-soft); }
