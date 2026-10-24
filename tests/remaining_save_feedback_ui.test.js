@@ -154,6 +154,6 @@ test('changed scripts and shell have matching versions in every direct and dynam
       .matchAll(new RegExp(`/static/${name}\\.js\\?v=([^"']+)`, 'g'))].map(match => match[1]));
     assert.ok(versions.length >= 2, name);
     assert.deepEqual([...new Set(versions)],
-      [name === 'app_shell' ? '20261023-auto-only' : name === 'list' ? '20261021-task-panel-refresh' : name === 'ticket_client_card' ? '20261021-client-save-position' : '20261021-all-save-feedback'], name);
+      [name === 'app_shell' ? '20261024-notification-layout-v2' : name === 'list' ? '20261021-task-panel-refresh' : name === 'ticket_client_card' ? '20261021-client-save-position' : '20261021-all-save-feedback'], name);
   }
 });

@@ -95,7 +95,7 @@
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/telegram_text_editor.js?v=20261005a",
-        "/static/profile_notification_bot.js?v=20261021-save-feedback",
+        "/static/profile_notification_bot.js?v=20261024-notification-layout-v2",
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261021-profile-quick-save"] }],

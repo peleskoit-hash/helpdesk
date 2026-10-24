@@ -335,9 +335,16 @@
       if (!el.root) return;
       const config = getActiveConfig();
       const draft = getActiveDraft();
+      const settingsOpen = el.root.querySelector("#notificationReceivingSettings")?.matches?.(":popover-open");
       el.root.innerHTML = `
-        ${renderModeControls(draft)}
-        ${renderDeliverySwitches()}
+        <button type="button" class="action notification-settings-toggle" popovertarget="notificationReceivingSettings">
+          <span>Основные настройки получения уведомлений</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div id="notificationReceivingSettings" class="notification-receiving-settings" popover="auto">
+          ${renderModeControls(draft)}
+          ${renderDeliverySwitches()}
+        </div>
         ${renderTabs()}
         ${config ? renderTab(config) : ""}
         <div class="notification-actions notification-actions-with-binding">
@@ -347,6 +354,7 @@
           <button type="button" class="action action-primary" data-save>Сохранить</button>
         </div>
       `;
+      if (settingsOpen) el.root.querySelector("#notificationReceivingSettings").showPopover();
       el.root.querySelectorAll("[data-delivery-switch]").forEach((input) => input.addEventListener("change", syncDeliveryFromDom));
       el.root.querySelectorAll("[data-tab-type]").forEach((button) => {
         button.addEventListener("click", () => {

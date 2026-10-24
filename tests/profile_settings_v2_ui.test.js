@@ -166,8 +166,11 @@ for (const theme of ['light', 'dark']) {
       assert.equal(await page.locator('[data-telegram-send-silently]').isChecked(), true);
       assert.match(await page.locator('[data-template-textarea]').inputValue(), /Новый текст/);
       await screenshot(page, `${theme}-${role}`);
+      await page.locator('.notification-settings-toggle').click();
       await Promise.all([page.waitForResponse(r => r.url().endsWith('/api/v1/me/notification-bot') && r.request().method() === 'PUT'), page.locator('[data-use-base-settings]').check()]);
       await page.waitForFunction(() => document.querySelector('[data-template-textarea]').disabled);
+      assert.equal(await page.locator('#notificationReceivingSettings').evaluate(el => el.matches(':popover-open')), true);
+      await page.keyboard.press('Escape');
       await assertContrast(page, ['[data-template-textarea]']);
     });
   }
@@ -224,5 +227,70 @@ for (const theme of ['light', 'dark']) {
     await page.goBack();
     await page.waitForSelector('#profileRoot:not(.hidden)');
     assert.equal((await style(page, '.profile-row')).radius, '16px');
+  });
+}
+
+
+for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 1080], [1440, 1000], [1366, 768], [1024, 740]]) {
+  test(`notification workspaces and overlay: ${theme}, ${width}x${height}`, async t => {
+    let previous;
+    for (const [template, role] of [['profile_notification_bot', 'agent'], ['profile_notification_bot', 'admin'], ['settings_notification_bot_basic', 'admin']]) {
+      const { page } = await setup(t, template, theme, role);
+      await page.setViewportSize({ width, height });
+      const geometry = () => page.evaluate(() => {
+        const box = selector => {
+          const r = document.querySelector(selector).getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom };
+        };
+        return { panel: box('.notification-bot-basic-panel'), main: box('#appContent'), toolbar: box('.toolbar'),
+          editor: box('[data-template-textarea]'), preview: box('[data-preview]') };
+      });
+      const initial = await geometry();
+      assert.equal(height - initial.panel.bottom, 16, JSON.stringify(initial));
+      assert.equal(initial.panel.y - initial.toolbar.bottom, 14);
+      assert.equal(initial.panel.x - initial.main.x, 16);
+      assert.equal(initial.editor.height, initial.preview.height);
+      assert.ok(initial.editor.height >= 280 && initial.editor.height <= 360);
+      if (width === 1920) {
+        const save = await page.locator('.notification-actions button').boundingBox();
+        assert.ok(save.y + save.height <= initial.panel.bottom, 'desktop save button fits inside the panel');
+      }
+      const normalized = { ...initial.panel, x: initial.panel.x - initial.main.x, width: initial.main.width - initial.panel.width };
+      if (previous) assert.deepEqual(normalized, previous, 'all three pages have identical workspace insets and height');
+      previous = normalized;
+      if (template === 'settings_notification_bot_basic') {
+        assert.equal(await page.locator('.notification-settings-toggle').count(), 0);
+        if (process.env.PROFILE_V2_SCREENSHOT_DIR) await screenshot(page, `${theme}-basic-${width}x${height}`);
+        continue;
+      }
+      const toggle = page.locator('.notification-settings-toggle'), popup = page.locator('#notificationReceivingSettings');
+      assert.equal(await popup.isVisible(), false);
+      await toggle.click();
+      assert.equal(await popup.evaluate(el => el.matches(':popover-open')), true);
+      const overlay = await popup.boundingBox(), anchor = await toggle.boundingBox();
+      assert.ok(Math.abs(overlay.x - anchor.x) <= 1 && Math.abs(overlay.width - anchor.width) <= 1);
+      assert.ok(overlay.y >= anchor.y + anchor.height);
+      assert.deepEqual(await geometry(), initial, 'opening settings never moves editor or resizes panel');
+      if (role === 'agent') assert.equal(await page.locator('[data-delivery-switch="new_assignment"]').isDisabled(), true);
+      const delivery = page.locator(`[data-delivery-switch="${role === 'agent' ? 'new_message' : 'notify_internal_task_completion'}"]`);
+      const checked = await delivery.isChecked();
+      await delivery.click();
+      assert.equal(await delivery.isChecked(), !checked);
+      await toggle.click();
+      assert.equal(await popup.isVisible(), false);
+      await toggle.click();
+      await page.keyboard.press('Escape');
+      assert.equal(await popup.isVisible(), false);
+      await toggle.click();
+      await page.locator('.settings-title').click();
+      assert.equal(await popup.isVisible(), false);
+      assert.deepEqual(await geometry(), initial);
+      const clear = await toggle.evaluate(el => {
+        const r = el.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === el.querySelector('span') || el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+      });
+      assert.equal(clear, true, 'closed overlay cannot intercept header clicks');
+      assert.equal(await page.locator('[data-template-textarea]').evaluate(el => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === el; }), true, 'closed overlay cannot intercept the editor');
+      if (process.env.PROFILE_V2_SCREENSHOT_DIR) await screenshot(page, `${theme}-${role}-${width}x${height}`);
+    }
   });
 }

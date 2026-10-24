@@ -87,7 +87,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
       return route.fulfill({ body: fs.readFileSync(file), contentType: { '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' }[ext] || 'application/octet-stream' });
     }
     if (!p.startsWith('/api/')) {
-      const template = p === '/tickets' ? 'tickets' : p.startsWith('/tickets/') ? 'ticket' : 'profile';
+      const template = p === '/profile/notification-bot' ? 'profile_notification_bot' : p === '/tickets' ? 'tickets' : p.startsWith('/tickets/') ? 'ticket' : 'profile';
       return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${template}.html`, 'utf8') });
     }
     requests.push({ path: p, method: req.method(), query: url.search });
@@ -106,7 +106,9 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
         Object.assign(preferences, patch);
       }
       result = preferences;
-    } else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
+    } else if (p === '/api/v1/me/notification-bot') result = { role, use_base_settings: false, delivery: {}, telegram_binding: { active: true },
+      items: [{ type: role === 'admin' ? 'internal_task_completion' : 'new_assignment', title: 'Заявка', enabled: true, template: 'Текст', tag_items: [] }] };
+    else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
     else if (p === '/api/v1/users/me' || p === '/api/v1/users/me/profile') result = me;
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me, { ...me, id: 'agent-2', full_name: 'Елена Александровна Волкова' }];
     else if (p.endsWith('/counts')) result = { active: 28, unassigned: 3, frozen: 4, closed: 158, special: 1,
@@ -887,5 +889,44 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     assert.equal(await modal.isVisible(),false);
     assert.deepEqual(await page.locator('th[data-column-key]').evaluateAll(nodes=>nodes.map(el=>el.dataset.columnKey)),original);
     assert.equal(requests.some(r=>r.method==='PATCH'),false);
+  });
+}
+
+
+for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) for (const height of [768, 1000]) {
+  test(`sidebar stays still across notification AppShell navigation: ${theme}, ${role}, ${height}`, async t => {
+    const { page } = await setup(t, { width: 1440, height, theme, role, pageName: 'tickets' });
+    await page.addStyleTag({ content: '.sidebar * { transition: none !important; animation: none !important; }' });
+    const measure = () => page.evaluate(() => ({
+      windowScroll: scrollY,
+      documentScroll: document.scrollingElement.scrollTop,
+      elements: [...document.querySelectorAll('.sidebar, .sidebar *')].filter(el => el.getBoundingClientRect().height).map(el => {
+        const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+        return { tag: el.tagName, id: el.id, x: r.x, y: r.y, width: r.width, height: r.height,
+          padding: s.padding, margin: s.margin, font: s.font, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight };
+      }),
+    }));
+    const before = await measure();
+    await page.evaluate(() => { window.sidebarBeforeNavigation = document.querySelector('.sidebar'); });
+    await page.locator('[data-sidebar-user-menu-toggle]').click();
+    await page.locator('[data-sidebar-user-menu-item="bot-notifications"]').click();
+    await page.waitForSelector('[data-template-textarea]');
+    await page.mouse.move(0, 0);
+    assert.equal(await page.evaluate(() => document.querySelector('.sidebar') === window.sidebarBeforeNavigation), true, 'AppShell preserves the sidebar node');
+    assert.deepEqual(await measure(), before, 'all sidebar coordinates, type metrics and scroll positions remain stable');
+    await page.locator('.tab-btn[href="/tickets?tab=active"]').click();
+    await page.waitForSelector('.ticket-row');
+    await page.mouse.move(0, 0);
+    assert.deepEqual(await measure(), before, 'return navigation has no drift');
+    assert.equal(before.elements[0].width === 246, role === 'agent', 'admin intrinsic width and agent fixed width are preserved');
+    // A stored sidebar scroll position is also preserved when navigation itself does not focus a link.
+    await page.evaluate(() => { document.querySelector('.sidebar').scrollTop = 8; });
+    const scrolled = await measure();
+    await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile/notification-bot'));
+    await page.waitForSelector('[data-template-textarea]');
+    assert.deepEqual(await measure(), scrolled);
+    await page.evaluate(() => window.HelpdeskAppShell.navigate('/tickets?tab=active'));
+    await page.waitForSelector('.ticket-row');
+    assert.deepEqual(await measure(), scrolled);
   });
 }

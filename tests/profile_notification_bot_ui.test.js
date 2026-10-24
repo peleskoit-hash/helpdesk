@@ -31,7 +31,7 @@ test("profile notification bot direct and shell loading use the current script v
   const shell = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "app_shell.js"), "utf8");
   const templateVersion = template.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
   const shellVersion = shell.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
-  assert.equal(templateVersion, "20261021-save-feedback");
+  assert.equal(templateVersion, "20261024-notification-layout-v2");
   assert.equal(shellVersion, templateVersion);
 });
 
@@ -155,7 +155,7 @@ test("admin personal editor uses the same validation as visible tabs", () => {
 });
 
 test("delivery switches are rendered outside the tab pane and survive tab switching", () => {
-  assert.match(source, /el\.root\.innerHTML = `\s+\$\{renderModeControls\(draft\)\}\s+\$\{renderDeliverySwitches\(\)\}\s+\$\{renderTabs\(\)\}\s+\$\{config \? renderTab\(config\) : ""\}/s);
+  assert.match(source, /popover="auto"[\s\S]+\$\{renderModeControls\(draft\)\}\s+\$\{renderDeliverySwitches\(\)\}[\s\S]+\$\{renderTabs\(\)\}\s+\$\{config \? renderTab\(config\) : ""\}/s);
   assert.match(source, /syncDeliveryFromDom\(\);\s+state\.activeType = button\.getAttribute/);
 });
 

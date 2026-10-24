@@ -1,4 +1,4 @@
-@import url("/static/profile-settings-v2.css?v=20261024a");
+@import url("/static/profile-settings-v2.css?v=20261024-notification-layout-v2");
 
 /* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
    The import precedes legacy CSS; deliberate scope specificity wins in both themes. */
@@ -92,6 +92,7 @@ body:has(.layout > .main) .toolbar {
 }
 
 body:has(.layout > .main) .sidebar {
+  font: 14px/1.5 var(--desk-font);
   padding: 18px 16px 16px;
   gap: 2px;
   overflow-y: auto;
@@ -564,3 +565,28 @@ body:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appCon
 }
 body:has(.layout > .main) #appContent.main[data-shell-page] { --desk-grid-base: transparent; }
 body:has(.layout > .main) #appContent.main .messages { --desk-grid-base: var(--desk-soft); }
+
+/* Match the existing tickets-list workspace bounds; inner page layouts stay local. */
+body #appContent.main:is([data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"], [data-shell-page="reviews"], [data-shell-page="management-users"]) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  & > :is(.content, .management-users-page) {
+    box-sizing: border-box;
+    padding: 14px 16px 16px;
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-content: stretch;
+    align-items: stretch;
+  }
+  & > .content > .panel { height: 100%; min-height: 0; align-self: stretch; }
+  & > .reviews-page { margin: 14px 16px 16px; }
+  & > :is(.content, .management-users-page) > .panel, & > .reviews-page { border-radius: 24px; }
+  @media (max-width: 700px) {
+    & > :is(.content, .management-users-page) { padding: 12px; }
+    & > .reviews-page { margin: 12px; }
+  }
+}

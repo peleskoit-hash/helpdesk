@@ -1,0 +1,68 @@
+/* Contacts list only. The shared shell and individual contact editor keep their styles. */
+body #appContent.main[data-shell-page="management-users"] { background-color: var(--desk-bg); }
+body #appContent.main[data-shell-page="management-users"] > .management-users-page {
+  --surface: var(--desk-surface);
+  --border: var(--desk-border);
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --accent: var(--desk-focus, var(--desk-accent));
+  color: var(--desk-text);
+  font: 14px/1.5 var(--desk-font);
+
+  & .management-users-table {
+    background-color: var(--desk-surface);
+    border-color: var(--desk-border);
+    border-radius: 24px;
+    box-shadow: var(--desk-shadow);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  & .management-users-search { translate: 8px 4px; }
+  & :is(button, input) { font-family: var(--desk-font); }
+  & button.action {
+    padding: 9px 12px;
+    font-size: 14px;
+    line-height: 1.4;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+  & button.action.primary, & button.action.primary:hover:not(:disabled) {
+    background: var(--desk-primary, var(--desk-on-tint));
+    color: var(--desk-on-accent, var(--desk-surface));
+    border-color: var(--desk-focus, var(--desk-accent));
+  }
+  & .management-users-filters button.action.active, & .management-users-filters button.action.active:hover {
+    background: var(--desk-tint);
+    color: var(--desk-on-tint);
+    border-color: var(--desk-accent);
+  }
+  & .management-users-search input {
+    padding: 10px 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & input::placeholder { color: var(--desk-muted); opacity: 1; }
+  & :is(button, input):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  & button:disabled { cursor: not-allowed; }
+  & th { background: var(--desk-soft); color: var(--desk-muted); border-color: var(--desk-border); }
+  & td { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); box-shadow: none; }
+  & .management-user-row td:first-child { border-radius: 14px 0 0 14px; }
+  & .management-user-row td:last-child { border-radius: 0 14px 14px 0; }
+  & .management-user-row:hover td { background: var(--desk-hover); }
+  & .management-user-row-blocked td { background: var(--desk-danger-bg); }
+  & .management-user-row-blocked:hover td { background: color-mix(in srgb, var(--desk-danger-bg) 90%, var(--desk-danger)); }
+  & :is(.management-user-muted, .status, .table-pagination-total) { color: var(--desk-muted); }
+  & .management-users-pagination .table-page-btn { display: inline-flex; align-items: center; justify-content: center; padding-block: 0; }
+  & .management-users-pagination { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); background: var(--desk-surface); border-color: var(--desk-border); }
+}
