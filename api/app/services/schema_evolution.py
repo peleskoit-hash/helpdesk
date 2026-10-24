@@ -944,6 +944,7 @@ def ensure_user_columns() -> None:
             "accent_strength_dark": "INTEGER",
             "appearance_write_state_json": json_type,
             "ticket_list_columns_json": json_type,
+            "client_card_collapsed_blocks_json": json_type,
             "legacy_ticket_count": "INTEGER",
             "last_assigned_at": "TIMESTAMP",
             "login": "VARCHAR(100)",

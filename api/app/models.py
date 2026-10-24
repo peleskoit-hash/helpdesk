@@ -125,6 +125,7 @@ class User(Base):
     accent_hue_dark: Mapped[int | None] = mapped_column(nullable=True)
     accent_strength_dark: Mapped[int | None] = mapped_column(nullable=True)
     appearance_write_state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    client_card_collapsed_blocks_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ticket_list_columns_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

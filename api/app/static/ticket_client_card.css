@@ -196,3 +196,25 @@
 @media (prefers-reduced-motion: reduce) {
   .avatar-preview-full .image-preview-img { animation: none; }
 }
+
+[data-shell-page="ticket-card"] #clientDynamicCard .client-card-block-title {
+  position: relative;
+  padding-right: 22px;
+  min-height: 16px;
+}
+
+[data-shell-page="ticket-card"] #clientDynamicCard .client-card-block-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+[data-shell-page="ticket-card"] #clientDynamicCard .client-card-block-collapsed > :not(.client-card-block-title) {
+  display: none;
+}

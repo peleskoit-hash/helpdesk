@@ -914,3 +914,60 @@ def test_delayed_initial_registration_cannot_overwrite_retry(appearance_context,
     _appearance_patch(factory, actor, latest["writer_id"], 2, accent_strength_light=99)
     with factory() as db:
         assert db.get(User, actor.real_user_id).accent_strength_light == 99
+
+
+def test_client_card_collapse_http_persistence_and_user_isolation(appearance_context, preferences_client):
+    factory, actor, _, other_id = appearance_context
+    assert preferences_client.get("/api/v1/users/me/preferences").json()["client_card_collapsed_blocks"] == {}
+    for patch in ({"tg": True}, {"dynamic-key": True}, {"tg": False}):
+        response = preferences_client.patch("/api/v1/users/me/preferences", json={"client_card_collapsed_blocks": patch})
+        assert response.status_code == 200
+    preferences_client.patch("/api/v1/users/me/preferences", json={"send_by_enter": True})
+    loaded = preferences_client.get("/api/v1/users/me/preferences").json()
+    assert loaded["client_card_collapsed_blocks"] == {"tg": False, "dynamic-key": True}
+    with factory() as db:
+        assert db.get(User, actor.real_user_id).client_card_collapsed_blocks_json == loaded["client_card_collapsed_blocks"]
+        assert db.get(User, other_id).client_card_collapsed_blocks_json is None
+        other = _current_user(effective_user_id=other_id, real_user_id=other_id)
+        assert users_router.get_my_preferences(db=db, current_user=other).client_card_collapsed_blocks == {}
+        users_router.update_my_preferences(UserPreferencesUpdate(client_card_collapsed_blocks={"tg": True}), db=db, current_user=other)
+    assert preferences_client.get("/api/v1/users/me/preferences").json()["client_card_collapsed_blocks"] == loaded["client_card_collapsed_blocks"]
+
+
+@pytest.mark.parametrize("value", [None, [], {"tg": "false"}, {"tg": 1}])
+def test_client_card_collapse_rejects_invalid_preferences(value):
+    with pytest.raises(ValidationError):
+        UserPreferencesUpdate(client_card_collapsed_blocks=value)
+
+
+def test_client_card_collapse_uses_real_user_preferences():
+    db = _session()
+    company = _company(db)
+    real = _user(db, company_id=company.id, full_name="Real", role="admin")
+    effective = _user(db, company_id=company.id, full_name="Effective")
+    users_router.update_my_preferences(
+        UserPreferencesUpdate(client_card_collapsed_blocks={"profile": True}), db=db,
+        current_user=_current_user(effective_user_id=effective.id, real_user_id=real.id),
+    )
+    db.refresh(effective)
+    assert real.client_card_collapsed_blocks_json == {"profile": True}
+    assert effective.client_card_collapsed_blocks_json is None
+
+
+def test_client_card_collapse_schema_upgrade_preserves_saved_state(monkeypatch):
+    from sqlalchemy import inspect, text
+    from api.app.services import schema_evolution
+
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE users (id VARCHAR(36) PRIMARY KEY, email VARCHAR(255))"))
+        conn.execute(text("INSERT INTO users (id, email) VALUES ('existing', 'existing@example.test')"))
+    schema_evolution.ensure_user_columns()
+    assert "client_card_collapsed_blocks_json" in {c["name"] for c in inspect(engine).get_columns("users")}
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT client_card_collapsed_blocks_json FROM users")).scalar_one() is None
+        conn.execute(text("UPDATE users SET client_card_collapsed_blocks_json = :value"), {"value": '{"tg": true}'})
+    schema_evolution.ensure_user_columns()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT client_card_collapsed_blocks_json FROM users")).scalar_one() == '{"tg": true}'

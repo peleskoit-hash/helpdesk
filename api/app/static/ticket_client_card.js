@@ -1,4 +1,41 @@
 (function initTicketClientCard(global) {
+  let blockPreferencesSave = Promise.resolve();
+
+  function syncBlockCollapse(ctx, entry, key) {
+    const collapsed = ctx.state.clientCardCollapsedBlocks?.[key] === true;
+    if (collapsed) entry.node.classList.add("client-card-block-collapsed");
+    else entry.node.classList.remove("client-card-block-collapsed");
+    if (entry.toggleCollapsed === collapsed && entry.toggleTitle === entry.blockTitle) return;
+    entry.toggleCollapsed = collapsed;
+    entry.toggleTitle = entry.blockTitle;
+    entry.toggle.setAttribute("aria-expanded", String(!collapsed));
+    entry.toggle.setAttribute("aria-label", `${collapsed ? "Раскрыть" : "Свернуть"} блок ${entry.blockTitle}`);
+    entry.toggle.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${collapsed ? "m6 9 6 6 6-6" : "m6 15 6-6 6 6"}"/></svg>`;
+  }
+
+  function addBlockToggle(ctx, entry, key) {
+    const button = entry.toggle = document.createElement("button");
+    button.type = "button";
+    button.className = "client-card-block-toggle";
+    button.addEventListener("click", () => {
+      const previous = ctx.state.clientCardCollapsedBlocks?.[key] === true;
+      const collapsed = !previous;
+      ctx.state.clientCardCollapsedBlocks = { ...ctx.state.clientCardCollapsedBlocks, [key]: collapsed };
+      syncBlockCollapse(ctx, entry, key);
+      button.disabled = true;
+      blockPreferencesSave = blockPreferencesSave.then(() => ctx.api("/api/v1/users/me/preferences", {
+        method: "PATCH", keepalive: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client_card_collapsed_blocks: { [key]: collapsed } }),
+      })).catch((error) => {
+        ctx.state.clientCardCollapsedBlocks[key] = previous;
+        syncBlockCollapse(ctx, entry, key);
+        ctx.showError(`Не удалось сохранить состояние блока: ${error.message}`);
+      }).finally(() => { button.disabled = false; });
+      return blockPreferencesSave;
+    });
+  }
+
   function defaultClientCardViewConfig() {
     return {
       blocks: [
@@ -1063,11 +1100,20 @@
         applyClientCardBlockColor(blockEl, color);
         entry.color = color;
       }
-      if (blockShowsTitle(block)) {
+      if (blockShowsTitle(block) || ctx.inlineClient) {
         const titleEl = entry.title ||= document.createElement("div");
         if (titleEl.className !== "client-card-block-title") titleEl.className = "client-card-block-title";
-        const title = block.title || block.key || "";
-        if (titleEl.textContent !== title) titleEl.textContent = title;
+        const title = blockShowsTitle(block) ? (block.title || block.key || "") : "";
+        if (entry.titleText !== title) {
+          titleEl.textContent = title;
+          entry.titleText = title;
+        }
+        if (ctx.inlineClient) {
+          entry.blockTitle = block.title || block.key;
+          if (!entry.toggle) addBlockToggle(ctx, entry, block.key);
+          if (entry.toggle.parentNode !== titleEl) titleEl.appendChild(entry.toggle);
+          syncBlockCollapse(ctx, entry, block.key);
+        }
         children.push(titleEl);
       }
 
@@ -1599,6 +1645,7 @@
   }
 
   global.TicketClientCard = {
+    waitForBlockPreferences: () => blockPreferencesSave,
     passwordPresentation: {
       duration: PASSWORD_REVEAL_MS, owner: clientCardRevealOwnerKey, mask: bitrixPasswordMask,
       state: bitrixPasswordCardRevealState, active: activeBitrixPasswordCardReveal,

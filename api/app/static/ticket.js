@@ -1669,7 +1669,9 @@ async function loadMe() {
 async function loadComposerPreferences(options = {}) {
   const silent = Boolean(options.silent);
   try {
+    await TicketClientCard.waitForBlockPreferences();
     const payload = await api("/api/v1/users/me/preferences");
+    state.clientCardCollapsedBlocks = payload?.client_card_collapsed_blocks || {};
     state.sendByEnter = Boolean(payload?.send_by_enter);
     state.taskPanelEnabled = payload?.task_panel_enabled === true;
     refreshSendByEnterUi();

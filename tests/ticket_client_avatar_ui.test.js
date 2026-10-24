@@ -29,7 +29,7 @@ function element(tag = 'div') {
   };
   Object.defineProperty(node, 'className', { get: () => [...classes].join(' '),
     set: value => { classes.clear(); value.split(/\s+/).filter(Boolean).forEach(n => classes.add(n)); } });
-  Object.defineProperty(node, 'innerHTML', { set: () => { node.children.forEach(n => { n.parentNode = null; }); node.children = []; } });
+  Object.defineProperty(node, 'innerHTML', { get: () => node._html, set: value => { node._html = value; node.children.forEach(n => { n.parentNode = null; }); node.children = []; } });
   Object.defineProperty(node, 'src', { get: () => node._src, set: value => {
     node.srcAssignments = (node.srcAssignments || 0) + 1; node._src = value;
   } });
@@ -61,7 +61,7 @@ function fixture() {
   const attachments = window.TicketAttachments;
   const clicks = [];
   ctx.openClientAvatarPreview = (...urls) => clicks.push(urls);
-  return { ctx, created, requests, revoked, errors, timers, clicks, attachments,
+  return { ctx, created, requests, revoked, errors, timers, clicks, attachments, card: window.TicketClientCard,
     decodeFailure: () => { decodeFails = true; },
     holdDecode: () => { holdDecode = true; }, finishDecode: () => finishDecode(),
     render: (profile = { telegram_avatar_present: true }, block = {}, config = null) => window.TicketClientCard.renderClientDynamicCard(ctx, profile, config || {
@@ -322,4 +322,96 @@ test('avatar resources use matching versions on direct pages and AppShell mounts
     assert.ok(versions.length >= 2);
     assert.deepEqual([...new Set(versions)], [resource === 'ticket_client_card.js' ? '20261021-client-save-position' : resource === 'ticket.js' ? '20261021-task-panel-refresh' : '20261020-quotes']);
   }
+});
+
+
+test('client blocks collapse independently by stable key and survive polling and ticket changes', async () => {
+  const f = fixture(), saved = {};
+  f.ctx.api = async (url, options) => {
+    assert.equal(url, '/api/v1/users/me/preferences');
+    assert.equal(options.method, 'PATCH');
+    Object.assign(saved, JSON.parse(options.body).client_card_collapsed_blocks);
+  };
+  f.render(pollingProfile, {}, pollingConfig);
+  const root = f.ctx.el.clientDynamicCard;
+  const button = root.children[0].children[0].children[0];
+  assert.equal(button['aria-expanded'], 'true');
+  assert.match(button.innerHTML, /m6 15 6-6 6 6/);
+  assert.match(button['aria-label'], /Свернуть/);
+  await button.click();
+  assert.equal(button['aria-expanded'], 'false');
+  assert.match(button.innerHTML, /m6 9 6 6 6-6/);
+  assert.match(button['aria-label'], /Раскрыть/);
+  assert.equal(root.children[0].classList.contains('client-card-block-collapsed'), true);
+  assert.equal(root.children[1].classList.contains('client-card-block-collapsed'), false);
+  assert.deepEqual(saved, { tg: true });
+  f.ctx.state.ticketId = 'another-ticket';
+  f.render(pollingProfile, {}, { blocks: pollingConfig.blocks.map(b => ({ ...b, title: 'Renamed' })) });
+  assert.equal(root.children[0].classList.contains('client-card-block-collapsed'), true);
+  await root.children[0].children[0].children[0].click();
+  assert.equal(root.children[0].classList.contains('client-card-block-collapsed'), false);
+  assert.deepEqual(saved, { tg: false });
+});
+
+test('AppShell remount waits for pending saves before loading server preferences', async () => {
+  const f = fixture();
+  let finish;
+  const saved = {};
+  f.ctx.api = () => new Promise(resolve => { finish = () => { saved.tg = true; resolve(); }; });
+  f.render(pollingProfile, {}, pollingConfig);
+  const pending = f.ctx.el.clientDynamicCard.children[0].children[0].children[0].click();
+  await flush();
+  // Exercise the actual preferences loader used on every ticket-card mount.
+  const ticket = fs.readFileSync('api/app/static/ticket.js', 'utf8');
+  const loader = ticket.slice(ticket.indexOf('async function loadComposerPreferences('), ticket.indexOf('async function updateSendByEnterPreference('));
+  const state = {};
+  let reads = 0;
+  const sandbox = { TicketClientCard: f.card, state, api: async () => { reads++; return { client_card_collapsed_blocks: { ...saved } }; },
+    refreshSendByEnterUi() {}, renderTaskPanel() {}, showError: assert.fail };
+  vm.runInNewContext(loader + '; this.load = loadComposerPreferences;', sandbox);
+  const mounted = sandbox.load();
+  await flush();
+  assert.equal(reads, 0);
+  finish();
+  await pending;
+  await mounted;
+  assert.equal(reads, 1);
+  assert.equal(state.clientCardCollapsedBlocks.tg, true);
+  f.ctx.state = { ...state, ticketId: 'remounted' };
+  f.ctx.el.clientDynamicCard = element();
+  f.render(pollingProfile, {}, pollingConfig);
+  assert.equal(f.ctx.el.clientDynamicCard.children[0].classList.contains('client-card-block-collapsed'), true);
+  assert.equal(f.ctx.el.clientDynamicCard.children[1].classList.contains('client-card-block-collapsed'), false);
+  // A full reload has a fresh JS module and only server preferences.
+  const refreshed = fixture();
+  refreshed.ctx.state.clientCardCollapsedBlocks = { ...saved };
+  refreshed.render(pollingProfile, {}, pollingConfig);
+  assert.equal(refreshed.ctx.el.clientDynamicCard.children[0].classList.contains('client-card-block-collapsed'), true);
+});
+
+test('dynamic blocks default to expanded, hidden titles remain hidden and Users has no toggles', async () => {
+  const f = fixture();
+  f.ctx.api = async () => ({});
+  const config = { blocks: [{ key: 'dynamic-key', title: 'Dynamic', show_title: false, fields: [{ key: 'contact_name' }] }] };
+  f.render(pollingProfile, {}, config);
+  const block = f.ctx.el.clientDynamicCard.children[0];
+  assert.equal(block.children[0].textContent, '');
+  assert.equal(block.children[0].children[0]['aria-expanded'], 'true');
+  await block.children[0].children[0].click();
+  assert.equal(f.ctx.state.clientCardCollapsedBlocks['dynamic-key'], true);
+  const users = fixture();
+  users.ctx.inlineClient = false;
+  users.render(pollingProfile, {}, pollingConfig);
+  assert.equal(users.created.some(n => n.className === 'client-card-block-toggle'), false);
+});
+
+test('failed save restores only the affected block and reports the error', async () => {
+  const f = fixture();
+  f.ctx.state.clientCardCollapsedBlocks = { profile: true };
+  f.ctx.api = async () => { throw new Error('offline'); };
+  f.render(pollingProfile, {}, pollingConfig);
+  await f.ctx.el.clientDynamicCard.children[0].children[0].children[0].click();
+  assert.equal(f.ctx.state.clientCardCollapsedBlocks.tg, false);
+  assert.equal(f.ctx.state.clientCardCollapsedBlocks.profile, true);
+  assert.equal(f.errors.length, 1);
 });

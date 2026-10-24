@@ -255,6 +255,7 @@ def _preferences_out(user: User) -> UserPreferencesOut:
         accent_intensity_light=user.accent_intensity_light,
         accent_intensity_dark=user.accent_intensity_dark,
         ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+        client_card_collapsed_blocks=user.client_card_collapsed_blocks_json or {},
     )
 
 
@@ -322,6 +323,10 @@ def update_my_preferences(
     for field in COLOR_FIELDS:
         if field in updates:
             setattr(user, field, updates[field])
+    if "client_card_collapsed_blocks" in updates:
+        user.client_card_collapsed_blocks_json = {
+            **(user.client_card_collapsed_blocks_json or {}), **updates["client_card_collapsed_blocks"],
+        }
     if "ticket_list_columns" in updates:
         user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:

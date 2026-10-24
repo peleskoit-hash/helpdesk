@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 
 TICKET_LIST_COLUMN_DEFAULTS = {
@@ -458,6 +458,7 @@ class UserPreferencesOut(BaseModel):
     interface_intensity_dark: int = Field(default=50, ge=0, le=100, strict=True)
     accent_hue_dark: int = Field(default=259, ge=0, le=360, strict=True)
     accent_strength_dark: int = Field(default=50, ge=0, le=100, strict=True)
+    client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
 
 
@@ -488,6 +489,7 @@ class UserPreferencesUpdate(BaseModel):
     accent_hue_dark: int | None = Field(default=None, ge=0, le=360, strict=True)
     accent_strength_dark: int | None = Field(default=None, ge=0, le=100, strict=True)
     ticket_list_columns: list[TicketListColumnPreference] | None = None
+    client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     appearance_write: AppearanceWrite | None = None
 
     @field_validator("theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark",
