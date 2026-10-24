@@ -167,27 +167,13 @@ test("management users page owns vertical scroll without global shell hacks", ()
   assert.doesNotMatch(bodyScope, /overflow:\s*hidden;/);
 });
 
-test("management home uses compact two-column cards while settings stays one-column", () => {
-  const baseLinksScope = sourceBetween(
-    stylesSource,
-    ".settings-home-links {",
-    ".management-home-panel .settings-home-links {",
-  );
-  const managementLinksScope = sourceBetween(
-    stylesSource,
-    ".management-home-panel .settings-home-links {",
-    ".settings-home-link {",
-  );
-  const linkScope = sourceBetween(
-    stylesSource,
-    ".settings-home-link {",
-    ".settings-home-link:hover {",
-  );
-
-  assert.match(baseLinksScope, /grid-template-columns:\s*1fr;[\s\S]*max-width:\s*546px;/);
-  assert.match(managementLinksScope, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*max-width:\s*1120px;/);
-  assert.match(linkScope, /font-size:\s*30px;[\s\S]*padding:\s*18px 28px;[\s\S]*white-space:\s*normal;[\s\S]*overflow-wrap:\s*anywhere;/);
-  assert.match(stylesSource, /@media \(max-width:\s*1180px\)\s*\{[\s\S]*\.management-home-panel \.settings-home-links\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+test("unified settings uses scoped V2 cards in two responsive columns", () => {
+  const v2 = fs.readFileSync(path.join(root, "api/app/static/desk-v2.css"), "utf8");
+  const scope = v2.slice(v2.indexOf('/* One workspace bubble;'));
+  assert.match(scope, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(scope, /font-size:\s*14px;/);
+  assert.match(scope, /background:\s*var\(--desk-soft\)/);
+  assert.match(scope, /@media \(max-width:\s*1000px\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
 });
 
 test("display settings container wraps theme toggle and keeps ticket color control scoped", () => {

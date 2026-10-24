@@ -168,7 +168,7 @@ for (const key of ['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'clie
 }
 
 test('direct and shell loading agree; every shell HTML entrypoint has the new shell version', () => {
-  const version = '20261024-client-settings-groups-v2';
+  const version = '20261025-ticket-sidebar-v2';
   const template = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   for (const file of ['bot_telegram_groups.js', 'bot_buttons_editor.js', 'bot_buttons_editor_view.js']) {

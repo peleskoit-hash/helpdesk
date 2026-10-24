@@ -71,9 +71,9 @@ def test_review_page_roles_and_html(monkeypatch, role, path):
         return
     assert response.status_code == 200
     assert 'data-shell-page="reviews"' in response.text
-    assert '/static/sidebar.js?v=20261012a' in response.text
+    assert '/static/sidebar.js?v=20261024-unified-settings-v2' in response.text
     assert '/static/reviews.js?v=20260907a' in response.text
-    assert '/static/reviews.css?v=20261016a' in response.text
+    assert '/static/reviews.css?v=20261024-reviews-v2' in response.text
     assert 'id="reviewDateFrom" type="date" disabled' in response.text
     assert 'id="reviewTableBody"' in response.text
     assert 'class="status-panel hidden"' in response.text

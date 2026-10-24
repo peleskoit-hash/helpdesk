@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Карточка заявки</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261024-client-settings-panel-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-ticket-sidebar-v2" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -244,26 +244,28 @@
               <div class="status-panel-title">Ответственный</div>
               <select id="ticketAssigneeSelect"></select>
             </div>
+            <div class="admin-actions-box admin-only hidden">
+              <label class="admin-skip-client"><input id="adminSkipClientNotification" class="desk-toggle" type="checkbox" autocomplete="off" />Без ответа клиенту</label>
+              <button id="adminForceCloseBtn" class="action">Принудительно закрыть</button>
+              <button id="adminDeleteBtn" class="action danger">Удалить заявку</button>
+            </div>
+            <div class="admin-actions-box admin-only hidden">
+              <button id="markSpecialBtn" class="action">Перенести в особые</button>
+            </div>
             <div id="autoCloseBox" class="auto-close-box hidden">
-              <div id="autoCloseDueText" class="status"></div>
+              <div id="autoCloseDueText" class="status">До закрытия: --</div>
               <label class="auto-close-toggle">
-                <input id="autoCloseDisabledCheckbox" type="checkbox" />
+                <input id="autoCloseDisabledCheckbox" class="desk-toggle" type="checkbox" />
                 <span>Отключить таймер</span>
               </label>
             </div>
             <div class="freeze-box">
-              <button id="freezeToggleBtn" class="action" style="margin-bottom:8px;">Заморозить</button>
-              <div class="status">Авторазморозка<br />(дата/время)</div>
-              <input id="freezeUntil" type="datetime-local" style="margin-top:6px;" />
-            </div>
-            <div class="admin-actions-box admin-only hidden">
-              <label class="admin-skip-client"><input id="adminSkipClientNotification" type="checkbox" autocomplete="off" />Без ответа клиенту</label>
-              <button id="adminForceCloseBtn" class="action">Принудительно закрыть</button>
-              <button id="adminDeleteBtn" class="action danger">Удалить заявку</button>
-              <button id="markSpecialBtn" class="action">Перенести в особые</button>
+              <button id="freezeToggleBtn" class="action">Заморозить</button>
+              <div class="status">Авторазморозка</div>
+              <input id="freezeUntil" type="datetime-local" />
             </div>
             <div class="ticket-right-actions wrong-problem-wrap">
-              <button id="wrongProblemBtn" class="action">Неверная проблема</button>
+              <button id="wrongProblemBtn" class="action" disabled>Неверная проблема</button>
             </div>
             <div class="ticket-quick-actions">
               <button id="greetingBtn" class="action quick-action-btn">Приветствие</button>
@@ -271,7 +273,7 @@
               <button id="onsiteBtn" class="action quick-action-btn">Иду к Вам</button>
             </div>
             <div class="ticket-right-actions close-wrap">
-              <button id="restoreBtn" class="action">Вернуть в работу</button>
+              <button id="restoreBtn" class="action" disabled>Восстановить заявку</button>
               <button id="closeBtn" class="action">Закрыть заявку</button>
             </div>
           </div>
@@ -349,15 +351,15 @@
   </div>
 
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
-  <script src="/static/sidebar.js?v=20261012a"></script>
+  <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261024-client-settings-groups-v2"></script>
+  <script src="/static/app_shell.js?v=20261025-ticket-sidebar-v2"></script>
   <script src="/static/ticket_api.js?v=20260521a"></script>
   <script src="/static/ticket_attachments.js?v=20261020-quotes"></script>
   <script src="/static/client_web_credentials.js?v=20261018-web-empty-autofill"></script>
   <script src="/static/ticket_client_card.js?v=20261024-client-controls-v2"></script>
   <script src="/static/ticket_composer.js?v=20261021-chat-file-input"></script>
-  <script src="/static/ticket_controls.js?v=20261013a"></script>
+  <script src="/static/ticket_controls.js?v=20261025-ticket-sidebar-v2"></script>
   <script src="/static/ticket_message_view.js?v=20261021-all-save-feedback"></script>
   <script src="/static/ticket.js?v=20261021-task-panel-refresh"></script>
 </body>

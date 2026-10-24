@@ -140,7 +140,7 @@ test("task close blocks on editor, server and message uploads and clears on read
         ctx.state.card.has_active_attachment_uploads = false;
         controls.renderTicketControlsView(ctx);
         assert.equal(closeBtn.disabled, false, `${role}/${source}/${terminal}`);
-        assert.equal(ctx.el.adminForceCloseBtn.disabled, false);
+        assert.equal(ctx.el.adminForceCloseBtn.disabled, role !== "admin");
       }
     }
   }
@@ -311,6 +311,62 @@ test("close button stays visible but disabled when agent cannot close yet", () =
 
   assert.deepEqual(visible, [true]);
   assert.equal(closeBtn.disabled, true);
+});
+
+test("timer placeholder retains the old countdown and toggle availability rules", () => {
+  for (const role of ["admin", "agent", "chiki_piki"])
+  for (const workflow of ["ticket", "task", "auto"])
+  for (const status of ["pending", "closed"])
+  for (const special of [false, true])
+  for (const collecting of [false, true])
+  for (const disabled of [false, true])
+  for (const minutes of [null, 0, 15]) {
+    const { ctx, controls } = controlsRenderCtx();
+    ctx.state.role = role;
+    Object.assign(ctx.state.card, { workflow_type: workflow, status, is_special: special,
+      intake_state: collecting ? "collecting" : "ready", auto_close_disabled: disabled });
+    ctx.el.autoCloseBox = {};
+    ctx.el.autoCloseDisabledCheckbox = {};
+    ctx.el.autoCloseDueText = {};
+    ctx.minutesLeftToDue = () => minutes;
+    let visible;
+    ctx.setVisible = (node, show) => { if (node === ctx.el.autoCloseBox) visible = show; };
+    controls.renderTicketControlsView(ctx);
+    const available = role !== "chiki_piki" && status !== "closed" && !special && workflow === "ticket" && !collecting;
+    assert.equal(visible, role !== "chiki_piki");
+    assert.equal(ctx.el.autoCloseDisabledCheckbox.disabled, !available);
+    assert.equal(ctx.el.autoCloseDisabledCheckbox.checked, disabled);
+    assert.equal(ctx.el.autoCloseDueText.textContent, available && !disabled && minutes !== null ? `До закрытия: ${minutes} м.` : "До закрытия: --");
+  }
+});
+
+test("visible restore and wrong-problem actions retain every previous availability condition", () => {
+  for (const role of ["admin", "agent", "trainee", "chiki_piki"])
+  for (const workflow of ["ticket", "task", "auto"])
+  for (const status of ["pending", "closed"])
+  for (const owner of [null, "agent-1", "another-agent"])
+  for (const used of [false, true])
+  for (const kind of ["normal", "group_child", "linked_child"])
+  for (const locked of [false, true]) {
+    const { controls, ctx } = controlsRenderCtx();
+    ctx.state.role = role;
+    ctx.state.stateActionInFlight = locked ? "restore" : null;
+    Object.assign(ctx.state.card, { workflow_type: workflow, status, closed_by_user_id: owner,
+      wrong_problem_used: used, task_kind: kind, parent_ticket_id: kind === "linked_child" ? "parent" : null });
+    const visible = new Map();
+    ctx.setVisible = (node, value) => visible.set(node, value);
+    controls.renderTicketControlsView(ctx);
+    const readonly = role === "chiki_piki";
+    const couldRestore = !readonly && status === "closed" && workflow === "ticket" && (role === "admin" || owner === "agent-1");
+    const couldCorrect = !readonly && status !== "closed" && !used && kind === "normal";
+    assert.equal(visible.get(ctx.el.restoreBtn), !readonly);
+    assert.equal(visible.get(ctx.el.wrongProblemBtn), !readonly);
+    assert.equal(ctx.el.restoreBtn.disabled, !couldRestore || locked);
+    assert.equal(ctx.el.wrongProblemBtn.disabled, !couldCorrect);
+    assert.equal(visible.get(ctx.el.adminForceCloseBtn), role === "admin");
+    assert.equal(ctx.el.adminForceCloseBtn.disabled, role !== "admin" || status === "closed");
+    assert.equal(visible.get(ctx.el.freezeToggleBtn), !readonly);
+  }
 });
 
 test("quick action sequence unlocks clarification and onsite after greeting button use", () => {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - Настройки</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261024-client-settings-panel-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-ticket-sidebar-v2" />
 </head>
 <body>
   <div class="layout">
@@ -28,9 +28,6 @@
       <a class="settings-link active admin-only hidden" href="/settings">
         <span>Настройки</span>
         <img src="/static/settings-gear.svg" alt="" />
-      </a>
-      <a class="settings-link admin-only hidden" href="/management">
-        <span>Управление</span>
       </a>
       <div class="sidebar-admin-separator admin-only hidden"></div>
       <a class="settings-link admin-only hidden" href="/statuses">
@@ -58,22 +55,77 @@
 
       <section class="content" style="grid-template-columns: 1fr;">
         <div class="panel settings-panel settings-home-panel">
-          <div class="settings-home-links">
-            <a class="settings-home-link" href="/settings/users">&#1053;&#1072;&#1089;&#1090;&#1088;&#1086;&#1081;&#1082;&#1072; &#1040;&#1076;&#1084;&#1080;&#1085;&#1086;&#1074;/&#1040;&#1075;&#1077;&#1085;&#1090;&#1086;&#1074;</a>
-            <a class="settings-home-link" href="/settings/client-card">Карточка Клиент</a>
-            <a class="settings-home-link" href="/settings/bot-buttons">Кнопки бота</a>
-            <a class="settings-home-link" href="/settings/notification-bot-basic">Базовые сообщения бота уведомлений</a>
-            <a class="settings-home-link" href="/settings/automatic-messages">Автоматические сообщения</a>
-          </div>
+          <section class="settings-home-section" aria-labelledby="settingsSection0">
+            <h2 id="settingsSection0">Главные параметры</h2>
+            <div class="settings-home-links">
+              <a class="settings-home-link" href="/settings/users">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Настройка Админов/Агентов</span><span class="settings-home-link-description">Учётные записи и параметры сотрудников.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/settings/client-card">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Карточка Клиент</span><span class="settings-home-link-description">Поля, блоки и правила карточки клиента.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/settings/bot-buttons">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Кнопки бота</span><span class="settings-home-link-description">Меню, действия и ответы кнопок бота.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/settings/notification-bot-basic">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Базовые сообщения бота уведомлений</span><span class="settings-home-link-description">Общие шаблоны уведомлений сотрудников.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/settings/automatic-messages">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Автоматические сообщения</span><span class="settings-home-link-description">Шаблоны автоматических сообщений.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/management/integrations">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Интеграции</span><span class="settings-home-link-description">Подключения к внешним сервисам.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/quick-replies">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Быстрые ответы</span><span class="settings-home-link-description">Готовые ответы для работы с заявками.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+            </div>
+          </section>
+          <section class="settings-home-section" aria-labelledby="settingsSection1">
+            <h2 id="settingsSection1">Управление</h2>
+            <div class="settings-home-links">
+              <a class="settings-home-link" href="/management/users">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Пользователи</span><span class="settings-home-link-description">Профили и данные клиентов.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/management/reviews">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Отзывы</span><span class="settings-home-link-description">Оценки и отзывы о работе поддержки.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/management/feedback">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Предложения и замечания</span><span class="settings-home-link-description">Обратная связь пользователей.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/management/statistics">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Статистика</span><span class="settings-home-link-description">Показатели работы службы поддержки.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/management/saved-files">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Сохранённые файлы</span><span class="settings-home-link-description">Файлы для повторного использования.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+              <a class="settings-home-link" href="/mass-notifications">
+                <span class="settings-home-link-text"><span class="settings-home-link-title">Массовые оповещения</span><span class="settings-home-link-description">Отправка уведомлений пользователям.</span></span>
+                <span class="settings-home-link-arrow" aria-hidden="true">→</span>
+              </a>
+            </div>
+          </section>
         </div>
       </section>
     </main>
   </div>
 
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
-  <script src="/static/sidebar.js?v=20261012a"></script>
+  <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261024-client-settings-groups-v2"></script>
+  <script src="/static/app_shell.js?v=20261025-ticket-sidebar-v2"></script>
   <script src="/static/settings_home.js?v=20260602a"></script>
 </body>
 </html>

@@ -148,7 +148,7 @@ def test_management_page_route_is_admin_guarded_in_main():
     assert "def management_page" in block
     assert 'return _redirect_login("/management")' in block
     assert "if not user.is_real_admin" in block
-    assert 'templates" / "management.html"' in block
+    assert 'RedirectResponse(url=f"/settings{query}", status_code=303)' in block
 
 
 def test_management_user_profile_update_refreshes_existing_profile():

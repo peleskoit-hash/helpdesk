@@ -203,6 +203,13 @@
   }
 
   function ensureManagementSection() {
+    if (state.role === "admin") {
+      qsa('.sidebar a.settings-link[href="/management"], .sidebar a.settings-link[href="/mass-notifications"]').forEach((link) => link.remove());
+      const settingsLink = qs('.sidebar a.settings-link[href="/settings"]');
+      const path = window.location.pathname;
+      settingsLink?.classList.toggle("active", path.startsWith("/settings") || (path.startsWith("/management") && path !== "/management/tasks") || path === "/mass-notifications" || path === "/quick-replies");
+      return;
+    }
     if (qs("#sidebarManagementLink")) return;
     const massLink = qs('a.settings-link[href="/mass-notifications"]');
     if (!massLink || !massLink.parentNode) return;

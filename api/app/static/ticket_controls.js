@@ -169,7 +169,7 @@
   }
 
   async function chooseWrongProblem(ctx, item) {
-    const { state, el, apiPost, setStatus, loadCard, showError, setVisible } = ctx;
+    const { state, el, apiPost, setStatus, loadCard, showError } = ctx;
     if (!isFinalProblemButton(item)) return;
     const confirmText = `Вы уверены что хотите отправить клиенту коррекционное сообщение с выбором "${item.label}"?`;
     if (!window.confirm(confirmText)) return;
@@ -177,7 +177,7 @@
       setStatus("Применяю результат...");
       await apiPost(`/api/v1/tickets/${state.ticketId}/wrong-problem`, { button_key: item.key });
       if (state.card) state.card.wrong_problem_used = true;
-      setVisible(el.wrongProblemBtn, false);
+      el.wrongProblemBtn.disabled = true;
       closeWrongProblemModal(ctx);
       await loadCard();
       if (state.card?.workflow_type === "task") {
@@ -258,17 +258,18 @@
     setVisible(el.greetingBtn, showClose);
     setVisible(el.clarificationBtn, showClose);
     setVisible(el.onsiteBtn, showClose);
-    setVisible(el.wrongProblemBtn, showWrongProblem);
+    setVisible(el.wrongProblemBtn, !isReadonly);
+    if (el.wrongProblemBtn) el.wrongProblemBtn.disabled = !showWrongProblem;
     setVisible(el.closeBtn, showClose);
-    if (el.adminForceCloseBtn) setVisible(el.adminForceCloseBtn, showAdminForceClose);
+    if (el.adminForceCloseBtn) setVisible(el.adminForceCloseBtn, state.role === "admin");
     if (el.adminDeleteBtn) setVisible(el.adminDeleteBtn, showAdminDelete);
-    setVisible(el.freezeToggleBtn, showFreezeToggle);
-    setVisible(el.restoreBtn, showRestore);
+    setVisible(el.freezeToggleBtn, !isReadonly);
+    setVisible(el.restoreBtn, !isReadonly);
     if (el.markSpecialBtn) {
       setVisible(el.markSpecialBtn, showMarkSpecial);
       el.markSpecialBtn.disabled = isClosed || Boolean(card.is_special) || !["ticket", "task"].includes(workflowType);
     }
-    if (el.autoCloseBox) setVisible(el.autoCloseBox, showAutoCloseBox);
+    if (el.autoCloseBox) setVisible(el.autoCloseBox, !isReadonly);
     const canSeeInstruction = state.role !== "chiki_piki" && Boolean(card.instruction_text);
     if (el.instructionBtn) setVisible(el.instructionBtn, canSeeInstruction);
     setVisible(el.editClientBtn, !isReadonly);
@@ -282,7 +283,7 @@
     }
     if (el.adminForceCloseBtn) {
       el.adminForceCloseBtn.textContent = "Принудительно закрыть";
-      el.adminForceCloseBtn.disabled = taskUploadsActive;
+      el.adminForceCloseBtn.disabled = !showAdminForceClose || taskUploadsActive;
     }
     if (el.freezeToggleBtn) el.freezeToggleBtn.textContent = card.is_frozen ? "Разморозить" : "Заморозить";
     if (el.greetingBtn) {
@@ -305,11 +306,12 @@
     if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || !canFreezeToggle || stateActionLocked;
     if (el.autoCloseDisabledCheckbox) {
       el.autoCloseDisabledCheckbox.checked = Boolean(card.auto_close_disabled);
+      el.autoCloseDisabledCheckbox.disabled = !showAutoCloseBox;
     }
     if (el.autoCloseDueText) {
       const minutesLeft = minutesLeftToDue(card.auto_close_due_at);
       if (!showAutoCloseBox || card.auto_close_disabled || minutesLeft === null) {
-        el.autoCloseDueText.textContent = "";
+        el.autoCloseDueText.textContent = "До закрытия: --";
       } else {
         el.autoCloseDueText.textContent = `До закрытия: ${minutesLeft} м.`;
       }

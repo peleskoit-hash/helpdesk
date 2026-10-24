@@ -505,7 +505,8 @@ def management_page(request: Request, db: Session = Depends(get_db)):
         return _redirect_login("/management")
     if not user.is_real_admin:
         return RedirectResponse(url="/tickets", status_code=303)
-    return FileResponse(str(BASE_DIR / "templates" / "management.html"))
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/settings{query}", status_code=303)
 
 
 @app.get("/management/integrations")

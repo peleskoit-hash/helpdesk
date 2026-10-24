@@ -69,12 +69,143 @@ const card = { ...rows[0], client_name: 'Мария Смирнова', instructi
       'Заявка назначена ответственному: Александр Иванов'][i % 4], author_name: user.full_name, created_at: stamp, attachments: [] })),
 };
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false }) {
+for (const theme of ['light', 'dark']) for (const width of [1366, 1920]) {
+  test(`sidebar selection keeps adaptive width stable: ${theme}, ${width}`, async t => {
+    const { page } = await setup(t, { width, height: 900, theme, pageName: 'tickets', fullName: 'Тест' });
+    await page.locator('.admin-agent-name').evaluateAll(nodes => {
+      nodes[0].textContent = 'Ли Бо';
+      nodes[1].textContent = 'Иван Александрович Соколов';
+    });
+    const sidebar = page.locator('.sidebar');
+    const initial = (await sidebar.boundingBox()).width;
+    for (const index of [0, 1, 0, 1]) {
+      await page.locator('.admin-agent-item').nth(index).click();
+      assert.equal((await sidebar.boundingBox()).width, initial);
+    }
+    assert.deepEqual(await page.locator('.tab-list').evaluate(el => {
+      const s = getComputedStyle(el); return [s.borderRadius, s.borderTopWidth, s.padding];
+    }), ['16px', '1px', '8px']);
+    assert.equal(await sidebar.evaluate(el => [el, ...el.querySelectorAll('.admin-agent-item, .admin-agent-name, .admin-agent-counts')].some(n => n.scrollWidth > n.clientWidth + 1)), false);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
+  test(`ticket action panel V2: ${role}, ${theme}`, async t => {
+    const cardPatch = { status: 'pending', wrong_problem_used: false, auto_close_disabled: false };
+    const { page, requests } = await setup(t, { width: 1366, height: 768, theme, role, pageName: 'ticket', cardPatch });
+    const close = page.locator('#closeBtn'), restore = page.locator('#restoreBtn'), wrong = page.locator('#wrongProblemBtn');
+    assert.equal(await restore.isVisible(), true);
+    assert.equal(await restore.isDisabled(), true);
+    assert.equal(await wrong.isVisible(), true);
+    assert.equal(await wrong.isDisabled(), false);
+    assert.equal(await close.evaluate(el => getComputedStyle(el).fontSize), '19px');
+    const block = await page.locator('.close-wrap').evaluate(el => {
+      const s = getComputedStyle(el), c = el.querySelector('#closeBtn').getBoundingClientRect(), r = el.querySelector('#restoreBtn').getBoundingClientRect();
+      return { radius: s.borderRadius, border: s.borderTopWidth, overlap: r.bottom > c.top, inside: c.bottom <= el.getBoundingClientRect().bottom };
+    });
+    assert.deepEqual(block, { radius: '16px', border: '1px', overlap: false, inside: true });
+    assert.equal(await page.locator('.freeze-box').evaluate(el => {
+      const s = getComputedStyle(el), button = el.querySelector('#freezeToggleBtn');
+      return button.getBoundingClientRect().width === el.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
+    }), true);
+    assert.equal(await page.locator('.freeze-box').innerText(), 'Заморозить\nАвторазморозка');
+    const timerGeometry = () => page.locator('.ticket-control-wrap').evaluate(root => {
+      const top = root.getBoundingClientRect().top - root.scrollTop;
+      return ['#autoCloseBox', '.freeze-box', '.wrong-problem-wrap', '.ticket-quick-actions', '.close-wrap'].map(selector => {
+        const box = root.querySelector(selector).getBoundingClientRect(); return [box.top - top, box.height];
+      });
+    });
+    const timerReference = await timerGeometry();
+    const future = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    for (const patch of [
+      { auto_close_due_at: future, auto_close_disabled: false },
+      { auto_close_due_at: null, auto_close_disabled: false },
+      { auto_close_due_at: future, auto_close_disabled: true },
+      { intake_state: 'collecting' },
+      { intake_state: 'ready', is_special: true },
+      { is_special: false, status: 'closed' },
+    ]) {
+      Object.assign(cardPatch, patch);
+      await page.reload();
+      await page.waitForSelector('.message');
+      assert.deepEqual(await timerGeometry(), timerReference);
+      const available = cardPatch.status !== 'closed' && !cardPatch.is_special && cardPatch.intake_state !== 'collecting';
+      const due = await page.locator('#autoCloseDueText').innerText();
+      if (available && cardPatch.auto_close_due_at && !cardPatch.auto_close_disabled) assert.match(due, /^До закрытия: \d+ м\.$/);
+      else assert.equal(due, 'До закрытия: --');
+      assert.equal(await page.locator('#autoCloseDisabledCheckbox').isDisabled(), !available);
+    }
+    Object.assign(cardPatch, { status: 'pending', auto_close_due_at: null, auto_close_disabled: false, is_special: false, intake_state: 'ready' });
+    await page.reload();
+    await page.waitForSelector('.message');
+    const timer = page.locator('#autoCloseDisabledCheckbox');
+    assert.deepEqual(await timer.evaluate(el => { const s = getComputedStyle(el); return [s.width, s.height, s.appearance]; }), ['40px', '24px', 'none']);
+    await timer.focus();
+    await page.keyboard.press('Space');
+    await page.waitForResponse(r => r.url().endsWith('/auto-close') && r.request().method() === 'PATCH');
+    if (role === 'admin') {
+      assert.equal(await page.locator('#ticketAssigneeBox + .admin-actions-box #adminForceCloseBtn').count(), 1);
+      assert.equal(await page.locator('#ticketAssigneeBox + .admin-actions-box #adminDeleteBtn').count(), 1);
+      assert.equal(await page.locator('#ticketAssigneeBox + .admin-actions-box #adminSkipClientNotification').count(), 1);
+      assert.equal(await page.locator('#ticketAssigneeBox + .admin-actions-box > :first-child #adminSkipClientNotification').count(), 1);
+      assert.equal(await page.locator('#ticketAssigneeBox + .admin-actions-box + .admin-actions-box #markSpecialBtn').count(), 1);
+      const skip = page.locator('#adminSkipClientNotification');
+      assert.equal(await skip.evaluate(el => getComputedStyle(el).width), '40px');
+      await skip.check();
+      assert.equal(await skip.isChecked(), true);
+      await page.locator('#adminForceCloseBtn').click();
+      await modalVisible(page, '#adminActionModal');
+      await page.locator('#cancelAdminActionBtn').click();
+      assert.equal(await skip.isChecked(), false);
+      const spacing = await page.locator('.sidebar').evaluate(el => {
+        const filter = el.querySelector('.admin-agent-filter').getBoundingClientRect();
+        const links = ['/settings', '/statuses', '/management/tasks'].map(p => el.querySelector(`a[href="${p}"]`).getBoundingClientRect());
+        return { above: links[0].top - filter.bottom, gaps: [links[1].top - links[0].bottom, links[2].top - links[1].bottom],
+          separator: getComputedStyle(el.querySelector('.sidebar-admin-separator')).display };
+      });
+      assert.equal(spacing.separator, 'none');
+      assert.ok(spacing.above >= 14);
+      assert.equal(spacing.gaps[0], spacing.gaps[1]);
+    } else {
+      assert.equal(await page.locator('#adminForceCloseBtn').isVisible(), false);
+      assert.equal(await page.locator('#adminDeleteBtn').isVisible(), false);
+    }
+    for (const owner of ['agent-1', 'another-agent']) {
+      Object.assign(cardPatch, { status: 'closed', closed_by_user_id: owner });
+      await page.reload();
+      await page.waitForSelector('.message');
+      assert.equal(await restore.isVisible(), true);
+      assert.equal(await restore.isDisabled(), role !== 'admin' && owner !== 'agent-1');
+      assert.equal(await wrong.isVisible(), true);
+      assert.equal(await wrong.isDisabled(), true);
+      assert.equal(await close.isDisabled(), true);
+      assert.equal(await page.locator('#freezeToggleBtn').isVisible(), true);
+      assert.equal(await page.locator('#freezeToggleBtn').isDisabled(), true);
+      if (role === 'admin') {
+        assert.equal(await page.locator('#adminForceCloseBtn').isVisible(), true);
+        assert.equal(await page.locator('#adminForceCloseBtn').isDisabled(), true);
+      }
+    }
+    Object.assign(cardPatch, { status: 'pending', wrong_problem_used: true });
+    await page.reload();
+    await page.waitForSelector('.message');
+    assert.equal(await wrong.isVisible(), true);
+    assert.equal(await wrong.isDisabled(), true);
+    assert.equal(requests.filter(r => r.method === 'POST' || r.method === 'DELETE').length, 0);
+    if (process.env.TICKET_ACTIONS_SCREENSHOT_DIR) {
+      fs.mkdirSync(process.env.TICKET_ACTIONS_SCREENSHOT_DIR, { recursive: true });
+      await page.locator('.ticket-control-wrap').evaluate(el => el.scrollTop = el.scrollHeight);
+      await page.screenshot({ path: path.join(process.env.TICKET_ACTIONS_SCREENSHOT_DIR, `${role}-${theme}.png`) });
+    }
+  });
+}
+
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(error.message));
-  const me = { ...user, role };
+  const me = { ...user, role, full_name: fullName };
   const preferences = { appearance_revision: '0', theme_preference: theme, color_enabled: true, task_panel_enabled: true,
     ticket_list_columns: columns.map(key => ({ key, width: key === 'subject' ? 340 : 160 })) };
   await page.route('**/*', async route => {
@@ -118,7 +249,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
     else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType,
-      client_profile: { ...card.client_profile, telegram_avatar_present: clientAvatar } };
+      client_profile: { ...card.client_profile, telegram_avatar_present: clientAvatar }, ...cardPatch };
     else if (p.endsWith('/client-profile')) result = { ...card.client_profile, telegram_avatar_present: clientAvatar };
     else if (p === '/api/v1/quick-replies/search') result = { items: [] };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });

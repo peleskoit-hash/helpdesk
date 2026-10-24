@@ -123,7 +123,7 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261024-client-settings-panel-v2' : '20261024-client-settings-groups-v2'], `${file}: ${resource}`);
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261025-ticket-sidebar-v2' : '20261025-ticket-sidebar-v2'], `${file}: ${resource}`);
     }
   }
 });

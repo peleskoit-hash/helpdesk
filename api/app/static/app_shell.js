@@ -102,7 +102,7 @@
     ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261011a"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261021-profile-quick-save"] }],
-    ["/management", { page: "management-home", scripts: ["/static/management_home.js?v=20260709a"] }],
+    ["/management", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/management/users", {
       page: "management-users",
       scripts: [
@@ -127,7 +127,7 @@
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261024-client-controls-v2",
         "/static/ticket_composer.js?v=20261021-chat-file-input",
-        "/static/ticket_controls.js?v=20261013a",
+        "/static/ticket_controls.js?v=20261025-ticket-sidebar-v2",
         "/static/ticket_message_view.js?v=20261021-all-save-feedback",
         "/static/ticket.js?v=20261021-task-panel-refresh",
       ],
@@ -289,7 +289,7 @@
       const href = link.getAttribute("href") || "";
       const linkUrl = new URL(href, window.location.origin);
       const active = linkUrl.pathname === "/settings"
-        ? url.pathname.startsWith("/settings")
+        ? url.pathname.startsWith("/settings") || (url.pathname.startsWith("/management") && url.pathname !== "/management/tasks") || url.pathname === "/mass-notifications" || url.pathname === "/quick-replies"
         : linkUrl.pathname === "/management"
           ? (url.pathname.startsWith("/management") && url.pathname !== "/management/tasks") || url.pathname === "/mass-notifications"
         : linkUrl.pathname === url.pathname;
@@ -327,6 +327,7 @@
 
   async function navigate(urlLike, options = {}) {
     const url = new URL(urlLike, window.location.origin);
+    if (url.pathname === "/management") url.pathname = "/settings";
     if (!canHandleUrl(url)) {
       window.location.href = `${url.pathname}${url.search}${url.hash}`;
       return false;

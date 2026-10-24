@@ -155,7 +155,7 @@ body:has(.layout > .main) :where(.sidebar) .tab-btn.active .tab-btn-count {
   background: var(--desk-surface);
   color: var(--desk-on-tint);
 }
-body:has(.layout > .main) :where(.sidebar) :is(.admin-agent-filter, .status-panel, .sidebar-user-name, .sidebar-user-menu) {
+body:has(.layout > .main) :where(.sidebar) :is(.tab-list, .admin-agent-filter, .status-panel, .sidebar-user-name, .sidebar-user-menu) {
   background: var(--desk-soft);
   color: var(--desk-text);
   border: 1px solid var(--desk-border);
@@ -164,14 +164,18 @@ body:has(.layout > .main) :where(.sidebar) :is(.admin-agent-filter, .status-pane
   backdrop-filter: none;
 }
 body:has(.layout > .main) :where(.sidebar) .admin-agent-filter { padding: 8px; }
+body:has(.layout > .main) :where(.sidebar) .tab-list { padding: 8px; }
 body:has(.layout > .main) :where(.sidebar) .tab-btn { padding-top: 9px; padding-bottom: 9px; }
 body:has(.layout > .main) :where(.sidebar) .admin-agent-list { max-height: 160px; overflow-y: auto; scrollbar-width: thin; grid-template-columns: minmax(0, 1fr); }
 body:has(.layout > .main) :where(.sidebar) .settings-link { margin-top: 3px; padding: 8px 12px; }
+body:has(.layout > .main) .sidebar .sidebar-admin-separator { display: none; }
+body:has(.layout > .main) .sidebar .settings-link.admin-only { margin-top: 4px; }
+body:has(.layout > .main) .sidebar .admin-agent-filter + .settings-link { margin-top: 14px; }
 body:has(.layout > .main) .sidebar > * { flex-shrink: 0; }
 body:has(.layout > .main) :where(.sidebar) .sidebar-bottom { background: var(--desk-surface); padding-top: 12px; }
 body:has(.layout > .main) :where(.sidebar) .admin-agent-header { color: var(--desk-muted); background: var(--desk-surface); border-color: var(--desk-border); box-shadow: none; }
 body:has(.layout > .main) :where(.sidebar) .admin-agent-header.pressed { color: var(--desk-on-tint); background: var(--desk-tint); border-color: var(--desk-accent); }
-body:has(.layout > .main) :where(.sidebar) .admin-agent-item { padding: 8px; display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) 72px; }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-item { padding: 8px; display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) 72px; font-weight: 700; }
 body:has(.layout > .main) :where(.sidebar) .admin-agent-counts {
   display: grid; grid-column: 2; grid-template-columns: 28px 2px 2px 28px; column-gap: 4px;
   flex: none; width: 72px; min-width: 0; align-items: center; justify-items: center; transform: none;
@@ -375,14 +379,18 @@ body #appContent.main[data-shell-page="ticket-card"] {
   & #clientDynamicCard { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
   & #clientModal .custom-field-editor:has(> .desk-toggle) { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   & .ticket-control-wrap { padding: 10px; gap: 10px; }
-  & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
-  & .freeze-box { background: var(--desk-blue-bg); }
+  & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions, .close-wrap) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
+  & .freeze-box { background: var(--desk-blue-bg); display: grid; gap: 6px; padding-block: 10px; }
+  & .freeze-box #freezeToggleBtn { width: 100%; }
+  & #autoCloseDueText { min-height: 20px; line-height: 20px; white-space: nowrap; }
   & #freezeUntil { width: 100%; min-width: 0; padding: 8px 6px; font-size: 13px; }
-  & .admin-skip-client { font-size: 13px; }
+  & :is(.admin-skip-client, .auto-close-toggle) { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   & .ticket-right-actions .action { min-height: 42px; }
   & .ticket-quick-actions .quick-action-btn { font-weight: 600; }
   & .ticket-quick-actions .quick-action-ready:not(:disabled) { background: var(--desk-success-bg); color: var(--desk-success); border-color: var(--desk-border); }
-  & .close-wrap #closeBtn { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); font-size: 15px; }
+  & .close-wrap { margin-top: 0; gap: 8px; flex-shrink: 0; }
+  & .close-wrap #restoreBtn { position: static; }
+  & .close-wrap #closeBtn { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); font-size: 19px; min-height: 50px; }
   & .close-wrap #closeBtn.close-action-ready:not(:disabled) { background: var(--desk-tint); color: var(--desk-on-tint); }
   &:has(.ticket-badge-type-task) .close-wrap #closeBtn { font-size: 18px; font-weight: 800; min-height: 60px; padding: 14px 18px; border-width: 2px; }
   &:has(.ticket-badge-type-task) .close-wrap #closeBtn.close-action-ready:not(:disabled) { border-color: var(--desk-accent); }
@@ -572,7 +580,7 @@ body:has(.layout > .main) #appContent.main[data-shell-page] { --desk-grid-base: 
 body:has(.layout > .main) #appContent.main .messages { --desk-grid-base: var(--desk-soft); }
 
 /* Match the existing tickets-list workspace bounds; inner page layouts stay local. */
-body #appContent.main:is([data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"], [data-shell-page="reviews"], [data-shell-page="management-users"]) {
+body #appContent.main:is([data-shell-page="settings-home"], [data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"], [data-shell-page="reviews"], [data-shell-page="management-users"]) {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
@@ -594,4 +602,59 @@ body #appContent.main:is([data-shell-page="profile"], [data-shell-page="profile-
     & > :is(.content, .management-users-page) { padding: 12px; }
     & > .reviews-page { margin: 12px; }
   }
+}
+
+/* One workspace bubble; section contents keep their natural height. */
+body #appContent.main[data-shell-page="settings-home"] {
+  color: var(--desk-text);
+  font: 14px/1.5 var(--desk-font);
+  & .settings-home-panel {
+    box-sizing: border-box;
+    padding: 24px;
+    overflow-y: auto;
+    background: var(--desk-surface);
+    border-color: var(--desk-border);
+    box-shadow: var(--desk-shadow);
+    backdrop-filter: none;
+  }
+  & .settings-home-section { flex: 0 0 auto; min-width: 0; }
+  & .settings-home-section + .settings-home-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--desk-border); }
+  & .settings-home-section h2 { margin: 0 0 12px; font-size: 18px; font-weight: 800; }
+  & .settings-home-links { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: none; }
+  & .settings-home-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--desk-border);
+    border-radius: 16px;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transform: none;
+    transition: background-color .16s ease, border-color .16s ease;
+  }
+  & .settings-home-link:hover { background: var(--desk-hover); border-color: var(--desk-accent); }
+  & .settings-home-link:focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 2px; }
+  & .settings-home-link-text { display: grid; gap: 3px; min-width: 0; }
+  & .settings-home-link-title { font-weight: 800; }
+  & .settings-home-link-description { color: var(--desk-muted); font-size: 13px; }
+  & .settings-home-link-arrow { flex: 0 0 auto; color: var(--desk-on-tint); font-size: 20px; }
+  @media (max-width: 1000px) {
+    & .settings-home-links { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 700px) {
+    & .settings-home-panel { padding: 16px; }
+  }
+}
+@media (max-width: 700px) {
+  body:has(#appContent.main[data-shell-page="settings-home"]) .layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 100dvh; }
+  body:has(#appContent.main[data-shell-page="settings-home"]) .sidebar { max-height: 360px; overflow-y: auto; }
+  body #appContent.main[data-shell-page="settings-home"] { height: 100dvh; }
 }
