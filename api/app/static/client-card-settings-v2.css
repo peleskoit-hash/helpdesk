@@ -1,0 +1,60 @@
+/* Client-card configuration only; the shared shell keeps its own styles. */
+body #appContent.main[data-shell-page="settings-client-card"] {
+  --surface: var(--desk-surface);
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --border: var(--desk-border);
+  --accent: var(--desk-focus, var(--desk-accent));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--desk-bg);
+  color: var(--desk-text);
+  & :is(.client-card-work-panel, .modal) { font: 14px/1.5 var(--desk-font); }
+
+  & [hidden] { display: none !important; }
+  & > .content { padding: 14px 16px 16px; min-height: 0; grid-auto-rows: minmax(0, 1fr); align-content: stretch; align-items: stretch; overflow: hidden; }
+  & .client-card-work-panel { min-height: 0; height: 100%; align-self: stretch; overflow: auto; border-radius: 24px; background-color: var(--desk-surface); border-color: var(--desk-border); box-shadow: var(--desk-shadow); backdrop-filter: none; }
+  & .client-card-main-row { flex-shrink: 0; padding: 4px 4px 0; background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px 16px 0 0; }
+  & .client-card-page-tabs { flex: 1; gap: 0; align-self: stretch; padding: 0; }
+  & #addClientCardBlockBtn { margin-left: auto; margin-bottom: 4px; flex-shrink: 0; }
+  & :is(#clientCardRulesPanel, #clientCardSourcesPanel) { padding: 16px; }
+  & :is(#clientCardRulesPanel, #clientCardSourcesPanel) .client-card-rules-head { margin-bottom: 8px; }
+  & :is(#clientCardRulesPanel, #clientCardSourcesPanel) .client-card-rules { gap: 8px; align-content: start; }
+  & .client-card-page-tabs button[role="tab"] { padding: 12px 16px; font-size: 22px; font-weight: 650; border: 0; border-bottom: 3px solid transparent; border-radius: 12px 12px 0 0; background: transparent !important; color: var(--desk-muted) !important; box-shadow: none; }
+  & .client-card-page-tabs button[aria-selected="true"] { background: var(--desk-surface) !important; border-bottom-color: var(--desk-accent); color: var(--desk-on-tint) !important; }
+  & :is(.client-card-settings-block.compact, .modal-field-section, .client-card-rule-action-row) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; }
+  & :is(.client-card-field-row, .client-card-rule-row, .client-card-system-note, .client-card-rule-template-preview) { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 12px; box-shadow: none; }
+  & :is(.client-card-accordion-title, .client-card-field-label, .modal-label-title, .modal-body label, .client-card-block-editor label, .settings-subtitle) { color: var(--desk-text); }
+  & :is(.client-card-accordion-key, .client-card-accordion-meta, .client-card-field-meta, .status, small) { color: var(--desk-muted); }
+  & .client-card-accordion-title { font-size: 18px; }
+  & .client-card-field-label { font-size: 15px; }
+  & .client-card-block-editor { grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 24px; align-items: center; }
+  & .client-card-block-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: min(100%, 580px); justify-self: center; }
+  & .client-card-option-section { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); }
+  & .client-card-option-title { font-size: 13px; font-weight: 700; color: var(--desk-muted); }
+  & .client-card-option-section label { width: 100%; max-width: none; }
+  & .client-card-field-row { grid-template-columns: minmax(0, 1fr) auto; }
+  & :is(.checkbox-label, label:has(> .desk-toggle)) { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--desk-text) !important; }
+  & :is(input:not([type="checkbox"]):not([type="color"]), select, textarea) { min-width: 0; background: var(--desk-surface); color: var(--desk-text); border: 1px solid var(--desk-border); border-radius: 12px; padding: 8px 10px; font: inherit; box-shadow: none; }
+  & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+  & button.action { background: var(--desk-soft); color: var(--desk-text); border: 1px solid var(--desk-border); border-radius: 12px; box-shadow: none; font-family: var(--desk-font); }
+  & button.action.primary:not([role="tab"]) { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); border-color: var(--desk-accent); }
+  & button.action.danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
+  & button.action:hover:not(:disabled) { background: var(--desk-hover); }
+  & :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: 0 24px 80px #00000026; backdrop-filter: none; }
+  & :is(.modal-head, .modal-foot) { border-color: var(--desk-border); }
+  & :is(.client-card-work-panel, .modal-body, textarea) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
+  @media (max-width: 900px) {
+    & .client-card-block-editor { grid-template-columns: minmax(0, 1fr); }
+    & .client-card-field-row { grid-template-columns: minmax(0, 1fr); }
+    & .client-card-field-actions { flex-wrap: wrap; }
+    & .client-card-page-tabs { flex-basis: 100%; }
+    & .client-card-page-tabs button[role="tab"] { font-size: 20px; }
+    & .client-card-block-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 700px) { & .client-card-block-options { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 700px) { & > .content { padding: 12px; } }
+}

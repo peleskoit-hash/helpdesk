@@ -59,7 +59,7 @@
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261021-all-save-feedback"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261021-all-save-feedback"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261024-client-settings-groups-v2"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [

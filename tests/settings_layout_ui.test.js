@@ -277,7 +277,7 @@ test("local page actions live inside their work containers after toolbar unifica
   const mainRow = findElement(clientCard, (node) => hasClass(node, "client-card-main-row"), "client card main row");
   const mainTabs = findElement(clientCard, (node) => hasClass(node, "client-card-page-tabs") && !hasClass(node, "client-card-subtabs"), "client card main tabs");
   const blocksPanel = findElement(clientCard, (node) => node.attrs.id === "clientCardBlocksPanel", "client card blocks panel");
-  const automationPanel = findElement(clientCard, (node) => node.attrs.id === "clientCardAutomationPanel", "client card automation panel");
+  const automationPanel = findElement(clientCard, (node) => node.attrs.id === "clientCardRulesPanel", "client card rules panel");
   const addBlockBtn = findElement(clientCard, (node) => node.attrs.id === "addClientCardBlockBtn", "add client card block button");
   assert.ok(containsElement(clientCardPanel, mainRow));
   assert.ok(containsElement(mainRow, mainTabs));

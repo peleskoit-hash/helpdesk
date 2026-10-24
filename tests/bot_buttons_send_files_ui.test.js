@@ -129,11 +129,11 @@ test('settings client card UI hides manual order controls in the main block and 
   assert.doesNotMatch(settingsClientCardTemplate, /editFieldSortOrder/);
 });
 
-test('settings client card UI exposes move actions and a compact color picker', () => {
+test('settings client card UI keeps move actions without color controls', () => {
   assert.match(settingsClientCardSource, /data-move-block-id/);
   assert.match(settingsClientCardSource, /data-move-field-id/);
-  assert.match(settingsClientCardSource, /type="color"/);
-  assert.match(settingsClientCardSource, /data-color-hex/);
+  assert.doesNotMatch(settingsClientCardSource, /type="color"/);
+  assert.doesNotMatch(settingsClientCardSource, /data-color-hex/);
   assert.doesNotMatch(settingsClientCardSource, /client-card-color-chip/);
   assert.doesNotMatch(settingsClientCardSource, /aria-pressed/);
 });
@@ -146,28 +146,9 @@ test('settings client card color helpers normalize named, hex, and invalid color
   assert.match(settingsClientCardSource, /card\.style\.background = safeColor/);
 });
 
-test('settings client card keeps draft block color through local rerenders and saves on color change', () => {
-  assert.match(settingsClientCardSource, /pendingBlockColors: new Map\(\)/);
-  assert.match(settingsClientCardSource, /function currentBlockColor/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(block\.id\) \|\| colorToHex\(block\.color_scheme\)/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.set\(id, color\)/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.get\(blockId\) \|\|/);
-  assert.match(settingsClientCardSource, /input\.addEventListener\("change", \(\) => saveBlock\(input\.dataset\.blockId, uiText\.colorSaved\)\)/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(blockId\)/);
-  assert.match(settingsClientCardSource, /state\.pendingBlockColors\.delete\(blockId\)/);
-});
-
-test('settings client card color input previews locally without direct patch', () => {
-  const inputHandlerSource = sourceBetween(settingsClientCardSource, 'input.addEventListener("input", () => {', '    input.addEventListener("change", () => saveBlock');
-  assert.match(inputHandlerSource, /state\.pendingBlockColors\.set\(id, color\)/);
-  assert.match(inputHandlerSource, /hex\.textContent = color\.toUpperCase\(\)/);
-  assert.match(inputHandlerSource, /applySettingsBlockColor\(card, color\)/);
-  assert.doesNotMatch(inputHandlerSource, /PATCH|api\(|saveBlock\(/);
-});
-
 test('settings client card save block sends current color and keeps pending on errors', () => {
   const payloadSource = sourceBetween(settingsClientCardSource, 'function blockPayloadFromDom(blockId)', 'function clearPendingBlockSaveTimer');
-  assert.match(payloadSource, /state\.pendingBlockColors\.get\(blockId\) \|\| colorInput\?\.value \|\| fallbackColorHex/);
+  assert.match(payloadSource, /state\.clientCard\.blocks\.find\([\s\S]*color_scheme/);
   assert.match(payloadSource, /return \{ title, color_scheme: color, is_active: active, show_in_card: showInCard, show_in_editor: showInEditor, show_title: showTitle \}/);
 
   const saveSource = sourceBetween(settingsClientCardSource, 'function clearPendingBlockSaveTimer', 'async function moveBlock');
@@ -182,7 +163,7 @@ test('settings client card save block sends current color and keeps pending on e
 test('settings client card block header separates content and reorder actions', () => {
   assert.match(settingsClientCardSource, /client-card-content-actions/);
   assert.match(settingsClientCardSource, /client-card-reorder-actions/);
-  const contentActions = sourceBetween(settingsClientCardSource, '<div class="client-card-content-actions">', '<div class="client-card-accordion-meta">');
+  const contentActions = sourceBetween(settingsClientCardSource, '<div class="client-card-content-actions">', '<div class="client-card-reorder-actions">');
   const reorderActions = sourceBetween(settingsClientCardSource, '<div class="client-card-reorder-actions">', '<div class="client-card-block-editor">');
   assert.doesNotMatch(contentActions, /data-save-block-id/);
   assert.doesNotMatch(contentActions, /data-toggle-block-id/);
@@ -207,8 +188,8 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261021-all-save-feedback/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20261021-all-save-feedback/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
@@ -319,28 +300,11 @@ test('task panel layout stays compact and dropdown is opaque in light and dark t
   assert.match(stylesSource, /body\[data-theme="dark"\] \.task-panel-dropdown \{[\s\S]*background: #111827;/);
 });
 
-test('settings client card uses main tabs with blocks open by default', () => {
-  assert.match(settingsClientCardTemplate, /data-client-card-main-tab="blocks"[^>]*aria-selected="true"[^>]*>&#1041;&#1083;&#1086;&#1082;&#1080;<\/button>/);
-  assert.match(settingsClientCardTemplate, /data-client-card-main-tab="automation"[^>]*aria-selected="false"[^>]*>&#1040;&#1074;&#1090;&#1086;&#1084;&#1072;&#1090;&#1080;&#1079;&#1072;&#1094;&#1080;&#1103;<\/button>/);
+test('settings client card has three global V2 tabs with blocks initially open', () => {
+  for (const tab of ['blocks', 'rules', 'sources']) assert.ok(settingsClientCardTemplate.includes(`data-client-card-main-tab="${tab}"`));
   assert.match(settingsClientCardSource, /activeClientCardTab: "blocks"/);
-  assert.match(settingsClientCardSource, /function setClientCardTab/);
-
-  const blocksPanel = sourceBetween(settingsClientCardTemplate, 'id="clientCardBlocksPanel"', 'id="clientCardAutomationPanel"');
-  assert.match(blocksPanel, /id="clientCardSettings"/);
-  assert.doesNotMatch(blocksPanel, /id="clientCardRules"/);
-  assert.doesNotMatch(blocksPanel, /id="clientCardSources"/);
-});
-
-test('settings client card automation has rules and sources subtabs', () => {
-  assert.match(settingsClientCardTemplate, /data-client-card-automation-tab="rules"[^>]*aria-selected="true"[^>]*>&#1055;&#1088;&#1072;&#1074;&#1080;&#1083;&#1072;<\/button>/);
-  assert.match(settingsClientCardTemplate, /data-client-card-automation-tab="sources"[^>]*aria-selected="false"[^>]*>&#1048;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1080; &#1076;&#1072;&#1085;&#1085;&#1099;&#1093;<\/button>/);
-  assert.match(settingsClientCardSource, /activeAutomationTab: "rules"/);
-  assert.match(settingsClientCardSource, /function setAutomationTab/);
-
-  const rulesPanel = sourceBetween(settingsClientCardTemplate, 'id="clientCardRulesPanel"', 'id="clientCardSourcesPanel"');
-  assert.match(rulesPanel, /id="clientCardRules"/);
-  assert.doesNotMatch(rulesPanel, /id="clientCardSources"/);
-  assert.match(settingsClientCardTemplate, /id="clientCardSourcesPanel" class="hidden" data-client-card-automation-panel="sources"/);
+  assert.doesNotMatch(settingsClientCardTemplate, /data-client-card-automation-tab|id="clientCardAutomationPanel"/);
+  assert.match(settingsClientCardTemplate, /role="tabpanel" data-client-card-main-panel="sources"/);
   assert.match(settingsClientCardTemplate, /class="panel settings-panel client-card-work-panel"/);
 });
 
@@ -358,25 +322,10 @@ test('settings client card tab switching keeps loaded config and toolbar actions
   assert.doesNotMatch(saveRule, /activeAutomationTab\s*=/);
 });
 
-test('settings client card layout stays top-aligned without old vertical stretch gap', () => {
-  assert.match(settingsClientCardSource, /syncClientCardTabs\(\)/);
-  assert.match(settingsClientCardTemplate, /class="content client-card-settings-content"/);
-  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \.client-card-settings-content \{[\s\S]*align-content: start;[\s\S]*grid-auto-rows: max-content;[\s\S]*overflow: visible;[\s\S]*min-height: max-content;/);
-  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] #clientCardAutomationPanel \{[\s\S]*display: grid;[\s\S]*gap: 12px;[\s\S]*align-content: start;/);
-  assert.doesNotMatch(stylesSource, /\.client-card-rule-action-row \{\s*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) auto;/);
-});
-
-test('settings client card blocks panel keeps natural height and vertical scroll access', () => {
-  const settingsPanelScope = sourceBetween(
-    stylesSource,
-    '.main[data-shell-page="settings-client-card"] .settings-panel {',
-    '.main[data-shell-page="settings-client-card"] #clientCardSettings,',
-  );
-  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \{[\s\S]*overflow-y: auto;[\s\S]*overflow-x: hidden;/);
-  assert.match(settingsPanelScope, /overflow: visible;/);
-  assert.match(settingsPanelScope, /min-height: max-content;/);
-  assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \[data-client-card-main-panel\] \{[\s\S]*width: 100%;[\s\S]*align-self: start;[\s\S]*min-height: max-content;/);
-  assert.doesNotMatch(settingsPanelScope, /overflow: hidden/);
+test('settings client card uses V2 workspace bounds and internal scrolling', () => {
+  const css = fs.readFileSync('api/app/static/client-card-settings-v2.css', 'utf8');
+  assert.match(css, /padding: 14px 16px 16px/);
+  assert.match(css, /height: 100%;[\s\S]*overflow: auto;[\s\S]*border-radius: 24px/);
 });
 
 test('settings client card UI exposes delete actions only for custom config entries', () => {
@@ -411,7 +360,7 @@ test('settings client card supports checkbox show-when-false flag', () => {
   const typeIndex = editFieldModal.indexOf('id="editFieldType"');
   const showWhenFalseIndex = editFieldModal.indexOf('id="editFieldShowWhenFalseWrap"');
   const optionsIndex = editFieldModal.indexOf('id="editFieldOptionsWrap"');
-  assert.ok(typeIndex !== -1 && showWhenFalseIndex > typeIndex, 'edit show_when_false must be directly below field type');
+  assert.ok(typeIndex !== -1 && showWhenFalseIndex < typeIndex, 'edit show_when_false belongs to the upper parameters group');
   assert.ok(optionsIndex === -1 || showWhenFalseIndex < optionsIndex, 'edit show_when_false must stay before select options');
   assert.match(settingsClientCardSource, /editFieldShowWhenFalse\.checked = field\.show_when_false !== false/);
   assert.match(settingsClientCardSource, /show_when_false: selectedType === "checkbox" \? Boolean\(el\.editFieldShowWhenFalse\.checked\) : true/);
@@ -1674,16 +1623,9 @@ test('verification block title renders through common client card config mechani
   assert.doesNotMatch(renderSource, /block\.key === "verification"/);
 });
 
-test('settings client card create block modal uses color input with hex preview', () => {
-  assert.match(settingsClientCardTemplate, /id="newClientCardBlockColor" class="client-card-color-input" type="color"/);
-  assert.match(settingsClientCardTemplate, /id="newClientCardBlockColorHex" class="client-card-color-hex">#E5E7EB<\/span>/);
-  assert.doesNotMatch(settingsClientCardTemplate, /<select id="newClientCardBlockColor">/);
-  assert.doesNotMatch(settingsClientCardTemplate, /value="gray"|>Голубой<\/option>|>Серый<\/option>/);
-  assert.match(settingsClientCardSource, /function syncCreateBlockColorPreview/);
-  assert.match(settingsClientCardSource, /el\.newClientCardBlockColor\.value = fallbackColorHex/);
-  assert.match(settingsClientCardSource, /syncCreateBlockColorPreview\(\);/);
-  assert.match(settingsClientCardSource, /const color = colorToHex\(el\.newClientCardBlockColor\.value\)/);
-  assert.match(settingsClientCardSource, /body: JSON\.stringify\(\{ title, color_scheme: color \}\)/);
+test('settings client card new block keeps the legacy default without a color control', () => {
+  assert.match(settingsClientCardTemplate, /id="newClientCardBlockColor" type="hidden"/);
+  assert.doesNotMatch(settingsClientCardTemplate, /type="color"/);
 });
 
 test('settings client card create field modal still uses block select with contextual lock', () => {
@@ -3401,7 +3343,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261024-client-controls-v2/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261024-client-settings-panel-v2/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3484,7 +3426,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261024-client-controls-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261024-client-settings-panel-v2/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

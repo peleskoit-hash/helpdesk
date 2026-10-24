@@ -13,7 +13,6 @@ const state = {
   pendingBlockSaveTimers: new Map(),
   pendingBlockSaveMeta: new Map(),
   activeClientCardTab: "blocks",
-  activeAutomationTab: "rules",
 };
 
 const colorSchemes = ["blue", "green", "yellow", "red", "gray", "purple"];
@@ -130,8 +129,6 @@ const el = {
   addClientCardBlockBtn: document.getElementById("addClientCardBlockBtn"),
   clientCardMainTabs: Array.from(document.querySelectorAll("[data-client-card-main-tab]")),
   clientCardMainPanels: Array.from(document.querySelectorAll("[data-client-card-main-panel]")),
-  clientCardAutomationTabs: Array.from(document.querySelectorAll("[data-client-card-automation-tab]")),
-  clientCardAutomationPanels: Array.from(document.querySelectorAll("[data-client-card-automation-panel]")),
   clientCardSettings: document.getElementById("clientCardSettings"),
   emptyClientCardText: document.getElementById("emptyClientCardText"),
   addClientCardRuleBtn: document.getElementById("addClientCardRuleBtn"),
@@ -244,23 +241,10 @@ function syncClientCardTabs() {
   });
   el.addClientCardBlockBtn.classList.toggle("hidden", !showBlocks);
 
-  el.clientCardAutomationTabs.forEach((tab) => {
-    const active = tab.dataset.clientCardAutomationTab === state.activeAutomationTab;
-    tab.classList.toggle("primary", active);
-    tab.setAttribute("aria-selected", active ? "true" : "false");
-  });
-  el.clientCardAutomationPanels.forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.clientCardAutomationPanel !== state.activeAutomationTab);
-  });
 }
 
 function setClientCardTab(tab) {
-  state.activeClientCardTab = tab === "automation" ? "automation" : "blocks";
-  syncClientCardTabs();
-}
-
-function setAutomationTab(tab) {
-  state.activeAutomationTab = tab === "sources" ? "sources" : "rules";
+  state.activeClientCardTab = ["rules", "sources"].includes(tab) ? tab : "blocks";
   syncClientCardTabs();
 }
 
@@ -1344,6 +1328,7 @@ function renderAdminOnlyOptionFlags(container, options, selectedValues = []) {
     text.textContent = value;
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
+    checkbox.className = "desk-toggle";
     checkbox.dataset.adminOnlyValue = value;
     checkbox.checked = selected.has(value);
     label.appendChild(text);
@@ -1440,8 +1425,7 @@ function syncEditFieldOptionsVisibility() {
 
 function blockPayloadFromDom(blockId) {
   const title = el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="title"]`).value.trim();
-  const colorInput = el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="color_scheme"]`);
-  const color = state.pendingBlockColors.get(blockId) || colorInput?.value || fallbackColorHex;
+  const color = state.clientCard.blocks.find((block) => block.id === blockId)?.color_scheme;
   const active = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="is_active"]`).checked);
   const showInCard = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="show_in_card"]`).checked);
   const showInEditor = Boolean(el.clientCardSettings.querySelector(`[data-block-id="${blockId}"][data-prop="show_in_editor"]`).checked);
@@ -1572,7 +1556,6 @@ function renderClientCardSettings() {
   for (const [blockIndex, block] of blocks.entries()) {
     const expanded = state.expandedBlocks.has(block.id);
     const customBlock = isCustomBlock(block);
-    const blockColor = currentBlockColor(block);
 
     const card = document.createElement("div");
     card.className = `client-card-settings-block compact ${blockColorClass(block.color_scheme)}`;
@@ -1589,9 +1572,6 @@ function renderClientCardSettings() {
           <div class="client-card-content-actions">
             ${customBlock ? `<button class="action danger" type="button" data-delete-block-id="${escapeHtml(block.id)}">${uiText.deleteBlock}</button>` : ""}
           </div>
-          <div class="client-card-accordion-meta">
-            <span>${block.is_active ? uiText.active : uiText.inactive}</span>
-          </div>
         </div>
         <div class="client-card-reorder-actions">
           <button class="action" type="button" data-move-block-id="${escapeHtml(block.id)}" data-direction="up" ${blockIndex === 0 ? "disabled" : ""}>${uiText.moveUp}</button>
@@ -1603,35 +1583,32 @@ function renderClientCardSettings() {
         <label>${uiText.title}
           <input data-block-id="${escapeHtml(block.id)}" data-prop="title" value="${escapeHtml(block.title)}" />
         </label>
-        <div class="client-card-block-color-control" data-no-card-open>
-          <label class="client-card-block-color-label" for="client-card-color-${escapeHtml(block.id)}">${uiText.blockColor}</label>
-          <div class="client-card-color-picker-row">
-            <input id="client-card-color-${escapeHtml(block.id)}" class="client-card-color-input" type="color" data-block-id="${escapeHtml(block.id)}" data-prop="color_scheme" value="${escapeHtml(blockColor)}" />
-            <span class="client-card-color-hex" data-block-id="${escapeHtml(block.id)}" data-color-hex>${escapeHtml(blockColor.toUpperCase())}</span>
-          </div>
-        </div>
+        <div class="client-card-block-options">
+          <div class="client-card-option-section" role="group" aria-label="Параметры">
+            <div class="client-card-option-title">Параметры</div>
         <label class="checkbox-label">${uiText.activeLabel}
-          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="is_active" ${block.is_active ? "checked" : ""} />
-        </label>
-        <label class="checkbox-label">${uiText.showInCard}
-          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_card" ${block.show_in_card !== false ? "checked" : ""} />
-        </label>
-        <label class="checkbox-label">${uiText.showInEditor}
-          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_editor" ${block.show_in_editor !== false ? "checked" : ""} />
+          <input type="checkbox" class="desk-toggle" data-block-id="${escapeHtml(block.id)}" data-prop="is_active" ${block.is_active ? "checked" : ""} />
         </label>
         <label class="checkbox-label">${uiText.showTitle}
-          <input type="checkbox" data-block-id="${escapeHtml(block.id)}" data-prop="show_title" ${block.show_title !== false ? "checked" : ""} />
+          <input type="checkbox" class="desk-toggle" data-block-id="${escapeHtml(block.id)}" data-prop="show_title" ${block.show_title !== false ? "checked" : ""} />
         </label>
+          </div>
+          <div class="client-card-option-section" role="group" aria-label="Отображение">
+            <div class="client-card-option-title">Отображение</div>
+        <label class="checkbox-label">${uiText.showInEditor}
+          <input type="checkbox" class="desk-toggle" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_editor" ${block.show_in_editor !== false ? "checked" : ""} />
+        </label>
+        <label class="checkbox-label">${uiText.showInCard}
+          <input type="checkbox" class="desk-toggle" data-block-id="${escapeHtml(block.id)}" data-prop="show_in_card" ${block.show_in_card !== false ? "checked" : ""} />
+        </label>
+          </div>
+        </div>
       </div>
 
       <div class="client-card-accordion-body ${expanded ? "" : "hidden"}">
         <div class="client-card-field-list">
           ${(block.fields || []).map((field, fieldIndex, fields) => `
             <div class="client-card-field-row" data-open-field-id="${escapeHtml(field.id)}">
-              <div class="client-card-field-visible">
-                <input type="checkbox" ${field.is_visible ? "checked" : ""} disabled />
-                <input type="checkbox" ${field.is_visible_in_editor !== false ? "checked" : ""} disabled />
-              </div>
               <div class="client-card-field-main">
                 <div class="client-card-field-label">${escapeHtml(field.label)}</div>
                 <div class="client-card-field-meta">
@@ -1654,7 +1631,6 @@ function renderClientCardSettings() {
       </div>
     `;
 
-    applySettingsBlockColor(card, blockColor);
     el.clientCardSettings.appendChild(card);
     card.addEventListener("click", (event) => {
       const boundary = interactiveBoundary(event.target);
@@ -1668,19 +1644,6 @@ function renderClientCardSettings() {
     input.addEventListener("input", () => scheduleBlockAutosave(input.dataset.blockId, { delay: 500, statusText: uiText.blockSaved }));
     input.addEventListener("change", () => scheduleBlockAutosave(input.dataset.blockId, { statusText: uiText.blockSaved }));
     input.addEventListener("blur", () => scheduleBlockAutosave(input.dataset.blockId, { statusText: uiText.blockSaved }));
-  });
-
-  el.clientCardSettings.querySelectorAll("[data-prop='color_scheme']").forEach((input) => {
-    input.addEventListener("input", () => {
-      const id = input.dataset.blockId;
-      const color = colorToHex(input.value);
-      state.pendingBlockColors.set(id, color);
-      const card = input.closest(".client-card-settings-block");
-      const hex = el.clientCardSettings.querySelector(`[data-block-id="${id}"][data-color-hex]`);
-      if (hex) hex.textContent = color.toUpperCase();
-      if (card) applySettingsBlockColor(card, color);
-    });
-    input.addEventListener("change", () => saveBlock(input.dataset.blockId, uiText.colorSaved));
   });
 
   el.clientCardSettings.querySelectorAll("[data-move-block-id]").forEach((btn) => {
@@ -1768,7 +1731,7 @@ function renderClientCardRules() {
       </div>
       <div class="client-card-field-actions">
         <label class="checkbox-label">${uiText.activeLabel}
-          <input type="checkbox" data-toggle-rule-id="${escapeHtml(rule.id)}" ${rule.is_active ? "checked" : ""} />
+          <input type="checkbox" class="desk-toggle" data-toggle-rule-id="${escapeHtml(rule.id)}" ${rule.is_active ? "checked" : ""} />
         </label>
         <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="up">\u2191</button>
         <button class="action" type="button" data-move-rule-id="${escapeHtml(rule.id)}" data-direction="down">\u2193</button>
@@ -1837,7 +1800,7 @@ function renderClientCardSources() {
       </div>
       <div class="client-card-field-actions">
         <label class="checkbox-label">${uiText.activeLabel}
-          <input type="checkbox" data-toggle-source-id="${escapeHtml(source.id)}" ${source.is_active ? "checked" : ""} />
+          <input type="checkbox" class="desk-toggle" data-toggle-source-id="${escapeHtml(source.id)}" ${source.is_active ? "checked" : ""} />
         </label>
         <button class="action" type="button" data-test-source-id="${escapeHtml(source.id)}">\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c</button>
         <button class="action danger" type="button" data-delete-source-id="${escapeHtml(source.id)}">\u0423\u0434\u0430\u043b\u0438\u0442\u044c</button>
@@ -2005,9 +1968,6 @@ const handlePageKeydown = (e) => {
   el.addClientCardBlockBtn.addEventListener("click", openCreateModal);
   el.clientCardMainTabs.forEach((tab) => {
     tab.addEventListener("click", () => setClientCardTab(tab.dataset.clientCardMainTab));
-  });
-  el.clientCardAutomationTabs.forEach((tab) => {
-    tab.addEventListener("click", () => setAutomationTab(tab.dataset.clientCardAutomationTab));
   });
   el.addClientCardRuleBtn.addEventListener("click", () => openRuleModal());
   el.addClientCardSourceBtn?.addEventListener("click", () => openSourceModal());

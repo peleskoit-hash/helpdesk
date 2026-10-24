@@ -161,6 +161,17 @@ function contrastRatio(foreground, background) {
 }
 
 for (const theme of ['light', 'dark']) {
+  test(`client view scrollbar uses V2 tokens: ${theme}`, async t => {
+    const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
+    const scroll = await page.locator('#clientDynamicCard').evaluate(el => {
+      el.scrollTop = 25;
+      const s = getComputedStyle(el);
+      return { top: el.scrollTop, width: s.scrollbarWidth, color: s.scrollbarColor };
+    });
+    assert.ok(scroll.top > 0, 'the view card itself is the scroll owner');
+    assert.equal(scroll.width, 'thin'); assert.notEqual(scroll.color, 'auto');
+    assert.equal(await page.locator('#clientModal').isVisible(), false);
+  });
   test(`ticket client V2 scrollbars, border and boolean save: ${theme}`, async t => {
     const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
     const panelBox = () => page.locator('.ticket-client-side, .ticket-card, .ticket-client-side > .card-head').evaluateAll(nodes => nodes.map(el => {
