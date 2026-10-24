@@ -1635,6 +1635,7 @@
         } else {
           fieldEl = renderReadonlyEditorField(field, currentValue, ctx);
         }
+        if (ctx.inlineClient) fieldEl.querySelector('input[type="checkbox"]')?.classList.add("desk-toggle");
         if (baseHidden) fieldEl.classList.add("hidden");
         blockWrap.appendChild(fieldEl);
         renderedFields += 1;

@@ -369,6 +369,9 @@ body #appContent.main[data-shell-page="ticket-card"] {
     .client-card-block-title, .client-card-field-label, .client-card-field-value,
     .client-card-field-readonly-rule, .status, .status-panel-title, .meta, small) { color: var(--desk-text); }
   & .client-edit-border { stroke: var(--desk-accent); border-radius: 24px; }
+  & .client-edit-border rect { rx: 22px; ry: 22px; }
+  & :is(#messages, #clientModal .modal-body) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
+  & #clientModal .custom-field-editor:has(> .desk-toggle) { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   & .ticket-control-wrap { padding: 10px; gap: 10px; }
   & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
   & .freeze-box { background: var(--desk-blue-bg); }

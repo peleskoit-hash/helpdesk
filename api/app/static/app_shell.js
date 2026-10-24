@@ -107,7 +107,7 @@
       page: "management-users",
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261021-client-save-position",
+        "/static/ticket_client_card.js?v=20261024-client-controls-v2",
         "/static/management_users.js?v=20261021-all-save-feedback",
       ],
     }],
@@ -125,7 +125,7 @@
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20261020-quotes",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261021-client-save-position",
+        "/static/ticket_client_card.js?v=20261024-client-controls-v2",
         "/static/ticket_composer.js?v=20261021-chat-file-input",
         "/static/ticket_controls.js?v=20261013a",
         "/static/ticket_message_view.js?v=20261021-all-save-feedback",

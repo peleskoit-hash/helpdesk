@@ -161,6 +161,62 @@ function contrastRatio(foreground, background) {
 }
 
 for (const theme of ['light', 'dark']) {
+  test(`ticket client V2 scrollbars, border and boolean save: ${theme}`, async t => {
+    const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
+    const panelBox = () => page.locator('.ticket-client-side, .ticket-card, .ticket-client-side > .card-head').evaluateAll(nodes => nodes.map(el => {
+      const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height];
+    }));
+    const view = await panelBox();
+    await page.route('**/api/v1/tickets/demo-0/client-card-view-config', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ blocks: [{ key: 'checks', title: 'Проверки', is_visible: true, is_visible_in_editor: true, fields: [
+      { key: 'is_verified', label: 'Верификация', field_type: 'checkbox', is_system: true, is_visible: true, is_visible_in_editor: true, is_editable: true },
+      { key: 'custom_temporary_rop', label: 'Временный РОП', field_type: 'checkbox', is_visible: true, is_visible_in_editor: true, is_editable: true },
+      ...Array.from({ length: 6 }, (_, i) => ({ key: `custom_note_${i}`, label: 'Примечание', field_type: 'textarea', is_visible: true, is_visible_in_editor: true, is_editable: true })),
+    ] }] }) }));
+    // Reload to load the configured system and custom boolean fields.
+    await page.reload();
+    await page.waitForSelector('.message');
+    await page.evaluate(() => document.fonts.ready);
+    await page.addStyleTag({ content: '#clientModal * { transition: none !important; }' });
+    await page.locator('#editClientBtn').click();
+    await page.locator('#clientModal .desk-toggle').first().waitFor();
+    assert.deepEqual(await panelBox(), view, 'panel and header geometry is unchanged');
+    const details = await page.evaluate(() => {
+      const panel = document.querySelector('.ticket-client-side').getBoundingClientRect(), rect = document.querySelector('.client-edit-border rect').getBoundingClientRect();
+      const style = getComputedStyle(document.querySelector('.client-edit-border rect'));
+      return { insets: [rect.left - panel.left, rect.top - panel.top, panel.right - rect.right, panel.bottom - rect.bottom], rx: style.rx, ry: style.ry,
+        scrollbars: ['#messages', '#clientModal .modal-body'].map(selector => { const el = document.querySelector(selector), s = getComputedStyle(el); el.scrollTop = 20; return { width: s.scrollbarWidth, color: s.scrollbarColor, scrolled: el.scrollTop }; }),
+        rows: [...document.querySelectorAll('#clientModal .desk-toggle')].map(el => { const a = el.getBoundingClientRect(), b = el.previousElementSibling.getBoundingClientRect(); return { type: el.type, appearance: getComputedStyle(el).appearance, alignment: Math.abs(a.y + a.height / 2 - b.y - b.height / 2) }; }) };
+    });
+    assert.deepEqual(details.insets, [2, 2, 2, 2]);
+    assert.equal(details.rx, '22px'); assert.equal(details.ry, '22px');
+    for (const s of details.scrollbars) { assert.equal(s.width, 'thin'); assert.notEqual(s.color, 'auto'); }
+    for (const s of details.scrollbars) assert.ok(s.scrolled > 0);
+    assert.equal(details.rows.length, 2);
+    for (const row of details.rows) { assert.equal(row.type, 'checkbox'); assert.equal(row.appearance, 'none'); assert.ok(row.alignment < 1); }
+    const verified = page.locator('#fIsVerified'), custom = page.locator('[data-custom-field-key="custom_temporary_rop"]');
+    await verified.uncheck();
+    await custom.focus(); await page.keyboard.press('Space');
+    assert.equal(await custom.isChecked(), true);
+    await page.evaluate(() => document.querySelector('#appContent').style.setProperty('--desk-accent', 'rgb(180, 90, 120)'));
+    assert.equal(await custom.evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(180, 90, 120)', 'toggle follows the active accent token');
+    await custom.evaluate(el => { el.disabled = true; });
+    assert.equal(await custom.evaluate(el => getComputedStyle(el).cursor), 'not-allowed');
+    await custom.evaluate(el => { el.disabled = false; });
+    let saved;
+    await page.route('**/api/v1/tickets/demo-0/client-profile', route => {
+      if (route.request().method() === 'PATCH') saved = route.request().postDataJSON();
+      if (!saved) return route.fallback();
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...card.client_profile, ...saved }) });
+    });
+    await page.locator('#saveClientBtn').click();
+    await page.locator('#clientModal').waitFor({ state: 'hidden' });
+    assert.equal(saved.is_verified, false); assert.equal(saved.custom_fields.custom_temporary_rop, true);
+    assert.deepEqual(await panelBox(), view);
+    await page.locator('#editClientBtn').click();
+    await page.locator('#fIsVerified').waitFor();
+    assert.equal(await verified.isChecked(), false); assert.equal(await custom.isChecked(), true);
+    await page.locator('#closeClientModalBtn').click();
+  });
   test(`client editor text contrast and unchanged geometry: ${theme}`, async t => {
     const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
     await page.locator('#editClientBtn').click();
