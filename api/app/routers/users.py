@@ -12,6 +12,8 @@ from ..models import StatsCompletion, TelegramNotificationAccount, User
 from ..routers.settings_users import _ensure_unique_login, _telegram_notification_display
 from ..schemas import (
     AgentOut,
+    AppearanceSessionOut,
+    AppearanceSessionCreate,
     CompletionPeriodStats,
     CompletionStatsOut,
     SelfAccountChangeOut,
@@ -28,6 +30,16 @@ from ..schemas import (
     dump_ticket_list_columns,
 )
 from ..services.assignment import assign_unassigned_fairly
+from ..services.user_appearance import (
+    APPEARANCE_FIELDS,
+    AppearanceSessionExpired,
+    accept_appearance_write,
+    appearance_colors,
+    appearance_revision,
+    convert_legacy_appearance,
+    COLOR_FIELDS,
+    register_appearance_session,
+)
 from ..services.statistics_lifecycle import set_user_availability_status
 from ..services.user_avatars import (
     MAX_AVATAR_BYTES,
@@ -231,19 +243,43 @@ def get_user_avatar(
     return FileResponse(str(path), media_type=media_type_for_kind(kind))
 
 
+def _preferences_out(user: User) -> UserPreferencesOut:
+    return UserPreferencesOut(
+        appearance_revision=appearance_revision(user),
+        send_by_enter=bool(user.send_by_enter),
+        color_enabled=bool(user.color_enabled),
+        task_panel_enabled=bool(user.task_panel_enabled),
+        theme_preference=user.theme_preference if user.theme_preference in {"light", "dark"} else "light",
+        **appearance_colors(user),
+        accent_preference=user.accent_preference,
+        accent_intensity_light=user.accent_intensity_light,
+        accent_intensity_dark=user.accent_intensity_dark,
+        ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+    )
+
+
 @router.get("/me/preferences", response_model=UserPreferencesOut)
 def get_my_preferences(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    return _preferences_out(_real_user_model(db, current_user))
+
+
+@router.post("/me/preferences/appearance-session", response_model=AppearanceSessionOut)
+def create_my_appearance_session(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    payload: AppearanceSessionCreate | None = None,
+):
+    initial = payload.preferences.model_dump(exclude_unset=True) if payload else {}
+    if payload and (not initial or set(initial) - set(APPEARANCE_FIELDS)):
+        _error(422, "invalid_initial_appearance", "Only appearance preferences may initialize a session")
     user = _real_user_model(db, current_user)
-    return UserPreferencesOut(
-        send_by_enter=bool(user.send_by_enter),
-        color_enabled=bool(user.color_enabled),
-        task_panel_enabled=bool(user.task_panel_enabled),
-        theme_preference=user.theme_preference if user.theme_preference in {"light", "dark"} else "light",
-        ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+    writer_id = register_appearance_session(
+        db, user, initial, payload.sequence if payload else 0, payload.expected_revision if payload else None,
     )
+    return AppearanceSessionOut(writer_id=writer_id, preferences=_preferences_out(user) if payload else None)
 
 
 @router.patch("/me/preferences", response_model=UserPreferencesOut)
@@ -254,6 +290,23 @@ def update_my_preferences(
 ):
     user = _real_user_model(db, current_user)
     updates = payload.model_dump(exclude_unset=True)
+    updates.pop("appearance_write", None)
+    has_appearance = any(field in updates for field in APPEARANCE_FIELDS)
+    if has_appearance and payload.appearance_write is None:
+        _error(422, "appearance_write_required", "Appearance settings require appearance_write")
+    if payload.appearance_write and has_appearance:
+        try:
+            accepted = accept_appearance_write(
+                db, user, str(payload.appearance_write.writer_id), payload.appearance_write.sequence,
+            )
+        except AppearanceSessionExpired:
+            preferences = _preferences_out(user).model_dump(mode="json")
+            db.rollback()
+            raise HTTPException(status_code=409, detail={
+                "error": {"code": "appearance_session_expired"}, "preferences": preferences,
+            })
+        if not accepted:
+            updates = {field: value for field, value in updates.items() if field not in APPEARANCE_FIELDS}
     if "send_by_enter" in updates:
         user.send_by_enter = bool(updates["send_by_enter"])
     if "color_enabled" in updates:
@@ -262,19 +315,21 @@ def update_my_preferences(
         user.task_panel_enabled = bool(updates["task_panel_enabled"])
     if "theme_preference" in updates:
         user.theme_preference = updates["theme_preference"]
+    for field in ("accent_preference", "accent_intensity_light", "accent_intensity_dark"):
+        if field in updates:
+            setattr(user, field, updates[field])
+    convert_legacy_appearance(user, updates)
+    for field in COLOR_FIELDS:
+        if field in updates:
+            setattr(user, field, updates[field])
     if "ticket_list_columns" in updates:
         user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:
         user.updated_at = datetime.utcnow()
+    if updates or payload.appearance_write:
         db.commit()
         db.refresh(user)
-    return UserPreferencesOut(
-        send_by_enter=bool(user.send_by_enter),
-        color_enabled=bool(user.color_enabled),
-        task_panel_enabled=bool(user.task_panel_enabled),
-        theme_preference=user.theme_preference if user.theme_preference in {"light", "dark"} else "light",
-        ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
-    )
+    return _preferences_out(user)
 
 
 @router.get("/me/completion-stats", response_model=CompletionStatsOut)

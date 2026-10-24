@@ -554,6 +554,35 @@ def test_user_theme_preference_column_is_added_idempotently_for_existing_schema(
     assert "theme_preference" in columns
     assert columns["theme_preference"]["notnull"] == 1
     assert theme_preference == "light"
+    with engine.connect() as conn:
+        appearance = conn.execute(text(
+            "SELECT accent_preference, accent_intensity_light, accent_intensity_dark FROM users WHERE id = 'user-1'"
+        )).one()
+    assert tuple(appearance) == ("purple", 50, 50)
+    for column in ("accent_preference", "accent_intensity_light", "accent_intensity_dark"):
+        assert columns[column]["notnull"] == 1
+    assert "appearance_write_state_json" in columns
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT appearance_write_state_json FROM users WHERE id = 'user-1'")).scalar_one() is None
+
+
+def test_appearance_schema_evolution_preserves_preferences_and_writer_state(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_user_columns()
+    with engine.begin() as conn:
+        conn.execute(text("""UPDATE users SET theme_preference='dark', accent_preference='teal',
+            accent_intensity_light=17, accent_intensity_dark=99, send_by_enter=TRUE,
+            appearance_write_state_json=:state WHERE id='user-1'"""),
+            {"state": '{"writer-1":{"order":1,"sequence":3}}'})
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+    with engine.connect() as conn:
+        result = conn.execute(text("""SELECT theme_preference, accent_preference,
+            accent_intensity_light, accent_intensity_dark, send_by_enter, appearance_write_state_json
+            FROM users WHERE id='user-1'""")).one()
+    assert tuple(result) == ("dark", "teal", 17, 99, 1, '{"writer-1":{"order":1,"sequence":3}}')
 
 
 def test_user_ticket_list_columns_column_is_added_idempotently_for_existing_schema(monkeypatch):
@@ -905,3 +934,34 @@ def test_postgres_equivalent_unique_invariant_detection(row, expected):
     )
 
     assert result is expected
+
+
+@pytest.mark.parametrize("accent,hue", [("purple",259), ("blue",215), ("red",350), ("green",153),
+                                          ("orange",29), ("teal",184), ("mono",0)])
+def test_hue_palette_migration_preserves_legacy_and_saved_colors(monkeypatch, accent, hue):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN accent_preference VARCHAR(16)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN accent_intensity_light INTEGER"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN accent_intensity_dark INTEGER"))
+        conn.execute(text("UPDATE users SET accent_preference=:accent, accent_intensity_light=17, accent_intensity_dark=99"),
+                     {"accent": accent})
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_user_columns()
+    schema_evolution.ensure_user_columns()
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT * FROM users WHERE id='user-1'")).mappings().one()
+        assert row["accent_preference"] == accent
+        assert row["accent_intensity_light"] == 17
+        assert row["accent_intensity_dark"] == 99
+        for theme, intensity in [("light",17), ("dark",99)]:
+            assert row[f"accent_hue_{theme}"] == hue
+            assert row[f"accent_strength_{theme}"] == (0 if accent == "mono" else intensity)
+            assert row[f"interface_hue_{theme}"] == (225 if theme == "dark" else 259)
+            assert row[f"interface_intensity_{theme}"] == 50
+        conn.execute(text("UPDATE users SET interface_hue_light=88, accent_hue_dark=42, accent_strength_dark=0"))
+    schema_evolution.ensure_user_columns()
+    with engine.connect() as conn:
+        assert tuple(conn.execute(text("SELECT interface_hue_light, accent_hue_dark, accent_strength_dark FROM users")).one()) == (88,42,0)
+    engine.dispose()

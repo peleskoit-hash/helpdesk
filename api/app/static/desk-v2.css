@@ -20,6 +20,9 @@ body:has(.layout > .main) {
   --desk-accent: #7760a8;
   --desk-tint: #ece5f6;
   --desk-on-tint: #624a91;
+  --desk-status-bg: #ece5f6;
+  --desk-status-text: #624a91;
+  --desk-status-border: #7760a8;
   --desk-danger: #b13f59;
   --desk-success: #35765d;
   --desk-success-bg: #eaf4ef;
@@ -49,6 +52,9 @@ body[data-theme="dark"]:has(.layout > .main) {
   --desk-accent: #b6a0e2;
   --desk-tint: #3c3354;
   --desk-on-tint: #dac7fa;
+  --desk-status-bg: #3c3354;
+  --desk-status-text: #dac7fa;
+  --desk-status-border: #b6a0e2;
   --desk-danger: #f39bb1;
   --desk-success: #9dd3ba;
   --desk-success-bg: #253c38;
@@ -70,7 +76,7 @@ body:has(.layout > .main) .sidebar,
 body:has(.layout > .main) .toolbar {
   --text: var(--desk-text);
   --muted: var(--desk-muted);
-  --accent: var(--desk-accent);
+  --accent: var(--desk-focus, var(--desk-accent));
   --border: var(--desk-border);
   font-family: var(--desk-font);
   color: var(--desk-text);
@@ -180,12 +186,22 @@ body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item { font-size: 
 body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item:hover { background: var(--desk-hover); }
 body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item-danger { color: var(--desk-danger); }
 body:has(.layout > .main) :where(.sidebar) .agent-avatar {
-  width: 44px;
-  height: 44px;
+  width: 88px;
+  height: 88px;
+  font-size: 24px;
   border-radius: 50%;
   background: var(--desk-tint);
   color: var(--desk-on-tint);
   box-shadow: none;
+}
+body:has(.layout > .main) :where(.sidebar) .sidebar-user-name {
+  padding: 8px 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 body:has(.layout > .main) :where(.sidebar) .agent-status-btn {
   font: 600 14px/1.4 var(--desk-font);
@@ -226,13 +242,13 @@ body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-lis
   --surface: var(--desk-surface);
   --text: var(--desk-text);
   --muted: var(--desk-muted);
-  --accent: var(--desk-accent);
+  --accent: var(--desk-focus, var(--desk-accent));
   --border: var(--desk-border);
   --internal: var(--desk-warning-bg);
   --system: var(--desk-soft);
   color: var(--desk-text);
   font: 14px/1.5 var(--desk-font);
-  background: radial-gradient(ellipse at 85% 0%, var(--desk-tint), transparent 55%), var(--desk-bg);
+  background: radial-gradient(ellipse at 85% 0%, var(--desk-backdrop, var(--desk-tint)), transparent 55%), var(--desk-bg);
 }
 body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]))::before { content: none; }
 
@@ -253,10 +269,10 @@ body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tick
     backdrop-filter: none;
   }
   & :is(button.action, .wrong-problem-item):hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
-  & button.action.primary, & .mini-check-btn.active { background: var(--desk-on-tint); border-color: var(--desk-on-tint); color: var(--desk-surface); }
-  & button.action.primary:hover:not(:disabled) { background: var(--desk-accent); }
+  & button.action.primary, & .mini-check-btn.active { background: var(--desk-primary, var(--desk-on-tint)); border-color: var(--desk-focus, var(--desk-accent)); color: var(--desk-on-accent, var(--desk-surface)); }
+  & button.action.primary:hover:not(:disabled) { background: var(--desk-primary, var(--desk-accent)); }
   & button.action.danger { color: var(--desk-danger); background: var(--desk-danger-bg); border-color: var(--desk-border); }
-  & :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+  & :is(input:not([type="checkbox"]):not([type="file"]):not([type="range"]), select, textarea) {
     background: var(--desk-soft);
     color: var(--desk-text);
     border: 1px solid var(--desk-border);
@@ -268,7 +284,7 @@ body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tick
     backdrop-filter: none;
   }
   & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
-  & :is(button, a, input, select, textarea):focus-visible { outline: 2px solid var(--desk-accent); outline-offset: 3px; }
+  & :is(button, a, input, select, textarea):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
   & :is(.status, .meta, .status-panel-title) { font-size: 13px; color: var(--desk-muted); }
   & .card-head { padding: 18px; border-color: var(--desk-border); font-size: 15px; }
   & .task-panel { margin: 12px 24px 0; background: var(--desk-surface); border-color: var(--desk-border); border-radius: 16px; box-shadow: none; }
@@ -283,17 +299,19 @@ body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tick
 }
 
 body #appContent.main[data-shell-page="ticket-card"] {
-  & > .ticket-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr) minmax(230px, 260px); }
-  & .ticket-head-main { background: transparent; border: 0; border-radius: 0; padding: 0; contain: none; }
+  & > .ticket-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr) minmax(230px, 260px); padding: 14px 16px 16px; gap: 12px; }
+  & .ticket-card > .ticket-card-wrap > .card-head { padding: 12px; }
+  & .ticket-head-main { background: transparent; border: 0; border-radius: 0; padding: 0; contain: none; align-items: center; gap: 8px; }
+  & .instruction-btn { flex: 0 0 auto; }
   & .ticket-head-title-wrap { flex: 1; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px; }
   & .ticket-head-title { min-width: 0; background: transparent; color: var(--desk-text); font-size: 23px; line-height: 1.3; letter-spacing: -.035em; padding: 0; font-weight: 800; }
   & .ticket-status-badges { flex: 0 0 auto; margin-left: 0; gap: 6px; }
-  & .ticket-status-badge { padding: 6px 10px; font-size: 12px; line-height: 1.2; border: 0; color: var(--desk-on-tint); background: var(--desk-tint); }
+  & .ticket-status-badge { padding: 6px 10px; font-size: 12px; line-height: 1.2; border: 0; color: var(--desk-status-text); background: var(--desk-status-bg); }
   & .ticket-badge-type-ticket { color: var(--desk-success); background: var(--desk-success-bg); }
   & .ticket-badge-type-task { color: var(--desk-task-text); background: var(--desk-task-bg); }
   & .ticket-badge-status-special { color: var(--desk-special-text); background: var(--desk-special-bg); }
   & .ticket-badge-status-unassigned { color: var(--desk-muted); background: var(--desk-border); }
-  & .ticket-badge-status-active { color: var(--desk-on-tint); background: var(--desk-tint); }
+  & .ticket-badge-status-active { color: var(--desk-status-text); background: var(--desk-status-bg); }
   & .ticket-badge-status-closed { color: var(--desk-danger); background: var(--desk-danger-bg); }
   & .ticket-badge-frozen { color: var(--desk-blue-text); background: var(--desk-blue-bg); }
   & .messages { padding: 28px clamp(20px, 2.2vw, 44px); gap: 22px; background: var(--desk-soft); scroll-padding: 24px; }
@@ -318,11 +336,11 @@ body #appContent.main[data-shell-page="ticket-card"] {
   & .btn-row { gap: 8px; }
   & .composer-enter-toggle { font-size: 13px; color: var(--desk-muted); }
   & .composer-hotkey-hint { font-size: 12px; }
-  & .send-now { background: var(--desk-on-tint) !important; border-color: var(--desk-on-tint) !important; color: var(--desk-surface) !important; box-shadow: none; }
+  & .send-now { background: var(--desk-primary, var(--desk-on-tint)) !important; border-color: var(--desk-focus, var(--desk-accent)) !important; color: var(--desk-on-accent, var(--desk-surface)) !important; box-shadow: none; }
   & :is(.quote-preview, .message-quote) { color: var(--desk-text); background: var(--desk-tint); border-color: var(--desk-accent); box-shadow: none; backdrop-filter: none; }
   & :is(.quote-preview-author, .quote-preview-text) { color: var(--desk-text); }
-  & .ticket-client-info { padding: 14px; gap: 12px; }
-  & .ticket-client-side > .card-head { padding: 10px 18px; }
+  & .ticket-client-info { padding: 10px; gap: 8px; }
+  & .ticket-client-side > .card-head { padding: 8px 12px; }
   & .client-card-block { border-radius: 16px; padding: 12px; gap: 6px; border-color: var(--desk-border); box-shadow: none; }
   & .client-card-block-title { font-size: 14px; color: var(--desk-text); }
   & .client-card-field { font-size: 14px; line-height: 1.5; padding: 7px 0; border-color: var(--desk-border); overflow-wrap: anywhere; }
@@ -337,14 +355,17 @@ body #appContent.main[data-shell-page="ticket-card"] {
   & .client-card-block-red { background: var(--desk-danger-bg); }
   & .client-card-block-gray { background: var(--desk-soft); }
   & .client-card-block-purple { background: var(--desk-tint); }
-  & .client-card-telegram-avatar { width: 92px; height: 92px; margin: 8px auto 16px; border-radius: 50%; overflow: hidden; }
-  & .client-card-telegram-avatar img { object-fit: cover; border-radius: 50%; }
+  & .client-card-telegram-avatar { width: 92px; height: 92px; margin: 8px auto 16px; border-radius: 16px; overflow: hidden; }
+  & .client-card-telegram-avatar img { object-fit: cover; border-radius: inherit; }
   & .edit-client-btn { background: var(--desk-tint) !important; border-color: transparent !important; color: var(--desk-on-tint) !important; min-height: 34px; }
   & #clientModal .modal-dialog { border-radius: 0; box-shadow: none; }
   & #clientModal .modal-body { padding: 14px; }
   & #clientModal .modal-foot { padding: 14px; }
+  & #clientModal :is(.modal-body, label, .modal-label-title, .custom-field-editor > span,
+    .client-card-block-title, .client-card-field-label, .client-card-field-value,
+    .client-card-field-readonly-rule, .status, .status-panel-title, .meta, small) { color: var(--desk-text); }
   & .client-edit-border { stroke: var(--desk-accent); border-radius: 24px; }
-  & .ticket-control-wrap { padding: 14px; gap: 14px; }
+  & .ticket-control-wrap { padding: 10px; gap: 10px; }
   & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
   & .freeze-box { background: var(--desk-blue-bg); }
   & #freezeUntil { width: 100%; min-width: 0; padding: 8px 6px; font-size: 13px; }
@@ -359,7 +380,14 @@ body #appContent.main[data-shell-page="ticket-card"] {
 }
 
 body #appContent.main[data-shell-page="tickets-list"] {
-  & .toolbar { flex-wrap: wrap; overflow: visible; }
+  & > .content { padding: 14px 16px 16px; gap: 12px; }
+  & > .task-panel { margin: 8px 16px 0; }
+  & .toolbar { padding: 6px 16px; flex-wrap: wrap; overflow: visible; }
+  & #columnsModal.columns-resize-mode {
+    background: #1412211f;
+    backdrop-filter: blur(.5px);
+    -webkit-backdrop-filter: blur(.5px);
+  }
   & .toolbar > .search-input-wrap { flex: 1 1 300px; max-width: 560px; }
   & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 8px 36px 8px 16px; font-size: 14px; }
   & :is(.bulk-assign-btn, .bulk-freeze-btn) { width: auto; }
@@ -385,7 +413,7 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & tr.ticket-color-closed { background: linear-gradient(90deg, var(--desk-danger-bg), var(--desk-surface) 70%); }
   & tr.ticket-row-seen { background-color: var(--desk-soft); }
   & .ticket-row-link { color: var(--desk-text); min-height: 58px; padding: 16px 12px; }
-  & .table-pagination-footer { padding: 16px 20px; background: var(--desk-surface); border-color: var(--desk-border); }
+  & .table-pagination-footer { padding: 12px 14px; background: var(--desk-surface); border-color: var(--desk-border); }
   & .table-pagination-total { color: var(--desk-muted); font-size: 14px; }
   & .table-page-number { border-radius: 12px; min-height: 36px; min-width: 36px; background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); font: 600 14px var(--desk-font); }
   & .table-page-number.active { background: var(--desk-tint); border-color: var(--desk-accent); color: var(--desk-on-tint); }
@@ -398,9 +426,84 @@ body.ticket-colors-disabled #appContent.main[data-shell-page="tickets-list"] tr.
 body #appContent.main[data-shell-page="tickets-list"] .color-legend { background: var(--desk-surface); border-color: var(--desk-border); color: var(--desk-text); border-radius: 14px; box-shadow: 0 8px 32px #00000018; }
 body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-task, .ticket-type-task) { background: var(--desk-success-bg); color: var(--desk-success); }
 body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-request, .ticket-type-request, .color-legend-internal-task, .ticket-type-internal-task) { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-group-task, .ticket-type-group-task) { background: var(--desk-tint); color: var(--desk-on-tint); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-group-task, .ticket-type-group-task) { background: var(--desk-status-bg); color: var(--desk-status-text); }
 body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-frozen, .ticket-type-frozen) { background: var(--desk-blue-bg); color: var(--desk-blue-text); }
 body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-closed, .ticket-type-closed) { background: var(--desk-danger-bg); color: var(--desk-danger); }
+
+/* Appearance is shared chrome; it remains outside the page layout in the top layer. */
+body:has(.layout > .main) #appContent :is(button.action.primary, .send-now) {
+  background: var(--desk-primary, var(--desk-on-tint));
+  border-color: var(--desk-focus, var(--desk-accent));
+  color: var(--desk-on-accent, var(--desk-surface));
+}
+body:has(.layout > .main) :is(.sidebar .tab-btn, .sidebar .settings-link, .sidebar .admin-agent-item, button.action.primary, .send-now),
+body #appearanceMenu.appearance-menu button {
+  transition-property: transform, box-shadow;
+}
+body #appearanceMenu.appearance-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 720px;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--desk-border) 75%, var(--desk-muted));
+  border-radius: 18px;
+  background: var(--desk-soft);
+  color: var(--desk-text);
+  font: 600 14px/1.5 var(--desk-font);
+  box-shadow: 0 12px 36px #00000033, 0 2px 8px #00000014;
+}
+body #appearanceMenu.appearance-menu .appearance-themes { display: flex; gap: 12px; margin-bottom: 20px; }
+body #appearanceMenu.appearance-menu .appearance-themes button {
+  flex: 1;
+  height: 52px;
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  background: var(--desk-soft);
+  color: var(--desk-text);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--desk-border), 0 5px 8px #00000012;
+}
+body #appearanceMenu.appearance-menu .appearance-themes button[aria-pressed="true"] {
+  background: var(--desk-tint);
+  color: var(--desk-on-tint);
+  border-color: var(--desk-focus);
+  box-shadow: inset 0 2px 5px #00000035;
+}
+body #appearanceMenu.appearance-menu .appearance-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+body #appearanceMenu.appearance-menu fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+body #appearanceMenu.appearance-menu legend { margin-bottom: 14px; padding: 0; font-weight: 800; }
+@media (max-width: 600px) {
+  body #appearanceMenu.appearance-menu .appearance-controls { grid-template-columns: minmax(0, 1fr); }
+}
+body #appearanceMenu.appearance-menu label { display: block; margin-bottom: 6px; font: inherit; }
+body #appearanceMenu.appearance-menu input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--desk-focus);
+  cursor: pointer;
+}
+body #appearanceMenu.appearance-menu input.appearance-hue {
+  appearance: none;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00) center / 100% 10px no-repeat;
+}
+body #appearanceMenu.appearance-menu input.appearance-hue::-webkit-slider-thumb {
+  appearance: none; width: 22px; height: 22px; border: 2px solid var(--desk-text); border-radius: 50%; background: var(--desk-surface);
+}
+body #appearanceMenu.appearance-menu input.appearance-hue::-moz-range-thumb {
+  width: 18px; height: 18px; border: 2px solid var(--desk-text); border-radius: 50%; background: var(--desk-surface);
+}
+body #appearanceMenu.appearance-menu input[type="range"] + label { margin-top: 12px; }
+body #appearanceMenu.appearance-menu :is(button, input):focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 4px; }
+body #appearanceMenu.appearance-menu .appearance-status { font-size: 12px; color: var(--desk-danger); }
+body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
 
 @media (min-width: 1201px) {
   body:has(.layout > .main) .layout { grid-template-columns: 246px minmax(0, 1fr); }
@@ -414,8 +517,17 @@ body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-closed, 
   }
 }
 @media (min-width: 1201px) and (max-width: 1500px) {
-  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 240px minmax(0, 1fr) 230px; gap: 12px; padding: 16px; }
+  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 240px minmax(0, 1fr) 230px; gap: 8px; padding: 11px; }
+  body #appContent.main[data-shell-page="ticket-card"] .ticket-status-badges { flex-direction: column; align-items: flex-start; gap: 4px; }
   body #appContent.main[data-shell-page="ticket-card"] .messages { padding: 22px 16px; }
+}
+@media (min-width: 701px) and (max-height: 800px) {
+  /* Keep the larger user avatar visible on a laptop-height sidebar. */
+  body:has(.layout > .main) .sidebar { padding-block: 12px; }
+  body:has(.layout > .main) :where(.sidebar) .sidebar-title { margin-block: 12px 8px; }
+  body:has(.layout > .main) :where(.sidebar) .tab-list { gap: 3px; }
+  body:has(.layout > .main) :where(.sidebar) .tab-btn { padding-block: 9px; }
+  body:has(.layout > .main) :where(.sidebar) .settings-link { padding-block: 6px; }
 }
 @media (max-width: 1200px) {
   body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 1fr; overflow-y: auto; grid-auto-rows: minmax(280px, auto); }

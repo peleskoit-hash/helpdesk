@@ -69,13 +69,13 @@ const card = { ...rows[0], client_name: 'Мария Смирнова', instructi
       'Заявка назначена ответственному: Александр Иванов'][i % 4], author_name: user.full_name, created_at: stamp, attachments: [] })),
 };
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket' }) {
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(error.message));
   const me = { ...user, role };
-  const preferences = { theme_preference: theme, color_enabled: true, task_panel_enabled: true,
+  const preferences = { appearance_revision: '0', theme_preference: theme, color_enabled: true, task_panel_enabled: true,
     ticket_list_columns: columns.map(key => ({ key, width: key === 'subject' ? 340 : 160 })) };
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
@@ -91,9 +91,20 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
       return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${template}.html`, 'utf8') });
     }
     requests.push({ path: p, method: req.method(), query: url.search });
+    if (p.endsWith('/appearance-session')) {
+      Object.assign(preferences, req.postDataJSON()?.preferences);
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        writer_id: '00000000-0000-4000-8000-000000000001', preferences,
+      }) });
+    }
+    if (p.endsWith('/client-avatar/thumbnail')) return route.fulfill({ contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="92" height="92"><rect width="92" height="92" fill="#98b4cd"/><circle cx="46" cy="34" r="17" fill="#304860"/><path d="M15 92V76a31 31 0 0 1 62 0v16" fill="#304860"/></svg>' });
     let result = {};
     if (p.endsWith('/preferences')) {
-      if (req.method() === 'PATCH') Object.assign(preferences, req.postDataJSON());
+      if (req.method() === 'PATCH') {
+        const { appearance_write, ...patch } = req.postDataJSON();
+        Object.assign(preferences, patch);
+      }
       result = preferences;
     } else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
     else if (p === '/api/v1/users/me' || p === '/api/v1/users/me/profile') result = me;
@@ -104,8 +115,9 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: rows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
-    else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType };
-    else if (p.endsWith('/client-profile')) result = card.client_profile;
+    else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType,
+      client_profile: { ...card.client_profile, telegram_avatar_present: clientAvatar } };
+    else if (p.endsWith('/client-profile')) result = { ...card.client_profile, telegram_avatar_present: clientAvatar };
     else if (p === '/api/v1/quick-replies/search') result = { items: [] };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });
   });
@@ -115,7 +127,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.locator('#errorModal').isVisible(), false);
   t.after(() => assert.deepEqual(errors, []));
-  return { page, requests };
+  return { page, requests, preferences };
 }
 
 async function geometry(page) {
@@ -138,16 +150,189 @@ async function modalVisible(page, selector) {
   assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.width <= vp.width + 1 && r.y + r.height <= vp.height + 1, JSON.stringify(r));
 }
 
+function contrastRatio(foreground, background) {
+  const lum = color => color.match(/[\d.]+/g).slice(0, 3).map(Number)
+    .map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4))
+    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  const a = lum(foreground), b = lum(background);
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`client editor text contrast and unchanged geometry: ${theme}`, async t => {
+    const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
+    await page.locator('#editClientBtn').click();
+    await page.locator('#fContactName').waitFor({ state: 'visible' });
+    await page.locator('#clientModal .modal-field-section').first().evaluate(section => {
+      const probe = document.createElement('div');
+      probe.className = 'client-card-field-readonly-rule';
+      probe.innerHTML = '<small class="status">Подсказка</small><label>Только чтение<input readonly value="Значение"></label><textarea placeholder="Подсказка ввода"></textarea>';
+      section.appendChild(probe);
+    });
+    const dimensions = () => page.locator('#clientModal, #clientModal .modal-dialog, #clientModal .modal-body, #clientModal label, #clientModal input, #clientModal select, #clientModal textarea').evaluateAll(nodes => nodes.map(el => {
+      const { x, y, width, height } = el.getBoundingClientRect(); return { x, y, width, height };
+    }));
+    const initialGeometry = await dimensions();
+    const samples = await page.locator('#clientModal').evaluate(root => {
+      function background(el) {
+        const layers = [];
+        for (let node = el; node; node = node.parentElement) {
+          const rgba = getComputedStyle(node).backgroundColor.match(/[\d.]+/g).map(Number);
+          layers.push([...rgba.slice(0, 3), rgba[3] ?? 1]);
+        }
+        return `rgb(${layers.reverse().reduce((bg, [r, g, b, a]) => [r, g, b].map((v, i) => v * a + bg[i] * (1 - a)), [255, 255, 255]).join(', ')})`;
+      }
+      const nodes = [...root.querySelectorAll('label, .modal-label-title, .custom-field-editor > span, .client-card-block-title, .client-card-field-label, .client-card-field-value, .status, small, input:not([type="checkbox"]), select, textarea, button')]
+        .filter(el => el.getClientRects().length && !el.disabled);
+      return nodes.flatMap(el => {
+        const style = getComputedStyle(el);
+        const sample = { node: el.id || el.className || el.tagName, color: style.color, background: background(el) };
+        return el.matches('input, textarea') ? [sample, { ...sample, node: `${sample.node}::placeholder`, color: getComputedStyle(el, '::placeholder').color }] : [sample];
+      });
+    });
+    assert.ok(samples.length > 10);
+    for (const sample of samples) assert.ok(contrastRatio(sample.color, sample.background) >= 4.5, JSON.stringify(sample));
+    await page.evaluate(theme => HelpdeskTheme.applyTheme(theme === 'dark' ? 'light' : 'dark'), theme);
+    assert.deepEqual(await dimensions(), initialGeometry);
+  });
+}
+
+test('appearance write failure is visible and restores the saved choice', async t => {
+  const { page } = await setup(t, { width: 1366, height: 768, theme: 'light', pageName: 'tickets' });
+  await page.locator('#themeToggleBtn').click();
+  const failWrite = route => ['PATCH','POST'].includes(route.request().method())
+    ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }) : route.fallback();
+  await page.route('**/api/v1/users/me/preferences**', failWrite);
+  await page.locator('#appearance-accent-hue').fill('350');
+  await page.locator('.appearance-status').filter({ hasText: 'Не удалось сохранить' }).waitFor();
+  assert.equal(await page.locator('#appearance-accent-hue').inputValue(), '259');
+  assert.equal(await page.locator('#appearanceMenu').isVisible(), true);
+  await page.unroute('**/api/v1/users/me/preferences**', failWrite);
+  await page.locator('#appearance-accent-hue').fill('153');
+  await page.waitForFunction(() => !saveInFlight);
+  assert.equal(await page.locator('.appearance-status').textContent(), '');
+  assert.equal(await page.locator('#appearance-accent-hue').inputValue(), '153');
+});
+
+for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+  for (const theme of ['light', 'dark']) {
+    test(`appearance colors, intensity, contrast and geometry: ${theme}, ${width}`, async t => {
+      const { page, preferences } = await setup(t, { width, height, theme, pageName: 'ticket' });
+      const before = await geometry(page);
+      await page.locator('#themeToggleBtn').click();
+      const menu = page.locator('#appearanceMenu');
+      await menu.waitFor({ state: 'visible' });
+      const menuBox = await menu.boundingBox(), triggerBox = await page.locator('#themeToggleBtn').boundingBox();
+      assert.ok(menuBox.y >= triggerBox.y + triggerBox.height);
+      assert.ok(menuBox.x >= 0 && menuBox.x + menuBox.width <= width);
+      assert.ok(menuBox.y + menuBox.height <= height);
+      if (process.env.DESK_V2_SCREENSHOTS) {
+        fs.mkdirSync(process.env.DESK_V2_SCREENSHOTS, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.DESK_V2_SCREENSHOTS, `appearance-${theme}-${width}.png`) });
+      }
+      assert.ok(menuBox.width >= 700 && menuBox.width <= 722);
+      assert.equal(await menu.locator('[data-appearance-accent]').count(), 0);
+      assert.equal(await menu.locator('input[type="range"]').count(), 4);
+      assert.equal(await menu.locator('output').count(), 0);
+      assert.ok((await page.locator('#appearance-interface-hue').evaluate(el => getComputedStyle(el).backgroundImage)).includes('linear-gradient'));
+      const range = page.locator('#appearance-accent-intensity');
+      const semanticsBackgrounds = () => page.locator('.ticket-status-badge, .message.internal, .message.agent, .action.danger')
+        .evaluateAll(nodes => nodes.map(el => getComputedStyle(el).backgroundColor));
+      const savedSemanticBackgrounds = await semanticsBackgrounds();
+      for (const hue of [0, 60, 90, 120, 180, 240, 300, 360]) {
+        for (const intensity of [0, 50, 100]) {
+          await page.locator('#appearance-interface-hue').fill(String(hue));
+          await page.locator('#appearance-interface-intensity').fill(String(intensity));
+          await page.locator('#appearance-accent-hue').fill(String(hue === 90 ? 60 : 360 - hue));
+          await range.fill(String(intensity));
+          await page.waitForFunction(() => !saveInFlight);
+          assert.equal(preferences[`interface_hue_${theme}`], hue);
+          assert.equal(preferences[`accent_hue_${theme}`], hue === 90 ? 60 : 360 - hue);
+          assert.equal(preferences[`interface_intensity_${theme}`], intensity);
+          assert.equal(preferences[`accent_strength_${theme}`], intensity);
+          assert.equal(await menu.isVisible(), true);
+          const styles = await page.evaluate(() => {
+            const background = el => {
+              const layers = [];
+              for (let node = el; node; node = node.parentElement) {
+                const rgba = getComputedStyle(node).backgroundColor.match(/[\d.]+/g).map(Number);
+                layers.push([...rgba.slice(0, 3), rgba[3] ?? 1]);
+              }
+              return `rgb(${layers.reverse().reduce((bg, [r,g,b,a]) => [r,g,b].map((v,i) => v*a+bg[i]*(1-a)), [255,255,255]).join(', ')})`;
+            };
+            const pairs = [...document.querySelectorAll('.sidebar .tab-btn.active, .sidebar-user-name, #sendNowBtn, .message, .message .status, .client-card-field-label, .client-card-field-value:not(.verified-ok):not(.verified-no), .client-card-field-value a, .client-card-block-title, .toolbar .action, .appearance-menu label, .appearance-menu legend, [data-appearance-theme]')]
+              .filter(el => el.getBoundingClientRect().width).map(el => {
+                const s = getComputedStyle(el); return [s.color, background(el), el.className || el.tagName];
+              });
+            return { pairs, tokens: ['bg','surface','soft','accent','text','border'].map(key => document.body.style.getPropertyValue(`--desk-${key}`)) };
+          });
+          assert.ok(styles.pairs.length >= 10);
+          for (const [fg,bg,node] of styles.pairs) assert.ok(contrastRatio(fg,bg) >= 4.5, `${theme}/${hue}/${intensity}/${node}: ${fg} / ${bg}`);
+          if (intensity === 0) for (const token of styles.tokens) {
+            const [r,g,b] = token.match(/[\d.]+/g).map(Number);
+            assert.equal(r,g); assert.equal(g,b);
+          }
+          assert.deepEqual(await semanticsBackgrounds(), savedSemanticBackgrounds);
+          const after = await geometry(page);
+          for (const key of ['sidebar','toolbar','content']) assert.deepEqual(after[key], before[key]);
+        }
+      }
+      await page.locator('#appearance-interface-hue').fill('111');
+      await page.locator('#appearance-interface-intensity').fill('23');
+      await page.locator('#appearance-accent-hue').fill('222');
+      await range.fill('41');
+      await page.waitForFunction(() => !saveInFlight);
+      const otherTheme = theme === 'light' ? 'dark' : 'light';
+      await page.locator(`[data-appearance-theme="${otherTheme}"]`).click();
+      assert.equal(await range.inputValue(), '50');
+      assert.equal(await page.locator('#appearance-interface-hue').inputValue(), otherTheme === 'dark' ? '225' : '259');
+      await range.fill('78');
+      await page.waitForFunction(() => !saveInFlight);
+      await page.locator(`[data-appearance-theme="${theme}"]`).click();
+      assert.equal(await range.inputValue(), '41');
+      assert.equal(await page.locator('#appearance-interface-hue').inputValue(), '111');
+      assert.equal(await page.locator('#appearance-interface-intensity').inputValue(), '23');
+      assert.equal(await page.locator('#appearance-accent-hue').inputValue(), '222');
+      await page.keyboard.press('Escape');
+      assert.equal(await menu.isVisible(), false);
+      assert.equal(await page.locator('#themeToggleBtn').evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Enter');
+      await menu.waitFor({ state: 'visible' });
+      await page.keyboard.press('Tab');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.appearanceTheme), 'light');
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Space');
+      assert.equal(await page.locator('body').getAttribute('data-theme'), 'dark');
+      await range.focus();
+      await page.keyboard.press('Home');
+      assert.equal(await range.inputValue(), '0');
+      await page.keyboard.press('End');
+      assert.equal(await range.inputValue(), '100');
+      assert.equal(await menu.isVisible(), true);
+      await page.locator('#themeToggleBtn').click();
+      assert.equal(await menu.isVisible(), false);
+      await page.locator('#themeToggleBtn').click();
+      await page.mouse.click(8, height - 8);
+      assert.equal(await menu.isVisible(), false);
+      await page.waitForFunction(() => !saveInFlight);
+      await page.reload();
+      await page.waitForFunction(() => document.body.dataset.sidebarReady === '1');
+      await page.locator('#themeToggleBtn').click();
+      assert.equal(await page.locator('#appearance-accent-intensity').inputValue(), '100');
+    });
+  }
+}
+
 for (const [width, height] of [[1366, 768], [1920, 1080]]) {
   for (const theme of ['light', 'dark']) {
     for (const pageName of ['ticket', 'tickets']) {
       test(`${pageName}: ${theme}, ${width}px — real assets, scrolling and controls`, async t => {
-        const { page, requests } = await setup(t, { width, height, theme, pageName });
+        const { page, requests } = await setup(t, { width, height, theme, pageName, clientAvatar: pageName === 'ticket' });
         const before = await geometry(page);
         assert.equal(before.overflow, false);
         assert.match(before.font, /Manrope/);
         assert.equal(before.radius, '24px');
-        assert.equal(before.background, theme === 'dark' ? 'rgb(32, 37, 53)' : 'rgb(255, 254, 253)');
+        assert.equal(before.background, theme === 'dark' ? 'rgb(32, 37, 53)' : 'rgb(245, 243, 249)');
         assert.ok(before.content.bottom <= height + 1);
         const sidebarChecks = await page.locator('.sidebar').evaluate(sidebar => ({
           width: sidebar.getBoundingClientRect().width,
@@ -179,11 +364,39 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
         }
         assert.deepEqual(indicators[0].dividers.map(bar => bar.x), indicators[1].dividers.map(bar => bar.x));
         assert.equal(await page.evaluate(() => document.fonts.check('15px Manrope', 'Заявка переписка')), true);
+        const employeeAvatar = await page.locator('.agent-avatar').boundingBox();
+        assert.equal(employeeAvatar.width, 88);
+        assert.equal(employeeAvatar.height, 88);
+        assert.ok(employeeAvatar.y + employeeAvatar.height <= height - 8, JSON.stringify(employeeAvatar));
+        const name = page.locator('.sidebar-user-name');
+        const originalName = await name.textContent();
+        await name.evaluate(el => { el.textContent = 'Александра Константиновна Рождественская'; });
+        const nameStyle = await name.evaluate(el => {
+          const s = getComputedStyle(el), r = el.getBoundingClientRect(), panel = el.closest('.sidebar-user-panel').getBoundingClientRect();
+          return { whitespace: s.whiteSpace, clamp: s.webkitLineClamp, lines: (r.height - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom) - 2) / parseFloat(s.lineHeight),
+            right: r.right, panelRight: panel.right };
+        });
+        assert.equal(nameStyle.whitespace, 'normal');
+        assert.equal(nameStyle.clamp, '2');
+        assert.ok(Math.abs(nameStyle.lines - 2) < .1);
+        assert.ok(nameStyle.right <= nameStyle.panelRight + 1);
+        await name.evaluate((el, text) => { el.textContent = text; }, originalName);
         await page.locator('.agent-avatar').click();
         await page.locator('.sidebar-user-menu').waitFor({ state: 'visible' });
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('.sidebar-user-menu').isVisible(), false);
         if (pageName === 'ticket') {
+          const avatar = page.locator('.client-card-telegram-avatar');
+          await avatar.waitFor({ state: 'visible' });
+          assert.deepEqual(await avatar.evaluate(el => {
+            const r = el.getBoundingClientRect();
+            return { width: r.width, height: r.height, radius: getComputedStyle(el).borderRadius,
+              imageRadius: getComputedStyle(el.querySelector('img')).borderRadius, loaded: el.querySelector('img').naturalWidth > 0 };
+          }), { width: 92, height: 92, radius: '16px', imageRadius: '16px', loaded: true });
+          const density = await page.locator('.ticket-layout').evaluate(el => {
+            const s = getComputedStyle(el); return { top: s.paddingTop, side: s.paddingLeft, gap: s.gap };
+          });
+          assert.deepEqual(density, width === 1366 ? { top: '11px', side: '11px', gap: '8px' } : { top: '14px', side: '16px', gap: '12px' });
           assert.equal(await page.locator('.message').count(), 32);
           assert.equal(await page.locator('.message.client').first().evaluate(el => getComputedStyle(el).fontSize), '18px');
           const internal = page.locator('.message.internal').first();
@@ -222,7 +435,12 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           assert.ok(headline.badgesLeft >= headline.titleRight);
           assert.ok(Math.abs(headline.titleCenter - headline.badgesCenter) < 1);
           assert.ok((await page.locator('.ticket-card > .ticket-card-wrap > .card-head').boundingBox()).height <= 102);
-          assert.equal(await page.locator('.toolbar #instructionBtn').count(), 1);
+          assert.equal(await page.locator('.toolbar #instructionBtn').count(), 0);
+          assert.equal(await page.locator('.ticket-head-main > #instructionBtn').count(), 1);
+          const instruction = await page.locator('#instructionBtn').boundingBox(), title = await page.locator('.ticket-head-title-wrap').boundingBox();
+          assert.ok(instruction.x >= title.x + title.width);
+          assert.ok(Math.abs(instruction.y + instruction.height / 2 - (title.y + title.height / 2)) < 1);
+          assert.equal(await page.locator('.toolbar > #backToListBtn').count(), 1);
           const composer = await page.locator('.card-actions').boundingBox();
           assert.ok(composer.y + composer.height <= height);
           await page.locator('#messages').evaluate(el => { el.scrollTop = 0; });
@@ -299,9 +517,11 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
         }
         // Theme geometry must be identical, including header wrapping.
         await page.locator('#themeToggleBtn').click();
+        await page.locator(`[data-appearance-theme="${theme === 'light' ? 'dark' : 'light'}"]`).click();
         await page.waitForFunction(theme => document.body.dataset.theme !== theme, theme);
         const after = await geometry(page);
         for (const key of ['sidebar', 'toolbar', 'content']) assert.deepEqual(after[key], before[key]);
+        await page.locator(`[data-appearance-theme="${theme}"]`).click();
         await page.locator('#themeToggleBtn').click();
         await page.waitForFunction(theme => document.body.dataset.theme === theme, theme);
         if (process.env.DESK_V2_SCREENSHOTS) {
@@ -366,13 +586,27 @@ for (const width of [1366, 1920]) {
 
 test('AppShell list → card → list preserves shell and new stylesheet', async t => {
   const { page } = await setup(t, { width: 1366, height: 768, theme: 'dark', pageName: 'tickets' });
+  await page.locator('#themeToggleBtn').click();
+  await page.locator('#appearance-accent-hue').fill('184');
+  await page.locator('#appearance-accent-intensity').fill('73');
+  await page.waitForFunction(() => !saveInFlight);
+  await page.keyboard.press('Escape');
+  const accentBeforeNavigation = await page.evaluate(() => document.body.style.getPropertyValue('--desk-accent'));
   await page.evaluate(() => { window.originalSidebar = document.querySelector('.sidebar'); });
   await page.locator('.ticket-row-link').first().click();
   await page.waitForSelector('.message');
+  assert.equal(await page.evaluate(() => document.body.style.getPropertyValue('--desk-accent')), accentBeforeNavigation);
+  await page.locator('#themeToggleBtn').click();
+  assert.equal(await page.locator('#appearanceMenu').count(), 1);
+  assert.equal(await page.locator('#appearance-accent-intensity').inputValue(), '73');
+  await page.keyboard.press('Escape');
   assert.equal(await page.evaluate(() => window.originalSidebar === document.querySelector('.sidebar')), true);
   assert.equal((await geometry(page)).radius, '24px');
   await page.locator('#backToListBtn').click();
   await page.waitForSelector('.ticket-row');
+  assert.equal(await page.evaluate(() => document.body.style.getPropertyValue('--desk-accent')), accentBeforeNavigation);
+  await page.evaluate(() => { HelpdeskTheme.initThemeToggle(); HelpdeskTheme.initThemeToggle(); });
+  assert.equal(await page.locator('#appearanceMenu').count(), 1);
   assert.equal(await page.evaluate(() => window.originalSidebar === document.querySelector('.sidebar')), true);
   assert.equal((await geometry(page)).radius, '24px');
 });
@@ -398,7 +632,7 @@ for (const width of [1366, 1920]) {
       // Exercise the CSS state without issuing a close request to the API.
       await close.evaluate(el => { el.disabled = true; el.classList.remove('close-action-ready'); });
       await page.waitForFunction(background => getComputedStyle(document.querySelector('#closeBtn')).backgroundColor === background,
-        theme === 'dark' ? 'rgb(38, 43, 61)' : 'rgb(246, 244, 249)');
+        theme === 'dark' ? 'rgb(38, 43, 61)' : 'rgb(240, 238, 246)');
       const disabled = await close.evaluate(el => ({ opacity: getComputedStyle(el).opacity, background: getComputedStyle(el).backgroundColor }));
       assert.equal(await close.isEnabled(), false);
       assert.equal(disabled.opacity, '0.45');
@@ -524,5 +758,134 @@ for (const width of [1366, 1920]) for (const theme of ['light', 'dark']) {
         if (sample.value === '595') assert.ok(sample.width > sample.height);
       }
     }
+  });
+}
+
+
+for (const theme of ['light','dark']) test(`appearance narrow window and keyboard hue: ${theme}`, async t => {
+  const {page} = await setup(t, {width:390, height:844, theme, pageName:'tickets'});
+  await page.locator('#themeToggleBtn').click();
+  const menu = page.locator('#appearanceMenu'), rect = await menu.boundingBox();
+  assert.ok(rect.x >= 0 && rect.x+rect.width <= 390);
+  assert.ok(rect.y >= 0 && rect.y+rect.height <= 844);
+  assert.equal(await menu.evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  assert.equal(await menu.locator('.appearance-controls').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length), 1);
+  const hue = page.locator('#appearance-interface-hue');
+  await hue.focus(); await page.keyboard.press('Home');
+  assert.equal(await hue.inputValue(),'0');
+  await page.keyboard.press('End');
+  assert.equal(await hue.inputValue(),'360');
+  await page.waitForFunction(() => !saveInFlight);
+  assert.equal(await menu.isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await menu.isVisible(),false);
+});
+
+
+for (const theme of ['light','dark']) test(`main hue reaches large surfaces without changing accents or geometry: ${theme}`, async t => {
+  const {page} = await setup(t, {width:1366,height:768,theme,pageName:'ticket'});
+  const before = await geometry(page);
+  await page.locator('#themeToggleBtn').click();
+  const stable = () => page.evaluate(() => ({
+    accent: ['accent','primary','on-accent'].map(key => document.body.style.getPropertyValue(`--desk-${key}`)),
+    semantic: ['danger','success','warning-text','blue-text'].map(key => getComputedStyle(document.body).getPropertyValue(`--desk-${key}`)),
+  }));
+  // Keep a non-default accent to exercise surface and accent controls independently.
+  await page.locator('#appearance-accent-hue').fill('215');
+  await page.waitForFunction(() => !saveInFlight);
+  const fixed = await stable();
+  for (const hue of [0,120,240,300]) for (const intensity of [0,50,100]) {
+    await page.locator('#appearance-interface-hue').fill(String(hue));
+    await page.locator('#appearance-interface-intensity').fill(String(intensity));
+    await page.waitForFunction(() => !saveInFlight);
+    const colors = await page.evaluate(() => {
+      const body = getComputedStyle(document.body);
+      const rgb = value => value.match(/[\d.]+/g).slice(0,3).map(Number);
+      return {
+        surfaces: ['.sidebar','.toolbar','.panel'].map(selector => rgb(getComputedStyle(document.querySelector(selector)).backgroundColor)),
+        tokens: ['bg','surface','soft','backdrop'].map(key => rgb(body.getPropertyValue(`--desk-${key}`))),
+        text: body.getPropertyValue('--desk-text'), muted: body.getPropertyValue('--desk-muted'),
+      };
+    });
+    assert.deepEqual(colors.surfaces[0],colors.tokens[1]);
+    assert.deepEqual(colors.surfaces[1],colors.tokens[1]);
+    assert.deepEqual(colors.surfaces[2],colors.tokens[1]);
+    assert.equal(new Set(colors.tokens.map(rgb=>rgb.join(','))).size,4);
+    if (intensity === 0) for (const rgb of colors.tokens) assert.equal(Math.max(...rgb)-Math.min(...rgb),0);
+    if (theme === 'light' && intensity > 0) for (const rgb of colors.tokens) {
+      assert.ok(Math.max(...rgb)-Math.min(...rgb) >= (intensity === 50 ? 6 : 12), `${hue}/${intensity}: ${rgb}`);
+      const [r,g,b]=rgb, max=Math.max(...rgb), min=Math.min(...rgb), d=max-min;
+      const actual = (max===r ? ((g-b)/d+6)%6 : max===g ? (b-r)/d+2 : (r-g)/d+4)*60;
+      assert.ok(Math.min(Math.abs(actual-hue),360-Math.abs(actual-hue)) <= 8, `${hue}: ${actual}`);
+    }
+    for (const rgb of colors.tokens) for (const text of [colors.text,colors.muted]) assert.ok(contrastRatio(text,`rgb(${rgb})`) >= 4.5);
+    assert.deepEqual(await stable(),fixed);
+    const after = await geometry(page);
+    for (const key of ['sidebar','toolbar','content']) assert.deepEqual(after[key],before[key]);
+    // Hue in the other theme must not alter any tokens of the visible theme.
+    const current = await stable();
+    await page.evaluate(other => { appearance[`interface_hue_${other}`] = 71; applyTheme(appearance.theme_preference); }, theme==='light'?'dark':'light');
+    assert.deepEqual(await stable(),current);
+  }
+});
+
+
+for (const width of [1366,1920]) for (const theme of ['light','dark']) {
+  test(`list density, column reorder and resize overlay: ${theme}, ${width}`, async t => {
+    const {page,requests} = await setup(t,{width,height:width===1366?768:1080,theme,pageName:'tickets'});
+    const layout = await page.evaluate(() => {
+      const content=document.querySelector('#appContent > .content'), style=getComputedStyle(content);
+      const panel=document.querySelector('.table-wrap').getBoundingClientRect(), outer=content.getBoundingClientRect();
+      return {padding:style.padding,gap:style.gap,inset:panel.x-outer.x,tableHeight:panel.height,
+        taskMargin:getComputedStyle(document.querySelector('#taskPanel')).margin,
+        overflow:document.documentElement.scrollWidth > innerWidth};
+    });
+    assert.equal(layout.padding,'14px 16px 16px');
+    assert.equal(layout.gap,'12px');
+    assert.equal(layout.inset,16);
+    assert.equal(layout.taskMargin,'8px 16px 0px');
+    assert.ok(layout.tableHeight>400); assert.equal(layout.overflow,false);
+    const table = page.locator('.table-scroll');
+    await table.evaluate(el => {el.scrollTop=el.scrollHeight;el.scrollLeft=el.scrollWidth;});
+    assert.ok(await table.evaluate(el=>el.scrollTop>0 && el.scrollLeft>0));
+    await table.evaluate(el=>{el.scrollTop=0;el.scrollLeft=0;});
+    await page.locator('#columnsSettingsBtn').click();
+    const modal=page.locator('#columnsModal');
+    await modalVisible(page,'#columnsModal');
+    const overlay=()=>modal.evaluate(el=>{const s=getComputedStyle(el);return {blur:s.backdropFilter,background:s.backgroundColor,pointer:s.pointerEvents};});
+    const normal=await overlay();
+    assert.equal(normal.blur,'blur(4px)');
+    const keys=()=>page.locator('.columns-draft-row').evaluateAll(rows=>rows.map(el=>el.dataset.columnKey));
+    const original=await keys();
+    await page.locator('.columns-draft-row').nth(1).dragTo(page.locator('.columns-draft-row').nth(2));
+    const reordered=await keys();
+    assert.notDeepEqual(reordered,original);
+    assert.equal(await modal.locator('.columns-dialog').isVisible(),true);
+    assert.deepEqual(await overlay(),normal);
+    await page.locator('#editColumnsWidthBtn').click();
+    const resize=await overlay();
+    assert.ok(parseFloat(resize.blur.match(/[\d.]+/)[0])<=.75,resize.blur);
+    assert.ok(Number(resize.background.match(/[\d.]+/g)[3])<=.2,resize.background);
+    assert.equal(resize.pointer,'none');
+    assert.equal(await modal.locator('.columns-dialog').isVisible(),false);
+    const heading=page.locator('th[data-column-key="subject"]');
+    const before=await heading.boundingBox();
+    const handle=await heading.locator('.column-resize-handle').boundingBox();
+    assert.ok(handle);
+    if (process.env.DESK_V2_SCREENSHOTS) {
+      fs.mkdirSync(process.env.DESK_V2_SCREENSHOTS,{recursive:true});
+      await page.screenshot({path:path.join(process.env.DESK_V2_SCREENSHOTS,`columns-resize-${theme}-${width}.png`)});
+    }
+    await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);
+    await page.mouse.down();await page.mouse.move(handle.x+handle.width/2+54,handle.y+handle.height/2,{steps:6});await page.mouse.up();
+    assert.ok((await heading.boundingBox()).width>=before.width+40);
+    assert.ok(await page.locator('.ticket-row td[data-column-key="subject"]').first().isVisible());
+    await page.locator('#saveResizeColumnsBtn').click();
+    assert.deepEqual(await overlay(),normal);
+    assert.equal(await modal.locator('.columns-dialog').isVisible(),true);
+    await page.locator('#closeColumnsModalBtn').click();
+    assert.equal(await modal.isVisible(),false);
+    assert.deepEqual(await page.locator('th[data-column-key]').evaluateAll(nodes=>nodes.map(el=>el.dataset.columnKey)),original);
+    assert.equal(requests.some(r=>r.method==='PATCH'),false);
   });
 }

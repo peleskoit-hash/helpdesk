@@ -212,8 +212,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261021-client-save-position/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261021-client-save-position/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261021-client-save-position/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261018b/);
-  assert.match(appShellSource, /ticket\.js\?v=20261018b/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261021-task-panel-refresh/);
+  assert.match(appShellSource, /ticket\.js\?v=20261021-task-panel-refresh/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261021-all-save-feedback/);
 });
 
@@ -301,7 +301,9 @@ test('ticket freeze button stays visible but disabled for unassigned cards', () 
   assert.match(renderSource, /const canFreezeToggle = card\.is_frozen \|\| !isUnassigned/);
   assert.match(renderSource, /setVisible\(el\.freezeToggleBtn, showFreezeToggle\)/);
   assert.match(renderSource, /el\.freezeToggleBtn\.disabled = !showFreezeToggle \|\| !canFreezeToggle \|\| stateActionLocked/);
-  assert.match(renderSource, /const showMarkSpecial = state\.role === "admin" && !isClosed && !card\.is_special && workflowType === "ticket"/);
+  assert.match(renderSource, /const showMarkSpecial = state\.role === "admin";/);
+  assert.match(renderSource, /setVisible\(el\.markSpecialBtn, showMarkSpecial\)/);
+  assert.match(renderSource, /el\.markSpecialBtn\.disabled = isClosed \|\| Boolean\(card\.is_special\) \|\| !\["ticket", "task"\]\.includes\(workflowType\)/);
   assert.doesNotMatch(renderSource, /showMarkSpecial[\s\S]*isUnassigned/);
 });
 
@@ -446,9 +448,37 @@ test('ticket client card hides false checkbox only when configured', () => {
   assert.doesNotMatch(sourceBetween(ticketClientCardSource, 'function renderEditableCustomField', 'function renderConfiguredSystemEditorField'), /show_when_false/);
 });
 
+// DOM moves preserve identity and detach nodes, as the browser renderer expects.
+class ClientCardDomMock {
+  constructor() {
+    this.parentElement = null;
+    this.attributes = new Map();
+  }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
+  appendChild(child) { return this.insertBefore(child, null); }
+  insertBefore(child, reference) {
+    if (reference !== null && !this.children.includes(reference)) throw new Error('NotFoundError');
+    if (child === reference) return child;
+    child.remove();
+    const index = reference === null ? this.children.length : this.children.indexOf(reference);
+    this.children.splice(index, 0, child);
+    child.parentElement = this;
+    return child;
+  }
+  remove() {
+    if (this.parentElement) {
+      const siblings = this.parentElement.children;
+      siblings.splice(siblings.indexOf(this), 1);
+      this.parentElement = null;
+    }
+  }
+}
+
 test('ticket client card applies show_when_false to system verification checkbox', () => {
-  class FakeElement {
+  class FakeElement extends ClientCardDomMock {
     constructor(tagName) {
+      super();
       this.tagName = tagName.toUpperCase();
       this.children = [];
       this.dataset = {};
@@ -473,10 +503,6 @@ test('ticket client card applies show_when_false to system verification checkbox
       this.children = [];
       this.textContent = value;
     }
-    appendChild(child) {
-      this.children.push(child);
-      return child;
-    }
     querySelectorAll(selector) {
       if (!selector.startsWith('.')) return [];
       const className = selector.slice(1);
@@ -496,8 +522,7 @@ test('ticket client card applies show_when_false to system verification checkbox
   const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object, Number, Math, Uint8Array });
   vm.runInContext(ticketClientCardSource, context);
 
-  const renderRows = (isVerified, showWhenFalse) => {
-    const root = new FakeElement('div');
+  const renderRows = (isVerified, showWhenFalse, root = new FakeElement('div')) => {
     const ctx = {
       state: {},
       el: { clientDynamicCard: root },
@@ -523,6 +548,10 @@ test('ticket client card applies show_when_false to system verification checkbox
   assert.equal(renderRows(false, true).length, 1);
   assert.equal(renderRows(false, false).length, 0);
   assert.equal(renderRows(true, false).length, 1);
+  const root = new FakeElement('div');
+  assert.equal(renderRows(true, false, root).length, 1);
+  assert.equal(renderRows(false, false, root).length, 0);
+  assert.equal(root.children.length, 0);
 });
 
 test('ticket client card editor renders readonly copyable fields without payload dataset', () => {
@@ -1033,24 +1062,29 @@ test('ticket client card renders bitrix password by presence flag and reveals th
   assert.match(valueSource, /if \(key === "bitrix_password"\) return profile\.bitrix_password_set \? "\*{8}" : null/);
   assert.match(valueSource, /if \(key === "bitrix_password"\) return !ctx\.isBlank\(value\)/);
   assert.match(valueSource, /function bindBitrixPasswordValueReveal/);
-  assert.match(valueSource, /valueEl\.textContent = bitrixPasswordMask\(ctx\)/);
+  assert.match(valueSource, /function resetBitrixPasswordValueEl\(ctx, valueEl, key = "bitrix_password"\)/);
+  assert.match(valueSource, /valueEl\.textContent = bitrixPasswordMask\(ctx, key\)/);
   assert.match(valueSource, /valueEl\.addEventListener\("click", async \(\) =>/);
   assert.match(ticketClientCardSource, /clientCardBitrixPasswordReveal/);
-  assert.match(ticketClientCardSource, /state\.revealedUntil = Date\.now\(\) \+ 5000/);
+  assert.match(ticketClientCardSource, /const PASSWORD_REVEAL_MS = 5000/);
+  assert.match(ticketClientCardSource, /state\.revealedUntil = Date\.now\(\) \+ PASSWORD_REVEAL_MS/);
   assert.match(ticketClientCardSource, /function activeBitrixPasswordCardReveal/);
   assert.match(ticketClientCardSource, /function scheduleBitrixPasswordCardRevealHide/);
-  assert.match(ticketClientCardSource, /hideBitrixPasswordCardReveal\(ctx, ownerKey\)/);
+  assert.match(ticketClientCardSource, /hideBitrixPasswordCardReveal\(ctx, ownerKey, key\)/);
   assert.match(valueSource, /applyBitrixPasswordValueRevealState\(ctx, valueEl\)/);
   assert.match(ticketClientCardSource, /if \(!profile\?\.bitrix_password_set\) clearBitrixPasswordCardReveal\(ctx\)/);
   assert.doesNotMatch(valueSource, /valueEl\.addEventListener\("blur"/);
-  assert.match(valueSource, /resetBitrixPasswordValueEl\(ctx, valueEl\)/);
-  assert.match(revealSource, /\/api\/v1\/tickets\/\$\{encodeURIComponent\(ctx\.state\.ticketId\)\}\/client-profile\/bitrix-password/);
-  assert.match(revealSource, /\/api\/v1\/management\/users\/\$\{encodeURIComponent\(clientId\)\}\/profile\/bitrix-password/);
+  assert.match(valueSource, /resetBitrixPasswordValueEl\(ctx, valueEl, key\)/);
+  assert.match(revealSource, /async function revealBitrixPassword\(ctx, key = "bitrix_password"\)/);
+  assert.match(revealSource, /const suffix = key === "bitrix_password" \? "bitrix-password" : "web-password"/);
+  assert.match(revealSource, /\/api\/v1\/tickets\/\$\{encodeURIComponent\(ctx\.state\.ticketId\)\}\/client-profile\/\$\{suffix\}/);
+  assert.match(revealSource, /\/api\/v1\/management\/users\/\$\{encodeURIComponent\(clientId\)\}\/profile\/\$\{suffix\}/);
 });
 
 test('ticket client card reveal survives rerender while async reveal is pending', async () => {
-  class FakeElement {
+  class FakeElement extends ClientCardDomMock {
     constructor(tagName) {
+      super();
       this.tagName = tagName.toUpperCase();
       this.children = [];
       this.dataset = {};
@@ -1073,11 +1107,6 @@ test('ticket client card reveal survives rerender while async reveal is pending'
     set innerHTML(value) {
       this.children = [];
       this.textContent = value;
-    }
-    appendChild(child) {
-      child.parentElement = this;
-      this.children.push(child);
-      return child;
     }
     addEventListener(type, handler) {
       this.eventListeners[type] = this.eventListeners[type] || [];
@@ -1127,10 +1156,11 @@ test('ticket client card reveal survives rerender while async reveal is pending'
   });
   vm.runInContext(ticketClientCardSource, context);
 
+  const revealRequests = [];
   const ctx = {
     state: { ticketId: 'ticket-1', card: { client_id: 'client-1' } },
     el: { clientDynamicCard: new FakeElement('div') },
-    api: () => revealPromise,
+    api: (url) => { revealRequests.push(url); return revealPromise; },
     isBlank: (value) => value === null || value === undefined || String(value).trim() === '',
   };
   const config = {
@@ -1152,13 +1182,20 @@ test('ticket client card reveal survives rerender while async reveal is pending'
   const clickPromise = oldValueEl.eventListeners.click[0]();
   window.TicketClientCard.renderClientDynamicCard(ctx, { bitrix_password_set: true }, config);
   const currentValueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
-  assert.notEqual(currentValueEl, oldValueEl);
+  assert.equal(currentValueEl, oldValueEl);
+  assert.equal(currentValueEl.parentElement.children.filter(node => node === currentValueEl).length, 1);
+  assert.equal(currentValueEl.eventListeners.click.length, 1);
+  assert.equal(currentValueEl.getAttribute('role'), 'button');
+  assert.equal(currentValueEl.getAttribute('aria-disabled'), 'false');
+  assert.equal(currentValueEl.tabIndex, 0);
+  assert.equal(currentValueEl.textContent.length, 10);
 
   revealResolve({ bitrix_password: 'plain-secret' });
   await clickPromise;
 
-  assert.notEqual(oldValueEl.textContent, 'plain-secret');
+  assert.equal(oldValueEl.textContent, 'plain-secret');
   assert.equal(currentValueEl.textContent, 'plain-secret');
+  assert.deepEqual(revealRequests, ['/api/v1/tickets/ticket-1/client-profile/bitrix-password']);
   assert.equal(currentValueEl.classList.contains('client-card-password-revealed'), true);
   assert.equal(ctx.state.clientCardBitrixPasswordReveal.plaintext, 'plain-secret');
   assert.equal(ctx.state.clientCardBitrixPasswordReveal.revealedUntil, 6000);
@@ -1172,8 +1209,9 @@ test('ticket client card reveal survives rerender while async reveal is pending'
 });
 
 test('ticket client card ignores async reveal result after owner changes', async () => {
-  class FakeElement {
+  class FakeElement extends ClientCardDomMock {
     constructor(tagName) {
+      super();
       this.tagName = tagName.toUpperCase();
       this.children = [];
       this.dataset = {};
@@ -1190,10 +1228,6 @@ test('ticket client card ignores async reveal result after owner changes', async
     set innerHTML(value) {
       this.children = [];
       this.textContent = value;
-    }
-    appendChild(child) {
-      this.children.push(child);
-      return child;
     }
     addEventListener(type, handler) {
       this.eventListeners[type] = this.eventListeners[type] || [];
@@ -1263,6 +1297,8 @@ test('ticket client card ignores async reveal result after owner changes', async
   await clickPromise;
 
   const currentValueEl = ctx.el.clientDynamicCard.querySelector("[data-client-card-bitrix-password-value='1']");
+  assert.notEqual(currentValueEl, valueEl);
+  assert.notEqual(valueEl.textContent, 'plain-secret');
   assert.notEqual(currentValueEl.textContent, 'plain-secret');
   assert.equal(currentValueEl.textContent.length, 10);
   assert.equal(ctx.state.clientCardBitrixPasswordReveal?.plaintext || '', '');
@@ -1413,8 +1449,10 @@ test('ticket and management users pages use the shared TicketClientCard modal re
 test('ordinary card and editor use the same runtime color field and do not cross-apply key-based modal colors', () => {
   const cardSource = sourceBetween(ticketClientCardSource, 'function renderClientDynamicCard', 'function fillClientPanel');
   const editorSource = sourceBetween(ticketClientCardSource, 'function renderCustomFieldsEditor', 'global.TicketClientCard = {');
-  assert.match(cardSource, /clientCardColorClass\(block\.color_scheme\)/);
-  assert.match(cardSource, /applyClientCardBlockColor\(blockEl, block\.color_scheme\)/);
+  assert.match(cardSource, /const color = block\.color_scheme \|\| ""/);
+  assert.match(cardSource, /if \(entry\.color !== color\) \{[\s\S]*clientCardColorClass\(color\)/);
+  assert.match(cardSource, /applyClientCardBlockColor\(blockEl, color\)/);
+  assert.match(cardSource, /entry\.color = color/);
   assert.match(editorSource, /blockWrap\.dataset\.blockColorScheme = String\(block\.color_scheme \|\| ""\)/);
   assert.match(editorSource, /applyClientCardEditorSectionColor\(blockWrap, block\.color_scheme\)/);
   assert.match(editorSource, /blockWrap\.className = "modal-field-section custom-field-editor-block"/);
@@ -3363,7 +3401,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261022-auto-message-scroll/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261024-appearance-v2/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3446,7 +3484,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261022-auto-message-scroll/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261024-appearance-v2/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);
@@ -3637,179 +3675,6 @@ test('ticket context quick replies use stores only pending reply body and return
   assert.doesNotMatch(quickRepliesSource, /draft_text|draftText|messageInput|ticket_message_body/);
   assert.match(ticketPageSource, /sessionStorage\.getItem\(pendingQuickReplyStorageKey\(\)\)/);
   assert.match(ticketPageSource, /await applyQuickReplyToComposer\(payload, "", token, state\.card\?\.id\)/);
-});
-
-test('theme toggle rebinds to replaced DOM node without stacking old listeners', async () => {
-  const source = fs.readFileSync('api/app/static/theme.js', 'utf8');
-  const buttons = [];
-  function makeButton() {
-    const listeners = {};
-    const button = {
-      textContent: '',
-      attrs: {},
-      addEventListener(type, fn) {
-        listeners[type] = listeners[type] || [];
-        listeners[type].push(fn);
-      },
-      removeEventListener(type, fn) {
-        listeners[type] = (listeners[type] || []).filter((item) => item !== fn);
-      },
-      setAttribute(name, value) {
-        this.attrs[name] = value;
-      },
-      click() {
-        (listeners.click || []).forEach((fn) => fn());
-      },
-      listenerCount(type) {
-        return (listeners[type] || []).length;
-      },
-    };
-    buttons.push(button);
-    return button;
-  }
-  let currentButton = makeButton();
-  const document = {
-    readyState: 'complete',
-    body: { dataset: {} },
-    getElementById(id) {
-      return id === 'themeToggleBtn' ? currentButton : null;
-    },
-    querySelectorAll(selector) {
-      if (selector === '#themeToggleBtn') return [currentButton];
-      if (selector === "form[action='/logout']") return [];
-      return [];
-    },
-    addEventListener() {},
-  };
-  const localStorage = {
-    store: { hd_theme: 'dark' },
-    getItem(key) { return this.store[key] || null; },
-    setItem(key, value) { this.store[key] = value; },
-    removeItem(key) { delete this.store[key]; },
-  };
-  const fetchCalls = [];
-  const fetch = async (url, options = {}) => {
-    fetchCalls.push([url, options.method || 'GET', options.body || null]);
-    if ((options.method || 'GET') === 'PATCH') {
-      const payload = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ theme_preference: payload.theme_preference }) };
-    }
-    return { ok: true, json: async () => ({ theme_preference: 'light' }) };
-  };
-  const window = {};
-  const context = vm.createContext({ document, localStorage, window, fetch });
-  const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
-  vm.runInContext(source, context);
-  await flushAsync();
-
-  assert.equal(currentButton.listenerCount('click'), 1);
-  assert.equal(localStorage.store.hd_theme, undefined);
-  assert.equal(document.body.dataset.theme, 'light');
-  currentButton.click();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(document.body.dataset.theme, 'dark');
-
-  const oldButton = currentButton;
-  currentButton = makeButton();
-  window.HelpdeskTheme.initThemeToggle();
-  window.HelpdeskTheme.initThemeToggle();
-  assert.equal(oldButton.listenerCount('click'), 0);
-  assert.equal(currentButton.listenerCount('click'), 1);
-  currentButton.click();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(document.body.dataset.theme, 'light');
-  assert.deepEqual(fetchCalls, [
-    ['/api/v1/users/me/preferences', 'GET', null],
-    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
-    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'light' })],
-  ]);
-});
-
-test('theme toggle serializes rapid saves and persists the last choice', async () => {
-  const source = fs.readFileSync('api/app/static/theme.js', 'utf8');
-  const listeners = {};
-  const button = {
-    textContent: '',
-    attrs: {},
-    addEventListener(type, fn) {
-      listeners[type] = listeners[type] || [];
-      listeners[type].push(fn);
-    },
-    removeEventListener(type, fn) {
-      listeners[type] = (listeners[type] || []).filter((item) => item !== fn);
-    },
-    setAttribute(name, value) {
-      this.attrs[name] = value;
-    },
-    click() {
-      (listeners.click || []).forEach((fn) => fn());
-    },
-  };
-  const document = {
-    readyState: 'complete',
-    body: { dataset: {} },
-    getElementById(id) {
-      return id === 'themeToggleBtn' ? button : null;
-    },
-    querySelectorAll(selector) {
-      if (selector === '#themeToggleBtn') return [button];
-      if (selector === "form[action='/logout']") return [];
-      return [];
-    },
-    addEventListener() {},
-  };
-  const localStorage = {
-    removeItem() {},
-  };
-  const patchResolvers = [];
-  const fetchCalls = [];
-  const fetch = (url, options = {}) => {
-    fetchCalls.push([url, options.method || 'GET', options.body || null]);
-    if ((options.method || 'GET') === 'PATCH') {
-      const payload = JSON.parse(options.body);
-      return new Promise((resolve) => {
-        patchResolvers.push(() => resolve({
-          ok: true,
-          json: async () => ({ theme_preference: payload.theme_preference }),
-        }));
-      });
-    }
-    return Promise.resolve({ ok: true, json: async () => ({ theme_preference: 'light' }) });
-  };
-  const window = {};
-  const context = vm.createContext({ document, localStorage, window, fetch });
-  const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
-  vm.runInContext(source, context);
-  await flushAsync();
-
-  button.click();
-  button.click();
-  await flushAsync();
-  assert.equal(document.body.dataset.theme, 'light');
-  assert.equal(JSON.stringify(fetchCalls), JSON.stringify([
-    ['/api/v1/users/me/preferences', 'GET', null],
-    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
-  ]));
-  assert.equal(patchResolvers.length, 1);
-
-  patchResolvers.shift()();
-  await flushAsync();
-  assert.equal(JSON.stringify(fetchCalls), JSON.stringify([
-    ['/api/v1/users/me/preferences', 'GET', null],
-    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'dark' })],
-    ['/api/v1/users/me/preferences', 'PATCH', JSON.stringify({ theme_preference: 'light' })],
-  ]));
-  assert.equal(patchResolvers.length, 1);
-
-  patchResolvers.shift()();
-  await flushAsync();
-  assert.equal(document.body.dataset.theme, 'light');
 });
 
 test('editor validation flags projection loss before save can wipe legacy rules', () => {

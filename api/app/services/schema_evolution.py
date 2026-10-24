@@ -931,6 +931,18 @@ def ensure_user_columns() -> None:
             "color_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
             "task_panel_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
             "theme_preference": "VARCHAR(10) NOT NULL DEFAULT 'light'",
+            "accent_preference": "VARCHAR(16) NOT NULL DEFAULT 'purple'",
+            "accent_intensity_light": "INTEGER NOT NULL DEFAULT 50",
+            "accent_intensity_dark": "INTEGER NOT NULL DEFAULT 50",
+            "interface_hue_light": "INTEGER",
+            "interface_intensity_light": "INTEGER",
+            "accent_hue_light": "INTEGER",
+            "accent_strength_light": "INTEGER",
+            "interface_hue_dark": "INTEGER",
+            "interface_intensity_dark": "INTEGER",
+            "accent_hue_dark": "INTEGER",
+            "accent_strength_dark": "INTEGER",
+            "appearance_write_state_json": json_type,
             "ticket_list_columns_json": json_type,
             "legacy_ticket_count": "INTEGER",
             "last_assigned_at": "TIMESTAMP",
@@ -965,6 +977,18 @@ def ensure_user_columns() -> None:
         conn.execute(text("UPDATE users SET color_enabled = TRUE WHERE color_enabled IS NULL"))
         conn.execute(text("UPDATE users SET task_panel_enabled = FALSE WHERE task_panel_enabled IS NULL"))
         conn.execute(text("UPDATE users SET theme_preference = 'light' WHERE theme_preference IS NULL OR theme_preference NOT IN ('light', 'dark')"))
+        # Only NULL fields are converted: restarting must never reset a saved palette.
+        hue_case = ("CASE accent_preference WHEN 'blue' THEN 215 WHEN 'red' THEN 350 "
+                    "WHEN 'green' THEN 153 WHEN 'orange' THEN 29 WHEN 'teal' THEN 184 "
+                    "WHEN 'mono' THEN 0 ELSE 259 END")
+        for theme in ("light", "dark"):
+            defaults = {
+                f"interface_hue_{theme}": "225" if theme == "dark" else "259", f"interface_intensity_{theme}": "50",
+                f"accent_hue_{theme}": hue_case,
+                f"accent_strength_{theme}": f"CASE WHEN accent_preference = 'mono' THEN 0 ELSE accent_intensity_{theme} END",
+            }
+            for field, expression in defaults.items():
+                conn.execute(text(f"UPDATE users SET {field} = {expression} WHERE {field} IS NULL"))
         conn.execute(text("UPDATE users SET legacy_ticket_count = 0 WHERE legacy_ticket_count IS NULL"))
         conn.execute(text("UPDATE users SET login = email WHERE login IS NULL"))
         conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -437,12 +438,37 @@ class UserStatusUpdate(BaseModel):
     availability_status: AvailabilityStatus
 
 
+AccentPreference = Literal["purple", "blue", "red", "green", "orange", "teal", "mono"]
+
+
 class UserPreferencesOut(BaseModel):
+    appearance_revision: str = ""
     send_by_enter: bool = False
     color_enabled: bool = True
     task_panel_enabled: bool = False
     theme_preference: Literal["light", "dark"] = "light"
+    accent_preference: AccentPreference = "purple"
+    accent_intensity_light: int = Field(default=50, ge=0, le=100, strict=True)
+    accent_intensity_dark: int = Field(default=50, ge=0, le=100, strict=True)
+    interface_hue_light: int = Field(default=259, ge=0, le=360, strict=True)
+    interface_intensity_light: int = Field(default=50, ge=0, le=100, strict=True)
+    accent_hue_light: int = Field(default=259, ge=0, le=360, strict=True)
+    accent_strength_light: int = Field(default=50, ge=0, le=100, strict=True)
+    interface_hue_dark: int = Field(default=225, ge=0, le=360, strict=True)
+    interface_intensity_dark: int = Field(default=50, ge=0, le=100, strict=True)
+    accent_hue_dark: int = Field(default=259, ge=0, le=360, strict=True)
+    accent_strength_dark: int = Field(default=50, ge=0, le=100, strict=True)
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
+
+
+class AppearanceWrite(BaseModel):
+    writer_id: UUID
+    sequence: int = Field(ge=1, le=9007199254740991, strict=True)
+
+
+class AppearanceSessionOut(BaseModel):
+    writer_id: UUID
+    preferences: UserPreferencesOut | None = None
 
 
 class UserPreferencesUpdate(BaseModel):
@@ -450,13 +476,26 @@ class UserPreferencesUpdate(BaseModel):
     color_enabled: bool | None = None
     task_panel_enabled: bool | None = None
     theme_preference: Literal["light", "dark"] | None = None
+    accent_preference: AccentPreference | None = None
+    accent_intensity_light: int | None = Field(default=None, ge=0, le=100, strict=True)
+    accent_intensity_dark: int | None = Field(default=None, ge=0, le=100, strict=True)
+    interface_hue_light: int | None = Field(default=None, ge=0, le=360, strict=True)
+    interface_intensity_light: int | None = Field(default=None, ge=0, le=100, strict=True)
+    accent_hue_light: int | None = Field(default=None, ge=0, le=360, strict=True)
+    accent_strength_light: int | None = Field(default=None, ge=0, le=100, strict=True)
+    interface_hue_dark: int | None = Field(default=None, ge=0, le=360, strict=True)
+    interface_intensity_dark: int | None = Field(default=None, ge=0, le=100, strict=True)
+    accent_hue_dark: int | None = Field(default=None, ge=0, le=360, strict=True)
+    accent_strength_dark: int | None = Field(default=None, ge=0, le=100, strict=True)
     ticket_list_columns: list[TicketListColumnPreference] | None = None
+    appearance_write: AppearanceWrite | None = None
 
-    @field_validator("theme_preference")
+    @field_validator("theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark",
+                     "interface_hue_light", "interface_intensity_light", "accent_hue_light", "accent_strength_light", "interface_hue_dark", "interface_intensity_dark", "accent_hue_dark", "accent_strength_dark")
     @classmethod
-    def validate_theme_preference(cls, value):
+    def validate_appearance_preference(cls, value):
         if value is None:
-            raise ValueError("theme_preference must be light or dark")
+            raise ValueError("appearance preference cannot be null")
         return value
 
     @field_validator("ticket_list_columns")
@@ -465,6 +504,12 @@ class UserPreferencesUpdate(BaseModel):
         if value is None:
             return value
         return normalize_ticket_list_columns(value)
+
+
+class AppearanceSessionCreate(BaseModel):
+    expected_revision: str
+    preferences: UserPreferencesUpdate
+    sequence: int = Field(ge=1, le=9007199254740991, strict=True)
 
 
 class TelegramNotificationSummaryOut(BaseModel):
