@@ -95,8 +95,8 @@ for (const theme of ['light', 'dark']) {
       assert.deepEqual(line, sibling, 'sibling surfaces share grid phase');
       assert.ok(line.every((value, i) => Math.abs(value - crossing[i]) <= 1), 'crossing strokes match within compositor rounding');
       if (template === 'ticket') assert.equal(await page.locator('#messages').evaluate(el => getComputedStyle(el).getPropertyValue('--desk-grid-base').trim() === getComputedStyle(el).getPropertyValue('--desk-soft').trim()), true);
-      assert.ok(assets.includes('/static/styles.css?v=20261025-roles-editor-v2'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261025-roles-editor-v2'));
+      assert.ok(assets.includes('/static/styles.css?v=20261025-modal-final-v2'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261025-modal-final-v2'));
     });
   }
   test(`grid contrast is stable across appearance hue and intensity: ${theme}`, async t => {
@@ -116,3 +116,16 @@ for (const theme of ['light', 'dark']) {
     assert.ok(Math.max(...ratios) - Math.min(...ratios) < .06, JSON.stringify(ratios));
   });
 }
+
+for (const theme of ['light', 'dark']) test(`V2 menu backdrop matches tickets: ${theme}`, async t => {
+  const backdrop = page => page.evaluate(() => {
+    const s = getComputedStyle(document.body);
+    return [s.backgroundImage, s.backgroundColor, s.backgroundAttachment];
+  });
+  const { page: reference } = await setup(t, 'tickets', theme);
+  const expected = await backdrop(reference);
+  for (const template of ['settings', 'statuses', 'management_tasks', 'management_users', 'settings_users', 'settings_automatic_messages']) {
+    const { page } = await setup(t, template, theme);
+    assert.deepEqual(await backdrop(page), expected, template);
+  }
+});

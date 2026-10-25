@@ -2,7 +2,9 @@
 @import url("/static/client-card-settings-v2.css?v=20261024-client-settings-panel-v2");
 @import url("/static/admin-pages-v2.css?v=20261025-status-log-responsive-v2");
 
-@import url("/static/admin-editors-v2.css?v=20261025-roles-editor-v2");
+@import url("/static/admin-editors-v2.css?v=20261025-modal-final-v2");
+
+@import url("/static/management-user-modal-v2.css?v=20261025-modal-final-v2");
 
 /* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
    The import precedes legacy CSS; deliberate scope specificity wins in both themes. */
@@ -249,6 +251,12 @@ body:has(.layout > .main) :where(.toolbar) :is(.display-settings, .bulk-admin-ac
 body:has(.layout > .main) .toolbar button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
 body:has(.layout > .main) .toolbar button.action.danger { color: var(--desk-danger); background: var(--desk-danger-bg); }
 
+/* All shell workspaces share the tickets V2 backdrop; legacy body gradients
+   must not show through the transparent grid outside their main bubbles. */
+body:has(.layout > .main) {
+  background: radial-gradient(ellipse at 85% 0%, var(--desk-backdrop, var(--desk-tint)), transparent 55%), var(--desk-bg);
+}
+
 /* Only the two requested workspaces receive the new surface and type system. */
 body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"])) {
   --bg: var(--desk-bg);
@@ -261,7 +269,6 @@ body:has(.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-lis
   --system: var(--desk-soft);
   color: var(--desk-text);
   font: 14px/1.5 var(--desk-font);
-  background: radial-gradient(ellipse at 85% 0%, var(--desk-backdrop, var(--desk-tint)), transparent 55%), var(--desk-bg);
 }
 
 body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) {

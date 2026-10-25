@@ -108,7 +108,7 @@
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261024-client-controls-v2",
-        "/static/management_users.js?v=20261021-all-save-feedback",
+        "/static/management_users.js?v=20261025-modal-final-v2",
       ],
     }],
     ["/management/integrations", {

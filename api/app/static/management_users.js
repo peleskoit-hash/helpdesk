@@ -290,6 +290,10 @@
     el.toggleClientBlockBtn.classList.toggle("danger", !state.selectedClientBlocked);
   }
 
+  function syncClientModalToggles(root) {
+    els(root).clientModal.querySelectorAll('input[type="checkbox"]').forEach(input => input.classList.add("desk-toggle"));
+  }
+
   async function openClientProfileModal(root, clientId, item = null) {
     if (!clientId || !window.TicketClientCard) return;
     state.selectedClientId = clientId;
@@ -298,6 +302,7 @@
     setStatus(root, "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438...");
     const profile = await api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`);
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
+    syncClientModalToggles(root);
     els(root).clientModal.classList.remove("hidden");
     setStatus(root, "\u0413\u043e\u0442\u043e\u0432\u043e");
   }
@@ -350,6 +355,7 @@
     state.selectedClientBlocked = Boolean(payload?.is_blocked);
     syncClientBlockControls(root);
     window.TicketClientCard.fillModal(clientCardCtx(root), payload?.profile || {});
+    syncClientModalToggles(root);
     await loadUsers(root);
     setStatus(root, "\u0414\u0430\u043d\u043d\u044b\u0435 \u043a\u043b\u0438\u0435\u043d\u0442\u0430 \u043e\u0447\u0438\u0449\u0435\u043d\u044b");
   }
@@ -389,6 +395,7 @@
       openClientProfileModal(root, row.dataset.clientId, item).catch((error) => setStatus(root, error.message));
     });
     el.closeClientModalBtn?.addEventListener("click", () => closeClientModal(root));
+    if (el.clientModal) closeOnBackdropClick(el.clientModal, () => closeClientModal(root));
     el.closeErrorModalBtn?.addEventListener("click", () => closeError(root));
     el.okErrorBtn?.addEventListener("click", () => closeError(root));
     el.copyErrorBtn?.addEventListener("click", async () => {
@@ -419,23 +426,31 @@
     }
   }
 
-  async function initManagementUsersPage({ root, url } = {}) {
+  function initManagementUsersPage({ root, url } = {}) {
     if (!root) return;
     applyFilterState(root, filterFromPageUrl(url || window.location.href), { resetOffset: false });
     bind(root);
-    try {
-      const sidebar = await window.HelpdeskSidebar?.init?.();
-      if (sidebar && sidebar.role !== "admin") {
-        setStatus(root, "\u0414\u043e\u0441\u0442\u0443\u043f \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0430");
-        return;
+    const handlePageKeydown = (event) => {
+      if (event.key === "Escape" && !els(root).clientModal?.classList.contains("hidden")) closeClientModal(root);
+    };
+    document.addEventListener("keydown", handlePageKeydown);
+    const destroy = () => document.removeEventListener("keydown", handlePageKeydown);
+    (async () => {
+      try {
+        const sidebar = await window.HelpdeskSidebar?.init?.();
+        if (sidebar && sidebar.role !== "admin") {
+          setStatus(root, "\u0414\u043e\u0441\u0442\u0443\u043f \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0430");
+          return;
+        }
+        state.role = sidebar?.role || "";
+        state.clientCardViewConfig = await api("/api/v1/management/users/client-card-view-config").catch(() => null);
+        await loadUsers(root);
+      } catch (error) {
+        setStatus(root, error.message);
       }
-      state.role = sidebar?.role || "";
-      state.clientCardViewConfig = await api("/api/v1/management/users/client-card-view-config").catch(() => null);
-      await loadUsers(root);
-    } catch (error) {
-      setStatus(root, error.message);
-    }
+    })();
     return {
+      destroy,
       onUrlChange(nextUrl) {
         return handleManagementUsersUrlChange(root, nextUrl);
       },

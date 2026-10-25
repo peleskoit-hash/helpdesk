@@ -105,6 +105,13 @@ for(const theme of ['light','dark'])for(const width of [320,700,1920])test(`seco
    return {width:rect.width,height:rect.height,font:getComputedStyle(textarea).fontSize,textarea:textarea.getBoundingClientRect().height,preview:preview.getBoundingClientRect().height,scroll:getComputedStyle(el.querySelector('.bot-telegram-preview')).scrollbarWidth};
  });
  assert.equal(editor.font,'16.8px');assert.equal(editor.scroll,'thin');
+ const previewContrast=await page.locator('#automaticMessageEditorModal .bot-telegram-preview-title').evaluate(el=>{
+   const luminance=color=>color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+   const text=luminance(getComputedStyle(el).color),bg=luminance(getComputedStyle(el.closest('.bot-telegram-preview-wrap')).backgroundColor);
+   return (Math.max(text,bg)+.05)/(Math.min(text,bg)+.05);
+ });
+ assert.ok(previewContrast>=4.5,`Preview title contrast: ${previewContrast}`);
+
  assert.ok(Math.abs(editor.textarea-editor.preview)<=2,JSON.stringify(editor));
  if(width>=1920){assert.ok(Math.abs(editor.width-1456)<=2,JSON.stringify(editor));assert.ok(Math.abs(editor.height-1014)<=2,JSON.stringify(editor));}
 

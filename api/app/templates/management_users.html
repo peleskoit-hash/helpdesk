@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - &#1059;&#1087;&#1088;&#1072;&#1074;&#1083;&#1077;&#1085;&#1080;&#1077; - &#1055;&#1086;&#1083;&#1100;&#1079;&#1086;&#1074;&#1072;&#1090;&#1077;&#1083;&#1080;</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261025-roles-editor-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-modal-final-v2" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -104,9 +104,9 @@
       </div>
 
       <div id="clientModal" class="modal hidden">
-        <div class="modal-dialog">
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="managementClientModalTitle">
           <div class="modal-head">
-            <div style="font-weight:700;">&#1050;&#1072;&#1088;&#1090;&#1086;&#1095;&#1082;&#1072; &#1082;&#1083;&#1080;&#1077;&#1085;&#1090;&#1072;</div>
+            <div id="managementClientModalTitle" style="font-weight:700;">&#1050;&#1072;&#1088;&#1090;&#1086;&#1095;&#1082;&#1072; &#1082;&#1083;&#1080;&#1077;&#1085;&#1090;&#1072;</div>
             <button id="closeClientModalBtn" type="button" class="action">&#1047;&#1072;&#1082;&#1088;&#1099;&#1090;&#1100;</button>
           </div>
           <div class="modal-body">
@@ -165,7 +165,7 @@
               <div class="modal-field-section modal-field-section-verification">
                 <label class="checkbox-label">
                   &#1042;&#1077;&#1088;&#1080;&#1092;&#1080;&#1082;&#1072;&#1094;&#1080;&#1103; &#1087;&#1088;&#1086;&#1081;&#1076;&#1077;&#1085;&#1072;
-                  <input id="fIsVerified" type="checkbox" />
+                  <input id="fIsVerified" class="desk-toggle" type="checkbox" />
                 </label>
               </div>
             </div>
@@ -199,9 +199,9 @@
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
   <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261025-roles-editor-v2"></script>
+  <script src="/static/app_shell.js?v=20261025-modal-final-v2"></script>
   <script src="/static/client_web_credentials.js?v=20261018-web-empty-autofill"></script>
   <script src="/static/ticket_client_card.js?v=20261024-client-controls-v2"></script>
-  <script src="/static/management_users.js?v=20261021-all-save-feedback"></script>
+  <script src="/static/management_users.js?v=20261025-modal-final-v2"></script>
 </body>
 </html>

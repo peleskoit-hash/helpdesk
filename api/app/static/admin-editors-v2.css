@@ -90,7 +90,8 @@ body:has(#appContent:is([data-shell-page="settings-users"], [data-shell-page="se
     & :is(.modal-head button.action, .modal-foot button.action, textarea, .bot-telegram-preview) { font-size: 16.8px; }
     & .bot-text-toolbar .action { font-size: 14.4px; min-height: 34px; padding: 6px 10px; }
     & :is(.automatic-message-editor-subtitle, .automatic-message-editor-meta, .bot-telegram-preview-title, .automatic-variable-option, .automatic-variable-group-title, .automatic-variable-option code) { font-size: 14.4px; }
-    & .bot-telegram-preview-wrap { grid-template-rows: auto minmax(0, 1fr); }
+    & .bot-telegram-preview-wrap { grid-template-rows: auto minmax(0, 1fr); background: var(--desk-soft); }
+    & .bot-telegram-preview-title { color: var(--desk-text); }
     & :is(.bot-telegram-preview, textarea, .modal-body, .automatic-variable-list, .bot-emoji-scroll) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
   }
   & #appContent[data-shell-page="mass-notifications"] .panel > .modal-body { width: min(100%, 960px); box-sizing: border-box; padding: 21px !important; flex-shrink: 0; }
