@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - Управление - Задачи</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261025-status-log-responsive-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-roles-editor-v2" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -178,8 +178,8 @@
               </label>
             </div>
             <div class="management-tasks-checks">
-              <label class="management-tasks-checkbox-row"><input id="internalTaskDisplayAuthor" type="checkbox" checked /> Показывать меня как автора</label>
-              <label class="management-tasks-checkbox-row"><input id="internalTaskNotify" type="checkbox" checked /> Уведомить о завершении</label>
+              <label class="management-tasks-checkbox-row"><input id="internalTaskDisplayAuthor" class="desk-toggle" type="checkbox" checked /> Показывать меня как автора</label>
+              <label class="management-tasks-checkbox-row"><input id="internalTaskNotify" class="desk-toggle" type="checkbox" checked /> Уведомить о завершении</label>
             </div>
             <div class="management-tasks-form-grid">
               <label>Когда создать
@@ -272,7 +272,7 @@
             </div>
             <div class="management-tasks-form-grid">
               <label class="management-tasks-checkbox-row">
-                <input id="internalTaskDeadlineEnabled" type="checkbox" />
+                <input id="internalTaskDeadlineEnabled" class="desk-toggle" type="checkbox" />
                 <span>Указать дедлайн</span>
               </label>
               <label id="internalTaskDeadlineAtWrap">Дедлайн
@@ -294,7 +294,7 @@
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
   <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261025-stats-final-v2"></script>
+  <script src="/static/app_shell.js?v=20261025-roles-editor-v2"></script>
   <script src="/static/management_tasks.js?v=20261021-all-save-feedback"></script>
 </body>
 </html>

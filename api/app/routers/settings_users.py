@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 ROLE_LABELS = {
     "admin": "Администратор",
-    "agent": "Сотрудник",
+    "agent": "Тех. поддержка",
     "trainee": "Стажёр",
     "chiki_piki": "Чики-пики",
 }
@@ -117,6 +117,7 @@ def _user_out_with_notification(
         legacy_ticket_count=int(user.legacy_ticket_count or 0),
         telegram_notification_bound=notification_account is not None,
         telegram_notification_display=_telegram_notification_display(notification_account) if notification_account else None,
+        last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

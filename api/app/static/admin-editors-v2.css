@@ -1,0 +1,119 @@
+/* Second V2 package: editor behavior stays in the existing page modules. */
+body:has(#appContent:is([data-shell-page="settings-users"], [data-shell-page="settings-automatic-messages"], [data-shell-page="mass-notifications"], [data-shell-page="management-tasks"])) {
+  & #appContent.main {
+    --surface: var(--desk-surface); --text: var(--desk-text); --muted: var(--desk-muted); --border: var(--desk-border); --accent: var(--desk-focus, var(--desk-accent));
+    display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; overflow: hidden;
+    font: 14px/1.5 var(--desk-font); color: var(--desk-text);
+  }
+  & #appContent > :is(.content, .management-tasks-page) {
+    box-sizing: border-box; height: 100%; min-height: 0; min-width: 0;
+    padding: 14px 16px 16px; grid-template-rows: minmax(0, 1fr); align-items: stretch; overflow: hidden; font-size: 21px;
+  }
+  & #appContent .panel {
+    box-sizing: border-box; height: 100%; min-height: 0; min-width: 0; border-radius: 24px;
+    background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); box-shadow: var(--desk-shadow); backdrop-filter: none;
+    overflow: auto;
+  }
+  & :is(#appContent .panel, #appContent .modal, #automaticMessageEditorModal, #appErrorDialog) {
+    --surface: var(--desk-surface); --text: var(--desk-text); --muted: var(--desk-muted); --border: var(--desk-border);
+    font: 21px/1.5 var(--desk-font); color: var(--desk-text);
+    & :is(button, input, select, textarea) { font-family: var(--desk-font); }
+    & :is(button.action, button.icon-btn) {
+      border: 1px solid var(--desk-border); border-radius: 12px; padding: 12px 18px; min-height: 56px; height: auto;
+      max-width: 100%; min-width: 0; font-size: 21px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere;
+      background: var(--desk-soft); color: var(--desk-text); box-shadow: none; backdrop-filter: none;
+    }
+    & button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+    & :is(button.primary, button.action-primary):hover:not(:disabled) { background: var(--desk-primary, var(--desk-on-tint)); }
+    & :is(button.primary, button.action-primary) { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); border-color: var(--desk-accent); }
+    & button.danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
+    & button:disabled { cursor: not-allowed; }
+    & :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+      box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; font-size: 21px; line-height: 1.5;
+      border: 1px solid var(--desk-border); border-radius: 12px; padding: 12px 16px;
+      background: var(--desk-soft); color: var(--desk-text); box-shadow: none;
+    }
+    & :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 2px; }
+    & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+    & :is(label, .status, .field-help, .field-error) { font-size: 18px; }
+    & label { min-width: 0; gap: 8px; }
+    & .status { color: var(--desk-muted); }
+    & .field-error { color: var(--desk-danger); }
+    & :is(.modal-head, .modal-foot, .card-head) { padding: 18px 21px; gap: 12px; flex-wrap: wrap; border-color: var(--desk-border); }
+    & .modal-body { min-height: 0; min-width: 0; padding: 21px; gap: 18px; scrollbar-gutter: stable; }
+    & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: var(--desk-shadow); backdrop-filter: none; max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; }
+
+  }
+  & #appContent :is(.settings-table, .management-tasks-table) { margin: 0; width: max-content; min-width: 100%; border-collapse: collapse; }
+  & #appContent :is(.settings-table, .management-tasks-table) :is(th, td) { padding: 18px; font-size: 21px; border-color: var(--desk-border); color: var(--desk-text); background: transparent; }
+  & #appContent :is(.settings-table, .management-tasks-table) th { font-size: 19.5px; color: var(--desk-muted); background: var(--desk-soft); }
+  & #appContent :is(.settings-table, .management-tasks-table) tr:hover { background: var(--desk-hover); }
+  & #appContent :is(#createUserBtn, #internalTaskCreateBtn) { margin: 21px; width: fit-content; flex-shrink: 0; }
+  & #appContent .settings-user-row { cursor: pointer; }
+  & #appContent .settings-user-row:focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: -2px; }
+  & #appContent .settings-user-row:is(:hover, :focus-visible) td { background: var(--desk-hover); }
+  & #appContent .settings-user-row:active td { background: var(--desk-tint); }
+  & #appContent .settings-user-dialog { width: min(820px, calc(100vw - 24px)); }
+  & #appContent .settings-user-dialog .modal-field-section { padding: 0; border: 0; background: transparent; box-shadow: none; gap: 18px; }
+  & #appContent .settings-user-dialog .modal-field-section label { color: var(--desk-muted); }
+  & #appContent .settings-telegram-card-title { color: var(--desk-text); font-size: 18px; }
+  & #appContent .settings-checkbox-label { color: var(--desk-text) !important; }
+  & #appContent .settings-telegram-card { border-color: var(--desk-border); background: var(--desk-soft); color: var(--desk-text); }
+  & #appContent .settings-telegram-card-meta { color: var(--desk-muted); font-size: 18px; }
+  & #appContent .automatic-messages-panel .settings-description { padding: 21px 24px 0; color: var(--desk-muted); font-size: 19.5px; }
+  & #appContent .automatic-messages-root { padding: 21px 24px 24px; overflow: visible; flex: 0 0 auto; }
+  & #appContent .automatic-message-section { background: var(--desk-soft); border-color: var(--desk-border); }
+  & #appContent .automatic-message-section-head { background: var(--desk-soft); border-color: var(--desk-border); padding: 18px 21px; }
+  & #appContent .automatic-message-section-head h3 { font-size: 24px; }
+  & #appContent .automatic-message-section-head span { background: var(--desk-tint); color: var(--desk-on-tint); }
+  & #appContent .automatic-message-row { padding: 18px 21px; border-color: var(--desk-border); }
+  & #appContent .automatic-message-row:hover { background: var(--desk-hover); }
+  & #appContent :is(.automatic-message-key, .automatic-message-description) { font-size: 18px; color: var(--desk-muted); }
+  & #appContent .automatic-message-badge { font-size: 16px; background: var(--desk-tint); color: var(--desk-on-tint); }
+  & #automaticMessageEditorModal {
+    & .bot-text-editor-body-toolbar { overflow: auto; }
+    & .bot-text-toolbar { flex-wrap: wrap; gap: 8px; }
+    & .bot-text-toolbar .action { min-height: 42px; padding: 8px 12px; font-size: 18px; }
+    & :is(.automatic-message-editor-subtitle, .automatic-message-editor-meta, .bot-telegram-preview-title) { color: var(--desk-muted); font-size: 18px; }
+    & :is(.bot-telegram-preview, .automatic-variable-picker, .automatic-variable-option, .automatic-variable-group-title, .bot-emoji-picker, .bot-emoji-tab) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); }
+    & .bot-telegram-preview { font-size: 21px; line-height: 1.5; }
+    & :is(.automatic-variable-option, .automatic-variable-group-title, .automatic-variable-option code) { font-size: 18px; }
+    & .automatic-variable-option { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+    & .automatic-variable-trigger { flex-shrink: 1; }
+  }
+  & #automaticMessageEditorModal {
+    font-size: 16.8px;
+    & #automaticMessageTextarea { font-size: 16.8px; }
+    & .automatic-message-editor-dialog { width: min(1456px, calc(100vw - 24px)); height: min(1014px, calc(100dvh - 24px)); }
+    & .modal-body.bot-text-editor-body-toolbar { grid-template-rows: auto auto minmax(180px, 1fr) minmax(180px, 1fr); overflow: auto; }
+    & :is(.modal-head, .modal-foot) { padding: 14px 17px; }
+    & :is(.modal-head button.action, .modal-foot button.action, textarea, .bot-telegram-preview) { font-size: 16.8px; }
+    & .bot-text-toolbar .action { font-size: 14.4px; min-height: 34px; padding: 6px 10px; }
+    & :is(.automatic-message-editor-subtitle, .automatic-message-editor-meta, .bot-telegram-preview-title, .automatic-variable-option, .automatic-variable-group-title, .automatic-variable-option code) { font-size: 14.4px; }
+    & .bot-telegram-preview-wrap { grid-template-rows: auto minmax(0, 1fr); }
+    & :is(.bot-telegram-preview, textarea, .modal-body, .automatic-variable-list, .bot-emoji-scroll) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
+  }
+  & #appContent[data-shell-page="mass-notifications"] .panel > .modal-body { width: min(100%, 960px); box-sizing: border-box; padding: 21px !important; flex-shrink: 0; }
+  & #appContent[data-shell-page="mass-notifications"] .modal-foot { flex-wrap: wrap; }
+  & #appContent .management-tasks-panel { display: flex; flex-direction: column; }
+  & #appContent :is(.management-tasks-tabs, .management-tasks-toolbar) { padding: 0 21px 18px; gap: 8px; flex-wrap: wrap; border-color: var(--desk-border); }
+  & #appContent .management-tasks-tabs .active, & #appContent .segmented-control .active { margin-bottom: 0; background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & #appContent .management-tasks-panel > section:not([hidden]) { min-height: 240px; flex: 1 0 240px; overflow: auto; }
+  & #appContent .management-tasks-table-wrap { overflow: auto; }
+  & #appContent .management-tasks-table { border-collapse: separate; border-spacing: 0 12px; padding: 0 12px; }
+  & #appContent .management-tasks-table tbody td { background: var(--desk-soft); border-top: 1px solid var(--desk-border); }
+  & #appContent .management-tasks-table tbody tr:hover td { background: var(--desk-hover); }
+  & #appContent .management-tasks-table tbody td:first-child { border-left: 1px solid var(--desk-border); border-radius: 16px 0 0 16px; }
+  & #appContent .management-tasks-table tbody td:last-child { border-right: 1px solid var(--desk-border); border-radius: 0 16px 16px 0; }
+  & #appContent .management-tasks-modal { width: min(960px, calc(100vw - 24px)); }
+  & #appContent .management-tasks-form { gap: 18px; }
+  & #appContent .management-tasks-schedule-info { background: var(--desk-soft); border-color: var(--desk-border); }
+  & #appContent .management-tasks-form-error { color: var(--desk-danger); }
+  & > .save-confirmation { font-size: 30px; max-width: calc(100vw - 24px); overflow-wrap: anywhere; }
+  @media (max-width: 700px) {
+    & #appContent > :is(.content, .management-tasks-page) { padding: 12px; }
+    & #appContent.main { height: 100dvh; grid-template-columns: minmax(0, 1fr); }
+    & #appContent .modal-foot { flex-wrap: wrap; }
+    & #automaticMessageEditorModal .modal-head { flex-wrap: wrap; }
+  }
+}

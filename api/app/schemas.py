@@ -581,6 +581,7 @@ class SettingsUserOut(BaseModel):
     legacy_ticket_count: int = 0
     telegram_notification_bound: bool = False
     telegram_notification_display: str | None = None
+    last_login_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

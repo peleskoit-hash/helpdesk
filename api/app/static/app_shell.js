@@ -58,7 +58,7 @@
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261021-all-save-feedback"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261021-all-save-feedback"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261025-roles-editor-v2"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261024-client-settings-groups-v2"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
@@ -98,7 +98,7 @@
         "/static/profile_notification_bot.js?v=20261024-notification-layout-v2",
       ],
     }],
-    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261021-profile-quick-save"] }],
+    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261025-stats-final-v2", "/static/statuses.js?v=20261025-status-log-v2"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261021-profile-quick-save"] }],

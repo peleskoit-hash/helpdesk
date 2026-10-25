@@ -22,7 +22,7 @@ for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 108
       return route.fulfill({ body: html, contentType: 'text/html' });
     });
     let reference;
-    for (const template of ['tickets', 'profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users', 'statuses', 'management_integrations', 'management_feedback', 'management_statistics', 'management_saved_files', 'quick_replies']) {
+    for (const template of ['tickets', 'profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users', 'statuses', 'management_integrations', 'management_feedback', 'management_statistics', 'management_saved_files', 'quick_replies', 'settings_users', 'settings_automatic_messages', 'mass_notifications', 'management_tasks']) {
       if (width === 390 && ['profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users'].includes(template)) continue;
       await page.goto(`http://desk.test/${template}`);
       await page.evaluate(theme => { document.body.dataset.theme = theme; document.body.dataset.sidebarReady = '1'; }, theme);
@@ -39,6 +39,7 @@ for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 108
           const panel = document.querySelector('#appContent .panel');
           const scroll = template === 'statuses' ? panel.querySelector('#statusBoardPanel')
             : template === 'quick_replies' ? panel.querySelector('.quick-replies-list')
+            : template === 'management_tasks' ? panel.querySelector('section:not([hidden])')
             : template === 'management_statistics' ? panel : panel.querySelector('.table-scroll') || panel;
           scroll.hidden = false;
           const filler = document.createElement('div'); filler.style.cssText = 'height:1800px;flex-shrink:0'; scroll.appendChild(filler);

@@ -1,6 +1,6 @@
 (function () {
 function initProfilePage() {
-const roleLabels = { admin: "Администратор", agent: "Сотрудник", trainee: "Стажёр", chiki_piki: "Чики-пики" };
+const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", trainee: "Стажёр", chiki_piki: "Чики-пики" };
 const RELOGIN_DELAY_MS = 2000;
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_OUTPUT_SIZE = 512;

@@ -310,6 +310,12 @@ def test_admin_can_create_scheduled_one_off_without_materialization():
 
 
 def test_scheduled_create_interprets_naive_datetime_in_app_timezone(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return datetime(2026, 9, 16)
+
+    monkeypatch.setattr(internal_tasks, "datetime", FrozenDateTime)
     monkeypatch.setattr(settings, "app_timezone", "Europe/Moscow")
     session = _session()
     company = _company(session)
@@ -328,6 +334,12 @@ def test_scheduled_create_interprets_naive_datetime_in_app_timezone(monkeypatch)
 
 
 def test_scheduled_create_normalizes_aware_datetime_to_utc(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return datetime(2026, 9, 16)
+
+    monkeypatch.setattr(internal_tasks, "datetime", FrozenDateTime)
     monkeypatch.setattr(settings, "app_timezone", "Europe/Moscow")
     session = _session()
     company = _company(session)

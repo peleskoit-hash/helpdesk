@@ -6,7 +6,7 @@ const state = {
   currentTelegramNotification: null,
 };
 
-const roleLabels = { admin: "Администратор", agent: "Сотрудник", trainee: "Стажёр", chiki_piki: "Чики-пики" };
+const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", trainee: "Стажёр", chiki_piki: "Чики-пики" };
 const statusLabels = { offline: "Не в сети", online: "В сети", on_ticket: "На заявке", waiting: "В ожидании", lunch: "Обед" };
 
 const el = {
@@ -36,6 +36,11 @@ const el = {
 
 function setStatus() {}
 function escapeHtml(v) { return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
+function fmtLastLogin(value) {
+  if (!value) return "—";
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : value + "Z";
+  return Number.isNaN(new Date(normalized).getTime()) ? "—" : fmtDate(normalized);
+}
 function fmtDate(d) { return d ? new Date(d).toLocaleString("ru-RU", { hour12: false }) : "-"; }
 
 async function api(path, options = {}) {
@@ -123,6 +128,10 @@ function renderUsers() {
 
   state.users.forEach((user) => {
     const tr = document.createElement("tr");
+    tr.className = "settings-user-row";
+    tr.dataset.userId = user.id;
+    tr.tabIndex = 0;
+    tr.setAttribute("aria-label", `Редактировать пользователя: ${user.full_name}`);
     tr.innerHTML = `
       <td>${escapeHtml(user.full_name)}</td>
       <td>${escapeHtml(user.login)}</td>
@@ -132,15 +141,19 @@ function renderUsers() {
       <td>${Number(user.legacy_ticket_count || 0)}</td>
       <td>${fmtDate(user.created_at)}</td>
       <td>${fmtDate(user.updated_at)}</td>
-      <td><button class="action edit-user-btn" type="button" data-user-id="${escapeHtml(user.id)}">Редактировать</button></td>
+      <td>${escapeHtml(fmtLastLogin(user.last_login_at))}</td>
     `;
     el.usersTableBody.appendChild(tr);
   });
 
-  el.usersTableBody.querySelectorAll(".edit-user-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const user = state.users.find((item) => item.id === btn.dataset.userId);
+  el.usersTableBody.querySelectorAll(".settings-user-row").forEach((row) => {
+    const edit = () => {
+      const user = state.users.find((item) => item.id === row.dataset.userId);
       if (user) openUserModal(user);
+    };
+    row.addEventListener("click", edit);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); edit(); }
     });
   });
 }

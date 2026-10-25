@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -287,6 +288,8 @@ def login_submit(
         html = html.replace("{{LOGIN_VALUE}}", login_value)
         html = html.replace("{{NEXT_VALUE}}", next or "/tickets")
         return HTMLResponse(content=html, status_code=401)
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
     login_user(request, user)
     safe_next = next if next and next.startswith("/") else "/tickets"
     return RedirectResponse(url=safe_next, status_code=303)

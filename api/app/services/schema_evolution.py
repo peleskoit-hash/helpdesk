@@ -947,6 +947,7 @@ def ensure_user_columns() -> None:
             "client_card_collapsed_blocks_json": json_type,
             "legacy_ticket_count": "INTEGER",
             "last_assigned_at": "TIMESTAMP",
+            "last_login_at": "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE",
             "login": "VARCHAR(100)",
             "password_hash": "VARCHAR(255)",
             "avatar_path": "VARCHAR(500)",

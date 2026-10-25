@@ -84,7 +84,7 @@ def _status_out(user: User) -> UserStatusOut:
     return UserStatusOut(
         id=user.id,
         role=user.role,
-        role_label={"admin": "Администратор", "agent": "Сотрудник", "trainee": "Стажёр", "chiki_piki": "Чики-пики"}.get(user.role, user.role),
+        role_label={"admin": "Администратор", "agent": "Тех. поддержка", "trainee": "Стажёр", "chiki_piki": "Чики-пики"}.get(user.role, user.role),
         full_name=user.full_name,
         availability_status=user.availability_status or "offline",
     )
@@ -411,7 +411,7 @@ def list_agents(db: Session = Depends(get_db), current_user: CurrentUser = Depen
             id=agent.id,
             full_name=agent.full_name,
             role=agent.role,
-            role_label={"agent": "Сотрудник", "trainee": "Стажёр"}.get(agent.role, agent.role),
+            role_label={"agent": "Тех. поддержка", "trainee": "Стажёр"}.get(agent.role, agent.role),
             availability_status=agent.availability_status or "offline",
             updated_at=agent.updated_at,
         )
@@ -432,7 +432,7 @@ def list_users_by_role(
     ).scalars().all()
     role_label_map = {
         "admin": "Администратор",
-        "agent": "Сотрудник",
+        "agent": "Тех. поддержка",
         "trainee": "Стажёр",
         "chiki_piki": "Чики-пики",
     }
@@ -464,7 +464,7 @@ def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depe
             id=user.id,
             full_name=user.full_name,
             role=user.role,
-            role_label={"agent": "Сотрудник", "trainee": "Стажёр"}.get(user.role, user.role),
+            role_label={"agent": "Тех. поддержка", "trainee": "Стажёр"}.get(user.role, user.role),
             availability_status=user.availability_status or "offline",
             updated_at=user.updated_at,
             avatar_present=bool((user.avatar_path or "").strip()),

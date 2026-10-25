@@ -128,6 +128,7 @@ class User(Base):
     client_card_collapsed_blocks_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ticket_list_columns_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

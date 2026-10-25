@@ -3343,7 +3343,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261025-status-log-responsive-v2/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261025-roles-editor-v2/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3426,7 +3426,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261025-status-log-responsive-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261025-roles-editor-v2/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

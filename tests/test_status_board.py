@@ -164,7 +164,7 @@ def test_status_board_returns_avatar_contract_and_preserves_existing_fields():
         "id": with_avatar.id,
         "full_name": "Anna Agent",
         "role": "agent",
-        "role_label": "Сотрудник",
+        "role_label": "Тех. поддержка",
         "availability_status": "waiting",
         "updated_at": with_avatar.updated_at,
         "avatar_present": True,

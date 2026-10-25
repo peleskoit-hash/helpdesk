@@ -9,8 +9,9 @@ async function setup(t, theme = 'light', count = 8) {
   const page = await browser.newPage({viewport: {width: 1280, height: 720}});
   const template = fs.readFileSync('api/app/templates/settings_automatic_messages.html', 'utf8');
   await page.setContent(template.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, ''));
-  await page.locator('body').evaluate((el, theme) => { el.dataset.theme = theme; }, theme);
+  await page.locator('body').evaluate((el, theme) => { el.dataset.theme = theme; el.dataset.sidebarReady = '1'; }, theme);
   await page.addStyleTag({content: fs.readFileSync('api/app/static/styles.css', 'utf8')});
+  for (const file of ['desk-v2.css', 'admin-editors-v2.css']) await page.addStyleTag({content: fs.readFileSync('api/app/static/' + file, 'utf8')});
   await page.evaluate(count => {
     const items = Array.from({length: count}, (_, i) => ({key: `message.${i}`, title: `Сообщение ${i}`, description: 'Описание сообщения', effective_text: `Текст ${i}`, default_text: `Текст ${i}`, runtime_enabled: true, is_overridden: i === 0}));
     const payload = {items, categories: [
@@ -43,10 +44,10 @@ test(`long expanded categories scroll to the last editable message in the real p
     return {selector, height: el.clientHeight, scrollHeight: el.scrollHeight, overflow: css.overflowY, maxHeight: css.maxHeight};
   }));
   const panel = page.locator('.automatic-messages-panel');
-  assert.ok(await panel.evaluate(el => el.clientHeight >= el.scrollHeight - 1), 'panel must contain all expanded rows');
-  assert.ok(sizes[0].scrollHeight > sizes[0].height, 'main workspace must have vertical scroll');
+  assert.ok(await panel.evaluate(el => el.scrollHeight > el.clientHeight), 'panel must scroll expanded rows inside the fixed V2 bubble');
+  assert.ok(sizes[0].scrollHeight <= sizes[0].height + 1, 'main workspace keeps the V2 bubble inside the viewport');
   assert.equal(sizes[3].overflow, 'visible', 'message list must not introduce a nested scrollbar');
-  await page.locator('.main').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.locator('.automatic-messages-panel').evaluate(el => { el.scrollTop = el.scrollHeight; });
   const last = page.locator('.automatic-message-row').last();
   const bounds = await last.boundingBox();
   assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 720, 'last message is visible after scrolling');
@@ -54,7 +55,7 @@ test(`long expanded categories scroll to the last editable message in the real p
   assert.equal(await page.locator('#automaticMessageTextarea').inputValue(), 'Текст 119');
   await page.locator('#automaticMessageCancelBtn').click();
   await page.setViewportSize({width: 1024, height: 600});
-  await page.locator('.main').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.locator('.automatic-messages-panel').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await last.click({timeout: 3000});
   assert.equal(await page.locator('#automaticMessageTextarea').inputValue(), 'Текст 119');
 });
@@ -70,10 +71,10 @@ for (const theme of ['light', 'dark']) {
     assert.deepEqual(await sections.locator('summary > span').allTextContents(), ['4', '4']);
     const arrow = () => sections.first().locator('i').evaluate(el => getComputedStyle(el, '::before').content);
     assert.equal(await arrow(), '"▼"');
-    const height = (await page.locator('.automatic-messages-panel').boundingBox()).height;
+    const height = await page.locator('#automaticMessagesRoot').evaluate(el => el.scrollHeight);
     await sections.first().locator('summary').click();
     assert.equal(await arrow(), '"▲"');
-    assert.ok((await page.locator('.automatic-messages-panel').boundingBox()).height > height);
+    assert.ok(await page.locator('#automaticMessagesRoot').evaluate(el => el.scrollHeight) > height);
     await sections.last().locator('summary').click();
     assert.equal(await page.locator('details[open]').count(), 2);
     assert.equal(await page.locator('#automaticMessagesRoot').evaluate(el => getComputedStyle(el).overflowY), 'visible');
@@ -123,7 +124,7 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261025-status-log-responsive-v2' : '20261025-stats-final-v2'], `${file}: ${resource}`);
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261025-roles-editor-v2' : '20261025-roles-editor-v2'], `${file}: ${resource}`);
     }
   }
 });

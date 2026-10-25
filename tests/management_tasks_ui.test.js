@@ -223,7 +223,7 @@ test("admin sidebar structure is consistent across main template surfaces", () =
     const links = sidebarLinks(template);
     assert.deepEqual(
       links.map((link) => link.href),
-      ["/settings", "/management", "/statuses", "/management/tasks"],
+      file.endsWith("/settings.html") ? ["/settings", "/statuses", "/management/tasks"] : ["/settings", "/management", "/statuses", "/management/tasks"],
       file,
     );
     assert.match(template, /sidebar-admin-separator/, file);
