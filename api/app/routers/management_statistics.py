@@ -5,10 +5,10 @@ import binascii
 import json
 from datetime import datetime, timezone
 from statistics import median
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from ..auth import CurrentUser, get_current_user, is_admin
@@ -94,7 +94,6 @@ def _stats_total(observations: list[tuple[str, int]]) -> ManagementWorkTimeStats
         tickets=tickets,
         tasks=tasks,
         objects=tickets + tasks,
-        total_seconds=total_seconds,
         average_seconds=average_seconds,
         median_seconds=median_seconds,
     )
@@ -255,7 +254,7 @@ def get_work_time_statistics(
             )
         )
 
-    items.sort(key=lambda item: (-item.total_seconds, item.full_name or item.user_id, item.user_id))
+    items.sort(key=lambda item: (-sum(seconds for _type, seconds in observations_by_user[item.user_id]), item.full_name or item.user_id, item.user_id))
     all_observations = [
         (object_type, seconds)
         for observations in observations_by_user.values()
@@ -354,6 +353,8 @@ def get_status_transitions(
     date_to: Annotated[datetime | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=STATUS_TRANSITIONS_MAX_LIMIT)] = STATUS_TRANSITIONS_DEFAULT_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
+    sort_order: Annotated[Literal["asc", "desc"], Query()] = "desc",
+    include_total: Annotated[bool, Query()] = False,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -381,12 +382,13 @@ def get_status_transitions(
         filters.append(CurrentStatusInterval.started_at >= date_from)
     if date_to is not None:
         filters.append(CurrentStatusInterval.started_at < date_to)
+    cursor_filters = []
     if cursor is not None:
         cursor_started_at, cursor_id = _decode_status_transition_cursor(cursor)
-        filters.append(
+        cursor_filters.append(
             or_(
-                CurrentStatusInterval.started_at < cursor_started_at,
-                and_(CurrentStatusInterval.started_at == cursor_started_at, CurrentStatusInterval.id < cursor_id),
+                CurrentStatusInterval.started_at > cursor_started_at if sort_order == "asc" else CurrentStatusInterval.started_at < cursor_started_at,
+                and_(CurrentStatusInterval.started_at == cursor_started_at, CurrentStatusInterval.id > cursor_id if sort_order == "asc" else CurrentStatusInterval.id < cursor_id),
             )
         )
 
@@ -400,7 +402,7 @@ def get_status_transitions(
         )
     )
 
-    rows = db.execute(
+    query = (
         select(CurrentStatusInterval, PreviousStatusInterval.status)
         .join(
             PreviousStatusInterval,
@@ -413,9 +415,10 @@ def get_status_transitions(
             ),
         )
         .where(*filters, ~other_previous_exists)
-        .order_by(CurrentStatusInterval.started_at.desc(), CurrentStatusInterval.id.desc())
-        .limit(limit + 1)
-    ).all()
+    )
+    total_count = db.scalar(select(func.count()).select_from(query.subquery())) if include_total else None
+    order = (CurrentStatusInterval.started_at.asc(), CurrentStatusInterval.id.asc()) if sort_order == "asc" else (CurrentStatusInterval.started_at.desc(), CurrentStatusInterval.id.desc())
+    rows = db.execute(query.where(*cursor_filters).order_by(*order).limit(limit + 1)).all()
 
     page_rows = rows[:limit]
     has_more = len(rows) > limit
@@ -446,4 +449,4 @@ def get_status_transitions(
                 changed_at=current.started_at,
             )
         )
-    return ManagementStatusTransitionsOut(items=items, next_cursor=next_cursor, has_more=has_more)
+    return ManagementStatusTransitionsOut(items=items, next_cursor=next_cursor, has_more=has_more, total_count=total_count)

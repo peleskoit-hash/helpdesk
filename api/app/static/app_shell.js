@@ -54,7 +54,7 @@
     ["/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
-    ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20260913a"] }],
+    ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2"] }],
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261021-all-save-feedback"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
@@ -99,7 +99,7 @@
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261021-profile-quick-save"] }],
-    ["/statuses", { page: "statuses", scripts: ["/static/statuses.js?v=20261011a"] }],
+    ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261025-stats-final-v2", "/static/statuses.js?v=20261025-status-log-v2"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261021-profile-quick-save"] }],
     ["/management", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
@@ -113,7 +113,7 @@
     }],
     ["/management/integrations", {
       page: "management-integrations",
-      scripts: ["/static/management_integrations.js?v=20260904a"],
+      scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
     ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261021-task-panel-refresh"] }],
   ]);

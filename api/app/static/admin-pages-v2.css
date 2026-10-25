@@ -1,0 +1,261 @@
+/* Existing V2 controls and workspace geometry, scoped to the six menu pages. */
+body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="management-integrations"], [data-shell-page="management-feedback"], [data-shell-page="management-statistics"], [data-shell-page="management-saved-files"], [data-shell-page="quick-replies"]) {
+  --surface: var(--desk-surface);
+  --text: var(--desk-text);
+  --muted: var(--desk-muted);
+  --border: var(--desk-border);
+  --accent: var(--desk-focus, var(--desk-accent));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--desk-text);
+  font: 14px/1.5 var(--desk-font);
+
+  & > :is(.content, .management-integrations-page, .management-feedback-page, .management-statistics-page, .management-saved-files-page) {
+    box-sizing: border-box;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: 14px 16px 16px;
+    grid-template-rows: minmax(0, 1fr);
+    align-content: stretch;
+    align-items: stretch;
+    overflow: hidden;
+    font-size: 21px;
+  }
+  & .panel {
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 24px;
+    background: var(--desk-surface);
+    border-color: var(--desk-border);
+    box-shadow: var(--desk-shadow);
+    backdrop-filter: none;
+  }
+  & :is(button, input, select, textarea) { font-family: var(--desk-font); }
+  & :is(.panel, .modal) button.action {
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    padding: 13.5px 18px;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    font-size: 21px;
+    line-height: 1.4;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 60px;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  & button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
+  & button.action.primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); border-color: var(--desk-accent); }
+  & button.action.primary:hover:not(:disabled) { background: var(--desk-primary, var(--desk-on-tint)); }
+  & button.action.danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
+  & button.action.danger:hover:not(:disabled) { background: var(--desk-danger-bg); }
+  & button:disabled { cursor: not-allowed; }
+  & :is(button, input, select, textarea, a):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 2px; }
+  & :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid var(--desk-border);
+    border-radius: 12px;
+    padding: 12px 18px;
+    background: var(--desk-soft);
+    color: var(--desk-text);
+    box-shadow: none;
+  }
+  & :is(input, textarea)::placeholder { color: var(--desk-muted); opacity: 1; }
+  & .table-wrap :is(th, td) { border-color: var(--desk-border); color: var(--desk-text); padding: 18px; font-size: 21px; white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
+  & .table-wrap th { background: var(--desk-surface); color: var(--desk-muted); font-size: 19.5px; }
+  & .table-wrap td { background: transparent; }
+  & .table-wrap tbody tr:hover { background: var(--desk-hover); }
+  & .management-saved-files-row.is-selected td { background: var(--desk-tint); color: var(--desk-on-tint); }
+  & .table-wrap a { color: var(--desk-on-tint); }
+  & :is(.table-pagination-footer, .management-statistics-pagination, .management-statistics-summary) { background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); }
+  & .integration-log-result-success { background: var(--desk-success-bg); color: var(--desk-success); }
+  & .integration-log-result-duplicate { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
+  & .integration-log-result-error { background: var(--desk-danger-bg); color: var(--desk-danger); }
+  & .management-statistics-tabs { border-color: var(--desk-border); flex-wrap: wrap; gap: 6px; padding: 21px 21px 0; }
+  & .management-statistics-tabs .action { min-height: 60px; font-weight: 700; }
+  & .management-statistics-tabs .action.active { margin-bottom: 0; background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); box-shadow: none; }
+  & .management-statistics-inner-card { background: transparent; border: 0; border-radius: 0; }
+  & .management-statistics-validation { color: var(--desk-warning-text); }
+  & .management-statistics-panel { overflow-y: auto; }
+  & :is(.integration-log-panel, .management-feedback-panel) { overflow-y: auto; }
+  & :is(.integration-log-panel > .table-scroll, .management-feedback-table-wrap) { flex: 1 0 240px; min-height: 240px; }
+  & .management-feedback-pagination[hidden] { display: none; }
+  & #managementStatisticsWorkTimePanel { overflow-y: auto; }
+  & .integration-log-filters { flex-shrink: 0; gap: 15px; padding: 18px 21px; }
+  & .integration-log-filters label { max-width: 100%; font-size: 18px; gap: 7.5px; }
+  & .integration-log-filters :is(input, select) { font-size: 19.5px; min-height: 57px; line-height: 1.5; }
+  & .status-board-grid { overflow-y: auto; padding: 18px; gap: 24px; }
+  & .status-user-column { background: var(--desk-soft); border-color: var(--desk-border); border-radius: 16px; align-content: start; flex-basis: min(480px, 100%); min-width: 0; padding: 27px; gap: 21px; }
+  & .status-user-head { border-color: var(--desk-border); gap: 21px; padding-bottom: 18px; }
+  & .status-user-name { font-size: 27px; }
+  & .status-user-avatar { width: 72px; height: 72px; font-size: 30px; background: var(--desk-tint); color: var(--desk-on-tint); }
+  & .status-board-btn { border-radius: 12px; padding: 15px 18px; font: 600 21px/1.4 var(--desk-font); box-shadow: none; transform: none; min-width: 0; overflow-wrap: anywhere; }
+  & .status-board-btn-time { font-size: 19.5px; }
+  & .status-board-btn.active { flex-wrap: wrap; gap: 12px; }
+  & .status-board-btn.active { border-color: var(--desk-accent); box-shadow: none; }
+  & .status-offline { background: var(--desk-surface); color: var(--desk-muted); }
+  & .status-online { background: var(--desk-success-bg); color: var(--desk-success); }
+  & .status-on-ticket { background: var(--desk-tint); color: var(--desk-on-tint); }
+  & .status-waiting { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
+  & .status-lunch { background: var(--desk-blue-bg); color: var(--desk-blue-text); }
+  & .quick-replies-workspace { grid-template-rows: auto minmax(0, 1fr); gap: 18px; }
+  & .quick-replies-list { gap: 12px; }
+  & .quick-reply-row { gap: 12px; }
+  & .quick-reply-card { font-size: 21px; padding: 15px 18px; gap: 15px; min-width: 0; }
+  & .quick-reply-card-title { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  & .quick-reply-card:hover { background: var(--desk-hover); border-color: var(--desk-accent); }
+  & .modal { font: 21px/1.5 var(--desk-font); }
+  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: var(--desk-shadow); backdrop-filter: none; max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; }
+  & :is(.modal-head, .modal-foot, .card-head) { border-color: var(--desk-border); }
+  & :is(.modal-head, .modal-foot) { padding: 15px 18px; gap: 12px; flex-wrap: wrap; }
+  & .card-head { padding: 15px 18px; gap: 12px; flex-wrap: wrap; }
+  & .modal-body { min-width: 0; min-height: 0; padding: 18px; gap: 15px; }
+  & :is(.modal-body label, .modal-label-title, .quick-reply-files-title) { font-size: 19.5px; white-space: normal; gap: 6px; }
+  & .modal-body :is(input, select, textarea) { font-size: 21px; line-height: 1.5; }
+  & .quick-reply-dialog .modal-body textarea { min-height: 330px; }
+  & :is(.quick-reply-modal-actions, .quick-reply-files-editor, .quick-reply-file-row) { gap: 12px; }
+  & .quick-reply-modal-actions { flex-wrap: wrap; max-width: 100%; }
+  & :is(.quick-reply-files-block, .quick-reply-files-list) { gap: 9px; }
+  & .quick-reply-file-row { padding: 9px 12px; }
+  & .modal .quick-reply-file-remove { width: 48px; min-width: 48px; min-height: 48px; height: 48px; padding: 0; }
+  & .quick-reply-author-footer { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  & .quick-reply-file-upload-status { min-height: 27px; }
+  & .management-saved-files-rename-form { gap: 18px; }
+  & :is(.status, .table-pagination-total, .management-statistics-median-help) { font-size: 19.5px; }
+  & #statusBoardEmpty { font-size: 25px; padding: 18px; }
+  & .integration-log-title { font-size: 24px; padding: 18px 21px 0; }
+  & .integration-log-badge { padding: 4.5px 12px; }
+  & :is(.management-statistics-pagination, .management-statistics-summary) { font-size: 21px; padding: 18px 21px; gap: 10.5px 27px; }
+  & .management-statistics-pagination { flex-wrap: wrap; }
+  & .management-statistics-user-muted { font-size: 18px; }
+  & .management-statistics-filter-row { padding: 21px; gap: 24px; }
+  & .management-statistics-filter-row .management-statistics-filters { padding: 0; }
+  & .management-statistics-inner-card { margin: 21px; }
+  & #managementStatisticsStatusesPanel:not([hidden]) { display: block; overflow-y: auto; }
+  & .management-statistics-table-wrap { padding: 0 21px 21px; }
+  & .management-statistics-validation { padding: 0 21px 18px; }
+  & .management-saved-files-toolbar { padding: 18px; gap: 12px; }
+  & .table-pagination-footer { padding: 15px 18px; gap: 18px; }
+  & .table-pagination-nav { gap: 9px; }
+  & .management-feedback-description { padding: 21px 21px 0; }
+  & .management-feedback-summary { padding: 0 21px 18px; }
+  & .management-feedback-text-action { padding: 6px 0; }
+  & :is(.management-feedback-empty, .management-statistics-empty) { padding: 21px; }
+  & :is(.integration-log-empty, .management-saved-files-empty) { padding: 18px; }
+  & .quick-replies-workspace { padding: 24px; }
+  & .quick-replies-workspace > #createQuickReplyBtn { margin: 0; }
+  & .integration-log-table { min-width: 1450px; table-layout: fixed; }
+  & .integration-log-table :is(th, td) { overflow-wrap: normal; word-break: normal; }
+  & .integration-log-table td { font-size: 17.85px; }
+  & .integration-log-table th { white-space: nowrap; }
+  & .integration-log-table :is(th, td):nth-child(1) { width: 165px; }
+  & .integration-log-table :is(th, td):nth-child(2) { width: 182px; }
+  & .integration-log-table :is(th, td):nth-child(3) { width: 156px; }
+  & .integration-log-table :is(th, td):nth-child(4) { width: 221px; white-space: nowrap; }
+  & .integration-log-table :is(th, td):nth-child(5) { width: 338px; }
+  & .integration-log-table .integration-log-badge { font-size: 16.575px; white-space: nowrap; }
+  & .integration-log-date { display: block; white-space: nowrap; }
+  & .management-statistics-table-wrap { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; box-sizing: border-box; }
+  & .management-statistics-table :is(th, td) { overflow-wrap: normal; word-break: normal; }
+  & .management-statistics-work-time-table { width: 1294px; min-width: 1294px; table-layout: fixed; }
+  & .management-statistics-work-time-table :is(th, td):nth-child(1) { width: 302px; }
+  & .management-statistics-work-time-table :is(th, td):nth-child(n+2):nth-child(-n+4) { width: 148px; }
+  & .management-statistics-work-time-table :is(th, td):nth-child(n+5) { width: 274px; }
+  & .management-statistics-statuses-table { width: 1140px; min-width: 1140px; table-layout: fixed; }
+  & .management-statistics-statuses-table :is(th, td) { width: 190px; }
+  & .status-page-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 21px; border-bottom: 1px solid var(--desk-border); flex-shrink: 0; }
+  & .status-page-tabs .active { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
+  & :is(#statusBoardPanel, #statusLogPanel)[hidden] { display: none; }
+  & #statusBoardPanel { min-height: 0; overflow: auto; flex: 1; }
+  & #statusLogPanel { display: flex; flex-direction: column; min-height: 0; overflow: auto; flex: 1; }
+  & .status-log-custom[hidden] { display: none; }
+  & #statusLogMessage { padding: 0 21px; flex-shrink: 0; }
+  & .status-log-viewport {
+    box-sizing: border-box; width: calc((100% - 42px) * 2 / 3); margin: 0 auto 21px 21px;
+    min-width: 0; min-height: 240px; flex: 1 0 240px; overflow-y: auto; overflow-x: hidden;
+    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
+    container-type: inline-size;
+  }
+  & .status-log-table { width: 100%; min-width: 0; margin: 0; table-layout: fixed; border-collapse: collapse; font-size: 21px; }
+  & .status-log-table :is(th, td) { font-size: inherit; padding: 27px; border-bottom: 1px solid var(--desk-border); text-align: left; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+  & .status-log-table :is(th, td):nth-child(1) { width: 23%; }
+  & .status-log-table :is(th, td):nth-child(2), & .status-log-table :is(th, td):nth-child(3) { width: 19%; }
+  & .status-log-table :is(th, td):nth-child(4) { width: 21%; }
+  & .status-log-table :is(th, td):nth-child(5) { width: 18%; }
+  & .status-log-table .management-statistics-user-muted { font-size: 27px; }
+  & .status-log-table th { font-size: 29.25px; color: var(--desk-muted); }
+  & .status-log-sort { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  & .status-log-sort:focus-visible { outline: 2px solid var(--desk-focus); }
+  & .management-statistics-summary {
+    margin: 18px 21px; padding: 12px 18px; border: 1px solid var(--desk-border);
+    border-radius: 16px; background: var(--desk-soft); width: fit-content; max-width: calc(100% - 42px);
+    box-sizing: border-box;
+  }
+  & .management-statistics-inner-card { margin: 0; }
+  & .management-statistics-table-wrap {
+    margin: 0 21px 21px; padding: 0; width: fit-content; max-width: calc(100% - 42px); align-self: start;
+    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
+  }
+  & .management-statistics-table th { background: var(--desk-soft); }
+  @container (min-width: 601px) and (max-width: 1050px) {
+    & .status-log-table { table-layout: auto; }
+    & .status-log-table :is(th, td):nth-child(n) { width: auto; padding-left: 4px; padding-right: 4px; overflow-wrap: normal; }
+  }
+  @container (max-width: 600px) {
+    & .status-log-table { display: block; }
+    & .status-log-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    & .status-log-table tbody { display: block; }
+    & .status-log-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--desk-border); }
+    & .status-log-table td:nth-child(n) { display: block; box-sizing: border-box; width: auto; min-width: 0; border: 0; }
+    & .status-log-table td::before { content: attr(data-label); display: block; font-size: 29.25px; font-weight: 700; color: var(--desk-muted); margin-bottom: 9px; }
+  }
+  @container (max-width: 600px) {
+    & .status-log-table tr { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 1000px) {
+    & .status-log-viewport { width: calc(100% - 42px); margin-left: 21px; }
+  }
+  & .status-log-pagination { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; }
+  @media (max-width: 760px) {
+    & .status-board-grid { padding: 15px; gap: 18px; }
+    & .status-user-column { padding: 21px; gap: 16.5px; }
+    & .status-user-head { gap: 15px; padding-bottom: 15px; }
+  }
+  & .field-error { color: var(--desk-danger); font-size: 19.5px; }
+  @media (max-width: 700px) {
+    & > :is(.content, .management-integrations-page, .management-feedback-page, .management-statistics-page, .management-saved-files-page) { padding: 12px; }
+    & .toolbar { flex-wrap: wrap; }
+    & .panel:not(.quick-replies-workspace) { overflow-y: auto; }
+    & .table-pagination-footer { display: flex; flex-wrap: wrap; gap: 8px; }
+    & .integration-log-filters > label { flex: 1 1 210px; }
+  }
+}
+
+/* Shared feedback is mounted outside #appContent; keep the enlargement local. */
+body:has(#appContent.main:is([data-shell-page="statuses"], [data-shell-page="management-integrations"], [data-shell-page="management-feedback"], [data-shell-page="management-statistics"], [data-shell-page="management-saved-files"], [data-shell-page="quick-replies"])) {
+  & > .save-confirmation { font-size: 36px; padding: 15px 27px; min-width: min(360px, calc(100vw - 24px)); max-width: calc(100vw - 24px); overflow-wrap: anywhere; }
+  & #appErrorDialog {
+    font: 24px/1.5 var(--desk-font);
+    & .modal-dialog { width: min(720px, 92vw); max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; }
+    & :is(.modal-head, .modal-actions) { padding: 15px 18px; gap: 12px; flex-wrap: wrap; }
+    & .modal-body { min-height: 0; padding: 18px; gap: 15px; }
+    & .status { font-size: 19.5px; }
+    & button.action { font-size: 20px; padding: 9px 13.5px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    & textarea { font-size: 21px; line-height: 1.5; padding: 12px; min-height: 195px; max-width: 100%; }
+  }
+  @media (max-width: 700px) {
+    & .layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 100dvh; }
+    & .layout > .sidebar { max-height: 360px; overflow-y: auto; }
+    & #appContent.main { height: 100dvh; }
+  }
+}

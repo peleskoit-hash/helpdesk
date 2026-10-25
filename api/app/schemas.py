@@ -641,7 +641,6 @@ class ManagementWorkTimeStatsTotal(BaseModel):
     tickets: int = 0
     tasks: int = 0
     objects: int = 0
-    total_seconds: int = 0
     average_seconds: int | float = 0
     median_seconds: int | float = 0
 
@@ -690,6 +689,7 @@ class ManagementStatusTransitionsOut(BaseModel):
     items: list[ManagementStatusTransitionItem]
     next_cursor: str | None = None
     has_more: bool = False
+    total_count: int | None = None
 
 
 class ReviewEmployeeOut(BaseModel):

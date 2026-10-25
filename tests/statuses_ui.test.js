@@ -19,7 +19,7 @@ function sourceBetween(source, start, end) {
 test("statuses page keeps existing shell and status board mount", () => {
   assert.match(template, /data-shell-page="statuses"/);
   assert.match(template, /id="statusBoardGrid"/);
-  assert.match(template, /\/static\/statuses\.js\?v=20261011a/);
+  assert.match(template, /\/static\/statuses\.js\?v=20261025-status-log-v2/);
 });
 
 test("status board uses the shared visual status order", () => {

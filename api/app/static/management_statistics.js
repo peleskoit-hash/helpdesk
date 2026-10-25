@@ -2,19 +2,6 @@
   const EMPTY = "\u2014";
   const DEFAULT_PERIOD = "30days";
   const EMPLOYEE_FILTER_ROLES = new Set(["agent", "trainee"]);
-  const TRANSITION_PAGE_SIZE_MIN = 1;
-  const TRANSITION_PAGE_SIZE_MAX = 100;
-  const TRANSITION_ROW_HEIGHT_FALLBACK = 30;
-  const TRANSITION_PAGE_SIZE_SAFETY_PX = 2;
-  const TRANSITION_RESIZE_DEBOUNCE_MS = 120;
-  const STATUS_LABELS = {
-    offline: "Не в сети",
-    online: "В сети",
-    on_ticket: "На заявке",
-    waiting: "В ожидании",
-    lunch: "Обед",
-  };
-
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -182,14 +169,6 @@
       statusesSummary: root.querySelector("#managementStatisticsStatusesSummary"),
       statusesTableBody: root.querySelector("#managementStatisticsStatusesTableBody"),
       statusesEmpty: root.querySelector("#managementStatisticsStatusesEmpty"),
-      transitionsTableBody: root.querySelector("#managementStatisticsTransitionsTableBody"),
-      transitionsEmpty: root.querySelector("#managementStatisticsTransitionsEmpty"),
-      transitionsViewport: root.querySelector("#managementStatisticsTransitionsViewport"),
-      transitionsHead: root.querySelector("#managementStatisticsTransitionsHead"),
-      transitionsPrev: root.querySelector("#managementStatisticsTransitionsPrev"),
-      transitionsNext: root.querySelector("#managementStatisticsTransitionsNext"),
-      transitionsPage: root.querySelector("#managementStatisticsTransitionsPage"),
-      transitionsPagination: root.querySelector(".management-statistics-transition-log .management-statistics-pagination"),
       medianHelp: root.querySelector(".management-statistics-median-help"),
       tabs: [...root.querySelectorAll("[data-statistics-tab]")],
       panels: [...root.querySelectorAll("[data-statistics-panel]")],
@@ -199,13 +178,6 @@
       appTimezone: "UTC",
       tab: "work-time",
       generation: 0,
-      transitionGeneration: 0,
-      transitionPage: 1,
-      transitionCursors: [null],
-      transitionHasMore: false,
-      transitionPageSize: null,
-      transitionResizeTimer: null,
-      transitionResizeObserver: null,
       controller: new AbortController(),
       destroyed: false,
     };
@@ -244,11 +216,6 @@
       active.tableBody.innerHTML = "";
       active.empty.hidden = false;
       active.empty.textContent = message || "Загрузка...";
-      if (state.tab === "statuses") {
-        el.transitionsTableBody.innerHTML = "";
-        el.transitionsEmpty.hidden = false;
-        el.transitionsEmpty.textContent = message || "Загрузка...";
-      }
       return state.generation;
     }
 
@@ -287,75 +254,6 @@
       el.dateTo.value = today;
     }
 
-    function updateTransitionPagination() {
-      if (!el.transitionsPrev || !el.transitionsNext || !el.transitionsPage) return;
-      el.transitionsPage.textContent = `Страница ${state.transitionPage}`;
-      el.transitionsPrev.disabled = state.transitionPage <= 1;
-      el.transitionsNext.disabled = !state.transitionHasMore;
-    }
-
-    function resetTransitionPagination() {
-      state.transitionGeneration += 1;
-      state.transitionPage = 1;
-      state.transitionCursors = [null];
-      state.transitionHasMore = false;
-      updateTransitionPagination();
-    }
-
-    function clampTransitionPageSize(value) {
-      const normalized = Number.isFinite(value) ? Math.floor(value) : TRANSITION_PAGE_SIZE_MIN;
-      return Math.max(TRANSITION_PAGE_SIZE_MIN, Math.min(TRANSITION_PAGE_SIZE_MAX, normalized));
-    }
-
-    function elementHeight(element) {
-      if (!element) return 0;
-      const rectHeight = typeof element.getBoundingClientRect === "function" ? element.getBoundingClientRect().height : 0;
-      return rectHeight || element.clientHeight || element.offsetHeight || 0;
-    }
-
-    function transitionViewportHeight() {
-      if (el.transitionsViewport && el.transitionsPagination && typeof el.transitionsViewport.getBoundingClientRect === "function" && typeof el.transitionsPagination.getBoundingClientRect === "function") {
-        const viewportRect = el.transitionsViewport.getBoundingClientRect();
-        const paginationRect = el.transitionsPagination.getBoundingClientRect();
-        const geometryHeight = paginationRect.top - viewportRect.top;
-        if (Number.isFinite(geometryHeight) && geometryHeight > 0) return geometryHeight;
-      }
-      return elementHeight(el.transitionsViewport);
-    }
-
-    function measuredTransitionRowHeight() {
-      const row = el.transitionsTableBody?.querySelector?.("tr") || el.transitionsTableBody?.firstElementChild;
-      return elementHeight(row) || TRANSITION_ROW_HEIGHT_FALLBACK;
-    }
-
-    function calculateTransitionPageSize() {
-      const viewportHeight = transitionViewportHeight();
-      const headerHeight = elementHeight(el.transitionsHead);
-      const rowHeight = measuredTransitionRowHeight();
-      const availableRowsHeight = Math.max(0, viewportHeight - headerHeight - TRANSITION_PAGE_SIZE_SAFETY_PX);
-      return clampTransitionPageSize(availableRowsHeight / rowHeight);
-    }
-
-    function currentTransitionPageSize() {
-      const pageSize = calculateTransitionPageSize();
-      state.transitionPageSize = pageSize;
-      return pageSize;
-    }
-
-    function scheduleTransitionPageSizeRefresh() {
-      if (state.destroyed || state.tab !== "statuses") return;
-      if (state.transitionResizeTimer != null) clearTimeout(state.transitionResizeTimer);
-      state.transitionResizeTimer = setTimeout(() => {
-        state.transitionResizeTimer = null;
-        if (state.destroyed || state.tab !== "statuses") return;
-        const nextPageSize = calculateTransitionPageSize();
-        if (nextPageSize === state.transitionPageSize) return;
-        state.transitionPageSize = nextPageSize;
-        resetTransitionPagination();
-        loadTransitionsPage();
-      }, TRANSITION_RESIZE_DEBOUNCE_MS);
-    }
-
     function renderUsers(users) {
       const current = el.employee.value || "";
       const options = ['<option value="">Все сотрудники</option>'];
@@ -385,35 +283,6 @@
       `;
     }
 
-    function statusLabel(status) {
-      return STATUS_LABELS[status] || status || EMPTY;
-    }
-
-    function parseApiDateTime(value) {
-      if (typeof value !== "string") return new Date(value);
-      const normalized = value.trim();
-      const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized);
-      const shouldTreatAsUtc = /^\d{4}-\d{2}-\d{2}T/.test(normalized) && !hasTimezone;
-      return new Date(shouldTreatAsUtc ? `${normalized}Z` : normalized);
-    }
-
-    function formatDateTime(value) {
-      const date = parseApiDateTime(value);
-      if (Number.isNaN(date.getTime())) return value || EMPTY;
-      const parts = new Intl.DateTimeFormat("ru-RU", {
-        timeZone: state.appTimezone,
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23",
-      }).formatToParts(date);
-      const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-      return `${fields.day}.${fields.month}.${fields.year} ${fields.hour}:${fields.minute}:${fields.second}`;
-    }
-
     function workTimeRowHtml(item) {
       return `
         <tr>
@@ -421,7 +290,6 @@
           <td>${Number(item.tickets || 0)}</td>
           <td>${Number(item.tasks || 0)}</td>
           <td>${Number(item.objects || 0)}</td>
-          <td>${escapeHtml(durationLabel(item.total_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.average_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.median_seconds))}</td>
         </tr>
@@ -441,17 +309,6 @@
       `;
     }
 
-    function transitionRowHtml(item) {
-      return `
-        <tr>
-          ${userCellHtml(item)}
-          <td>${escapeHtml(statusLabel(item.from_status))}</td>
-          <td>${escapeHtml(statusLabel(item.to_status))}</td>
-          <td>${escapeHtml(formatDateTime(item.changed_at))}</td>
-        </tr>
-      `;
-    }
-
     function summaryHtml(parts) {
       return parts.map((part, index) => `<span>${index > 0 ? "| " : ""}${escapeHtml(part)}</span>`).join("");
     }
@@ -460,7 +317,6 @@
       const total = payload?.total || {};
       const items = Array.isArray(payload?.items) ? payload.items : [];
       el.workTimeSummary.innerHTML = summaryHtml([
-        `Общее время: ${durationLabel(total.total_seconds)}`,
         `Объектов: ${Number(total.objects || 0)}`,
         `Среднее: ${durationLabel(total.average_seconds)}`,
         `Медиана: ${durationLabel(total.median_seconds)}`,
@@ -490,16 +346,6 @@
       setStatus("");
     }
 
-    function renderTransitions(payload) {
-      const items = Array.isArray(payload?.items) ? payload.items : [];
-      el.transitionsTableBody.innerHTML = items.map(transitionRowHtml).join("");
-      el.transitionsEmpty.hidden = items.length > 0;
-      el.transitionsEmpty.textContent = "За выбранный период смен статусов нет";
-      state.transitionHasMore = Boolean(payload?.has_more);
-      if (payload?.next_cursor) state.transitionCursors[state.transitionPage] = payload.next_cursor;
-      updateTransitionPagination();
-    }
-
     function buildStatisticsUrl(endpoint, extraParams = {}) {
       const bounds = periodBounds(el.period.value, el.dateFrom.value, el.dateTo.value, new Date(), state.appTimezone);
       if (bounds.error) return { error: bounds.error };
@@ -514,82 +360,35 @@
       return { url: "/api/v1/management/statistics/" + endpoint + (suffix ? "?" + suffix : "") };
     }
 
-    async function loadTransitionsPage() {
-      const activeTab = state.tab;
-      const requestGeneration = state.generation;
-      const transitionGeneration = ++state.transitionGeneration;
-      const pageSize = currentTransitionPageSize();
-      el.transitionsTableBody.innerHTML = "";
-      el.transitionsEmpty.hidden = false;
-      el.transitionsEmpty.textContent = "Загрузка...";
-      updateTransitionPagination();
-      const built = buildStatisticsUrl("status-transitions", {
-        limit: pageSize,
-        cursor: state.transitionCursors[state.transitionPage - 1],
-      });
-      if (built.error) {
-        el.transitionsEmpty.textContent = "";
-        setValidation(built.error);
-        return;
-      }
-      try {
-        const payload = await api(built.url, state.controller.signal);
-        if (
-          state.destroyed
-          || requestGeneration !== state.generation
-          || transitionGeneration !== state.transitionGeneration
-          || state.tab !== activeTab
-        ) return;
-        renderTransitions(payload);
-        const measuredPageSize = calculateTransitionPageSize();
-        if (measuredPageSize !== pageSize) {
-          state.transitionPageSize = measuredPageSize;
-          resetTransitionPagination();
-          loadTransitionsPage();
-        }
-      } catch (error) {
-        if (state.destroyed || requestGeneration !== state.generation || transitionGeneration !== state.transitionGeneration || state.tab !== activeTab || error.name === "AbortError") return;
-        el.transitionsTableBody.innerHTML = "";
-        el.transitionsEmpty.hidden = false;
-        el.transitionsEmpty.textContent = "Не удалось загрузить лог смен статусов. Повторите попытку.";
-      }
-    }
-
     async function loadActiveTab() {
       const activeTab = state.tab;
       const endpoint = activeTab === "statuses" ? "statuses" : "work-time";
       const requestGeneration = clearActiveResults("Загрузка...");
       setStatus("Загрузка...");
       const built = buildStatisticsUrl(endpoint);
-      if (activeTab === "statuses") resetTransitionPagination();
       if (built.error) {
         panelElements(activeTab).empty.textContent = "";
-        if (activeTab === "statuses") el.transitionsEmpty.textContent = "";
         setStatus("");
         setValidation(built.error);
         return;
       }
       setValidation("");
       try {
-        const transitionsPromise = activeTab === "statuses" ? loadTransitionsPage() : null;
         const payload = await api(built.url, state.controller.signal);
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab) return;
         if (activeTab === "work-time") renderWorkTime(payload);
         else {
           renderStatuses(payload);
-          await transitionsPromise;
         }
       } catch (error) {
         if (state.destroyed || requestGeneration !== state.generation || state.tab !== activeTab || error.name === "AbortError") return;
         panelElements(activeTab).empty.textContent = "";
-        if (activeTab === "statuses") el.transitionsEmpty.textContent = "";
         setStatus("Не удалось загрузить статистику. Повторите попытку.");
       }
     }
 
     function selectTab(tab) {
       state.tab = tab;
-      if (tab === "statuses") resetTransitionPagination();
       for (const button of el.tabs) button.classList.toggle("active", button.dataset.statisticsTab === tab);
       for (const panel of el.panels) panel.hidden = panel.dataset.statisticsPanel !== tab;
       if (el.medianHelp) el.medianHelp.hidden = tab !== "work-time";
@@ -625,41 +424,19 @@
     for (const control of [el.employee, el.period, el.dateFrom, el.dateTo]) {
       listen(control, "change", () => {
         updateCustomVisibility();
-        resetTransitionPagination();
         loadActiveTab();
       });
     }
-    if (el.transitionsPrev) {
-      listen(el.transitionsPrev, "click", () => {
-        if (state.transitionPage <= 1) return;
-        state.transitionPage -= 1;
-        state.transitionHasMore = true;
-        loadTransitionsPage();
-      });
-    }
-    if (el.transitionsNext) {
-      listen(el.transitionsNext, "click", () => {
-        if (!state.transitionHasMore) return;
-        state.transitionPage += 1;
-        state.transitionHasMore = false;
-        loadTransitionsPage();
-      });
-    }
-    if (el.transitionsViewport && window.ResizeObserver) {
-      state.transitionResizeObserver = new window.ResizeObserver(scheduleTransitionPageSizeRefresh);
-      state.transitionResizeObserver.observe(el.transitionsViewport);
-    }
-
     start();
 
     return () => {
       state.destroyed = true;
       state.controller.abort();
       while (listeners.length) listeners.pop()();
-      if (state.transitionResizeTimer != null) clearTimeout(state.transitionResizeTimer);
-      state.transitionResizeObserver?.disconnect?.();
     };
   }
+
+  window.HelpdeskStatisticsDates = { calendarDate, addCalendarDays, periodBounds };
 
   window.ManagementStatisticsTestHooks = {
     addCalendarDays,

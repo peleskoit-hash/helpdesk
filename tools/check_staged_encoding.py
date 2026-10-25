@@ -23,7 +23,7 @@ TEXT_EXTENSIONS = {
 IGNORE_PARTS = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".pytest_cache"}
 
 # Typical mojibake fragments when UTF-8 text was decoded as cp1251/latin.
-MOJIBAKE_RE = re.compile(r"(?:Р[А-яЁё]|С[А-яЁё]|Ð.|Ñ.)")
+MOJIBAKE_RE = re.compile(r"(?:[\u0420\u0421][^\x00-\x7f\s]){3,}|(?:[\u00d0\u00d1][^\x00-\x7f\s]){3,}")
 
 
 def _run_git(*args: str) -> str:
@@ -63,7 +63,7 @@ def _staged_files() -> list[Path]:
 
 def _looks_mojibake(line: str) -> bool:
     # Heuristic: require several suspicious fragments on one line to reduce false positives.
-    return len(MOJIBAKE_RE.findall(line)) >= 3
+    return bool(MOJIBAKE_RE.search(line))
 
 
 def main() -> int:

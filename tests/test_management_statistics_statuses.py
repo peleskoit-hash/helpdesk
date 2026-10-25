@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -86,8 +86,8 @@ def _add_status_chain(session, company_id: str, user_id: str, *, count: int, sta
     rows = []
     statuses = ["online", "waiting"]
     for index in range(count):
-        started_at = datetime(2026, 9, 2, start_hour, index, 0)
-        ended_at = datetime(2026, 9, 2, start_hour, index + 1, 0) if index < count - 1 else datetime(2026, 9, 2, start_hour, index + 1, 0)
+        started_at = datetime(2026, 9, 2, start_hour) + timedelta(minutes=index)
+        ended_at = datetime(2026, 9, 2, start_hour) + timedelta(minutes=index + 1)
         rows.append(
             _status_interval(
                 company_id,
@@ -499,7 +499,8 @@ def test_status_transitions_default_limit_and_cursor_paginates_without_duplicate
     assert first_ids.isdisjoint(second_ids)
 
 
-def test_status_transitions_cursor_tie_break_with_same_changed_at():
+@pytest.mark.parametrize("sort_order", ["asc", "desc"])
+def test_status_transitions_cursor_tie_break_with_same_changed_at(sort_order):
     session = _session()
     company, admin, agent = _seed_admin_context(session)
     other = _user(session, company, "agent-b")
@@ -526,8 +527,8 @@ def test_status_transitions_cursor_tie_break_with_same_changed_at():
         session.add_all([previous, current])
     session.commit()
 
-    first = _get_transitions(session, admin, limit=2).json()
-    second = _get_transitions(session, admin, limit=2, cursor=first["next_cursor"]).json()
+    first = _get_transitions(session, admin, limit=2, sort_order=sort_order).json()
+    second = _get_transitions(session, admin, limit=2, cursor=first["next_cursor"], sort_order=sort_order).json()
 
     seen = [item["user_id"] for item in first["items"] + second["items"]]
     assert len(first["items"]) == 2
@@ -535,6 +536,7 @@ def test_status_transitions_cursor_tie_break_with_same_changed_at():
     assert len(second["items"]) == 1
     assert set(seen) == {agent.id, other.id, third.id}
     assert len(seen) == len(set(seen)) == 3
+    assert seen == ([agent.id, other.id, third.id] if sort_order == "asc" else [third.id, other.id, agent.id])
 
 
 def test_status_transitions_invalid_rows_do_not_consume_page_size():
@@ -618,3 +620,35 @@ def test_status_transitions_rejects_non_admin_roles():
     for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
         response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/status-transitions")
         assert response.status_code == 403
+
+
+@pytest.mark.parametrize("sort_order", ["asc", "desc"])
+def test_status_transitions_full_page_total_sort_and_cursor(sort_order):
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    _add_status_chain(session, company.id, agent.id, count=126)
+    session.commit()
+    params = dict(limit=50, sort_order=sort_order, include_total=True, user_id=agent.id)
+    pages = []
+    while True:
+        response = _get_transitions(session, admin, **params)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total_count"] == 125
+        pages.append(payload["items"])
+        if not payload["has_more"]:
+            break
+        params["cursor"] = payload["next_cursor"]
+    assert [len(page) for page in pages] == [50, 50, 25]
+    times = [row["changed_at"] for page in pages for row in page]
+    assert times == sorted(times, reverse=sort_order == "desc")
+    assert len(set(times)) == 125
+    missing = _get_transitions(session, admin, include_total=True, user_id="missing").json()
+    assert missing["total_count"] == 0
+    assert missing["items"] == []
+
+    filtered = _get_transitions(
+        session, admin, include_total=True, user_id=agent.id, sort_order=sort_order,
+        date_from="2026-09-02T08:02:00Z", date_to="2026-09-02T08:05:00Z",
+    ).json()
+    assert filtered["total_count"] == len(filtered["items"]) == 3

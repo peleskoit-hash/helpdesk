@@ -45,6 +45,12 @@
     return date.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
   }
 
+  function formatLogDateTime(value) {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return EMPTY;
+    return `<span class="integration-log-date">${escapeHtml(date.toLocaleDateString("ru-RU"))}</span><span class="integration-log-date">${escapeHtml(date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</span>`;
+  }
+
   function nextLocalDayStart(value) {
     if (!value) return "";
     const date = new Date(`${value}T00:00:00`);
@@ -165,7 +171,7 @@
     const resultClass = item.result ? `integration-log-result-${item.result}` : "";
     return `
       <tr>
-        <td>${escapeHtml(formatDateTime(item.created_at))}</td>
+        <td>${formatLogDateTime(item.created_at)}</td>
         <td>${escapeHtml(eventLabel)}</td>
         <td><span class="status integration-log-badge ${escapeHtml(resultClass)}">${escapeHtml(resultLabel)}</span></td>
         <td class="integration-log-code">${escapeHtml(formatCell(item.code))}</td>

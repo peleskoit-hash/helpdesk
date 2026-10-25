@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Статусы сотрудников</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261025-ticket-sidebar-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-status-log-responsive-v2" />
 </head>
 <body class="statuses-page">
   <div class="layout">
@@ -58,11 +58,41 @@
 
       <section class="content" style="grid-template-columns: 1fr;">
         <div class="panel status-board">
-          <div class="card-head">
-            <div style="font-weight:700;">Быстрое управление статусами сотрудников</div>
+          <div class="settings-section-tabs status-page-tabs" role="tablist" aria-label="Разделы статусов">
+            <button class="action active" type="button" data-status-tab="board" role="tab" aria-selected="true" aria-controls="statusBoardPanel">Управление статусами сотрудников</button>
+            <button class="action" type="button" data-status-tab="log" role="tab" aria-selected="false" aria-controls="statusLogPanel">Лог смены статусов</button>
           </div>
-          <div id="statusBoardGrid" class="status-board-grid"></div>
-          <div id="statusBoardEmpty" class="status hidden">Активных сотрудников нет</div>
+          <section id="statusBoardPanel" role="tabpanel">
+            <div id="statusBoardGrid" class="status-board-grid"></div>
+            <div id="statusBoardEmpty" class="status hidden">Активных сотрудников нет</div>
+          </section>
+          <section id="statusLogPanel" role="tabpanel" hidden>
+            <div class="integration-log-filters status-log-filters">
+              <label>Сотрудник:<select id="statusLogEmployee"><option value="">Все сотрудники</option></select></label>
+              <label>Период:<select id="statusLogPeriod">
+                <option value="today">Сегодня</option><option value="yesterday">Вчера</option>
+                <option value="week">Неделя</option><option value="30days" selected>30 дней</option>
+                <option value="month">Месяц</option><option value="year">Год</option>
+                <option value="all">За всё время</option><option value="custom">Произвольный</option>
+              </select></label>
+              <label class="status-log-custom" hidden>с:<input id="statusLogDateFrom" type="date" /></label>
+              <label class="status-log-custom" hidden>по:<input id="statusLogDateTo" type="date" /></label>
+              <label>Сортировка:<select id="statusLogOrder"><option value="desc">Сначала новые</option><option value="asc">Сначала старые</option></select></label>
+            </div>
+            <div id="statusLogMessage" class="status" role="status"></div>
+            <div class="table-scroll status-log-viewport">
+              <table class="status-log-table">
+                <thead><tr><th>Сотрудник</th><th>Был статус</th><th>Стал статус</th><th data-status-log-sort aria-sort="descending"><button type="button" class="status-log-sort">Дата</button></th><th data-status-log-sort aria-sort="descending"><button type="button" class="status-log-sort">Время</button></th></tr></thead>
+                <tbody id="statusLogTableBody"></tbody>
+              </table>
+              <div id="statusLogEmpty" class="status">За выбранный период смен статусов нет</div>
+            </div>
+            <nav class="table-pagination-footer status-log-pagination" aria-label="Страницы лога смены статусов">
+              <button id="statusLogPrev" class="action" type="button" disabled>Назад</button>
+              <span id="statusLogSummary" aria-live="polite"></span>
+              <button id="statusLogNext" class="action" type="button" disabled>Вперёд</button>
+            </nav>
+          </section>
         </div>
       </section>
   <div id="errorModal" class="modal hidden">
@@ -88,7 +118,9 @@
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
   <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261025-ticket-sidebar-v2"></script>
-  <script src="/static/statuses.js?v=20261011a"></script>
+  <script src="/static/app_shell.js?v=20261025-stats-final-v2"></script>
+  <script src="/static/management_statistics.js?v=20261025-stats-final-v2"></script>
+  <script src="/static/status_transitions.js?v=20261025-stats-final-v2"></script>
+  <script src="/static/statuses.js?v=20261025-status-log-v2"></script>
 </body>
 </html>

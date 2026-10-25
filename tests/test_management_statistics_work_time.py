@@ -112,7 +112,7 @@ def test_work_time_single_completed_interval_counts_one_observation():
         "tickets": 1,
         "tasks": 0,
         "objects": 1,
-        "total_seconds": 600,
+
         "average_seconds": 600,
         "median_seconds": 600,
         "user_id": agent.id,
@@ -123,7 +123,7 @@ def test_work_time_single_completed_interval_counts_one_observation():
         "tickets": 1,
         "tasks": 0,
         "objects": 1,
-        "total_seconds": 600,
+
         "average_seconds": 600,
         "median_seconds": 600,
     }
@@ -148,7 +148,7 @@ def test_work_time_groups_employee_object_before_average_median_and_counts_tasks
     assert body["items"][0]["tickets"] == 2
     assert body["items"][0]["tasks"] == 1
     assert body["items"][0]["objects"] == 3
-    assert body["items"][0]["total_seconds"] == 5400
+    assert "total_seconds" not in body["items"][0]
     assert body["items"][0]["average_seconds"] == 1800
     assert body["items"][0]["median_seconds"] == 1800
 
@@ -179,7 +179,7 @@ def test_work_time_truncates_fractional_seconds_after_employee_object_grouping()
     body = _get(session, admin).json()
 
     assert body["items"][0]["objects"] == 1
-    assert body["items"][0]["total_seconds"] == 1
+    assert "total_seconds" not in body["items"][0]
     assert body["items"][0]["average_seconds"] == 1
     assert body["items"][0]["median_seconds"] == 1
 
@@ -224,7 +224,7 @@ def test_work_time_same_object_is_separate_observation_per_employee_and_total_us
         "tickets": 3,
         "tasks": 0,
         "objects": 3,
-        "total_seconds": 9600,
+
         "average_seconds": 3200,
         "median_seconds": 2400,
     }
@@ -251,11 +251,11 @@ def test_work_time_period_clipping_boundaries_and_one_sided_filters():
 
     assert clipped.status_code == 200
     assert clipped.json()["total"]["objects"] == 3
-    assert clipped.json()["total"]["total_seconds"] == 14400
+    assert clipped.json()["total"]["average_seconds"] == 4800
     assert only_from.json()["total"]["objects"] == 4
-    assert only_from.json()["total"]["total_seconds"] == 28800
+    assert only_from.json()["total"]["average_seconds"] == 7200
     assert only_to.json()["total"]["objects"] == 4
-    assert only_to.json()["total"]["total_seconds"] == 32400
+    assert only_to.json()["total"]["average_seconds"] == 8100
     assert invalid.status_code == 400
 
 
@@ -270,9 +270,9 @@ def test_work_time_open_interval_uses_single_now_and_clips_to_date_to(monkeypatc
     date_to_before_now = _get(session, admin, date_to="2026-09-02T11:00:00")
     date_to_after_now = _get(session, admin, date_to="2026-09-02T13:00:00")
 
-    assert no_date_to.json()["total"]["total_seconds"] == 7200
-    assert date_to_before_now.json()["total"]["total_seconds"] == 3600
-    assert date_to_after_now.json()["total"]["total_seconds"] == 7200
+    assert no_date_to.json()["total"]["average_seconds"] == 7200
+    assert date_to_before_now.json()["total"]["average_seconds"] == 3600
+    assert date_to_after_now.json()["total"]["average_seconds"] == 7200
 
 
 def test_work_time_preserves_inactive_deleted_user_and_hard_deleted_source_ticket():
@@ -337,7 +337,7 @@ def test_work_time_user_filter_keeps_only_requested_user():
         "tickets": 0,
         "tasks": 0,
         "objects": 0,
-        "total_seconds": 0,
+
         "average_seconds": 0,
         "median_seconds": 0,
     }

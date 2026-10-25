@@ -8,7 +8,7 @@ test.before(async () => { browser = await chromium.launch({ channel: 'msedge', h
 test.after(async () => { await browser?.close(); });
 
 // Real templates/styles; omit page scripts to compare the same sidebar role.
-for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 1080], [1366, 768], [640, 740]]) {
+for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 1080], [1366, 768], [640, 740], [390, 844]]) {
   test(`V2 outer bubbles match the list: ${theme}, ${width}x${height}`, async t => {
     const page = await browser.newPage({ viewport: { width, height } });
     t.after(() => page.close());
@@ -22,7 +22,8 @@ for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 108
       return route.fulfill({ body: html, contentType: 'text/html' });
     });
     let reference;
-    for (const template of ['tickets', 'profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users']) {
+    for (const template of ['tickets', 'profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users', 'statuses', 'management_integrations', 'management_feedback', 'management_statistics', 'management_saved_files', 'quick_replies']) {
+      if (width === 390 && ['profile', 'profile_notification_bot', 'settings_notification_bot_basic', 'reviews', 'management_users'].includes(template)) continue;
       await page.goto(`http://desk.test/${template}`);
       await page.evaluate(theme => { document.body.dataset.theme = theme; document.body.dataset.sidebarReady = '1'; }, theme);
       const geometry = await page.evaluate(() => {
@@ -34,14 +35,16 @@ for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 108
       else assert.deepEqual(geometry, reference, template);
       if (template !== 'tickets') {
         // Extra content remains reachable through the page's existing scroll owner.
-        assert.equal(await page.evaluate(() => {
+        assert.equal(await page.evaluate(template => {
           const panel = document.querySelector('#appContent .panel');
-          const scroll = panel.querySelector('.table-scroll') || panel;
+          const scroll = template === 'statuses' ? panel.querySelector('#statusBoardPanel')
+            : template === 'quick_replies' ? panel.querySelector('.quick-replies-list')
+            : template === 'management_statistics' ? panel : panel.querySelector('.table-scroll') || panel;
           scroll.hidden = false;
           const filler = document.createElement('div'); filler.style.cssText = 'height:1800px;flex-shrink:0'; scroll.appendChild(filler);
           scroll.scrollTop = scroll.scrollHeight;
           return scroll.scrollTop > 0;
-        }), true, `${template}: content can scroll`);
+        }, template), true, `${template}: content can scroll`);
       }
     }
   });

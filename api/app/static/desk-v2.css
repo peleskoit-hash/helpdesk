@@ -1,5 +1,6 @@
 @import url("/static/profile-settings-v2.css?v=20261024-notification-layout-v2");
 @import url("/static/client-card-settings-v2.css?v=20261024-client-settings-panel-v2");
+@import url("/static/admin-pages-v2.css?v=20261025-status-log-responsive-v2");
 
 /* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
    The import precedes legacy CSS; deliberate scope specificity wins in both themes. */

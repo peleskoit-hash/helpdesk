@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES Helpdesk - Управление - Статистика</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261025-ticket-sidebar-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-status-log-responsive-v2" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -92,7 +92,7 @@
           <div id="managementStatisticsValidation" class="status management-statistics-validation" hidden></div>
 
           <section id="managementStatisticsWorkTimePanel" data-statistics-panel="work-time">
-            <div id="managementStatisticsWorkTimeSummary" class="management-statistics-summary">Общее время: 0 сек | Объектов: 0 | Среднее: 0 сек | Медиана: 0 сек | Заявки: 0 | Задачи: 0</div>
+            <div id="managementStatisticsWorkTimeSummary" class="management-statistics-summary">Объектов: 0 | Среднее: 0 сек | Медиана: 0 сек | Заявки: 0 | Задачи: 0</div>
             <div class="table-scroll management-statistics-table-wrap">
               <table class="management-statistics-table management-statistics-work-time-table">
                 <thead>
@@ -101,7 +101,6 @@
                     <th scope="col">Выполнено заявок</th>
                     <th scope="col">Выполнено задач</th>
                     <th scope="col">Всего выполнено</th>
-                    <th scope="col">Общее время выполнения</th>
                     <th scope="col">Среднее время выполнения</th>
                     <th scope="col">Медианное значение</th>
                   </tr>
@@ -131,28 +130,6 @@
                 <div id="managementStatisticsStatusesEmpty" class="status management-statistics-empty">Загрузка...</div>
               </div>
             </div>
-            <div class="management-statistics-inner-card management-statistics-transition-log">
-              <h2>Лог смен статусов</h2>
-              <div id="managementStatisticsTransitionsViewport" class="table-scroll management-statistics-table-wrap management-statistics-transitions-viewport">
-                <table class="management-statistics-table management-statistics-transitions-table">
-                  <thead id="managementStatisticsTransitionsHead">
-                    <tr>
-                      <th scope="col">Сотрудник</th>
-                      <th scope="col">Был статус</th>
-                      <th scope="col">Стал статус</th>
-                      <th scope="col">Дата и время</th>
-                    </tr>
-                  </thead>
-                  <tbody id="managementStatisticsTransitionsTableBody"></tbody>
-                </table>
-                <div id="managementStatisticsTransitionsEmpty" class="status management-statistics-empty">Загрузка...</div>
-              </div>
-              <div class="management-statistics-pagination">
-                <button id="managementStatisticsTransitionsPrev" class="action" type="button">← Назад</button>
-                <span id="managementStatisticsTransitionsPage">Страница 1</span>
-                <button id="managementStatisticsTransitionsNext" class="action" type="button">Вперёд →</button>
-              </div>
-            </div>
           </section>
         </div>
       </div>
@@ -162,7 +139,7 @@
   <script src="/static/theme.js?v=20261024-appearance-v2"></script>
   <script src="/static/sidebar.js?v=20261024-unified-settings-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261025-ticket-sidebar-v2"></script>
-  <script src="/static/management_statistics.js?v=20260913a"></script>
+  <script src="/static/app_shell.js?v=20261025-stats-final-v2"></script>
+  <script src="/static/management_statistics.js?v=20261025-stats-final-v2"></script>
 </body>
 </html>

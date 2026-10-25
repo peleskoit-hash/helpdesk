@@ -1,5 +1,19 @@
 (function () {
 function initStatusesPage() {
+const root = document.getElementById("appContent");
+const log = window.HelpdeskStatusTransitions.init({ root });
+const tabs = [...root.querySelectorAll("[data-status-tab]")];
+function selectTab(event) {
+  const selected = event.currentTarget.dataset.statusTab;
+  for (const tab of tabs) {
+    tab.classList.toggle("active", tab.dataset.statusTab === selected);
+    tab.setAttribute("aria-selected", String(tab.dataset.statusTab === selected));
+  }
+  root.querySelector("#statusBoardPanel").hidden = selected !== "board";
+  root.querySelector("#statusLogPanel").hidden = selected !== "log";
+  if (selected === "log") log.show(); else log.hide();
+}
+tabs.forEach(tab => tab.addEventListener("click", selectTab));
 const state = {
   users: [],
   inFlight: new Set(),
@@ -218,6 +232,8 @@ function stopPolling() {
   window.addEventListener("beforeunload", stopPolling);
 })();
 return () => {
+  log.destroy();
+  tabs.forEach(tab => tab.removeEventListener("click", selectTab));
   stopPolling();
   window.removeEventListener("beforeunload", stopPolling);
 };
