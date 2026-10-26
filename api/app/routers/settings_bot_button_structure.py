@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -9,9 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuLevelLayout
-from ..schemas import BotButtonGroupOut, BotButtonMenuStructureOut, BotButtonStructureLeafOut
+from ..schemas import BotButtonGroupOut, BotButtonMenuStructureOut, BotButtonStructureLeafOut, BotButtonMovePayload
 from ..services.button_config import build_level_layout_key, build_visibility_button_key, build_terminal_button_key
 from ..services.bot_button_keys import lock_button_keys, check_button_key_collisions, change_button_workflow_key
+from ..services.bot_button_moves import move_button_between_levels
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -192,7 +193,8 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
     for row in rows:
         if row.workflow_type == "group_task" and row.currently_present and not row.is_archived:
             group = BotButtonGroupOut(label=row.label_override if row.label_overridden and row.label_override else row.button_label,
-                                      full_path=row.button_path, technical_key=row.button_key)
+                                      full_path=row.button_path, technical_key=row.button_key,
+                                      button_id=row.id, parent_path=row.parent_path or "")
             groups[row.button_path] = group
             result.group_tasks.append(group)
     for row in rows:
@@ -203,6 +205,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
             label=row.label_override if row.label_overridden and row.label_override else row.button_label,
             workflow_type=row.workflow_type, full_path=row.button_path, technical_key=row.button_key,
             source_button_key=row.button_key, has_instruction=bool((row.instruction_text or "").strip()),
+            button_id=row.id, parent_path=row.parent_path or "",
             removed=removed, is_enabled=True if not row.visibility_overridden else bool(row.is_enabled),
             stable_button_id=row.stable_button_id, is_db_created=bool(row.is_db_created),
             is_archived=bool(row.is_archived), status="removed_changed" if removed else "actual",
@@ -234,8 +237,14 @@ def _build_db_only_tree_rows(db: Session, menu_name: str) -> list[dict]:
     by_parent: dict[str, list[BotButtonSetting]] = {}
     for row in rows:
         by_parent.setdefault((row.parent_path or "").strip(), []).append(row)
+
+    def sort_key(row: BotButtonSetting):
+        value = row.updated_at or row.created_at or now
+        utc_value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return utc_value, row.button_label
+
     for bucket in by_parent.values():
-        bucket.sort(key=lambda r: ((r.updated_at or r.created_at or now), r.button_label))
+        bucket.sort(key=sort_key)
 
     def _effective_label(row: BotButtonSetting) -> str:
         if bool(row.label_overridden):
@@ -254,6 +263,8 @@ def _build_db_only_tree_rows(db: Session, menu_name: str) -> list[dict]:
                 "label": _effective_label(row),
                 "kind": "terminal",
                 "technical_key": row.button_key,
+                "button_id": row.id,
+                "parent_path": row.parent_path or "",
                 "workflow_type": workflow,
                 "full_path": row.button_path,
                 "has_instruction": bool((row.instruction_text or "").strip()),
@@ -417,6 +428,38 @@ def get_bot_button_level_layout(
     }
 
 
+@router.post("/bot-buttons/item/move")
+def move_bot_button_item(
+    payload: BotButtonMovePayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+
+    def load_layout(menu, level_key):
+        rows = _rows_for_level_key(db, menu, level_key)
+        allowed = _level_button_keys(rows)
+        return _normalize_layout_payload_rows([
+            {"columns": item.get("columns"), "button_keys": [node["technical_key"]
+             for node in item.get("buttons", []) if node.get("technical_key") in allowed]}
+            for item in rows], allowed)
+
+    try:
+        row = move_button_between_levels(db, payload, load_layout)
+        db.flush()
+        structure = _model_to_dict(_build_bot_menu_structure(db, payload.menu_type))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _error(409, "button_move_conflict", "Button move conflicts with existing data")
+    except Exception:
+        db.rollback()
+        raise
+    return {"ok": True, "button_id": row.id, "button_key": row.button_key,
+            "stable_button_id": row.stable_button_id, "parent_path": row.parent_path,
+            "button_path": row.button_path, "structure": structure}
+
+
 @router.put("/bot-buttons/layout")
 def save_bot_button_level_layout(
     menu_type: str,
@@ -426,6 +469,7 @@ def save_bot_button_level_layout(
     user: CurrentUser = Depends(get_current_user),
 ):
     _require_admin(user)
+    lock_button_keys(db)
     if not menu_type.strip():
         _error(422, "menu_type_required", "menu_type is required")
     if not level_key.strip():

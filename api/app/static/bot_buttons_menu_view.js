@@ -279,7 +279,7 @@
 
     el.content.innerHTML = `
       <p class="bot-buttons-description">Здесь настраиваются кнопки Telegram-бота из базы данных.</p>
-      <div class="bot-buttons-split-layout">
+      <div class="bot-buttons-split-layout bot-buttons-v2-list">
         <div class="bot-buttons-split-left">
           <div class="bot-layout-toolbar">
             <button type="button" id="createMenuTypeBtn" class="action">Создать меню</button>
@@ -287,7 +287,9 @@
           <div class="bot-buttons-level-list">
             ${items.map((item) => `
               <button type="button" class="bot-buttons-level-item ${item.ok ? "" : "bot-button-type-card-error"}" data-menu-name="${escapeHtml(item.menu_name)}">
-                ${escapeHtml(MenuView.menuTypeTitle(item))}
+                <span class="bot-menu-card-title">${escapeHtml(item.display_name || item.menu_name || "Меню")}</span>
+                <span class="bot-menu-card-meta">${escapeHtml((item.destinations || []).join(", ") || "Не привязано")}</span>
+                <span class="bot-menu-card-counts">${Number.isFinite(item.buttons_count) ? `<span class="bot-button-type-tag">Кнопки: ${item.buttons_count}</span>` : ""}${Number.isFinite(item.menus_count) ? `<span class="bot-button-type-tag">Подменю: ${Math.max(0, item.menus_count - 1)}</span>` : ""}</span>
               </button>
             `).join("")}
           </div>
@@ -299,7 +301,9 @@
               ${archived.map((item) => `
                 <div class="bot-removed-row">
                   <button type="button" class="bot-buttons-level-item bot-button-leaf-removed" disabled>
-                    ${escapeHtml(MenuView.menuTypeTitle(item))}
+                    <span class="bot-menu-card-title">${escapeHtml(item.display_name || item.menu_name || "Меню")}</span>
+                <span class="bot-menu-card-meta">${escapeHtml((item.destinations || []).join(", ") || "Не привязано")}</span>
+                <span class="bot-menu-card-counts">${Number.isFinite(item.buttons_count) ? `<span class="bot-button-type-tag">Кнопки: ${item.buttons_count}</span>` : ""}${Number.isFinite(item.menus_count) ? `<span class="bot-button-type-tag">Подменю: ${Math.max(0, item.menus_count - 1)}</span>` : ""}</span>
                   </button>
                   <button type="button" class="action" data-restore-menu="${escapeHtml(item.menu_name)}">Восстановить</button>
                 </div>
@@ -322,9 +326,7 @@
             </div>
           </div>
         </div>
-        <div class="bot-buttons-split-right" id="botButtonsRightPanel">
-          ${renderRightPanel()}
-        </div>
+
       </div>
     `;
 

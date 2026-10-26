@@ -1351,6 +1351,12 @@
     return control.value;
   }
 
+  function trackModalChanges(ctx) {
+    const editor = inlineEditorState(ctx);
+    editor.open = true;
+    editor.values = new Map(inlineEditorControls(ctx).map(control => [control, inlineControlValue(control)]));
+  }
+
   function hasInlineChanges(ctx) {
     const editor = ctx.state.clientCardInline;
     if (!editor?.open) return false;
@@ -1664,6 +1670,7 @@
     openClientModal,
     closeClientModal,
     saveClientProfile,
+    trackModalChanges,
     hasInlineChanges,
     confirmInlineExit,
     destroyClientEditor,

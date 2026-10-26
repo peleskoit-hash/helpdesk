@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import BotButtonSetting, BotMenuLevelLayout, Ticket
-from .button_config import button_key_aliases, build_terminal_button_key, build_visibility_button_key, ordinary_button_keys
+from .button_config import button_identity_path, button_key_aliases, build_terminal_button_key, build_visibility_button_key, ordinary_button_keys
 
 
 def _conflict(code: str, message: str):
@@ -34,7 +34,8 @@ def check_button_key_collisions(db: Session, row: BotButtonSetting):
 
 def change_button_workflow_key(db: Session, row: BotButtonSetting, workflow: str):
     typed = ordinary_button_keys(row)
-    old_db = build_visibility_button_key(row.menu_type, "db", row.button_path)
+    identity_path = button_identity_path(row)
+    old_db = build_visibility_button_key(row.menu_type, "db", identity_path)
     if not typed or row.button_key not in typed | {old_db}:
         _conflict("button_key_requires_decision", "Нестандартный ключ требует отдельного решения")
     legacy = row.legacy_button_key
@@ -42,7 +43,7 @@ def change_button_workflow_key(db: Session, row: BotButtonSetting, workflow: str
         if legacy and legacy not in typed | {old_db}:
             _conflict("button_legacy_key_occupied", "Для сохранения старого db-ключа требуется миграция алиасов")
         legacy = old_db
-    new_key = build_terminal_button_key(row.menu_type, workflow, row.button_path)
+    new_key = build_terminal_button_key(row.menu_type, workflow, identity_path)
     aliases = button_key_aliases(row)
     layouts = []
     for layout in db.execute(select(BotMenuLevelLayout).where(BotMenuLevelLayout.menu_type == row.menu_type)).scalars().all():

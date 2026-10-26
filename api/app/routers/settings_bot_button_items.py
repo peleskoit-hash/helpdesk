@@ -965,11 +965,11 @@ def save_bot_button_instruction(
     workflow_type_changed = False
     if row is not None:
         effective_workflow_type = _validate_existing_button_workflow_transition(row, requested_workflow_type)
+        if menu_type != row.menu_type or button_path != row.button_path:
+            _error(409, "button_identity_changed", "Кнопка перемещена; обновите редактор")
         is_submenu_request = effective_workflow_type == "submenu"
         workflow_type_changed = normalize_workflow_type(row.workflow_type) != normalize_workflow_type(effective_workflow_type)
         if workflow_type_changed and effective_workflow_type in EDITABLE_EXISTING_WORKFLOW_TYPES:
-            if menu_type != row.menu_type or button_path != row.button_path:
-                _error(409, "button_identity_changed", "Нельзя одновременно менять путь и тип кнопки")
             change_button_workflow_key(db, row, effective_workflow_type)
     if row is None:
         row = BotButtonSetting(

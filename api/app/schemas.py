@@ -1021,12 +1021,23 @@ class BotMenuDestinationPayload(BaseModel):
     destination: str = Field(min_length=1)
 
 
+class BotButtonMovePayload(BaseModel):
+    button_id: str = Field(min_length=1)
+    menu_type: str = Field(min_length=1)
+    parent_path: str = ""
+    target_row: int | None = Field(default=None, ge=0, strict=True)
+    target_index: int = Field(default=0, ge=0, strict=True)
+    new_row: bool = True
+
+
 class BotButtonStructureLeafOut(BaseModel):
     label: str
     workflow_type: Literal["ticket", "task", "auto", "group_task_child"]
     full_path: str
     technical_key: str
     source_button_key: str
+    button_id: str | None = None
+    parent_path: str = ""
     has_instruction: bool = False
     removed: bool = False
     is_enabled: bool = True
@@ -1040,6 +1051,8 @@ class BotButtonGroupOut(BaseModel):
     label: str
     full_path: str
     technical_key: str
+    button_id: str | None = None
+    parent_path: str = ""
     children: list[BotButtonStructureLeafOut] = Field(default_factory=list)
 
 

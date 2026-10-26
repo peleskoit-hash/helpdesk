@@ -12,7 +12,7 @@ test.after(async () => { await browser?.close(); });
 for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme}`, async t => {
  const page = await browser.newPage({viewport:{width:1440,height:1000}}); t.after(()=>page.close());
  const errors=[], calls=[]; page.on('pageerror', e=>errors.push(e.message));
- page.on('dialog', d=>d.accept());
+ let acceptDialog=true, dialogCount=0; page.on('dialog', d=>{dialogCount++;return acceptDialog?d.accept():d.dismiss();});
  const me={id:'admin',role:'admin',login:'admin',full_name:'Администратор'};
  let blocked=false;
  const profile={contact_name:'Иван',last_name:'Иванов',is_verified:false,custom_fields:{flag:false,note:'Комментарий'}};
@@ -48,6 +48,12 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
  await page.goto('http://desk.test/management/users');await page.locator('.management-user-row td').first().click();
  const modal=page.locator('#clientModal'),dialog=modal.locator('.modal-dialog');await dialog.waitFor({state:'visible'});
  assert.equal(await page.locator('body').getAttribute('data-theme'),theme);
+ for(const close of [()=>page.locator('#closeClientModalBtn').click(),()=>page.keyboard.press('Escape'),()=>modal.click({position:{x:5,y:5}})]){
+  await modal.locator('#fContactName').fill('Несохранённое имя');acceptDialog=false;const before=dialogCount;
+  await close();assert.equal(dialogCount,before+1);assert.equal(await modal.isVisible(),true);assert.equal(await modal.locator('#fContactName').inputValue(),'Несохранённое имя');
+  acceptDialog=true;await close();await modal.waitFor({state:'hidden'});assert.equal(dialogCount,before+2);
+  await page.locator('.management-user-row td').first().click();await dialog.waitFor({state:'visible'});
+ }
  const listeners=await page.evaluate(()=>[...window.testKeyListeners].filter(fn=>fn.name==='handlePageKeydown').length);
  await page.evaluate(()=>{window.testCloseCount=0;const close=window.TicketClientCard.closeClientModal;window.TicketClientCard.closeClientModal=(...args)=>{window.testCloseCount++;return close(...args);};});
  await dialog.locator('.modal-head').click();assert.equal(await modal.isVisible(),true);
@@ -73,6 +79,7 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
  await modal.locator('#fContactName').fill('Новое имя');
  await modal.locator('[data-custom-field-key="flag"]').check();
  await page.locator('#saveClientBtn').click();await modal.waitFor({state:'hidden'});
+ assert.equal(dialogCount,6,'Saving does not ask to discard changes');
  const saved=calls.find(c=>c.path.endsWith('/client/profile')&&c.method==='PATCH');
  assert.equal(saved.data.contact_name,'Новое имя');assert.equal(saved.data.custom_fields.flag,true);
  await page.locator('.management-user-row td').first().click();await dialog.waitFor({state:'visible'});

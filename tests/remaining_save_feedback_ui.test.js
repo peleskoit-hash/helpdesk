@@ -94,6 +94,7 @@ for (const [file, name, next] of handlers) {
         els: () => el, validateDailyTimes: () => true, collectPayload: () => ({}),
         selectedItem: () => ({id: 'file'}),
         currentLevel: () => ({levelKey: 'level'}), serializeLayoutRows: () => [],
+        cancelLayoutEdit(state) { state.layoutEditMode = false; state.layoutDraftRows = []; },
         draft: {subject: 'New', systemText: '', instructionText: ''}, group: {endpoint: '/group', key: 'key'},
         uiText: {}, openEditMessageModal: async () => 'Edited', alert() {},
       };
@@ -154,6 +155,6 @@ test('changed scripts and shell have matching versions in every direct and dynam
       .matchAll(new RegExp(`/static/${name}\\.js\\?v=([^"']+)`, 'g'))].map(match => match[1]));
     assert.ok(versions.length >= 2, name);
     assert.deepEqual([...new Set(versions)],
-      [['app_shell', 'management_users'].includes(name) ? '20261025-modal-final-v2' : name === 'settings_users' ? '20261025-roles-editor-v2' : name === 'settings_client_card' ? '20261024-client-settings-groups-v2' : name === 'list' ? '20261021-task-panel-refresh' : name === 'ticket_client_card' ? '20261024-client-controls-v2' : '20261021-all-save-feedback'], name);
+      [['app_shell', 'bot_buttons_level_view', 'settings_bot_buttons'].includes(name) ? '20261025-bot-move-v2' : ['app_shell', 'management_users', 'ticket_client_card', 'bot_buttons_level_view', 'settings_bot_buttons'].includes(name) ? '20261025-bot-browser-v2' : name === 'settings_users' ? '20261025-roles-editor-v2' : name === 'settings_client_card' ? '20261024-client-settings-groups-v2' : name === 'list' ? '20261021-task-panel-refresh' : name === 'ticket_client_card' ? '20261024-client-controls-v2' : '20261021-all-save-feedback'], name);
   }
 });

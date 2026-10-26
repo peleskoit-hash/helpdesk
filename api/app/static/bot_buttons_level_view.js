@@ -102,7 +102,54 @@
     if (!state) return false;
     state.layoutEditMode = false;
     state.layoutDraftRows = [];
+    state.layoutPendingMove = null;
+    state.layoutDragNode = null;
+    state.layoutDragLocal = false;
+    state.layoutError = "";
     return true;
+  }
+
+  function localLayoutChanged(state) {
+    return JSON.stringify(serializeLayoutRows(state.layoutDraftRows)) !== state.layoutOriginalRows;
+  }
+
+  function canMoveNode(node) {
+    return node?.kind === "terminal" && ["ticket", "task", "auto"].includes(node.workflow_type)
+      && !!node.button_id && typeof node.parent_path === "string" && !node.removed && !node.is_archived;
+  }
+
+  function moveBlockedReason(ctx, node, parentPath) {
+    if (ctx.state.layoutSaving) return "Дождитесь сохранения.";
+    if (ctx.state.layoutPendingMove) return "Один перенос за сохранение. Сохраните или отмените перенос.";
+    if (localLayoutChanged(ctx.state)) return "Сначала сохраните или отмените перестановки текущего уровня.";
+    if (!canMoveNode(node)) return "Можно переносить только обычные кнопки с ID и путём из структуры.";
+    if (node.parent_path === parentPath) return "Кнопка уже находится на этом уровне.";
+    return "";
+  }
+
+  function moveDropZone(ctx, parentPath, label) {
+    const pending = ctx.state.layoutPendingMove;
+    return `<div class="bot-move-drop" data-move-parent="${ctx.escapeHtml(parentPath)}"
+      data-move-label="${ctx.escapeHtml(label)}" aria-disabled="${!!pending || localLayoutChanged(ctx.state)}">
+      Перенести сюда: ${ctx.escapeHtml(label)}
+      ${pending?.payload.parent_path === parentPath ? `<div class="bot-move-preview">После сохранения: ${ctx.escapeHtml(pending.label)}</div>` : ""}
+    </div>`;
+  }
+
+  function refreshLevelStack(ctx, structure) {
+    ctx.state.menuStructure = structure;
+    const stack = ctx.state.levelStack || [];
+    const refreshed = [];
+    for (let index = 0; index < stack.length; index += 1) {
+      const level = stack[index];
+      const rows = index === 0 ? structure.tree_rows : findRowsForLevelKey(structure.tree_rows, level.levelKey);
+      if (!rows) break;
+      refreshed.push({ ...level, rows });
+    }
+    ctx.state.levelStack = refreshed;
+    ctx.state.preview = { kind: null, label: "", technicalKey: "", item: null, loading: false, menuName: ctx.state.selectedMenu };
+    ctx.state.buttonColorStructure = null;
+    ctx.state.buttonColorRequests = new Map();
   }
 
   function isLayoutEditableLevel(ctx, level) {
@@ -145,7 +192,51 @@
     return null;
   }
 
+  function applyButtonColors(ctx) {
+    const menu = ctx.state.selectedMenu;
+    if (ctx.state.buttonColorStructure !== ctx.state.menuStructure) {
+      ctx.state.buttonColorStructure = ctx.state.menuStructure;
+      ctx.state.buttonColorRequests = new Map();
+    }
+    const requests = ctx.state.buttonColorRequests ||= new Map();
+    ctx.el.content.querySelectorAll("[data-button-color-key]").forEach(button => {
+      const key = button.dataset.buttonColorKey;
+      const cacheKey = `${menu}|${key}`;
+      const apply = item => {
+        if (!button.isConnected) return;
+        for (const style of ["primary", "success", "danger"]) {
+          button.classList.toggle(`bot-button-color-${style}`, item?.button_style === style);
+        }
+      };
+      if (!requests.has(cacheKey)) {
+        requests.set(cacheKey, ctx.api(`/api/v1/settings/bot-buttons/item?button_key=${encodeURIComponent(key)}&menu_type=${encodeURIComponent(menu)}`)
+          .catch(() => { requests.delete(cacheKey); return null; }));
+      }
+      requests.get(cacheKey).then(apply);
+    });
+  }
+
+  function buttonTypeLabel(node) {
+    if (node.kind === "submenu") return "Подменю";
+    if (node.kind === "group_task_parent") return "Групповая задача";
+    return ({ticket:"Заявка", task:"Задача", auto:"Автоматическая задача", group_task:"Групповая задача"})[node.workflow_type] || "Задача";
+  }
+
+  function renderSubmenuContents(ctx, node) {
+    const children = (node.children_rows || []).flatMap(row => row.buttons || []);
+    return `<details class="bot-structure-submenu" data-submenu-key="${ctx.escapeHtml(node.technical_key)}" ${ctx.state.layoutOpenSubmenus?.has(node.technical_key) ? "open" : ""}><summary>Содержимое подменю (${children.length})</summary>
+      ${children.map(child => `<div class="bot-structure-child">
+        <button type="button" class="${nodeClass(ctx, child)} ${child.button_id && ctx.state.layoutPendingMove?.payload.button_id === child.button_id ? "bot-move-source-pending" : ""}"
+          data-button-color-key="${ctx.escapeHtml(child.technical_key || "")}" data-move-source="${ctx.escapeHtml(child.technical_key || "")}"
+          draggable="${!ctx.state.layoutPendingMove && !ctx.state.layoutSaving && canMoveNode(child)}">
+          <span>${ctx.escapeHtml(child.label)}</span><span class="bot-button-type-tag">${buttonTypeLabel(child)}</span>
+        </button>${child.kind === "submenu" ? renderSubmenuContents(ctx, child) : ""}</div>`).join("")}
+      ${moveDropZone(ctx, node.full_path, node.label)}
+    </details>`;
+  }
+
   function renderLevel(ctx) {
+    ctx.state.layoutOpenSubmenus = new Set(Array.from(ctx.el.content.querySelectorAll(".bot-structure-submenu[open]"), node => node.dataset.submenuKey));
     const current = currentLevel(ctx);
     const isArchiveLevel = String(current?.levelKey || "").includes("|level|__removed__");
     const rows = current?.rows || [];
@@ -166,10 +257,10 @@
       ? `
         <div class="bot-layout-toolbar">
           ${ctx.state.layoutEditMode
-            ? `<button type="button" id="saveLayoutBtn" class="action action-primary">\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a</button>
+            ? `<button type="button" id="saveLayoutBtn" class="action action-primary">Сохранить структуру</button>
                <button type="button" id="cancelLayoutBtn" class="action">\u041e\u0442\u043c\u0435\u043d\u0430</button>
                <span class="bot-layout-help">\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043a\u043d\u043e\u043f\u043a\u0438, \u0447\u0442\u043e\u0431\u044b \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a. \u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0434\u043e 3 \u043a\u043d\u043e\u043f\u043e\u043a.</span>`
-            : `<button type="button" id="editLayoutBtn" class="action">\u0418\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a</button>
+            : `<button type="button" id="editLayoutBtn" class="action">Изменить структуру</button>
                ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u0434\u043c\u0435\u043d\u044e</button>` : ""}
                <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>`}
         </div>
@@ -183,28 +274,40 @@
     const rowsForRender = ctx.state.layoutEditMode ? (ctx.state.layoutDraftRows || []) : visibleRows;
 
     ctx.el.content.innerHTML = `
-      <div class="bot-buttons-split-layout">
+      <div class="bot-buttons-split-layout bot-buttons-v2-list">
         <div class="bot-buttons-split-left">
           ${ctx.renderMenuBindingsPanel()}
           ${ctx.state.layoutEditMode ? `
           <div class="bot-layout-edit-shell">
-            <div class="bot-layout-mode-badge">\u0420\u0435\u0436\u0438\u043c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043e\u0440\u044f\u0434\u043a\u0430</div>
+            <div class="bot-layout-mode-badge">Режим изменения структуры</div>
           ` : ""}
           ${toolbarHtml}
+          ${ctx.state.layoutEditMode ? `
+            <div class="bot-move-help" role="status">${ctx.state.layoutPendingMove
+              ? `Черновик: ${ctx.escapeHtml(ctx.state.layoutPendingMove.label)} → ${ctx.escapeHtml(ctx.state.layoutPendingMove.targetLabel)}. Сохраните или отмените перенос; другие изменения заблокированы.`
+              : "Один межуровневый перенос за сохранение. Кнопка добавится отдельным рядом в конец уровня."}</div>
+            ${ctx.state.layoutError ? `<div class="bot-layout-error" role="alert">${ctx.escapeHtml(ctx.state.layoutError)} Можно повторить сохранение или отменить.</div>` : ""}
+            ${moveDropZone(ctx, current.fullPath || "", current.kind === "root" ? "Корень меню" : "Текущий уровень")}
+            ${current.kind === "submenu" && typeof current.parentPath === "string" ? moveDropZone(ctx, current.parentPath, "На уровень выше") : ""}
+          ` : ""}
           <div class="bot-buttons-level-list">
             ${rowsForRender.length ? rowsForRender.map((row, rowIndex) => `
               ${ctx.state.layoutEditMode ? `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${rowIndex}">\u041d\u043e\u0432\u044b\u0439 \u0440\u044f\u0434 \u0437\u0434\u0435\u0441\u044c</div>` : ""}
               <div class="bot-buttons-row ${ctx.state.layoutEditMode ? "bot-layout-row-edit" : ""}" ${ctx.state.layoutEditMode ? `data-layout-drop-row="${rowIndex}"` : ""}>
                 ${(row.buttons || []).map((node, nodeIndex) => `
+                  <div class="bot-structure-item">
                   <button
                     type="button"
-                    class="${nodeClass(ctx, node)}"
+                    class="${nodeClass(ctx, node)}${node.kind === "submenu" ? " bot-button-submenu" : ""}${ctx.state.layoutPendingMove?.payload.button_id === node.button_id && node.button_id ? " bot-move-source-pending" : ""}"
+                    data-button-color-key="${ctx.escapeHtml(node.technical_key || "")}"
                     data-row-index="${rowIndex}"
                     data-node-index="${nodeIndex}"
-                    ${ctx.state.layoutEditMode ? `draggable="true" data-layout-drag-button="${rowIndex}:${nodeIndex}"` : ""}
+                    ${ctx.state.layoutEditMode ? `draggable="${!ctx.state.layoutPendingMove && !ctx.state.layoutSaving}" data-layout-drag-button="${rowIndex}:${nodeIndex}"` : ""}
                   >
-                    ${ctx.escapeHtml(node.label)}
+                    <span>${ctx.escapeHtml(node.label)}</span><span class="bot-button-type-tag">${buttonTypeLabel(node)}</span>
                   </button>
+                  ${ctx.state.layoutEditMode && node.kind === "submenu" ? renderSubmenuContents(ctx, node) : ""}
+                  </div>
                 `).join("")}
               </div>
             `).join("") : `<div class="status">\u041f\u0443\u0441\u0442\u043e</div>`}
@@ -219,25 +322,16 @@
             </div>
           ` : ""}
         </div>
-        <div class="bot-buttons-split-right" id="botButtonsRightPanel">
-          ${ctx.renderRightPanel()}
-        </div>
+
       </div>
     `;
 
+    applyButtonColors(ctx);
+    ctx.el.content.querySelectorAll(".bot-structure-submenu").forEach(container => {
+      container.addEventListener("dragover", event => { event.stopPropagation(); });
+      container.addEventListener("drop", event => { event.preventDefault(); event.stopPropagation(); });
+    });
     ctx.el.content.querySelectorAll("[data-row-index][data-node-index]").forEach((btn) => {
-      btn.addEventListener("mouseenter", () => {
-        if (ctx.state.layoutEditMode) return;
-        const row = rows[Number(btn.dataset.rowIndex)];
-        const mappedRow = visibleRows[Number(btn.dataset.rowIndex)];
-        const sourceRow = mappedRow || row;
-        const node = sourceRow?.buttons?.[Number(btn.dataset.nodeIndex)];
-        if (!node) return;
-        ctx.state.preview = ctx.buildPreviewFromNode(node);
-        const panel = document.getElementById("botButtonsRightPanel");
-        if (panel) panel.innerHTML = ctx.renderRightPanel();
-        ctx.loadPreviewItem(node);
-      });
       btn.addEventListener("click", async () => {
         if (ctx.state.layoutEditMode) return;
         if (!ctx.confirmDiscard()) return;
@@ -246,11 +340,6 @@
         const node = row?.buttons?.[Number(btn.dataset.nodeIndex)];
         if (!node) return;
         ctx.state.preview = ctx.buildPreviewFromNode(node);
-        {
-          const panel = document.getElementById("botButtonsRightPanel");
-          if (panel) panel.innerHTML = ctx.renderRightPanel();
-        }
-        ctx.loadPreviewItem(node);
         const nextRows = Array.isArray(node.children_rows) ? node.children_rows : [];
         if (node.kind === "submenu" || node.kind === "group_task_parent" || nextRows.length > 0) {
           ctx.state.levelStack.push({
@@ -258,6 +347,7 @@
             rows: nextRows,
             levelKey: node.level_key || null,
             fullPath: node.full_path || "",
+            parentPath: node.parent_path,
             kind: node.kind || "",
             technicalKey: node.technical_key || "",
             workflowType: node.workflow_type || "",
@@ -270,6 +360,7 @@
     });
 
     document.getElementById("editLayoutBtn")?.addEventListener("click", () => {
+      cancelLayoutEdit(ctx.state);
       ctx.state.layoutEditMode = true;
       ctx.state.layoutDraftRows = normalizeDraftRows(
         visibleRows.map((r) => ({
@@ -277,6 +368,7 @@
           buttons: r.buttons || [],
         })),
       );
+      ctx.state.layoutOriginalRows = JSON.stringify(serializeLayoutRows(ctx.state.layoutDraftRows));
       ctx.render();
     });
     document.getElementById("addLevelItemBtn")?.addEventListener("click", async () => {
@@ -289,10 +381,12 @@
       if (typeof ctx.openSubmenuEditor === "function") await ctx.openSubmenuEditor();
     });
     document.getElementById("cancelLayoutBtn")?.addEventListener("click", () => {
+      if (ctx.state.layoutSaving) return;
       cancelLayoutEdit(ctx.state);
       ctx.render();
     });
     document.getElementById("saveLayoutBtn")?.addEventListener("click", async () => {
+      if (ctx.state.layoutSaving) return;
       const level = currentLevel(ctx);
       if (!level?.levelKey || !ctx.state.selectedMenu) return;
       const serializedRows = serializeLayoutRows(ctx.state.layoutDraftRows || []);
@@ -300,35 +394,32 @@
         alert("\u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043d\u0435\u043b\u044c\u0437\u044f \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0431\u043e\u043b\u044c\u0448\u0435 3 \u043a\u043d\u043e\u043f\u043e\u043a.");
         return;
       }
-      ctx.setStatus("\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435 \u043f\u043e\u0440\u044f\u0434\u043a\u0430...");
-      const result = await ctx.api(`/api/v1/settings/bot-buttons/layout?menu_type=${encodeURIComponent(ctx.state.selectedMenu)}&level_key=${encodeURIComponent(level.levelKey)}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: serializedRows }),
-      });
-      ctx.state.layoutEditMode = false;
-      ctx.state.layoutDraftRows = [];
-      if (result?.structure) {
-        ctx.state.menuStructure = result.structure;
-        const refreshedRows = level.levelKey === result.structure.root_level_key
-          ? (result.structure.tree_rows || [])
-          : findRowsForLevelKey(result.structure.tree_rows || [], level.levelKey);
-        if (refreshedRows) {
-          const stackIndex = Math.max(0, (ctx.state.levelStack || []).length - 1);
-          ctx.state.levelStack[stackIndex] = {
-            ...(ctx.state.levelStack[stackIndex] || {}),
-            rows: refreshedRows,
-            levelKey: level.levelKey,
-          };
+      ctx.setStatus("Сохранение структуры...");
+      ctx.state.layoutSaving = true;
+      ctx.state.layoutError = "";
+      ctx.render();
+      try {
+        const pending = ctx.state.layoutPendingMove;
+        const result = await ctx.api(pending ? "/api/v1/settings/bot-buttons/item/move" : `/api/v1/settings/bot-buttons/layout?menu_type=${encodeURIComponent(ctx.state.selectedMenu)}&level_key=${encodeURIComponent(level.levelKey)}`, {
+          method: pending ? "POST" : "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(pending ? pending.payload : { rows: serializedRows }),
+        });
+        cancelLayoutEdit(ctx.state);
+        if (result?.structure) {
+          refreshLevelStack(ctx, result.structure);
         } else {
           await ctx.refreshMenuStructure();
         }
-      } else {
-        await ctx.refreshMenuStructure();
+        ctx.setStatus("\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d");
+        global.HelpdeskAppShell?.showSaved?.(ctx.el?.content?.closest(".panel.bot-buttons-panel"));
+      } catch (error) {
+        ctx.state.layoutError = error.message || "Не удалось сохранить структуру.";
+        ctx.setStatus(ctx.state.layoutError);
+      } finally {
+        ctx.state.layoutSaving = false;
+        ctx.render();
       }
-      ctx.render();
-      ctx.setStatus("\u041f\u043e\u0440\u044f\u0434\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d");
-      global.HelpdeskAppShell?.showSaved?.(ctx.el?.content?.closest(".panel.bot-buttons-panel"));
     });
 
     document.getElementById("addDestinationBtn")?.addEventListener("click", async () => {
@@ -366,6 +457,9 @@
 
     if (ctx.state.layoutEditMode) {
       bindLayoutEditing(ctx);
+      for (const button of ctx.el.content.querySelectorAll("#saveLayoutBtn, #cancelLayoutBtn, .bot-menu-bindings-panel button, .bot-menu-bindings-panel select")) {
+        button.disabled = !!ctx.state.layoutSaving || button.closest(".bot-menu-bindings-panel") !== null;
+      }
     }
 
     document.getElementById("openRemovedArchiveBtn")?.addEventListener("click", () => {
@@ -402,26 +496,94 @@
 
   function bindLayoutEditing(ctx) {
     const draft = ctx.state.layoutDraftRows || [];
+    const localAllowed = () => !ctx.state.layoutPendingMove && !ctx.state.layoutSaving && ctx.state.layoutDragLocal;
+    const blockLocal = () => {
+      ctx.state.layoutError = ctx.state.layoutPendingMove
+        ? "Сначала сохраните или отмените межуровневый перенос."
+        : "Для межуровневого переноса используйте область вложения или уровень выше.";
+      ctx.render();
+    };
+    ctx.el.content.querySelectorAll("[data-move-source]").forEach(button => {
+      button.addEventListener("dragstart", event => {
+        if (ctx.state.layoutPendingMove || ctx.state.layoutSaving) { event.preventDefault(); return; }
+        const find = rows => {
+          for (const row of rows || []) for (const node of row.buttons || []) {
+            if (node.technical_key === button.dataset.moveSource) return node;
+            const child = find(node.children_rows);
+            if (child) return child;
+          }
+          return null;
+        };
+        ctx.state.layoutDragNode = find(ctx.state.menuStructure.tree_rows);
+        ctx.state.layoutDragLocal = false;
+        event.dataTransfer?.setData("text/plain", button.dataset.moveSource);
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      });
+      button.addEventListener("dragend", () => {
+        ctx.state.layoutDragNode = null;
+        ctx.state.layoutDragLocal = false;
+        clearDropClasses(ctx.el.content);
+      });
+    });
+    ctx.el.content.querySelectorAll("[data-move-parent]").forEach(zone => {
+      zone.addEventListener("dragover", event => {
+        event.preventDefault(); event.stopPropagation();
+        const reason = moveBlockedReason(ctx, ctx.state.layoutDragNode, zone.dataset.moveParent);
+        zone.classList.toggle("bot-layout-drop-active", !reason);
+        zone.classList.toggle("bot-layout-drop-forbidden", !!reason);
+        zone.setAttribute("aria-disabled", String(!!reason));
+        zone.title = reason || "Добавить отдельным рядом в конец уровня";
+        const help = ctx.el.content.querySelector(".bot-move-help");
+        if (help) help.textContent = reason || "Добавить отдельным рядом в конец уровня после сохранения.";
+        if (event.dataTransfer) event.dataTransfer.dropEffect = reason ? "none" : "move";
+      });
+      zone.addEventListener("dragleave", () => clearDropClasses(ctx.el.content));
+      zone.addEventListener("drop", event => {
+        event.preventDefault(); event.stopPropagation();
+        const node = ctx.state.layoutDragNode;
+        const reason = moveBlockedReason(ctx, node, zone.dataset.moveParent);
+        if (reason) { ctx.state.layoutError = reason; ctx.render(); return; }
+        ctx.state.layoutPendingMove = {
+          label: node.label,
+          targetLabel: zone.dataset.moveLabel,
+          payload: { button_id: node.button_id, menu_type: ctx.state.selectedMenu,
+            parent_path: zone.dataset.moveParent, new_row: true, target_index: 0 },
+        };
+        ctx.state.layoutDragNode = null;
+        ctx.state.layoutError = "";
+        ctx.render();
+      });
+    });
     ctx.el.content.querySelectorAll("[data-layout-drag-button]").forEach((btn) => {
       btn.addEventListener("dragstart", (event) => {
+        if (ctx.state.layoutPendingMove || ctx.state.layoutSaving) { event.preventDefault(); return; }
+        const ref = parseDragRef(btn.dataset.layoutDragButton);
+        ctx.state.layoutDragNode = draft[ref?.row]?.buttons?.[ref?.index];
+        ctx.state.layoutDragLocal = true;
         event.dataTransfer?.setData("text/plain", btn.dataset.layoutDragButton || "");
         event.dataTransfer?.setData("application/x-bot-layout-button", btn.dataset.layoutDragButton || "");
         if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
         btn.classList.add("bot-layout-dragging");
       });
       btn.addEventListener("dragend", () => {
+        ctx.state.layoutDragNode = null;
+        ctx.state.layoutDragLocal = false;
         btn.classList.remove("bot-layout-dragging");
         clearDropClasses(ctx.el.content);
       });
       btn.addEventListener("dragover", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        btn.classList.add("bot-layout-drop-active");
+        const target = draft[Number(btn.dataset.rowIndex)];
+        const allowed = localAllowed() && (target?.buttons.includes(ctx.state.layoutDragNode) || (target?.buttons.length || 0) < MAX_LAYOUT_ROW_BUTTONS);
+        btn.classList.toggle("bot-layout-drop-active", allowed);
+        btn.classList.toggle("bot-layout-drop-forbidden", !allowed);
       });
       btn.addEventListener("dragleave", () => btn.classList.remove("bot-layout-drop-active"));
       btn.addEventListener("drop", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (!localAllowed()) { blockLocal(); return; }
         const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
         const toRow = Number(btn.dataset.rowIndex);
         const toIndex = Number(btn.dataset.nodeIndex);
@@ -441,15 +603,17 @@
         const idx = Number(rowEl.dataset.layoutDropRow);
         const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
         const targetLen = draft[idx]?.buttons?.length || 0;
-        const sameRow = from && from.row === idx;
-        rowEl.classList.toggle("bot-layout-drop-active", sameRow || targetLen < MAX_LAYOUT_ROW_BUTTONS);
-        rowEl.classList.toggle("bot-layout-drop-forbidden", !sameRow && targetLen >= MAX_LAYOUT_ROW_BUTTONS);
+        const sameRow = ctx.state.layoutDragNode && draft[idx]?.buttons.includes(ctx.state.layoutDragNode);
+        const allowed = localAllowed() && (sameRow || targetLen < MAX_LAYOUT_ROW_BUTTONS);
+        rowEl.classList.toggle("bot-layout-drop-active", !!allowed);
+        rowEl.classList.toggle("bot-layout-drop-forbidden", !allowed);
       });
       rowEl.addEventListener("dragleave", () => {
         rowEl.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden");
       });
       rowEl.addEventListener("drop", (event) => {
         event.preventDefault();
+        if (!localAllowed()) { blockLocal(); return; }
         const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
         const toRow = Number(rowEl.dataset.layoutDropRow);
         clearDropClasses(ctx.el.content);
@@ -465,11 +629,13 @@
     ctx.el.content.querySelectorAll("[data-layout-new-row-before]").forEach((zone) => {
       zone.addEventListener("dragover", (event) => {
         event.preventDefault();
-        zone.classList.add("bot-layout-drop-active");
+        zone.classList.toggle("bot-layout-drop-active", !!localAllowed());
+        zone.classList.toggle("bot-layout-drop-forbidden", !localAllowed());
       });
       zone.addEventListener("dragleave", () => zone.classList.remove("bot-layout-drop-active"));
       zone.addEventListener("drop", (event) => {
         event.preventDefault();
+        if (!localAllowed()) { blockLocal(); return; }
         const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
         const beforeRow = Number(zone.dataset.layoutNewRowBefore);
         clearDropClasses(ctx.el.content);

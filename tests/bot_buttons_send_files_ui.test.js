@@ -190,12 +190,12 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 test('client card script cache busting is updated for changed JS files', () => {
   assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
   assert.match(appShellSource, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20261024-client-controls-v2/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261021-task-panel-refresh/);
   assert.match(appShellSource, /ticket\.js\?v=20261021-task-panel-refresh/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261025-modal-final-v2/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261025-bot-browser-v2/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -2022,7 +2022,7 @@ test('layout edit markup has mode shell and no old row controls', () => {
 
   assert.match(html, /bot-layout-edit-shell/);
   assert.match(html, /bot-layout-mode-badge/);
-  assert.match(html, /\u0420\u0435\u0436\u0438\u043c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043e\u0440\u044f\u0434\u043a\u0430/);
+  assert.match(html, /Режим изменения структуры/);
   assert.match(html, /data-layout-drag-button/);
   assert.match(html, /data-layout-new-row-before/);
   assert.doesNotMatch(html, /data-layout-row|data-layout-add-row|data-layout-del-row|bot-layout-row-head|bot-layout-cols/);
@@ -2406,6 +2406,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
     },
     BotButtonsFiles: {},
     BotButtonsLevelView: {
+      cancelLayoutEdit(state) { state.layoutEditMode = false; state.layoutDraftRows = []; },
       renderLevel(ctx) {
         levelCtx = ctx;
         return '';
@@ -3343,7 +3344,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261025-modal-final-v2/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261025-bot-colors-v2/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3426,7 +3427,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261025-modal-final-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261025-bot-colors-v2/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

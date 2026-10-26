@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select, literal_column
+from sqlalchemy import and_, or_, select, literal_column, func
 from sqlalchemy.orm import Session
 
 from ..models import BotButtonSetting, BotMenuProfile, BotMenuDestinationBinding
@@ -104,10 +104,21 @@ def available_menu_names(db: Session) -> tuple[str, ...]:
 ORDINARY_WORKFLOW_TYPES = ("ticket", "task", "auto")
 
 
+def button_identity_path(row: BotButtonSetting) -> str:
+    """A move changes location, not the path embedded in the stored key."""
+    if row.button_kind != "terminal" or row.workflow_type not in ORDINARY_WORKFLOW_TYPES:
+        return row.button_path
+    for kind in (*ORDINARY_WORKFLOW_TYPES, "db"):
+        prefix = f"{row.menu_type}|{kind}|"
+        if row.button_key.startswith(prefix):
+            return row.button_key[len(prefix):]
+    return row.button_path
+
+
 def ordinary_button_keys(row: BotButtonSetting) -> set[str]:
     if row.button_kind != "terminal" or row.workflow_type not in ORDINARY_WORKFLOW_TYPES or is_system_menu_type(row.menu_type):
         return set()
-    return {build_terminal_button_key(row.menu_type, workflow, row.button_path) for workflow in ORDINARY_WORKFLOW_TYPES}
+    return {build_terminal_button_key(row.menu_type, workflow, button_identity_path(row)) for workflow in ORDINARY_WORKFLOW_TYPES}
 
 
 def button_key_aliases(row: BotButtonSetting, *, submenu: bool = False) -> set[str]:
@@ -115,10 +126,10 @@ def button_key_aliases(row: BotButtonSetting, *, submenu: bool = False) -> set[s
     if row.legacy_button_key:
         aliases.add(row.legacy_button_key)
     typed = ordinary_button_keys(row)
-    if row.button_key in typed | {build_visibility_button_key(row.menu_type, "db", row.button_path)}:
+    if row.button_key in typed | {build_visibility_button_key(row.menu_type, "db", button_identity_path(row))}:
         aliases.update(typed)
     if not row.is_db_created and (not submenu or row.button_kind == "section"):
-        path = (row.button_path or row.button_label).split("/")
+        path = (button_identity_path(row) or row.button_label).split("/")
         parts = [row.menu_type, path[-1], "submenu"] if submenu else [row.menu_type, *path[-2:]]
         aliases.add(hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12])
     return aliases
@@ -153,12 +164,15 @@ def resolve_button_row(db: Session, key: str, menu_name: str | None = None, *, s
 
 def button_key_matches(key):
     """SQL equivalent for historical ticket search and access filters."""
-    typed = [BotButtonSetting.menu_type + literal_column(f"'|{workflow}|'") + BotButtonSetting.button_path
-             for workflow in ORDINARY_WORKFLOW_TYPES]
-    old_db = BotButtonSetting.menu_type + literal_column("'|db|'") + BotButtonSetting.button_path
     ordinary = and_(BotButtonSetting.button_kind == "terminal",
                     BotButtonSetting.workflow_type.in_([literal_column(f"'{workflow}'") for workflow in ORDINARY_WORKFLOW_TYPES]),
-                    ~BotButtonSetting.menu_type.startswith("__system__", autoescape=True),
-                    or_(*(BotButtonSetting.button_key == candidate for candidate in [*typed, old_db])))
+                    ~BotButtonSetting.menu_type.startswith("__system__", autoescape=True))
+    variants = []
+    for stored_kind in (*ORDINARY_WORKFLOW_TYPES, "db"):
+        prefix = BotButtonSetting.menu_type + f"|{stored_kind}|"
+        path = func.substr(BotButtonSetting.button_key, func.length(prefix) + 1)
+        variants.append(and_(func.substr(BotButtonSetting.button_key, 1, func.length(prefix)) == prefix,
+            or_(*(key == BotButtonSetting.menu_type + f"|{workflow}|" + path
+                  for workflow in ORDINARY_WORKFLOW_TYPES))))
     return or_(BotButtonSetting.button_key == key, BotButtonSetting.legacy_button_key == key,
-               and_(ordinary, or_(*(key == candidate for candidate in typed))))
+               and_(ordinary, or_(*variants)))

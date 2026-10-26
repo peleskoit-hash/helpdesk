@@ -1,0 +1,65 @@
+/* Browse and structure views only; the concrete button editor and dialogs keep their skin. */
+body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v2-browse) {
+  min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr);
+  & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
+  & .bot-buttons-v2-browse { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; padding: 21px; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); font: 21px/1.5 var(--desk-font); }
+  & .bot-buttons-breadcrumb { margin: 0 0 18px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); font-size: 21px; }
+  & .bot-buttons-description { color: var(--desk-muted); font-size: 18px; }
+  & .bot-buttons-v2-list { display: block; }
+  & .bot-buttons-split-left { width: 100%; min-width: 0; padding: 0; }
+  & .bot-buttons-level-list { display: grid; gap: 12px; }
+  & .bot-buttons-row { display: flex; gap: 12px; }
+  & .bot-structure-item { flex: 1 1 0; min-width: 0; }
+  & .bot-buttons-level-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; box-sizing: border-box; width: 100%; min-width: 0; min-height: 64px; padding: 16px 20px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); color: var(--desk-text); font: 21px/1.5 var(--desk-font); text-align: left; overflow-wrap: anywhere; box-shadow: none; }
+  & .bot-buttons-level-item:hover { background: var(--desk-hover); }
+  & .bot-buttons-level-item:active { background: var(--desk-tint); }
+  & :is(button, select, summary):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  & .bot-button-submenu { position: relative; }
+  & .bot-button-submenu::after { content: ""; position: absolute; inset: 0; border: 5px dashed var(--desk-text); border-radius: inherit; pointer-events: none; }
+  & .bot-buttons-level-item.bot-button-color-primary { background: #2f80ed; color: #0f172a; }
+  & .bot-buttons-level-item.bot-button-color-success { background: #27ae60; color: #0f172a; }
+  & .bot-buttons-level-item.bot-button-color-danger { background: #eb5757; color: #0f172a; }
+  & .bot-buttons-level-item:is(.bot-button-color-primary, .bot-button-color-success, .bot-button-color-danger):hover { filter: brightness(1.05); }
+  & .bot-buttons-level-item:is(.bot-button-color-primary, .bot-button-color-success, .bot-button-color-danger)::after { border-color: #0f172a; }
+  & .bot-button-disabled { opacity: .6; }
+  & .bot-button-leaf-removed { border-style: dashed; }
+  & .bot-button-type-tag { display: inline-block; flex-shrink: 0; max-width: 100%; padding: 3px 10px; border-radius: 999px; background: var(--desk-surface); color: var(--desk-on-tint); font-size: 16px; font-weight: 600; overflow-wrap: normal; white-space: normal; }
+  & [data-menu-name] { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 18px; }
+  & .bot-menu-card-title { font-weight: 700; }
+  & .bot-menu-card-meta { grid-column: 1; color: var(--desk-muted); font-size: 18px; }
+  & .bot-menu-card-counts { grid-column: 2; grid-row: 1 / 3; display: flex; flex-wrap: wrap; gap: 8px; }
+  & :is(.bot-menu-bindings-panel, .bot-layout-edit-shell) { margin: 0 0 18px; padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); color: var(--desk-text); }
+  & :is(.bot-menu-bindings-title, .bot-layout-mode-badge) { color: var(--desk-text); font-size: 21px; background: transparent; }
+  & .bot-menu-binding-chip { background: var(--desk-tint); color: var(--desk-on-tint); font-size: 18px; }
+  & .bot-layout-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  & .bot-menu-bindings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  & .bot-buttons-v2-list :is(.action, select) { box-sizing: border-box; max-width: 100%; min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); color: var(--desk-text); font: 20px/1.4 var(--desk-font); white-space: normal; box-shadow: none; }
+  & .bot-buttons-v2-list .action:hover { background: var(--desk-hover); }
+  & .bot-buttons-v2-list .action-danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
+  & .bot-layout-help { font-size: 16px; color: var(--desk-muted); }
+  & :is(.bot-layout-row-edit, .bot-layout-new-row-drop) { border: 1px dashed var(--desk-border); border-radius: 12px; padding: 8px; background: var(--desk-surface); color: var(--desk-muted); }
+  & .bot-layout-new-row-drop { min-height: 32px; font-size: 16px; }
+  & .bot-layout-drop-active { outline: 2px solid var(--desk-accent); background: var(--desk-tint); }
+  & .bot-layout-drop-forbidden { outline: 2px solid var(--desk-danger); }
+  & .bot-structure-submenu { padding: 12px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); font-size: 18px; }
+  & .bot-structure-submenu summary { cursor: pointer; color: var(--desk-on-tint); }
+  & .bot-structure-child { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--desk-border); }
+  & .bot-structure-child > details { width: 100%; }
+  & .bot-move-drop { margin: 12px 0; padding: 16px; min-height: 32px; border: 2px dashed var(--desk-border); border-radius: 12px; background: var(--desk-surface); color: var(--desk-text); font-size: 18px; }
+  & .bot-move-drop.bot-layout-drop-active { border-color: var(--desk-accent); background: var(--desk-tint); color: var(--desk-on-tint); }
+  & .bot-move-drop.bot-layout-drop-forbidden { border-color: var(--desk-danger); background: var(--desk-danger-bg); color: var(--desk-danger); cursor: not-allowed; }
+  & :is(.bot-move-help, .bot-move-preview) { margin: 10px 0; color: var(--desk-text); font-size: 16px; }
+  & .bot-layout-error { margin: 12px 0; padding: 12px; border: 1px solid var(--desk-danger); border-radius: 12px; background: var(--desk-danger-bg); color: var(--desk-danger); font-size: 18px; }
+  & .bot-move-source-pending { opacity: .6; border-style: dashed; cursor: not-allowed; }
+  & .bot-layout-edit-shell [draggable="false"] { cursor: not-allowed; }
+  & .bot-layout-edit-shell button:disabled { opacity: .6; cursor: wait; }
+  @media (max-width: 700px) {
+    & > .content { padding: 12px; }
+    & .bot-buttons-v2-browse { padding: 0; }
+    & #botButtonsContent { padding: 14px; }
+    & .bot-buttons-level-item { padding: 14px; gap: 8px; flex-wrap: wrap; }
+    & [data-menu-name] { grid-template-columns: minmax(0, 1fr); }
+    & .bot-menu-card-counts { grid-column: 1; grid-row: auto; }
+    & .bot-button-type-tag { font-size: 14px; }
+  }
+}

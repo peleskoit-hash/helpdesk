@@ -268,10 +268,12 @@
     return loadUsers(root);
   }
 
-  function closeClientModal(root) {
+  function closeClientModal(root, { force = false } = {}) {
+    if (!force && !window.TicketClientCard?.confirmInlineExit?.(clientCardCtx(root))) return false;
     window.TicketClientCard?.closeClientModal?.(clientCardCtx(root));
     const modal = els(root).clientModal;
     if (modal) modal.classList.add("hidden");
+    if (state.clientCardInline) state.clientCardInline.open = false;
     state.selectedClientId = "";
     state.selectedClientBlocked = false;
   }
@@ -303,6 +305,7 @@
     const profile = await api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`);
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
     syncClientModalToggles(root);
+    window.TicketClientCard.trackModalChanges(clientCardCtx(root));
     els(root).clientModal.classList.remove("hidden");
     setStatus(root, "\u0413\u043e\u0442\u043e\u0432\u043e");
   }
@@ -315,7 +318,7 @@
       method: "PATCH",
       body: JSON.stringify(payload),
     });
-    closeClientModal(root);
+    closeClientModal(root, { force: true });
     await loadUsers(root);
     setStatus(root, "\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e");
     window.HelpdeskAppShell?.showSaved?.(root.querySelector(".panel.management-users-table"));
@@ -356,6 +359,7 @@
     syncClientBlockControls(root);
     window.TicketClientCard.fillModal(clientCardCtx(root), payload?.profile || {});
     syncClientModalToggles(root);
+    window.TicketClientCard.trackModalChanges(clientCardCtx(root));
     await loadUsers(root);
     setStatus(root, "\u0414\u0430\u043d\u043d\u044b\u0435 \u043a\u043b\u0438\u0435\u043d\u0442\u0430 \u043e\u0447\u0438\u0449\u0435\u043d\u044b");
   }

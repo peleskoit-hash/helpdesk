@@ -65,14 +65,14 @@
       scripts: [
         "/static/bot_buttons_api.js?v=20260520a",
         "/static/bot_buttons_files.js?v=20260629a",
-        "/static/bot_buttons_level_view.js?v=20261021-all-save-feedback",
+        "/static/bot_buttons_level_view.js?v=20261025-bot-move-v2",
         "/static/telegram_text_editor.js?v=20261005a",
         "/static/bot_telegram_groups.js?v=20261021-group-copy",
         "/static/bot_buttons_editor.js?v=20261023-auto-only",
-        "/static/bot_buttons_menu_view.js?v=20260708a",
+        "/static/bot_buttons_menu_view.js?v=20261025-bot-browser-v2",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
         "/static/bot_buttons_editor_view.js?v=20261023-auto-only",
-        "/static/settings_bot_buttons.js?v=20261021-all-save-feedback",
+        "/static/settings_bot_buttons.js?v=20261025-bot-move-v2",
       ],
     }],
     ["/settings/automatic-messages", {
@@ -107,8 +107,8 @@
       page: "management-users",
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261024-client-controls-v2",
-        "/static/management_users.js?v=20261025-modal-final-v2",
+        "/static/ticket_client_card.js?v=20261025-bot-browser-v2",
+        "/static/management_users.js?v=20261025-bot-browser-v2",
       ],
     }],
     ["/management/integrations", {
@@ -125,7 +125,7 @@
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20261020-quotes",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261024-client-controls-v2",
+        "/static/ticket_client_card.js?v=20261025-bot-browser-v2",
         "/static/ticket_composer.js?v=20261021-chat-file-input",
         "/static/ticket_controls.js?v=20261025-ticket-sidebar-v2",
         "/static/ticket_message_view.js?v=20261021-all-save-feedback",

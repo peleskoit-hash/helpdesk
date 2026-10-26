@@ -318,6 +318,10 @@ function hasUnsavedChanges() {
 }
 
 function confirmDiscard() {
+  if (state.layoutPendingMove || state.layoutSaving) {
+    setStatus("Сохраните или отмените перенос перед выходом с уровня.");
+    return false;
+  }
   return BotButtonsEditor.confirmDiscard(editorCtx());
 }
 
@@ -921,6 +925,7 @@ function renderBreadcrumb() {
 }
 
 function render() {
+  el.content.closest(".bot-buttons-panel")?.classList.toggle("bot-buttons-v2-browse", state.view === "menu_types" || state.view === "level");
   renderBreadcrumb();
   if (state.view === "menu_types") return renderMenuTypes();
   if (state.view === "level") return renderLevel();
@@ -1268,6 +1273,10 @@ async function createLevelItem() {
 }
 
 function handleBack() {
+  if (state.layoutPendingMove || state.layoutSaving) {
+    setStatus("Сохраните или отмените перенос перед выходом с уровня.");
+    return;
+  }
   if (state.view === "system_editor") {
     if (!confirmSystemFirstConnectionDiscard()) return;
     discardSystemFirstConnectionChanges();
@@ -1292,8 +1301,7 @@ function handleBack() {
   if (state.view === "level") {
     if (!confirmDiscard()) return;
     discardEditorChanges();
-    state.layoutEditMode = false;
-    state.layoutDraftRows = [];
+    BotButtonsLevelView.cancelLayoutEdit(state);
     if (state.levelStack.length > 1) {
       state.levelStack.pop();
       state.preview = {
@@ -1330,7 +1338,7 @@ function handleBack() {
 }
 
 function handleBeforeUnload(event) {
-  if (!hasUnsavedChanges()) return;
+  if (!hasUnsavedChanges() && !state.layoutPendingMove && !state.layoutSaving) return;
   event.preventDefault();
   event.returnValue = "";
 }
