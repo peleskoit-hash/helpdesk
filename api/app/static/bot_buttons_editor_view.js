@@ -35,10 +35,6 @@
       .replace(/"/g, "&quot;");
   }
 
-  function textStatus(value) {
-    return String(value || "").trim() ? "Задан" : "Не задан";
-  }
-
   function renderButtonStylePicker(ctx) {
     const escapeHtml = ctx.escapeHtml || escapeModalHtml;
     const selectedStyle = String(ctx.state?.buttonStyle || "");
@@ -459,7 +455,6 @@
       escapeHtml,
       renderSelectedFiles,
       renderConditionalRules,
-      buildMoveCandidates,
       renderAssigneeOptions,
       openFilePickerModal,
       openConditionalRuleFilesModal,
@@ -471,15 +466,12 @@
       archiveMenuButton,
       restoreRemovedSetting,
       deleteRemovedSetting,
-      moveRemovedSetting,
-      hasAnyStoredSettings,
     } = ctx;
 
     const leaf = state.selectedLeaf;
     if (!leaf) return;
     const editorHelpers = global.BotButtonsEditor || {};
     const isRemoved = !!leaf.removed;
-    const isDbCreated = !!leaf.is_db_created;
     const resolvedLeafWorkflowType = typeof editorHelpers.resolveLeafWorkflowType === "function"
       ? editorHelpers.resolveLeafWorkflowType(leaf)
       : String(leaf.workflow_type || "").trim().toLowerCase();
@@ -499,11 +491,6 @@
       }, 0);
     }, 0);
     const nestedChildCount = countNestedChildren(leaf.children_rows);
-    const moveOptions = buildMoveCandidates()
-      .filter((c) => c.key !== leaf.technical_key)
-      .filter((c) => !resolvedLeafWorkflowType || c.workflowType === resolvedLeafWorkflowType)
-      .map((c) => `<option value="${escapeHtml(c.key)}" data-path="${escapeHtml(c.path)}" data-workflow-type="${escapeHtml(c.workflowType)}">${escapeHtml(c.path)}</option>`)
-      .join("");
     const deleteActionHtml = isSubmenuEditor && !isRemoved
       ? `<div class="bot-editor-section">
            <div class="bot-removed-title">Удаление подменю</div>
@@ -575,26 +562,32 @@
             </div>
           `}
 
-          <div class="bot-editor-section">
+          <div class="bot-editor-section bot-creation-parameters">
             <div class="bot-removed-title">Параметры создания</div>
             <label class="checkbox-label">
-              <input id="buttonIsEnabled" type="checkbox" ${state.isEnabled ? "checked" : ""} />
+              <input id="buttonIsEnabled" class="desk-toggle" type="checkbox" ${state.isEnabled ? "checked" : ""} />
               <span>Кнопка активна</span>
             </label>
             <label class="checkbox-label">
-              <input id="fixedAssigneeEnabled" type="checkbox" ${state.fixedAssigneeEnabled ? "checked" : ""} />
+              <input id="fixedAssigneeEnabled" class="desk-toggle" type="checkbox" ${state.fixedAssigneeEnabled ? "checked" : ""} />
               <span>Фиксированный ответственный</span>
             </label>
             <select id="fixedAssigneeUserId" class="input" ${state.fixedAssigneeEnabled ? "" : "disabled"}>
               ${renderAssigneeOptions()}
             </select>
             <label class="checkbox-label">
-              <input id="freezeOnCreate" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
+              <input id="freezeOnCreate" class="desk-toggle" type="checkbox" ${state.freezeOnCreate ? "checked" : ""} />
               <span>Сразу замораживать при создании</span>
             </label>
+            ${isGroupTaskChildEditor ? "" : `
+              <label class="checkbox-label">
+                <input id="confirmationEnabled" class="desk-toggle" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
+                <span>Требовать подтверждение перед созданием</span>
+              </label>
+            `}
             ${isGroupTaskChildEditor ? `
               <label class="checkbox-label">
-                <input id="suppressClientAnswer" type="checkbox" ${state.suppressClientAnswer ? "checked" : ""} />
+                <input id="suppressClientAnswer" class="desk-toggle" type="checkbox" ${state.suppressClientAnswer ? "checked" : ""} />
                 <span>Не отправлять ответ клиенту</span>
               </label>
             ` : ""}
@@ -639,64 +632,38 @@
             ${Array.isArray(leaf.children_rows) && leaf.children_rows.length ? '<button id="openNestedBtn" type="button" class="action">Открыть вложенные кнопки</button>' : ""}
           </div>
         `;
-    const rightColumnHtml = isSubmenuEditor
-      ? `
-          <div class="bot-editor-section">
-            <div class="bot-editor-text-row">
-              <label class="field-label">Текст клиенту</label>
-              <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
-            </div>
-            <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
-          </div>
-        `
-      : `
-          <div class="bot-editor-section">
-            <div class="bot-editor-text-row">
-              <label class="field-label">Инструкция</label>
-              <button id="editInstructionBtn" type="button" class="action">Редактировать</button>
-            </div>
-            <div class="status">Статус: ${escapeHtml(textStatus(state.editorText))}</div>
-          </div>
-
-          ${isGroupTaskChildEditor ? "" : `
-            <div class="bot-editor-section">
-              <div class="bot-editor-text-row">
-                <label class="field-label">Текст клиенту</label>
-                <button id="editClientTextBtn" type="button" class="action">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.editorClientText))}</div>
-            </div>
-          `}
-
-          <div class="bot-editor-section">
-            <div class="bot-editor-text-row">
-              <label class="field-label">Текст системный</label>
-              <button id="editSystemTextBtn" type="button" class="action">Редактировать</button>
-            </div>
-            <div class="status">Статус: ${escapeHtml(textStatus(state.editorSystemText))}</div>
-          </div>
-
-          ${isGroupTaskChildEditor ? "" : `
-            <div class="bot-editor-section">
-              <label class="checkbox-label">
-                <input id="confirmationEnabled" type="checkbox" ${state.confirmationEnabled ? "checked" : ""} />
-                <span>Требовать подтверждение перед созданием</span>
-              </label>
-              <div class="bot-editor-text-row">
-                <label class="field-label">Подтверждение перед созданием</label>
-                <button id="editConfirmationTextBtn" type="button" class="action ${state.confirmationEnabled ? "" : "action-muted"}">Редактировать</button>
-              </div>
-              <div class="status">Статус: ${escapeHtml(textStatus(state.confirmationText))}</div>
-              ${state.confirmationEnabled ? "" : '<div class="status">Подтверждение выключено, но текст сохранится и применится после включения.</div>'}
-            </div>
-          `}
-        `;
+    const clientTemplate = editorHelpers.clientTextOverride?.(state);
+    const clientTextLocked = !!clientTemplate;
+    const textCard = (id, title, value, disabled = false, note = "") => `
+      <button id="${id}" type="button" class="bot-editor-section bot-text-card" ${disabled ? 'disabled aria-disabled="true"' : ''}>
+        <span class="field-label">${escapeHtml(title)}</span>
+        <span class="bot-text-card-preview">${escapeHtml(stripAllowedTelegramTags(value || "")) || "Текст не задан"}</span>
+        ${note ? `<span class="status">${escapeHtml(note)}</span>` : ""}
+      </button>`;
+    const clientCard = textCard("editClientTextBtn", "Текст клиенту",
+      clientTemplate ? clientTemplate.effective_text : state.editorClientText, clientTextLocked,
+      clientTemplate ? `Источник: Автоматические сообщения → ${clientTemplate.key}` : "");
+    const rightColumnHtml = isSubmenuEditor ? clientCard : `
+      ${textCard("editInstructionBtn", "Инструкция", state.editorText)}
+      ${isGroupTaskChildEditor ? "" : clientCard}
+      ${textCard("editSystemTextBtn", "Текст системный", state.editorSystemText)}
+      ${isGroupTaskChildEditor ? "" : textCard("editConfirmationTextBtn", "Подтверждение", state.confirmationText,
+        !state.confirmationEnabled, state.confirmationEnabled ? "" : "Подтверждение выключено. Сохранённый текст не удаляется.")}
+    `;
 
     el.content.innerHTML = `
       <div class="panel settings-panel bot-instruction-editor">
         <div class="status">Technical key: <code>${escapeHtml(leaf.technical_key)}</code></div>
         ${isRemoved ? '<div class="bot-removed-warning">Эта кнопка отсутствует в текущей структуре и находится в блоке «Удалённые/изменённые».</div>' : ""}
-        ${(!isRemoved && isDbCreated && !isSubmenuEditor) ? '<div class="bot-editor-inline-actions"><button id="archiveButtonBtn" type="button" class="action action-danger">Удалить из меню</button></div>' : ""}
+        ${isRemoved ? `
+        <div class="bot-removed-actions">
+          <div class="bot-removed-title">Удалённая запись</div>
+          <div class="bot-removed-row">
+            <button id="restoreRemovedBtn" type="button" class="action action-primary">Восстановить</button>
+            <button id="deleteRemovedBtn" type="button" class="action action-danger">Удалить окончательно</button>
+          </div>
+        </div>` : ""}
+        ${(!isRemoved && !isSubmenuEditor) ? '<div class="bot-editor-inline-actions"><button id="archiveButtonBtn" type="button" class="action action-danger">Удалить из меню</button></div>' : ""}
 
         <div class="bot-editor-grid">
           <div class="bot-editor-col bot-editor-col-left">
@@ -707,22 +674,6 @@
             ${rightColumnHtml}
           </div>
         </div>
-
-        ${isRemoved ? `
-        <div class="bot-removed-actions">
-          <div class="bot-removed-title">Удалённая запись</div>
-          <div class="bot-removed-row">
-            ${isDbCreated ? '<button id="restoreRemovedBtn" type="button" class="action action-primary">Восстановить</button>' : ''}
-            <button id="deleteRemovedBtn" type="button" class="action action-danger">Удалить окончательно</button>
-          </div>
-          <div class="bot-removed-row">
-            <select id="moveTargetSelect" class="input">
-              <option value="">Выберите актуальную кнопку для переноса</option>
-              ${moveOptions}
-            </select>
-            <button id="moveRemovedBtn" type="button" class="action">Перенести настройки</button>
-          </div>
-        </div>` : ""}
       </div>
     `;
 
@@ -770,6 +721,7 @@
       });
     });
     editClientTextBtn?.addEventListener("click", () => {
+      if (clientTextLocked) return;
       openTextEditorModal({
         title: "Редактирование текста клиенту",
         value: state.editorClientText || "",
@@ -795,6 +747,7 @@
       });
     });
     editConfirmationTextBtn?.addEventListener("click", () => {
+      if (!state.confirmationEnabled) return;
       openTextEditorModal({
         title: "Редактирование подтверждения",
         value: state.confirmationText || "",
@@ -964,35 +917,12 @@
     if (isRemoved) {
       const delBtn = document.getElementById("deleteRemovedBtn");
       const restoreBtn = document.getElementById("restoreRemovedBtn");
-      const moveBtn = document.getElementById("moveRemovedBtn");
-      const moveSelect = document.getElementById("moveTargetSelect");
       restoreBtn?.addEventListener("click", async () => {
         await restoreRemovedSetting();
       });
       delBtn?.addEventListener("click", async () => {
         if (!window.confirm("Удалить эту запись из удалённых/изменённых?")) return;
         await deleteRemovedSetting();
-      });
-      moveBtn?.addEventListener("click", async () => {
-        const targetKey = moveSelect?.value || "";
-        if (!targetKey) {
-          alert("Сначала выберите кнопку для переноса.");
-          return;
-        }
-        let warning = "Настройки старой кнопки будут перенесены на выбранную актуальную кнопку. Продолжить?";
-        try {
-          const targetItem = await ctx.api(`/api/v1/settings/bot-buttons/item?button_key=${encodeURIComponent(targetKey)}&menu_type=${encodeURIComponent(state.selectedMenu || "")}`);
-          if (hasAnyStoredSettings(targetItem)) {
-            warning = "У выбранной актуальной кнопки уже есть собственные настройки. Они будут перезаписаны. Продолжить?";
-          }
-        } catch (e) {
-          console.warn("Не удалось проверить целевую кнопку перед переносом", e);
-        }
-        if (!window.confirm(warning)) return;
-        const selected = moveSelect.options[moveSelect.selectedIndex];
-        const targetPath = selected?.dataset?.path || "";
-        const targetWorkflowType = selected?.dataset?.workflowType || "ticket";
-        await moveRemovedSetting(targetKey, targetPath, targetWorkflowType);
       });
     }
   };

@@ -30,7 +30,6 @@ def _seed_row(session, **overrides):
         "button_path": "A",
         "button_label": "A",
         "currently_present": True,
-        "is_db_created": False,
         "button_kind": "terminal",
         "parent_path": "",
         "is_archived": False,

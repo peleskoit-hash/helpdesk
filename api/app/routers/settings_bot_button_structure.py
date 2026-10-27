@@ -207,7 +207,7 @@ def _build_bot_menu_structure(db: Session, menu_name: str) -> BotButtonMenuStruc
             source_button_key=row.button_key, has_instruction=bool((row.instruction_text or "").strip()),
             button_id=row.id, parent_path=row.parent_path or "",
             removed=removed, is_enabled=True if not row.visibility_overridden else bool(row.is_enabled),
-            stable_button_id=row.stable_button_id, is_db_created=bool(row.is_db_created),
+            stable_button_id=row.stable_button_id,
             is_archived=bool(row.is_archived), status="removed_changed" if removed else "actual",
         )
         if removed:
@@ -273,7 +273,6 @@ def _build_db_only_tree_rows(db: Session, menu_name: str) -> list[dict]:
                 "status": "actual",
                 "is_enabled": (True if not row.visibility_overridden else bool(row.is_enabled)),
                 "children_rows": [],
-                "is_db_created": bool(row.is_db_created),
                 "is_archived": bool(row.is_archived),
             }
             if kind == "section" and workflow != "group_task":
@@ -354,7 +353,6 @@ def create_bot_button_item(
             label_override=None,
             label_overridden=False,
             currently_present=True,
-            is_db_created=True,
             button_kind="section" if kind == "section" else ("group_parent" if kind == "group_task" else "terminal"),
             parent_path=parent_path,
             is_archived=False,
@@ -377,7 +375,6 @@ def create_bot_button_item(
         exists.is_archived = False
         exists.deleted_at = None
         exists.deleted_by_user_id = None
-        exists.is_db_created = True
         exists.button_kind = "section" if kind == "section" else ("group_parent" if kind == "group_task" else "terminal")
         exists.parent_path = parent_path
         exists.is_enabled = is_enabled

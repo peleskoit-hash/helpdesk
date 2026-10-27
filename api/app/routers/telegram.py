@@ -65,7 +65,7 @@ from ..services.saved_files import SavedFileStorageError, resolve_saved_file_pat
 from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 from ..services.temporary_rop import temporary_rop_destination
-from ..services.automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
+from ..services.automatic_messages import get_automatic_message_row, render_automatic_message_for_telegram, render_automatic_message_text
 from ..services.telegram_client_close import (
     CLIENT_CLOSE_MESSAGE_KEY,
     client_can_close_ticket,
@@ -741,6 +741,8 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
             if not _is_enabled(child):
                 continue
             child_kind = (child.button_kind or "terminal").strip().lower()
+            if (child.workflow_type or "").strip().lower() == "group_task":
+                return True
             if child_kind in {"section", "group_parent"}:
                 if _has_visible_descendants(child.button_path):
                     return True
@@ -756,8 +758,8 @@ def _send_problem_menu_db_only(db: Session, chat_id: str, *, menu_name: str, men
                 continue
             kind = (row.button_kind or "terminal").strip().lower()
             workflow = (row.workflow_type or "").strip().lower()
-            if workflow == "group_task" and not bool(row.is_db_created):
-                # Imported txt group_task parents should run as terminal group_task actions.
+            if workflow == "group_task":
+                # Group tasks are actions regardless of their storage origin or structural kind.
                 result_rows.append(
                     [
                         {
@@ -1779,6 +1781,17 @@ def _render_client_text_for_telegram(
         return rendered, None
 
 
+def _render_button_request_text_for_telegram(
+    db: Session, ticket: Ticket, button: ButtonSpec, fallback: str,
+    *, template_key: str, contact: TelegramContact | None = None,
+    extra: dict[str, object] | None = None,
+) -> tuple[str, str | None]:
+    override = get_automatic_message_row(db, template_key)
+    if override is not None and override.is_overridden:
+        return _automatic_telegram_text(db, template_key, fallback, ticket=ticket, contact=contact, extra=extra)
+    return _render_client_text_for_telegram(db, ticket, button, fallback)
+
+
 def _render_confirmation_text_for_telegram(
     db: Session,
     ticket: Ticket,
@@ -2057,7 +2070,6 @@ def _process_menu_callback(
                         select(BotButtonSetting).where(
                             BotButtonSetting.menu_type == menu_name,
                             BotButtonSetting.button_key == menu_key,
-                            BotButtonSetting.is_db_created.is_(True),
                             BotButtonSetting.button_kind.in_(["section", "group_parent"]),
                             BotButtonSetting.currently_present.is_(True),
                         )
@@ -2255,7 +2267,7 @@ def _process_problem_type_callback(
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id, "\u041e\u043f\u0438\u0448\u0438\u0442\u0435 \u0437\u0430\u0434\u0430\u0447\u0443 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c")
-            task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
+            task_client_text, task_client_parse_mode = _render_button_request_text_for_telegram(
                 db,
                 collecting_ticket,
                 button,
@@ -2267,6 +2279,8 @@ def _process_problem_type_callback(
                     contact=contact,
                     extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES, "button_label": button.label},
                 ),
+                template_key="telegram.task.request_text", contact=contact,
+                extra={"button_label": button.label, "timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES},
             )
             response = send_message(
                 external_chat_id,
@@ -2285,8 +2299,10 @@ def _process_problem_type_callback(
     if notify_client:
         if callback_id:
             answer_callback_query(callback_id, "\u0417\u0430\u044f\u0432\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430")
-        ticket_client_text, ticket_client_parse_mode = _render_client_text_for_telegram(
-            db, ticket, button, "Заявка создана. Опишите проблему сообщением."
+        ticket_client_text, ticket_client_parse_mode = _render_button_request_text_for_telegram(
+            db, ticket, button, "Заявка создана. Опишите проблему сообщением.",
+            template_key="telegram.ticket.create.default_client_text", contact=contact,
+            extra={"button_label": button.label},
         )
         response = send_message(
             external_chat_id,
@@ -2685,7 +2701,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 if notify_client:
                     if callback_id:
                         answer_callback_query(callback_id, "Опишите задачу одним сообщением")
-                    task_client_text, task_client_parse_mode = _render_client_text_for_telegram(
+                    task_client_text, task_client_parse_mode = _render_button_request_text_for_telegram(
                         db,
                         collecting_ticket,
                         button,
@@ -2697,6 +2713,8 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                             contact=contact,
                             extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES, "button_label": button.label},
                         ),
+                        template_key="telegram.task.request_text", contact=contact,
+                        extra={"button_label": button.label, "timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES},
                     )
                     response = send_message(
                         external_chat_id,
@@ -2714,7 +2732,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
             if notify_client:
                 if callback_id:
                     answer_callback_query(callback_id, "Заявка создана")
-                ticket_client_text, ticket_client_parse_mode = _render_client_text_for_telegram(
+                ticket_client_text, ticket_client_parse_mode = _render_button_request_text_for_telegram(
                     db,
                     ticket,
                     button,
@@ -2726,6 +2744,8 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                         contact=contact,
                         extra={"button_label": button.label},
                     ),
+                    template_key="telegram.ticket.create.default_client_text", contact=contact,
+                    extra={"button_label": button.label},
                 )
                 response = send_message(
                     external_chat_id,
@@ -2739,6 +2759,12 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                     notify_client_about_assignee(db, ticket, assigned_agent)
             return {"ok": True, "ticket_id": ticket.id, "button": button.label, "status": ticket.status}
 
+        if data.startswith("menuid:"):
+            row = db.get(BotButtonSetting, data.removeprefix("menuid:").strip())
+            if row is not None and (row.workflow_type or "").strip().lower() == "group_task":
+                # Keyboards sent before the group-task callback fix must run the same action.
+                data = f"btnid:{row.id}"
+                callback = {**callback, "data": data}
         menu_key = _menu_key_from_callback(db, data, None)
         if menu_key is not None:
             return _process_menu_callback(db, payload, callback, notify_client, menu_key)

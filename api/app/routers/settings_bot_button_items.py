@@ -247,7 +247,6 @@ def _materialize_system_button_row(db: Session, *, button_key: str, default_text
         currently_present=True,
         is_enabled=True,
         visibility_overridden=False,
-        is_db_created=True,
         button_kind="system",
         parent_path="",
         is_archived=False,
@@ -763,7 +762,6 @@ def get_bot_button_item(
         "button_label_from": "db",
         "removed": not bool(row.currently_present),
         "currently_present": bool(row.currently_present),
-        "is_db_created": bool(row.is_db_created),
         "is_archived": bool(row.is_archived),
         "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None,
         "deleted_by_user_id": row.deleted_by_user_id,
@@ -1166,8 +1164,6 @@ def delete_bot_button_setting(
         db.commit()
         return {"ok": True, "deleted": True, "hard": True}
     row_kind = (row.button_kind or "").strip().lower()
-    if not bool(row.is_db_created) and row_kind != "section":
-        _error(422, "cannot_delete_txt_button", "Txt-кнопки нельзя удалить из меню, используйте только отключение активности.")
     now = datetime.utcnow()
     row.currently_present = False
     row.is_archived = True
@@ -1203,8 +1199,6 @@ def restore_bot_button_setting(
     if row is None:
         _error(404, "button_setting_not_found", "Запись кнопки не найдена")
     row_kind = (row.button_kind or "").strip().lower()
-    if not bool(row.is_db_created) and row_kind != "section":
-        _error(422, "cannot_restore_txt_button", "Восстановление применяется только к элементам, созданным через UI.")
     now = datetime.utcnow()
     row.currently_present = True
     row.is_archived = False

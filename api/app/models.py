@@ -912,7 +912,6 @@ class BotButtonSetting(Base):
     automation_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     visibility_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_db_created: Mapped[bool] = mapped_column(Boolean, default=False)
     button_kind: Mapped[str] = mapped_column(String(30), default="terminal")
     parent_path: Mapped[str] = mapped_column(String(1000), default="")
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -1,5 +1,12 @@
 (function initBotButtonsEditor(global) {
   const Editor = {};
+  Editor.clientTextOverride = function clientTextOverride(state) {
+    const workflow = String(state.editorWorkflowType || state.selectedLeaf?.workflow_type || "").toLowerCase();
+    const key = workflow === "ticket" ? "telegram.ticket.create.default_client_text"
+      : ["task", "group_task"].includes(workflow) ? "telegram.task.request_text" : null;
+    const template = key && state.clientTextTemplates?.[key];
+    return template?.is_overridden === true ? { ...template, key } : null;
+  };
   const SYSTEM_FIRST_CONNECTION_BUTTON_KEY = "__system__|first_connection";
   const EDITABLE_WORKFLOW_TYPES = ["ticket", "task", "auto"];
   const AUTO_ONLY_AUTOMATIONS = new Set(["bitrix_deal_phone_lookup", "bitrix_phone_deal_lookup", "client_origin", "telegram_group"]);
@@ -203,11 +210,16 @@
   Editor.openEditor = async function openEditor(ctx, leaf) {
     const { state, api, setStatus, render, normalizeConditionalRuleForState } = ctx;
     setStatus(`Загрузка настройки "${leaf.label}"...`);
-    const payload = await api(`/api/v1/settings/bot-buttons/item?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu || "")}`);
+    const templateKeys = ["telegram.ticket.create.default_client_text", "telegram.task.request_text"];
+    const [payload, ...templates] = await Promise.all([
+      api(`/api/v1/settings/bot-buttons/item?button_key=${encodeURIComponent(leaf.technical_key)}&menu_type=${encodeURIComponent(state.selectedMenu || "")}`),
+      ...templateKeys.map(key => api(`/api/v1/settings/automatic-messages/${key}`)),
+    ]);
+    state.clientTextTemplates = Object.fromEntries(templateKeys.map((key, index) => [key, templates[index]]));
     state.selectedLeaf = {
       ...leaf,
       workflow_type: Editor.resolveLeafWorkflowType({ ...leaf, workflow_type: payload?.workflow_type || leaf?.workflow_type }),
-      is_db_created: !!payload?.is_db_created,
+      removed: !!leaf.removed || !!payload?.removed || !!payload?.is_archived,
       is_archived: !!payload?.is_archived,
       editor_mode: Editor.isSubmenuLeaf({ ...leaf, workflow_type: payload?.workflow_type || leaf?.workflow_type }) ? "submenu" : "default",
     };

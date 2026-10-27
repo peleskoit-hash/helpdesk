@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-import hashlib
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -46,7 +45,6 @@ def _seed_row(session, **overrides):
         "button_path": "A",
         "button_label": "A",
         "currently_present": True,
-        "is_db_created": False,
         "button_kind": "terminal",
         "parent_path": "",
         "is_archived": False,
@@ -1766,7 +1764,7 @@ def test_submenu_save_rejects_type_change_when_query_workflow_differs(monkeypatc
 
 
 @pytest.mark.parametrize("old_type,new_type", [("ticket", "task"), ("task", "ticket")])
-@pytest.mark.parametrize("callback_kind", ["source", "technical", "id", "db"])
+@pytest.mark.parametrize("callback_kind", ["technical", "id", "db"])
 def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch, old_type, new_type, callback_kind):
     session = _session()
     key = f"menu-a|{old_type}|A"
@@ -1813,7 +1811,7 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     monkeypatch.setattr(telegram_router, "schedule_avatar_refresh", lambda *args: None)
     monkeypatch.setattr(telegram_router, "_remove_menu_keyboard", lambda *args, **kwargs: None)
     callback_data = {
-        "source": "btn:" + hashlib.sha1(b"menu-a|A").hexdigest()[:12], "technical": f"btn:{key}",
+        "technical": f"btn:{key}",
         "id": f"btnid:{row.id}", "db": f"btn:{key}",
     }[callback_kind]
     button = telegram_router._button_from_callback(session, callback_data, "menu-a")
@@ -2202,7 +2200,6 @@ def test_disabling_submenu_does_not_delete_children(monkeypatch):
         button_kind="section",
         button_path="Submenu",
         button_label="Submenu",
-        is_db_created=True,
     )
     child = _seed_row(
         session,
@@ -2211,7 +2208,6 @@ def test_disabling_submenu_does_not_delete_children(monkeypatch):
         button_kind="terminal",
         button_path="Submenu/Child",
         button_label="Child",
-        is_db_created=True,
         parent_path="Submenu",
     )
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
@@ -2250,7 +2246,6 @@ def test_delete_submenu_archives_descendants(monkeypatch):
         button_kind="section",
         button_path="Submenu",
         button_label="Submenu",
-        is_db_created=True,
     )
     child = _seed_row(
         session,
@@ -2259,7 +2254,6 @@ def test_delete_submenu_archives_descendants(monkeypatch):
         button_kind="terminal",
         button_path="Submenu/Child",
         button_label="Child",
-        is_db_created=True,
         parent_path="Submenu",
     )
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
@@ -2290,7 +2284,6 @@ def test_db_submenu_can_be_deleted_via_backend_and_archives_recursive_descendant
         button_kind="section",
         button_path="Submenu",
         button_label="Submenu",
-        is_db_created=False,
     )
     nested = _seed_row(
         session,
@@ -2299,7 +2292,6 @@ def test_db_submenu_can_be_deleted_via_backend_and_archives_recursive_descendant
         button_kind="section",
         button_path="Submenu/Nested",
         button_label="Nested",
-        is_db_created=False,
         parent_path="Submenu",
     )
     child_a = _seed_row(
@@ -2309,7 +2301,6 @@ def test_db_submenu_can_be_deleted_via_backend_and_archives_recursive_descendant
         button_kind="terminal",
         button_path="Submenu/Leaf A",
         button_label="Leaf A",
-        is_db_created=False,
         parent_path="Submenu",
     )
     child_b = _seed_row(
@@ -2319,7 +2310,6 @@ def test_db_submenu_can_be_deleted_via_backend_and_archives_recursive_descendant
         button_kind="terminal",
         button_path="Submenu/Nested/Leaf B",
         button_label="Leaf B",
-        is_db_created=False,
         parent_path="Submenu/Nested",
     )
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
@@ -2350,7 +2340,6 @@ def test_deleted_db_submenu_disappears_from_telegram_runtime_but_txt_config_stay
         button_label="Submenu",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
     )
     config, refs = _txt_submenu_config()
     sent = {}
@@ -2377,7 +2366,6 @@ def test_deleted_db_submenu_disappears_from_active_settings_tree_recursively(mon
         button_label="Submenu",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
     )
     _seed_row(
         session,
@@ -2388,7 +2376,6 @@ def test_deleted_db_submenu_disappears_from_active_settings_tree_recursively(mon
         button_label="Nested",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
         parent_path="Submenu",
     )
     _seed_row(
@@ -2400,7 +2387,6 @@ def test_deleted_db_submenu_disappears_from_active_settings_tree_recursively(mon
         button_label="Leaf A",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
         parent_path="Submenu",
     )
     _seed_row(
@@ -2412,7 +2398,6 @@ def test_deleted_db_submenu_disappears_from_active_settings_tree_recursively(mon
         button_label="Leaf B",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
         parent_path="Submenu/Nested",
     )
 
@@ -2447,7 +2432,6 @@ def test_db_submenu_restore_restores_recursive_descendants(monkeypatch):
         button_label="Submenu",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
     )
     child = _seed_row(
         session,
@@ -2458,7 +2442,6 @@ def test_db_submenu_restore_restores_recursive_descendants(monkeypatch):
         button_label="Leaf A",
         currently_present=False,
         is_archived=True,
-        is_db_created=False,
         parent_path="Submenu",
     )
     monkeypatch.setattr(settings_bot_button_items, "_require_admin", lambda user: None)
@@ -2616,7 +2599,6 @@ def test_group_task_child_creation_snapshots_suppress_client_answer_for_source_a
         button_kind="terminal",
         button_path="Parent/DB child",
         button_label="DB child",
-        is_db_created=True,
         suppress_client_answer=True,
     )
     parent = Ticket(

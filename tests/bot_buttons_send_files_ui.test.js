@@ -2402,8 +2402,7 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
       yesNo(value) { return value ? 'Да' : 'Нет'; },
       nodeKindLabel(value) { return String(value || ''); },
       renderInfoRow() { return ''; },
-      hasAnyStoredSettings() { return false; },
-    },
+      },
     BotButtonsFiles: {},
     BotButtonsLevelView: {
       cancelLayoutEdit(state) { state.layoutEditMode = false; state.layoutDraftRows = []; },
@@ -2783,7 +2782,7 @@ test('send_files metadata sync uses automationTypeValue as source of truth', () 
 
 test('editor view renders workflow type select for ticket key fallback without explicit workflow_type', () => {
   const content = { innerHTML: '' };
-  editorViewHelpers.renderEditor({
+  const ctx = {
     state: {
       selectedLeaf: {
         technical_key: 'menu-a|ticket|A',
@@ -2791,7 +2790,6 @@ test('editor view renders workflow type select for ticket key fallback without e
         full_path: 'A',
         children_rows: [],
         removed: false,
-        is_db_created: false,
       },
       editorWorkflowType: '',
       editorBotLabel: 'A',
@@ -2821,7 +2819,6 @@ test('editor view renders workflow type select for ticket key fallback without e
     escapeHtml(value) { return String(value); },
     renderSelectedFiles() { return ''; },
     renderConditionalRules() { return ''; },
-    buildMoveCandidates() { return []; },
     renderAssigneeOptions() { return ''; },
     openFilePickerModal() {},
     openConditionalRuleFilesModal() {},
@@ -2833,9 +2830,8 @@ test('editor view renders workflow type select for ticket key fallback without e
     archiveMenuButton() {},
     restoreRemovedSetting() {},
     deleteRemovedSetting() {},
-    moveRemovedSetting() {},
-    hasAnyStoredSettings() { return false; },
-  });
+  };
+  editorViewHelpers.renderEditor(ctx);
 
   assert.match(content.innerHTML, /id="editorWorkflowTypeSelect"/);
   assert.match(content.innerHTML, /\u0417\u0430\u044f\u0432\u043a\u0430/);
@@ -2843,6 +2839,12 @@ test('editor view renders workflow type select for ticket key fallback without e
   assert.match(content.innerHTML, /\u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430/);
   assert.match(content.innerHTML, /\u0422\u0435\u043a\u0441\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443/);
   assert.match(content.innerHTML, /id="editClientTextBtn"/);
+  assert.match(content.innerHTML, /id="archiveButtonBtn"/);
+  assert.doesNotMatch(content.innerHTML, /id="restoreRemovedBtn"/);
+  ctx.state.selectedLeaf.removed = true;
+  editorViewHelpers.renderEditor(ctx);
+  assert.match(content.innerHTML, /id="restoreRemovedBtn"/);
+  assert.doesNotMatch(content.innerHTML, /id="archiveButtonBtn"/);
 });
 
 test('editor view renders compact button color picker without visual color labels', () => {
@@ -2855,7 +2857,6 @@ test('editor view renders compact button color picker without visual color label
         full_path: 'A',
         children_rows: [],
         removed: false,
-        is_db_created: false,
       },
       editorWorkflowType: 'ticket',
       editorBotLabel: 'A',
@@ -2886,7 +2887,6 @@ test('editor view renders compact button color picker without visual color label
     escapeHtml(value) { return String(value); },
     renderSelectedFiles() { return ''; },
     renderConditionalRules() { return ''; },
-    buildMoveCandidates() { return []; },
     renderAssigneeOptions() { return ''; },
     openFilePickerModal() {},
     openConditionalRuleFilesModal() {},
@@ -2898,8 +2898,6 @@ test('editor view renders compact button color picker without visual color label
     archiveMenuButton() {},
     restoreRemovedSetting() {},
     deleteRemovedSetting() {},
-    moveRemovedSetting() {},
-    hasAnyStoredSettings() { return false; },
   });
 
   assert.match(content.innerHTML, /\u0426\u0432\u0435\u0442 \u043a\u043d\u043e\u043f\u043a\u0438/);
@@ -3010,7 +3008,6 @@ test('editor view prefers saved workflow_type over technical_key fallback when r
         full_path: 'A',
         children_rows: [],
         removed: false,
-        is_db_created: false,
       },
       editorWorkflowType: 'task',
       editorBotLabel: 'A',
@@ -3040,7 +3037,6 @@ test('editor view prefers saved workflow_type over technical_key fallback when r
     escapeHtml(value) { return String(value); },
     renderSelectedFiles() { return ''; },
     renderConditionalRules() { return ''; },
-    buildMoveCandidates() { return []; },
     renderAssigneeOptions() { return ''; },
     openFilePickerModal() {},
     openConditionalRuleFilesModal() {},
@@ -3052,8 +3048,6 @@ test('editor view prefers saved workflow_type over technical_key fallback when r
     archiveMenuButton() {},
     restoreRemovedSetting() {},
     deleteRemovedSetting() {},
-    moveRemovedSetting() {},
-    hasAnyStoredSettings() { return false; },
   });
 
   assert.match(content.innerHTML, /<option value="task" selected>/);
@@ -3071,7 +3065,6 @@ test('group task child editor renders child-only fields and hides client button 
         full_path: 'Parent/Child',
         children_rows: [],
         removed: false,
-        is_db_created: false,
       },
       editorWorkflowType: 'group_task_child',
       editorBotLabel: 'Child',
@@ -3102,7 +3095,6 @@ test('group task child editor renders child-only fields and hides client button 
     escapeHtml(value) { return String(value); },
     renderSelectedFiles() { return ''; },
     renderConditionalRules() { return ''; },
-    buildMoveCandidates() { return []; },
     renderAssigneeOptions() { return ''; },
     openFilePickerModal() {},
     openConditionalRuleFilesModal() {},
@@ -3114,8 +3106,6 @@ test('group task child editor renders child-only fields and hides client button 
     archiveMenuButton() {},
     restoreRemovedSetting() {},
     deleteRemovedSetting() {},
-    moveRemovedSetting() {},
-    hasAnyStoredSettings() { return false; },
   });
 
   assert.match(content.innerHTML, /\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438/);

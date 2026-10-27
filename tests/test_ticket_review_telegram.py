@@ -166,7 +166,6 @@ def _seed_system_button(session, *, key: str, default_text: str, text: str | Non
         label_overridden=text is not None,
         button_style=style,
         currently_present=True,
-        is_db_created=True,
         button_kind="system",
         parent_path="",
         is_archived=False,

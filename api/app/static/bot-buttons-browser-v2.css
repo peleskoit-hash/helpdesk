@@ -1,4 +1,4 @@
-/* Browse and structure views only; the concrete button editor and dialogs keep their skin. */
+/* Scoped V2 styles for button browsing, structure and the concrete editor. */
 body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v2-browse) {
   min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr);
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
@@ -62,4 +62,64 @@ body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v
     & .bot-menu-card-counts { grid-column: 1; grid-row: auto; }
     & .bot-button-type-tag { font-size: 14px; }
   }
+}
+
+/* Concrete button editor only; automatic-message editors keep their existing styles. */
+body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-editor) {
+  & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
+  & .bot-buttons-panel { box-sizing: border-box; height: 100%; padding: 20px; overflow: auto; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); }
+  & .bot-instruction-editor { padding: 0; border: 0; background: transparent; box-shadow: none; font: 16.8px/1.5 var(--desk-font); }
+  & .bot-editor-section { background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); padding: 16px; border-radius: 16px; }
+  & :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
+  & :is(input:not([type="checkbox"]), select) { padding: 8px 10px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); box-sizing: border-box; }
+  & .checkbox-label { display: flex; align-items: center; gap: 10px; width: fit-content; cursor: pointer; }
+  & input[type="checkbox"]:not(.desk-toggle) { width: 18px; height: 18px; accent-color: var(--desk-accent); }
+  & .bot-creation-parameters .checkbox-label { color: var(--desk-text) !important; }
+  & .status { color: var(--desk-muted); font-size: 14.4px; overflow-wrap: anywhere; }
+  & .bot-text-card { display: grid; width: 100%; box-sizing: border-box; text-align: left; cursor: pointer; font: inherit; }
+  & .bot-text-card:not(:disabled):hover { background: var(--desk-hover); border-color: var(--desk-accent); }
+  & .bot-text-card:disabled { opacity: 1; cursor: not-allowed; color: var(--desk-muted); border-style: dashed; }
+  & .bot-text-card:disabled .field-label { color: var(--desk-muted); }
+  & .bot-text-card-preview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+  & :is(button, input, select):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  @media (max-width: 780px) { & .bot-editor-grid { grid-template-columns: minmax(0, 1fr); } }
+}
+
+/* The shared create-item classes also serve menu creation; scope this to button creation. */
+body:has(#appContent[data-shell-page="settings-bot-buttons"]) .modal-overlay:has(#botCreateLabelInput) {
+  background: #14122166; backdrop-filter: blur(4px);
+  & .bot-create-item-dialog { box-sizing: border-box; width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--desk-border); border-radius: 24px; background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; font: 24px/1.5 var(--desk-font); }
+  & :is(.modal-header, .modal-footer) { padding: 18px 24px; border-color: var(--desk-border); }
+  & .modal-header h3 { margin: 0; font-size: 1.17em; line-height: 1.3; }
+  & .modal-body { min-height: 0; padding: 20px 24px; gap: 16px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
+  & .bot-create-item-section { min-width: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); }
+  & .bot-create-item-label { color: var(--desk-text); margin-bottom: 12px; }
+  & .bot-create-item-types { gap: 12px; }
+  & :is(.bot-create-item-type, .bot-create-item-active, .bot-create-item-note) { font-size: 19.5px; line-height: 1.5; color: var(--desk-text); gap: 12px; }
+  & :is(input[type="radio"], input[type="checkbox"]) { width: 24px !important; height: 24px !important; min-height: 24px !important; accent-color: var(--desk-accent); cursor: pointer; }
+  & #botCreateLabelInput { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); color: var(--desk-text); font: 21px/1.5 var(--desk-font); box-shadow: none; }
+  & .modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+  & .action { min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: 20px/1.4 var(--desk-font); }
+  & .action:hover { background: var(--desk-hover); }
+  & .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
+  & :is(button, input):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
+  @media (max-width: 480px) { & :is(.modal-header, .modal-body, .modal-footer) { padding: 16px; } }
+}
+
+body:has(#appContent[data-shell-page="settings-bot-buttons"]) #botTextEditorModal {
+  --surface: var(--desk-surface); --text: var(--desk-text); --muted: var(--desk-muted); --border: var(--desk-border);
+  font: 16.8px/1.5 var(--desk-font); color: var(--desk-text);
+  & .bot-text-editor-dialog { width: min(1456px, calc(100vw - 24px)); height: min(1014px, calc(100dvh - 24px)); max-height: min(1014px, calc(100dvh - 24px)); border: 1px solid var(--desk-border); border-radius: 24px; background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; }
+  & :is(.modal-head, .modal-foot) { padding: 14px 17px; border-color: var(--desk-border); }
+  & .modal-foot { gap: 10px; flex-wrap: wrap; }
+  & .modal-body { padding: 18px; gap: 12px; overflow: auto; }
+  & .bot-text-editor-body.bot-text-editor-body-split.bot-text-editor-body-toolbar { grid-template-rows: auto minmax(180px, 1fr) minmax(180px, 1fr); }
+  & :is(textarea, .bot-telegram-preview) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-soft); color: var(--desk-text); font: 16.8px/1.5 var(--desk-font); }
+  & .bot-telegram-preview-wrap { display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--desk-soft); border-color: var(--desk-border); }
+  & .bot-telegram-preview-title { color: var(--desk-text); font-size: 14.4px; }
+  & .bot-text-toolbar { flex-wrap: wrap; gap: 8px; }
+  & .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: inherit; }
+  & .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
+  & .bot-text-toolbar .action { min-height: 34px; height: auto; padding: 6px 10px; font-size: 14.4px; }
+  & :is(textarea, .bot-telegram-preview, .modal-body) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
 }

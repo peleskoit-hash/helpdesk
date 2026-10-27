@@ -14,7 +14,7 @@ from api.app.db import Base, get_db
 from api.app.models import (BotButtonSetting, BotMenuDestinationBinding, BotMenuLevelLayout,
                             BotMenuProfile, Client, Company, TelegramContact, Ticket, User)
 from api.app.routers import telegram, tickets, settings_bot_button_items as items, settings_bot_button_structure as structure, settings_bot_menu_profiles as profiles
-from api.app.services import button_config, ticket_problem_flow as flow
+from api.app.services import assignment, button_config, ticket_problem_flow as flow
 from api.app.services.button_config import build_level_layout_key
 
 
@@ -32,7 +32,7 @@ def button(db, name, *, parent="", workflow="ticket", kind="terminal", menu="men
     row = BotButtonSetting(id=f"{menu}:{path}", button_key=f"{menu}|{workflow}|{path}",
                            menu_type=menu, button_path=path, parent_path=parent,
                            button_label=name, workflow_type=workflow, button_kind=kind,
-                           currently_present=True, is_archived=False, is_db_created=False,
+                           currently_present=True, is_archived=False,
                            created_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 1))
     for key, value in extra.items():
         setattr(row, key, value)
@@ -53,10 +53,16 @@ def no_txt(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("old_flag", ["true", "false"])
-def test_group_callback_and_description_create_old_db_children(db, monkeypatch, no_txt, old_flag):
+@pytest.mark.parametrize("kind", ["section", "group_parent", "terminal"])
+@pytest.mark.parametrize("legacy_menuid", [False, True])
+def test_group_callback_and_description_create_old_db_children(
+    db, monkeypatch, no_txt, old_flag, kind, legacy_menuid,
+):
     monkeypatch.setenv("USE_DB_BUTTONS", old_flag)
     monkeypatch.setattr(telegram, "settings", Settings(_env_file=None))
-    parent = button(db, "Parent", workflow="group_task", kind="group_parent")
+    parent = button(db, "Parent", workflow="group_task", kind=kind)
+    submenu = button(db, "Submenu", workflow="submenu", kind="section")
+    leaf = button(db, "Leaf", parent="Submenu")
     first = button(db, "A", parent="Parent", workflow="group_task_child", suppress_client_answer=True)
     second = button(db, "B", parent="Parent", workflow="group_task_child")
     button(db, "Archived", parent="Parent", workflow="group_task_child", is_archived=True)
@@ -83,15 +89,38 @@ def test_group_callback_and_description_create_old_db_children(db, monkeypatch, 
     monkeypatch.setattr(telegram, "process_review_incoming_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(telegram, "process_feedback_incoming_message", lambda *args, **kwargs: None)
     monkeypatch.setattr(telegram, "choose_online_agent", lambda *args: agent)
-    resolved = telegram._button_from_callback(db, f"btnid:{parent.id}", "menu-a")
+    sent = []
+    monkeypatch.setattr(telegram, "send_message", lambda *args, **kwargs: sent.append(kwargs) or {"result": {"message_id": 99}})
+    monkeypatch.setattr(telegram, "answer_callback_query", lambda *args: None)
+    telegram._send_problem_menu_with_visibility(db, "456", menu_name="menu-a")
+    generated = {item["text"]: item["callback_data"]
+                 for row in sent[-1]["reply_markup"]["inline_keyboard"] for item in row}
+    assert generated["Parent"] == f"btnid:{parent.id}"
+    assert generated["Submenu"] == f"menuid:{submenu.id}"
+    navigation = telegram.process_telegram_update(db, {"update_id": 0, "callback_query": {
+        "id": "submenu", "data": generated["Submenu"], "from": {"id": 123},
+        "message": {"chat": {"id": 456, "type": "private"}},
+    }}, notify_client=True)
+    assert navigation["menu_key"] == submenu.button_key
+    assert sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"btnid:{leaf.id}"
+    assert db.query(Ticket).filter_by(task_kind="group_parent").count() == 0
+    assert db.query(Ticket).filter_by(task_kind="group_child").count() == 0
+    callback_data = generated["Parent"]
+    if legacy_menuid:
+        callback_data = f"menuid:{parent.id}"
+    resolved = telegram._button_from_callback(db, generated["Parent"], "menu-a")
     assert [child.key for child in resolved.subtasks] == [second.button_key, first.button_key]
     result = telegram.process_telegram_update(db, {"update_id": 1, "callback_query": {
-        "id": "callback", "data": f"btnid:{parent.id}", "from": {"id": 123},
+        "id": "callback", "data": callback_data, "from": {"id": 123},
         "message": {"chat": {"id": 456, "type": "private"}},
     }})
     assert result["task_pending"] is True
     created_parent = db.get(Ticket, result["ticket_id"])
     assert created_parent.task_kind == "group_parent"
+    assert created_parent.workflow_type == "task"
+    assert created_parent.agent_visible is False
+    assert db.query(Ticket).count() == 1
+    assert db.query(Ticket).filter_by(parent_ticket_id=created_parent.id).count() == 0
     # The description completes the group intake after the parent callback.
     result = telegram.process_telegram_update(db, {"update_id": 2, "message": {
         "message_id": 10, "chat": {"id": 456, "type": "private"},
@@ -103,8 +132,28 @@ def test_group_callback_and_description_create_old_db_children(db, monkeypatch, 
     assert [child.subject for child in children] == ["B", "A"]
     assert [child.suppress_client_answer for child in children] == [False, True]
     assert all(child.task_kind == "group_child" and child.workflow_type == "task" for child in children)
-    telegram._create_group_children_from_collecting(db, created_parent, resolved, "Again", agent)
-    assert db.query(Ticket).filter_by(parent_ticket_id=created_parent.id).count() == 2
+    child_ids = {child.id for child in children}
+    assignment.assign_ticket_by_admin(db, created_parent, agent, notify_client=False)
+    db.commit()
+    assert {child.id for child in db.query(Ticket).filter_by(parent_ticket_id=created_parent.id)} == child_ids
+    assert db.query(Ticket).filter_by(task_kind="group_parent").count() == 1
+
+
+@pytest.mark.parametrize("kind", ["section", "group_parent", "terminal"])
+def test_nested_group_task_is_an_action_even_without_children(db, monkeypatch, kind):
+    submenu = button(db, "Submenu", workflow="submenu", kind="section")
+    parent = button(db, "Parent", parent="Submenu", workflow="group_task",
+                    kind=kind)
+    sent = []
+    monkeypatch.setattr(telegram, "send_message", lambda *args, **kwargs: sent.append(kwargs))
+    telegram._send_problem_menu_with_visibility(db, "456", menu_name="menu-a")
+    assert sent[-1]["reply_markup"]["inline_keyboard"] == [
+        [{"text": "Submenu", "callback_data": f"menuid:{submenu.id}"}],
+    ]
+    telegram._send_problem_menu_with_visibility(db, "456", menu_name="menu-a", menu_key=submenu.button_key)
+    assert sent[-1]["reply_markup"]["inline_keyboard"][0] == [
+        {"text": "Parent", "callback_data": f"btnid:{parent.id}"},
+    ]
 
 
 def wrong_problem_args(sent, messages):
@@ -329,14 +378,18 @@ def test_db_only_admin_menu_and_files_with_old_env(db, monkeypatch, tmp_path, no
     assert callback.kind == "ticket" and callback.instruction_text == "DB instruction"
 
 
-def test_old_hashed_callbacks_resolve_only_db_rows(db, no_txt):
-    import hashlib
+def test_txt_hashes_are_not_aliases_but_explicit_legacy_keys_still_resolve(db, no_txt):
     section = button(db, "Section", workflow="submenu", kind="section")
     leaf = button(db, "Leaf", parent="Section", workflow="task", label_overridden=True, label_override="New label")
-    alias = hashlib.sha1(b"menu-a|Section|Leaf").hexdigest()[:12]
-    menu_alias = hashlib.sha1(b"menu-a|Section|submenu").hexdigest()[:12]
-    assert telegram._menu_key_from_callback(db, f"menu:{menu_alias}", "menu-a") == section.button_key
-    assert telegram._button_from_callback(db, f"btn:{alias}", "menu-a").key == leaf.button_key
+    alias = '041ddf0dd14d'
+    menu_alias = '82057901a36a'
+    assert telegram._menu_key_from_callback(db, f"menu:{menu_alias}", "menu-a") is None
+    assert telegram._button_from_callback(db, f"btn:{alias}", "menu-a") is None
+    section.legacy_button_key = "previous-section-key"
+    leaf.legacy_button_key = "previous-leaf-key"
+    db.flush()
+    assert telegram._menu_key_from_callback(db, "menu:previous-section-key", "menu-a") == section.button_key
+    assert telegram._button_from_callback(db, "btn:previous-leaf-key", "menu-a").key == leaf.button_key
     assert telegram._button_from_callback(db, f"btn:{alias}", "other") is None
     leaf.is_archived = True
     db.flush()

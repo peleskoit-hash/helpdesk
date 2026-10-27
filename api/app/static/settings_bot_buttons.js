@@ -764,50 +764,8 @@ function renderSystemButtonGroupEditor() {
   });
 }
 
-function buildMoveCandidates() {
-  const candidates = [];
-  const walkRows = (rows) => {
-    (rows || []).forEach((row) => {
-      (row.buttons || []).forEach((node) => {
-        if (node.kind === "terminal" && !node.removed) {
-          candidates.push({
-            key: node.technical_key,
-            label: node.label,
-            path: node.full_path || node.label,
-            workflowType: node.workflow_type,
-          });
-        }
-        if (Array.isArray(node.children_rows) && node.children_rows.length) {
-          walkRows(node.children_rows);
-        }
-      });
-    });
-  };
-  walkRows(state.menuStructure?.tree_rows || []);
-  return candidates;
-}
-
 function buildArchiveRowsFromStructure() {
   return BotButtonsLevelView.buildArchiveRowsFromStructure(levelViewCtx());
-}
-
-function hasAnyStoredSettings(item) {
-  if (!item) return false;
-  return Boolean(
-    (item.instruction_text && String(item.instruction_text).trim()) ||
-    item.system_text_overridden ||
-    item.fixed_assignee_enabled ||
-    item.fixed_assignee_user_id ||
-    item.freeze_on_create ||
-    item.confirmation_overridden ||
-    item.confirmation_enabled ||
-    (item.confirmation_text && String(item.confirmation_text).trim()) ||
-    item.files_overridden ||
-    (Array.isArray(item.files) && item.files.length > 0) ||
-    item.conditional_files_overridden ||
-    (Array.isArray(item.conditional_files) && item.conditional_files.length > 0) ||
-    item.visibility_overridden
-  );
 }
 
 function renderAssigneeOptions() {
@@ -858,7 +816,6 @@ function editorViewCtx() {
     escapeHtml,
     renderSelectedFiles,
     renderConditionalRules,
-    buildMoveCandidates,
     renderAssigneeOptions,
     openFilePickerModal,
     openConditionalRuleFilesModal,
@@ -870,8 +827,6 @@ function editorViewCtx() {
     archiveMenuButton,
     restoreRemovedSetting,
     deleteRemovedSetting,
-    moveRemovedSetting,
-    hasAnyStoredSettings,
   };
 }
 
@@ -1136,21 +1091,6 @@ async function restoreRemovedSetting() {
   setStatus("Элемент восстановлен");
 }
 
-async function moveRemovedSetting(targetKey, targetPath, targetWorkflowType) {
-  const leaf = state.selectedLeaf;
-  if (!leaf || !state.selectedMenu) return;
-  setStatus("Перенос...");
-  await api(
-    `/api/v1/settings/bot-buttons/item/rebind?old_button_key=${encodeURIComponent(leaf.technical_key)}&new_button_key=${encodeURIComponent(targetKey)}&menu_type=${encodeURIComponent(state.selectedMenu)}&workflow_type=${encodeURIComponent(targetWorkflowType)}&button_path=${encodeURIComponent(targetPath)}&button_label=${encodeURIComponent((targetPath || "").split("/").pop() || targetPath)}`,
-    { method: "POST" },
-  );
-  await refreshMenuStructure();
-  state.view = "level";
-  state.selectedLeaf = null;
-  render();
-  setStatus("Перенесено");
-}
-
 function openCreateItemModal({ isChildTaskLevel = false } = {}) {
   return new Promise((resolve) => {
     const typeOptions = [
@@ -1182,7 +1122,7 @@ function openCreateItemModal({ isChildTaskLevel = false } = {}) {
             </div>
             <div class="bot-create-item-section">
               <div class="bot-create-item-label">Название кнопки</div>
-              <input id="botCreateLabelInput" class="input" type="text" maxlength="120" />
+              <input id="botCreateLabelInput" class="input" type="text" maxlength="120" autocomplete="off" />
             </div>
             <div class="bot-create-item-section">
               <label class="bot-create-item-active">

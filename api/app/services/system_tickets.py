@@ -87,7 +87,6 @@ def materialize_first_connection_row(db: Session, defaults: FirstConnectionDefau
         system_text_overridden=False,
         is_enabled=True,
         visibility_overridden=False,
-        is_db_created=True,
         button_kind="system",
         parent_path="",
         is_archived=False,

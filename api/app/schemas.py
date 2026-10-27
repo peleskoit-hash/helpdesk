@@ -1042,7 +1042,6 @@ class BotButtonStructureLeafOut(BaseModel):
     removed: bool = False
     is_enabled: bool = True
     stable_button_id: str | None = None
-    is_db_created: bool = False
     is_archived: bool = False
     status: Literal["actual", "removed_changed"] = "actual"
 
@@ -1081,7 +1080,7 @@ class BotButtonItemOut(BaseModel):
     label_override: str | None = None
     label_overridden: bool = False
     button_label_effective: str | None = None
-    button_label_from: Literal["txt", "db"] = "txt"
+    button_label_from: Literal["db"] = "db"
     instruction_text: str | None = None
     removed: bool = False
     currently_present: bool = True

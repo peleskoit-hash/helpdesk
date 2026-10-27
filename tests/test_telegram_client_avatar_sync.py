@@ -397,7 +397,7 @@ def test_new_menu_intake_queues_one_refresh_including_group_task_menu(case, monk
     case.db.add(BotButtonSetting(id="menu", button_key="menu-key", menu_type="Test",
                                 workflow_type="group_task" if kind == "group_parent" else "ticket",
                                 button_path="Menu", button_label="Menu", button_kind=kind,
-                                is_db_created=True, currently_present=True))
+                                currently_present=True))
     case.db.commit()
     monkeypatch.setattr(telegram, "_menu_name_for_contact", lambda *args: "Test")
     monkeypatch.setattr(telegram, "_submenu_path_by_key_or_db", lambda *args: "")

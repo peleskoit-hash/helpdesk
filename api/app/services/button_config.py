@@ -1,7 +1,6 @@
 """Shared button values and stable key helpers. Button data lives in the database."""
 from __future__ import annotations
 
-import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -128,10 +127,6 @@ def button_key_aliases(row: BotButtonSetting, *, submenu: bool = False) -> set[s
     typed = ordinary_button_keys(row)
     if row.button_key in typed | {build_visibility_button_key(row.menu_type, "db", button_identity_path(row))}:
         aliases.update(typed)
-    if not row.is_db_created and (not submenu or row.button_kind == "section"):
-        path = (button_identity_path(row) or row.button_label).split("/")
-        parts = [row.menu_type, path[-1], "submenu"] if submenu else [row.menu_type, *path[-2:]]
-        aliases.add(hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12])
     return aliases
 
 

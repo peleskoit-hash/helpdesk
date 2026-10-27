@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261025-bot-move-v2");
+@import url("/static/desk-v2.css?v=20261026-bot-editor-v2");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -6886,10 +6886,6 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   grid-template-columns: 40px 1.15fr 1fr 1.15fr;
   gap: 8px;
   align-items: center;
-}
-
-.bot-removed-row .input {
-  min-width: 280px;
 }
 
 .bot-instruction-editor {

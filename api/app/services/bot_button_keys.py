@@ -60,7 +60,7 @@ def change_button_workflow_key(db: Session, row: BotButtonSetting, workflow: str
     # Validate the proposed aliases before mutating persistent records.
     candidate = BotButtonSetting(id=row.id, button_key=new_key, legacy_button_key=legacy,
         menu_type=row.menu_type, button_path=row.button_path, workflow_type=workflow,
-        button_kind=row.button_kind, button_label=row.button_label, is_db_created=row.is_db_created)
+        button_kind=row.button_kind, button_label=row.button_label)
     check_button_key_collisions(db, candidate)
     row.button_key = new_key
     row.legacy_button_key = legacy

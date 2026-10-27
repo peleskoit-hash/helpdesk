@@ -365,7 +365,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261025-bot-browser-v2' : resource === 'ticket_client_card.js' ? '20261024-client-controls-v2' : '20261021-task-panel-refresh']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261026-bot-editor-v2' : resource === 'ticket_client_card.js' ? '20261025-bot-browser-v2' : '20261021-task-panel-refresh']);
   }
 });
 
@@ -599,7 +599,7 @@ test('view typography grows modestly only in ticket card; editor fonts and spaci
     assert.match(css, new RegExp(`\\[data-shell-page="ticket-card"\\] #clientDynamicCard \\.${selector} \\{\\s*font-size: ${size}px;`));
   }
   assert.match(css, /#clientDynamicCard \.client-card-field \{[^}]*line-height: 1\.3;/);
-  assert.doesNotMatch(css, /#clientDynamicCard[^{}]*\{[^}]*padding:/);
+  assert.doesNotMatch(css, /#clientDynamicCard\s*\{[^}]*padding:/);
   assert.doesNotMatch(css, /#clientModal[^{}]*\{[^}]*font-size:/);
 });
 

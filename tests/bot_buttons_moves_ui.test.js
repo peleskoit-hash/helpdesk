@@ -183,7 +183,8 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
   await page.locator('#cancelLayoutBtn').click();
   assert.equal(calls.filter(call => call.method === 'PUT' && call.p.endsWith('/layout')).length, 0);
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css', 'app_shell.js', 'bot_buttons_level_view.js', 'settings_bot_buttons.js']) {
-    assert.ok(assets.includes(`/static/${file}?v=20261025-bot-move-v2`), `Fresh asset: ${file}`);
+    const version = ['bot_buttons_level_view.js', 'settings_bot_buttons.js'].includes(file) ? '20261025-bot-move-v2' : '20261026-bot-editor-v2';
+    assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);
 });

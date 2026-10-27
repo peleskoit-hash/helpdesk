@@ -1124,8 +1124,18 @@ def ensure_telegram_group_registry_tables() -> None:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN telegram_group_id VARCHAR(36) REFERENCES telegram_automation_groups(id)"))
 
 
+def drop_bot_button_origin_column(conn) -> None:
+    """Drop the obsolete origin flag without rewriting rows or using CASCADE."""
+    inspector = inspect(conn)
+    if inspector.has_table("bot_button_settings") and "is_db_created" in {
+        column["name"] for column in inspector.get_columns("bot_button_settings")
+    }:
+        conn.execute(text("ALTER TABLE bot_button_settings DROP COLUMN is_db_created"))
+
+
 def ensure_bot_button_settings_table() -> None:
     with engine.begin() as conn:
+        drop_bot_button_origin_column(conn)
         dialect = conn.dialect.name
         if dialect == "sqlite":
             conn.execute(
@@ -1164,7 +1174,6 @@ def ensure_bot_button_settings_table() -> None:
                         automation_overridden BOOLEAN,
                         is_enabled BOOLEAN,
                         visibility_overridden BOOLEAN,
-                        is_db_created BOOLEAN,
                         button_kind VARCHAR(30),
                         parent_path VARCHAR(1000),
                         is_archived BOOLEAN,
@@ -1216,8 +1225,6 @@ def ensure_bot_button_settings_table() -> None:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN automation_overridden BOOLEAN"))
             if "visibility_overridden" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN visibility_overridden BOOLEAN"))
-            if "is_db_created" not in existing:
-                conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN is_db_created BOOLEAN"))
             if "button_kind" not in existing:
                 conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN button_kind VARCHAR(30)"))
             if "parent_path" not in existing:
@@ -1234,7 +1241,6 @@ def ensure_bot_button_settings_table() -> None:
             conn.execute(text("UPDATE bot_button_settings SET automation_overridden = FALSE WHERE automation_overridden IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET is_enabled = TRUE WHERE is_enabled IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET visibility_overridden = FALSE WHERE visibility_overridden IS NULL"))
-            conn.execute(text("UPDATE bot_button_settings SET is_db_created = FALSE WHERE is_db_created IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET button_kind = 'terminal' WHERE button_kind IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET parent_path = '' WHERE parent_path IS NULL"))
             conn.execute(text("UPDATE bot_button_settings SET currently_present = TRUE WHERE currently_present IS NULL"))
@@ -1281,7 +1287,6 @@ def ensure_bot_button_settings_table() -> None:
                     automation_overridden BOOLEAN,
                     is_enabled BOOLEAN,
                     visibility_overridden BOOLEAN,
-                    is_db_created BOOLEAN,
                     button_kind VARCHAR(30),
                     parent_path VARCHAR(1000),
                     is_archived BOOLEAN,
@@ -1353,8 +1358,6 @@ def ensure_bot_button_settings_table() -> None:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN automation_overridden BOOLEAN"))
         if "visibility_overridden" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN visibility_overridden BOOLEAN"))
-        if "is_db_created" not in existing:
-            conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN is_db_created BOOLEAN"))
         if "button_kind" not in existing:
             conn.execute(text("ALTER TABLE bot_button_settings ADD COLUMN button_kind VARCHAR(30)"))
         if "parent_path" not in existing:
@@ -1375,7 +1378,6 @@ def ensure_bot_button_settings_table() -> None:
         conn.execute(text("UPDATE bot_button_settings SET automation_overridden = FALSE WHERE automation_overridden IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET is_enabled = TRUE WHERE is_enabled IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET visibility_overridden = FALSE WHERE visibility_overridden IS NULL"))
-        conn.execute(text("UPDATE bot_button_settings SET is_db_created = FALSE WHERE is_db_created IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET button_kind = 'terminal' WHERE button_kind IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET parent_path = '' WHERE parent_path IS NULL"))
         conn.execute(text("UPDATE bot_button_settings SET currently_present = TRUE WHERE currently_present IS NULL"))

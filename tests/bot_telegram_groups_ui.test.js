@@ -144,8 +144,8 @@ for (const key of ['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'clie
       ctx.state.selectedLeaf.workflow_type = 'task';
       ctx.state.selectedLeaf.technical_key = 'Menu|task|Request';
       Object.assign(ctx, {el: {content: document.querySelector('#widget')}, escapeHtml: String,
-        buildMoveCandidates: () => [], renderAssigneeOptions: () => '', renderSelectedFiles: () => '',
-        renderConditionalRules: () => '', hasAnyStoredSettings: () => false,
+        renderAssigneeOptions: () => '', renderSelectedFiles: () => '',
+        renderConditionalRules: () => '',
         render: () => window.BotButtonsEditorView.renderEditor(ctx),
         saveInstruction: () => window.BotButtonsEditor.saveInstruction(ctx)});
       ctx.render();

@@ -172,7 +172,6 @@
         has_instruction: !!leaf.has_instruction,
         removed: true,
         is_enabled: true,
-        is_db_created: !!leaf.is_db_created,
         is_archived: !!leaf.is_archived,
         children_rows: [],
       }],

@@ -67,13 +67,13 @@ def test_role_filter_preserves_call_center_access_after_button_key_change(db, no
             assert (historic.button_config_key, historic.instruction_button_key) == historical_links
 
 
-@pytest.mark.parametrize("start,changes,is_db", [
+@pytest.mark.parametrize("start,changes,uses_db_key", [
     ("ticket", ["task", "ticket"], False),
     ("task", ["ticket", "auto"], False),
     ("task", ["ticket", "auto", "task", "ticket"], True),
 ])
-def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, start, changes, is_db):
-    row = button(db, "A", workflow=start, stable_button_id=str(uuid.uuid4()), is_db_created=is_db,
+def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, start, changes, uses_db_key):
+    row = button(db, "A", workflow=start, stable_button_id=str(uuid.uuid4()),
                  instruction_text="Instruction", client_text="Client", system_text="System",
                  label_override="Visible label", label_overridden=True,
                  files_json=["user.txt"], files_overridden=True, automation_key="send_files",
@@ -81,7 +81,7 @@ def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, s
                  conditional_files_overridden=True, confirmation_enabled=True, confirmation_text="Confirm",
                  button_style="success", freeze_on_create=True)
     row.button_label = "SearchLabel"
-    if is_db:
+    if uses_db_key:
         row.button_key = "menu-a|db|A"
     initial = row.button_key
     layout = BotMenuLevelLayout(id="layout", menu_type="menu-a", level_key=build_level_layout_key("menu-a"),
@@ -105,7 +105,7 @@ def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, s
         db.expire_all()
         assert result["button_key"] == f"menu-a|{next_type}|A"
         assert row.button_key == result["button_key"]
-        assert row.legacy_button_key == (initial if is_db else None)
+        assert row.legacy_button_key == (initial if uses_db_key else None)
         assert {field: getattr(row, field) for field in preserved} == preserved
         assert layout.layout_json == [{"columns": 3, "button_keys": ["left", row.button_key, "right"]}]
         assert db.query(BotButtonSetting).count() == 1
@@ -133,14 +133,14 @@ def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, s
 
 
 def test_db_key_is_not_renamed_without_type_change(db, no_txt):
-    row = button(db, "A", is_db_created=True, button_key="menu-a|db|A")
+    row = button(db, "A", button_key="menu-a|db|A")
     db.commit()
     save(db, row, "ticket")
     assert row.button_key == "menu-a|db|A" and row.legacy_button_key is None
 
 
 def test_occupied_db_legacy_requires_decision_without_any_changes(db, no_txt):
-    row = button(db, "A", is_db_created=True, button_key="menu-a|db|A", legacy_button_key="older-custom-key")
+    row = button(db, "A", button_key="menu-a|db|A", legacy_button_key="older-custom-key")
     db.commit()
     with pytest.raises(HTTPException) as error:
         save(db, row, "task")
@@ -189,7 +189,7 @@ def test_new_buttons_use_workflow_keys_and_cannot_duplicate_the_path(db, workflo
 
 @pytest.mark.parametrize("legacy", [None, "menu-a|task|A"])
 def test_db_original_alias_survives_compatible_legacy_slot(db, legacy):
-    row = button(db, "A", is_db_created=True, button_key="menu-a|db|A", legacy_button_key=legacy)
+    row = button(db, "A", button_key="menu-a|db|A", legacy_button_key=legacy)
     db.commit()
     save(db, row, "auto")
     assert row.legacy_button_key == "menu-a|db|A"
@@ -197,19 +197,15 @@ def test_db_original_alias_survives_compatible_legacy_slot(db, legacy):
     assert resolve_button_row(db, "menu-a|task|A").id == row.id
 
 
-def test_russian_button_path_keeps_backslash_and_rebind_to_own_alias_is_noop(db):
-    from api.app.routers.settings import rebind_bot_button_setting
+def test_russian_button_path_keeps_backslash_and_old_key_resolves(db):
     row = button(db, r"Выдать чип\брелок", workflow="task", menu="Руководство")
     db.commit()
     original = row.button_key
     result = save(db, row, "ticket")
     assert result["button_key"] == r"Руководство|ticket|Выдать чип\брелок"
-    rebound = rebind_bot_button_setting(original, row.button_key, row.menu_type, row.workflow_type,
-                                        row.button_path, row.button_label, db=db, user=ADMIN)
-    assert rebound["moved"] is False
+    assert resolve_button_row(db, original).id == row.id
     unused_alias = row.button_key.replace("|ticket|", "|auto|")
-    assert rebind_bot_button_setting(original, unused_alias, row.menu_type, row.workflow_type,
-        row.button_path, row.button_label, db=db, user=ADMIN)["moved"] is False
+    assert resolve_button_row(db, unused_alias).id == row.id
     assert db.query(BotButtonSetting).count() == 1
 
 
@@ -238,7 +234,7 @@ def test_unknown_key_format_is_rejected_without_mutation(db):
 
 
 def test_restore_by_create_changes_type_without_losing_db_alias(db):
-    row = button(db, "A", is_db_created=True, button_key="menu-a|db|A", is_archived=True,
+    row = button(db, "A", button_key="menu-a|db|A", is_archived=True,
                  currently_present=False, instruction_text="Keep")
     db.commit()
     identity = row.id
@@ -255,7 +251,7 @@ def test_instruction_endpoint_returns_new_key_and_accepts_old_links(db, old_kind
     from fastapi.testclient import TestClient
     from api.app.auth import get_current_user
     from api.app.db import get_db
-    row = button(db, "A", button_key=f"menu-a|{old_kind}|A", is_db_created=old_kind == "db",
+    row = button(db, "A", button_key=f"menu-a|{old_kind}|A",
                  stable_button_id=str(uuid.uuid4()), instruction_text="Keep")
     db.commit()
     old_key = row.button_key
@@ -275,3 +271,18 @@ def test_instruction_endpoint_returns_new_key_and_accepts_old_links(db, old_kind
         assert item.json()["button_key"] == "menu-a|task|A"
         assert item.json()["instruction_text"] == "Keep"
     assert (row.id, row.stable_button_id) == identity
+
+
+def test_button_settings_rebind_endpoint_is_removed():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.app.routers import settings
+    app = FastAPI()
+    app.include_router(settings.router)
+    assert "/api/v1/settings/bot-buttons/item/rebind" not in {route.path for route in app.routes}
+    with TestClient(app) as http:
+        response = http.post("/api/v1/settings/bot-buttons/item/rebind", params={
+            "old_button_key": "source", "new_button_key": "target", "menu_type": "menu-a",
+            "workflow_type": "ticket", "button_path": "Target", "button_label": "Target",
+        })
+    assert response.status_code == 404

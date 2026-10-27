@@ -64,7 +64,7 @@ def seed(engine, root, source):
             key = f"{menu}|{'db' if kind == 'section' else 'ticket'}|{path}"
             row = BotButtonSetting(id=uid(f"{prefix}-button-{index}"), stable_button_id=uid(f"{prefix}-stable-{index}"),
                 button_key=key, menu_type=menu, workflow_type="submenu" if kind == "section" else "ticket",
-                button_path=path, parent_path=parent, button_label=f"Button {index}", button_kind=kind, is_db_created=True,
+                button_path=path, parent_path=parent, button_label=f"Button {index}", button_kind=kind,
                 instruction_text="DEV instruction\n raw ", client_text=None if source else "old client text",
                 client_text_overridden=False if source else True, label_override=None if source else "old label",
                 is_enabled=False if source else True, currently_present=False if source and index == 5 else True,
