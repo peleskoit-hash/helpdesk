@@ -432,7 +432,10 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & tr.ticket-row td:first-child { border-radius: 14px 0 0 14px; }
   & tr.ticket-row td:last-child { border-radius: 0 14px 14px 0; }
   & tr.ticket-row { background: var(--desk-soft); }
-  & tr.ticket-row:hover { outline: 1px solid var(--desk-accent); outline-offset: -1px; }
+  & tr.ticket-row:hover td { border-top-color: var(--desk-accent); border-bottom-color: var(--desk-accent); }
+  & tr.ticket-row:hover td:first-child { border-left-color: var(--desk-accent); }
+  & tr.ticket-row:hover td:last-child { border-right-color: var(--desk-accent); }
+  & :is(td.ticket-channel-col, td.ticket-check-cell) { text-overflow: clip; }
   & tr.ticket-color-request { background: linear-gradient(90deg, color-mix(in srgb, var(--desk-warning-bg) 80%, var(--desk-surface)), var(--desk-surface) 70%); }
   & tr.ticket-color-task { background: linear-gradient(90deg, var(--desk-success-bg), var(--desk-surface) 70%); }
   & tr.ticket-color-group-task { background: linear-gradient(90deg, var(--desk-tint), var(--desk-surface) 70%); }

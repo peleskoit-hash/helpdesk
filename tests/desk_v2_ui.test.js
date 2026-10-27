@@ -9,6 +9,83 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 
+for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
+  test(`list row rounded hover and icon overflow: ${theme}, ${role}`, async t => {
+    const { page } = await setup(t, { width: 1366, height: 900, theme, role, pageName: 'tickets' });
+    const row = page.locator('tr.ticket-row').first();
+    const appearance = () => row.evaluate(el => ({
+      size: [el.getBoundingClientRect().width, el.getBoundingClientRect().height],
+      background: getComputedStyle(el).background,
+      cells: [...el.cells].map(td => {
+        const s = getComputedStyle(td);
+        return [td.clientWidth, td.clientHeight, s.padding, s.background, s.borderTopWidth, s.borderBottomWidth];
+      }),
+      icons: [...el.querySelectorAll('.ticket-channel-icon, .ticket-channel-icon svg, input, select')].map(icon => {
+        const s = getComputedStyle(icon), box = icon.getBoundingClientRect(), cell = icon.closest('td').getBoundingClientRect();
+        return [icon.outerHTML, box.x - cell.x, box.y - cell.y, box.width, box.height, s.pointerEvents];
+      }),
+    }));
+    await page.mouse.move(0, 0);
+    const before = await appearance();
+    await row.locator('.ticket-row-link').first().hover();
+    assert.deepEqual(await appearance(), before);
+    const border = await row.evaluate(el => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--desk-accent)'; el.firstElementChild.appendChild(probe);
+      const accent = getComputedStyle(probe).color; probe.remove();
+      return { accent, outline: getComputedStyle(el).outlineStyle,
+        cells: [...el.cells].map(td => [getComputedStyle(td).borderTopColor, getComputedStyle(td).borderBottomColor]),
+        left: getComputedStyle(el.firstElementChild).borderLeftColor,
+        right: getComputedStyle(el.lastElementChild).borderRightColor,
+        radii: [getComputedStyle(el.firstElementChild).borderTopLeftRadius, getComputedStyle(el.lastElementChild).borderTopRightRadius] };
+    });
+    assert.equal(border.outline, 'none');
+    assert.ok(border.cells.every(colors => colors.every(color => color === border.accent)));
+    assert.equal(border.left, border.accent); assert.equal(border.right, border.accent);
+    assert.deepEqual(border.radii, ['14px', '14px']);
+    for (const selector of ['td.ticket-channel-col', ...(role === 'admin' ? ['td.ticket-check-cell'] : [])]) {
+      assert.equal(await row.locator(selector).evaluate(el => getComputedStyle(el).textOverflow), 'clip');
+    }
+    assert.equal(await row.locator('td.ticket-linked-cell').first().evaluate(el => getComputedStyle(el).textOverflow), 'ellipsis');
+    assert.deepEqual(await page.locator('.ticket-channel-icon svg').evaluateAll(nodes => [...new Set(nodes.map(el => {
+      const box = el.getBoundingClientRect(); return `${box.width}x${box.height}`;
+    }))]), ['17x17']);
+
+    // Sample the painted border itself: top edge, curved corner and outer corner.
+    for (const side of ['left', 'right']) {
+      if (side === 'right') await page.locator('.table-scroll').evaluate(el => { el.scrollLeft = el.scrollWidth; });
+      const cell = side === 'left' ? row.locator('td').first() : row.locator('td').last();
+      const png = await cell.screenshot();
+      const pixels = await page.evaluate(async ({ base64, side }) => {
+        const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
+        const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+        const pixel = (x, y) => [...ctx.getImageData(side === 'left' ? x : image.width - 1 - x, y, 1, 1).data].slice(0, 3);
+        const curve = [];
+        for (let x = 3; x <= 10; x++) for (let y = 3; y <= 10; y++) curve.push(pixel(x, y));
+        return { top: pixel(18, 0), curve, outside: pixel(0, 0) };
+      }, { base64: png.toString('base64'), side });
+      const accent = border.accent.match(/\d+/g).slice(0, 3).map(Number);
+      const distance = pixel => Math.max(...pixel.map((value, index) => Math.abs(value - accent[index])));
+      assert.ok(distance(pixels.top) < 8, `${side} top border: ${pixels.top}`);
+      assert.ok(pixels.curve.some(pixel => distance(pixel) < 40), `${side} curved border is painted`);
+      assert.ok(distance(pixels.outside) > 20, `${side} outer corner stays rounded`);
+    }
+    await page.locator('.table-scroll').evaluate(el => { el.scrollLeft = 0; });
+    if (role === 'admin') { await row.locator('.ticket-check').check(); assert.equal(await row.locator('.ticket-check').isChecked(), true); }
+    await page.locator('#columnsSettingsBtn').click();
+    assert.equal(await page.locator('#columnsModal').isVisible(), true);
+    await page.locator('#closeColumnsModalBtn').click();
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-ticket-row-v2"]').count(), 1);
+    await row.locator('.ticket-row-link').first().click();
+    await page.waitForSelector('.message');
+    await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
+    await page.locator('.ticket-row-link').first().hover();
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-ticket-row-v2"]').count(), 1);
+    assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
+  });
+}
+
 for (const theme of ['light', 'dark']) {
   test(`shell styles do not affect matching classes in settings content: ${theme}`, async t => {
     const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
