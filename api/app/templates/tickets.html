@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Helpdesk MVP - Список заявок</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261027-dialog-prompts-v4" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261027-active-status-v1" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -175,7 +175,7 @@
       </div>
       <div class="modal-foot columns-modal-foot">
         <label class="columns-task-panel-toggle">
-          <input id="taskPanelEnabledInput" type="checkbox" />
+          <input id="taskPanelEnabledInput" type="checkbox" class="desk-toggle" />
           <span>Панель задач</span>
         </label>
         <button id="closeColumnsModalBtn" type="button" class="action" aria-label="Закрыть">Закрыть</button>
@@ -185,19 +185,6 @@
     <div id="resizeColumnsActions" class="resize-columns-actions hidden">
       <button id="saveResizeColumnsBtn" type="button" class="action primary">Сохранить</button>
       <button id="cancelResizeColumnsBtn" type="button" class="action">Отмена</button>
-    </div>
-  </div>
-
-  <div id="deleteColumnModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteColumnTitle" aria-describedby="deleteColumnText">
-    <div class="modal-dialog assign-dialog">
-      <div class="modal-head">
-        <div id="deleteColumnTitle" style="font-weight:700;">Удаление столбца</div>
-      </div>
-      <div id="deleteColumnText" class="modal-body"></div>
-      <div class="modal-foot">
-        <button id="cancelDeleteColumnBtn" type="button" class="action">Отмена</button>
-        <button id="confirmDeleteColumnBtn" type="button" class="action danger">Удалить</button>
-      </div>
     </div>
   </div>
 
@@ -224,8 +211,9 @@
   <script src="/static/theme.js?v=20261027-visual-controls-v2"></script>
   <script src="/static/sidebar.js?v=20261027-themed-dialogs-v1"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261027-dialog-prompts-v4"></script>
+  <script src="/static/app_shell.js?v=20261027-type-palette-dialogs-v1"></script>
   <script src="/static/ticket_column_auto_width.js?v=20261027-list-columns-v3"></script>
-  <script src="/static/list.js?v=20261027-list-final-v1"></script>
+  <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
+  <script src="/static/list.js?v=20261027-type-palette-dialogs-v1"></script>
 </body>
 </html>

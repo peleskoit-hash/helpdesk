@@ -216,10 +216,6 @@ function collectElements() {
     cancelBulkActionBtn: byId("cancelBulkActionBtn"),
     confirmBulkActionBtn: byId("confirmBulkActionBtn"),
     columnsModal: byId("columnsModal"),
-    deleteColumnModal: byId("deleteColumnModal"),
-    deleteColumnText: byId("deleteColumnText"),
-    cancelDeleteColumnBtn: byId("cancelDeleteColumnBtn"),
-    confirmDeleteColumnBtn: byId("confirmDeleteColumnBtn"),
     closeColumnsModalBtn: byId("closeColumnsModalBtn"),
     columnAddSelect: byId("columnAddSelect"),
     columnsDraftList: byId("columnsDraftList"),
@@ -279,7 +275,6 @@ function requireListElements() {
 
 let el = collectElements();
 let pendingBulkAction = null;
-let pendingColumnDelete = null;
 
 function normalizeLoadOptions(options = {}) {
   return {
@@ -1192,7 +1187,6 @@ function openColumnsModal() {
 }
 
 function closeColumnsModal() {
-  if (pendingColumnDelete) closeDeleteColumnModal();
   stopColumnReorderDrag();
   if (state.columnResizeActive) {
     cancelColumnResizeDraft();
@@ -1204,22 +1198,17 @@ function closeColumnsModal() {
   if (hadPreview) renderTable();
 }
 
-function openDeleteColumnModal(key, trigger) {
+async function confirmDeleteDraftColumn(key) {
   const def = TICKET_COLUMN_DEFS[key];
-  if (!def || def.mandatory) return;
-  pendingColumnDelete = { key, trigger };
-  el.deleteColumnText.textContent = `Вы уверены, что хотите удалить столбец „${def.title}“ из списка?`;
-  el.columnsModal.inert = true;
-  el.deleteColumnModal.classList.remove("hidden");
-  el.cancelDeleteColumnBtn.focus();
-}
-
-function closeDeleteColumnModal() {
-  const trigger = pendingColumnDelete?.trigger;
-  pendingColumnDelete = null;
-  el.deleteColumnModal.classList.add("hidden");
-  el.columnsModal.inert = false;
-  (trigger?.isConnected ? trigger : el.editColumnsWidthBtn)?.focus();
+  const draft = state.draftTicketListColumns;
+  if (!def || def.mandatory || !draft) return;
+  const confirmed = await window.HelpdeskDialogs.confirm(
+    `Вы уверены, что хотите удалить столбец „${def.title}“ из списка?`,
+    { title: "Удаление столбца", acceptLabel: "Удалить" },
+  );
+  if (!confirmed || !pageEventController || pageEventController.signal.aborted || state.draftTicketListColumns !== draft) return;
+  deleteDraftColumn(key);
+  el.editColumnsWidthBtn?.focus();
 }
 
 function deleteDraftColumn(key) {
@@ -1889,22 +1878,6 @@ function init() {
     }, { signal: pageSignal });
   }
   if (el.bulkActionModal) closeOnBackdropClick(el.bulkActionModal, closeBulkActionModal);
-  el.cancelDeleteColumnBtn?.addEventListener("click", closeDeleteColumnModal, { signal: pageSignal });
-  el.confirmDeleteColumnBtn?.addEventListener("click", () => {
-    if (!pendingColumnDelete) return;
-    deleteDraftColumn(pendingColumnDelete.key);
-    closeDeleteColumnModal();
-  }, { signal: pageSignal });
-  if (el.deleteColumnModal) {
-    closeOnBackdropClick(el.deleteColumnModal, closeDeleteColumnModal);
-    el.deleteColumnModal.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") { event.stopPropagation(); closeDeleteColumnModal(); }
-      if (event.key === "Tab") {
-        event.preventDefault();
-        (document.activeElement === el.cancelDeleteColumnBtn ? el.confirmDeleteColumnBtn : el.cancelDeleteColumnBtn).focus();
-      }
-    }, { signal: pageSignal });
-  }
   if (el.closeColumnsModalBtn) el.closeColumnsModalBtn.addEventListener("click", closeColumnsModal, { signal: pageSignal });
   if (el.saveColumnsBtn) el.saveColumnsBtn.addEventListener("click", saveColumnsModal, { signal: pageSignal });
   el.columnAutoWidthInput?.addEventListener("change", toggleAutoColumnWidth, { signal: pageSignal });
@@ -1934,10 +1907,10 @@ function init() {
     }, { signal: pageSignal });
   }
   if (el.columnsDraftList) {
-    el.columnsDraftList.addEventListener("click", (event) => {
+    el.columnsDraftList.addEventListener("click", async (event) => {
       const deleteButton = event.target.closest("[data-column-delete]");
       if (deleteButton) {
-        openDeleteColumnModal(deleteButton.dataset.columnDelete || "", deleteButton);
+        await confirmDeleteDraftColumn(deleteButton.dataset.columnDelete || "");
         return;
       }
     }, { signal: pageSignal });
@@ -2048,7 +2021,6 @@ runTicketsListPage().catch((error) => {
 
 return {
   destroy() {
-    if (pendingColumnDelete) closeDeleteColumnModal();
     columnAutoResizeObserver?.disconnect();
     state.columnAutoCalculation = null;
     stopColumnReorderDrag();

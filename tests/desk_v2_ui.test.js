@@ -172,7 +172,7 @@ for (const height of [768, 900]) for (const theme of ['light', 'dark']) {
       const brand = document.querySelector('.sidebar-brand'), bs = getComputedStyle(brand), br = brand.getBoundingClientRect();
       const scroll = document.querySelector('.table-scroll'), sr = scroll.getBoundingClientRect(), head = document.querySelector('thead').getBoundingClientRect();
       return { brand: { x: br.x + parseFloat(bs.paddingLeft), y: br.y, before: getComputedStyle(brand, "::before").content, background: getComputedStyle(brand.closest('.sidebar')).backgroundColor, color: bs.color, text: brand.textContent, size: bs.fontSize, family: bs.fontFamily },
-        line: { y: Math.floor(head.bottom) - 1, left: sr.left + 1, right: sr.left + scroll.clientWidth - 2, color: getComputedStyle(document.querySelector('th')).borderBottomColor },
+        line: { y: Math.floor(head.bottom) - 1, left: sr.left + 1, right: sr.left + scroll.clientWidth - 2, color: getComputedStyle(document.querySelector('thead'), '::after').backgroundColor },
         buttons: ['prevPageBtn', 'nextPageBtn'].map(id => {
           const el = document.getElementById(id), r = el.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(el);
           const text = range.getBoundingClientRect();
@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-dialog-prompts-v4"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-active-status-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-dialog-prompts-v4"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-active-status-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -476,7 +476,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
   });
 }
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [] }) {
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [], ticketRows = rows }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
@@ -522,7 +522,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p.endsWith('/counts')) result = { active: 28, unassigned: 3, frozen: 4, closed: 158, special: 1,
       by_assignee: { 'agent-1': { active: 123, frozen: 12 }, 'agent-2': { active: 3, frozen: 456 } } };
     else if (p.endsWith('/task-panel')) result = rows.slice(0, 10);
-    else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: rows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
+    else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: ticketRows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
     else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType,
@@ -844,8 +844,8 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
         assert.deepEqual(indicators[0].dividers.map(bar => bar.x), indicators[1].dividers.map(bar => bar.x));
         assert.equal(await page.evaluate(() => document.fonts.check('15px Manrope', 'Заявка переписка')), true);
         const employeeAvatar = await page.locator('.agent-avatar').boundingBox();
-        assert.equal(employeeAvatar.width, 88);
-        assert.equal(employeeAvatar.height, 88);
+        assert.ok(Math.abs(employeeAvatar.width - 61.6) < .02);
+        assert.ok(Math.abs(employeeAvatar.height - 61.6) < .02);
         assert.ok(employeeAvatar.y + employeeAvatar.height <= height - 8, JSON.stringify(employeeAvatar));
         const name = page.locator('.sidebar-user-name');
         const originalName = await name.textContent();
@@ -1364,7 +1364,7 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     assert.deepEqual(bubble, ['12px', '16px', true, true]);
     const removedKey = await page.locator('[data-column-delete]').first().getAttribute('data-column-delete');
     await page.locator('[data-column-delete]').first().click();
-    await page.locator('#confirmDeleteColumnBtn').click();
+    await page.locator('dialog.desk-dialog [data-dialog-accept]').click();
     await select.selectOption(removedKey);
     assert.equal(await select.evaluate(el => el.selectedIndex), -1, 'selection clears after adding');
     assert.equal((await keys()).at(-1), removedKey);
@@ -1704,36 +1704,200 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
     const trash = page.locator('[data-column-delete]').first();
     const key = await trash.getAttribute('data-column-delete');
     const title = await trash.locator('..').locator('.columns-draft-title').textContent();
-    for (const cancel of ['button', 'Escape', 'backdrop']) {
-      await trash.click(); await modalVisible(page, '#deleteColumnModal');
-      assert.equal(await page.locator('#deleteColumnText').textContent(), `Вы уверены, что хотите удалить столбец „${title}“ из списка?`);
+    const dialog = page.locator('dialog.desk-dialog[open]');
+    for (const cancel of ['button', 'Escape']) {
+      await trash.click(); await dialog.waitFor();
+      assert.equal(await dialog.locator('.desk-dialog-message').textContent(), `Вы уверены, что хотите удалить столбец „${title}“ из списка?`);
+      assert.equal(await dialog.locator('h2').textContent(), 'Удаление столбца');
       assert.deepEqual(await draft(), before, 'opening confirmation never changes the draft');
-      assert.equal(await page.locator('#deleteColumnModal .modal-dialog').evaluate(el => getComputedStyle(el).borderRadius), '24px');
-      assert.equal(await page.locator('#cancelDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
-      await page.keyboard.press('Tab'); assert.equal(await page.locator('#confirmDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
-      await page.keyboard.press('Tab'); assert.equal(await page.locator('#cancelDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
-      if (cancel === 'button') await page.locator('#cancelDeleteColumnBtn').click();
-      else if (cancel === 'Escape') await page.keyboard.press('Escape');
-      else await page.locator('#deleteColumnModal').click({ position: { x: 4, y: 4 } });
-      assert.equal(await page.locator('#deleteColumnModal').isVisible(), false);
+      const appearance = await dialog.evaluate(el => {
+        const s = getComputedStyle(el), r = el.getBoundingClientRect();
+        return [s.borderRadius, s.fontSize, getComputedStyle(el, '::backdrop').backdropFilter,
+          document.elementFromPoint(r.x + 20, r.y + 20) === el];
+      });
+      assert.deepEqual(appearance, ['24px', '28px', 'blur(6px)', true]);
+      assert.equal(await dialog.locator('[data-dialog-cancel]').evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Tab'); assert.equal(await dialog.locator('[data-dialog-accept]').evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Tab'); assert.equal(await dialog.locator('[data-dialog-cancel]').evaluate(el => el === document.activeElement), true);
+      if (cancel === 'button') await dialog.locator('[data-dialog-cancel]').click();
+      else await page.keyboard.press('Escape');
+      await dialog.waitFor({state: 'detached'});
       assert.equal(await page.locator('#columnsModal').isVisible(), true);
       assert.deepEqual(await draft(), before, 'cancel preserves the entire existing draft');
       assert.equal(await trash.evaluate(el => el === document.activeElement), true);
     }
-    await trash.click(); await page.locator('#confirmDeleteColumnBtn').click();
+    await trash.click(); await page.locator('dialog.desk-dialog [data-dialog-accept]').click();
     assert.deepEqual(await keys(), dirtyOrder.filter(item => item !== key));
-    assert.equal(await page.locator('#deleteColumnModal').isVisible(), false);
+    assert.equal(await dialog.count(), 0);
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     assert.equal(await page.locator('#columnsModal').evaluate(el => el.inert), false);
+    assert.equal(await page.locator('#editColumnsWidthBtn').evaluate(el => el === document.activeElement), true);
     assert.equal(JSON.stringify(preferences), persisted); assert.equal(requests.some(r => r.method === 'PATCH'), false);
     await page.locator('#closeColumnsModalBtn').click(); await page.locator('#columnsSettingsBtn').click();
     assert.deepEqual(await keys(), original, 'closing still discards unsaved deletion');
-    await page.locator('#closeColumnsModalBtn').click();
+    await trash.click(); await dialog.waitFor();
+    await page.evaluate(() => {
+      document.querySelector('#closeColumnsModalBtn').click();
+      document.querySelector('#columnsSettingsBtn').click();
+    });
+    await dialog.locator('[data-dialog-accept]').click();
+    assert.deepEqual(await keys(), original, 'a delayed response cannot delete from a newly opened draft');
+    const savedKey = await trash.getAttribute('data-column-delete');
+    await trash.click(); await dialog.locator('[data-dialog-accept]').click();
+    await page.locator('#saveColumnsBtn').click();
+    await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+    assert.equal(preferences.ticket_list_columns.some(column => column.key === savedKey), false, 'only Save persists deletion');
     if (role === 'admin') {
       await page.locator('.ticket-check').first().check(); await page.locator('#bulkDeleteBtn').click();
       assert.equal(await page.locator('#bulkActionModal').isVisible(), true);
-      assert.equal(await page.locator('#deleteColumnModal').isVisible(), false, 'bulk deletion uses its existing dialog');
+      assert.equal(await dialog.count(), 0, 'bulk deletion uses its existing dialog');
       await page.locator('#cancelBulkActionBtn').click();
     }
   });
 }
+
+for (const theme of ['light', 'dark']) test(`type badge palette matches legend, staff colors and stays independent of appearance: ${theme}`, async t => {
+  const types = [
+    ['task', 'Задача', '#a9e3c3', '#155b3e', {workflow_type: 'task'}, 'online'],
+    ['request', 'Заявка', '#f5d4a5', '#875315', {workflow_type: 'ticket'}, 'waiting'],
+    ['group-task', 'Увольнение', '#c9b1f4', '#563292', {task_kind: 'group_child'}, 'on-ticket'],
+    ['internal-task', 'Внутренняя', '#f2e8ab', '#695617', {is_internal_task: true}],
+    ['frozen', 'Замороженная', '#afd8f9', '#235b8a', {is_frozen: true}, 'lunch'],
+    ['closed', 'Закрытая', '#f5baca', '#302c40', {status: 'closed'}, 'offline'],
+  ];
+  const ticketRows = types.map(([key, label, bg, fg, patch], i) => ({...rows[0], id: `palette-${i}`, workflow_type: 'task', task_kind: 'normal', is_internal_task: false, is_frozen: false, ...patch}));
+  const {page, preferences} = await setup(t, {width: 1440, height: 1000, theme, pageName: 'tickets', ticketRows});
+  const values = () => page.evaluate(types => types.map(([key]) => {
+    const read = selector => {const el = document.querySelector(selector), s = getComputedStyle(el); return [el.textContent, s.backgroundColor, s.color];};
+    return [read(`.ticket-type-${key}`), read(`.color-legend-${key}`)];
+  }), types);
+  const rgb = hex => `rgb(${hex.slice(1).match(/../g).map(v => parseInt(v, 16)).join(', ')})`;
+  const expected = types.map(([, label, bg, fg]) => [[label, rgb(bg), rgb(fg)], [label, rgb(bg), rgb(fg)]]);
+  assert.deepEqual(await values(), expected);
+  assert.equal(new Set(expected.map(pair => pair[0][1])).size, 6);
+  for (const [, , bg, fg] of types) assert.ok(contrastRatio(rgb(fg), rgb(bg)) >= 4.5, `${fg}/${bg}`);
+  const geometry = () => page.locator('.ticket-type-badge, .color-legend-swatch').evaluateAll(els => els.map(el => {
+    const s = getComputedStyle(el); return [s.width, s.height, s.padding, s.borderRadius, s.font];
+  }));
+  const before = await geometry();
+  await page.evaluate(types => {
+    const probe = document.createElement('div'); probe.id = 'staffPaletteProbe'; probe.hidden = true;
+    probe.innerHTML = types.filter(type => type[5]).map(type => `<button class="agent-status-btn status-${type[5]}"></button>`).join('');
+    document.querySelector('.sidebar').appendChild(probe);
+  }, types);
+  const staff = () => page.locator('#staffPaletteProbe button').evaluateAll(els => els.map(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]));
+  const staffExpected = types.filter(type => type[5]).map(type => [rgb(type[2]), rgb(type[0] === 'closed' ? '#913d59' : type[3])]);
+  assert.deepEqual(await staff(), staffExpected);
+  for (const hue of [0, 60, 180, 259, 360]) for (const intensity of [0, 50, 100]) {
+    await page.evaluate(({theme, hue, intensity}) => {
+      appearance = {...appearance, [`interface_hue_${theme}`]: hue, [`interface_intensity_${theme}`]: intensity,
+        [`accent_hue_${theme}`]: hue, [`accent_strength_${theme}`]: intensity};
+      HelpdeskTheme.applyTheme(theme);
+    }, {theme, hue, intensity});
+    assert.deepEqual(await values(), expected, `${theme}/${hue}/${intensity}`);
+    assert.deepEqual(await staff(), staffExpected, 'staff status palette is unchanged');
+  }
+  await page.locator('#colorToggleText').hover(); await page.locator('#colorLegend').waitFor({state: 'visible'});
+  assert.deepEqual(await values(), expected); assert.deepEqual(await geometry(), before);
+  await page.locator('#colorEnabledInput').uncheck();
+  await page.waitForFunction(() => document.body.classList.contains('ticket-colors-disabled'));
+  assert.equal(await page.locator('#colorLegend').isVisible(), false);
+  assert.deepEqual(await values(), expected, 'toggle retains existing badge behavior');
+  await page.waitForFunction(() => !document.querySelector('#colorEnabledInput').checked);
+  await page.locator('#colorEnabledInput').check(); await page.locator('#colorToggleText').hover();
+  await page.locator('#colorLegend').waitFor({state: 'visible'}); assert.deepEqual(await values(), expected);
+  await page.waitForFunction(() => document.querySelector('#colorEnabledInput').checked);
+  assert.equal(preferences.color_enabled, true);
+  await page.locator('#appContent').evaluate(el => el.style.setProperty('--ticket-type-task-bg', '#112233'));
+  const changed = (await values())[0];
+  assert.equal(changed[0][1], 'rgb(17, 34, 51)'); assert.deepEqual(changed[0], changed[1], 'both locations use the same palette variable');
+});
+
+for (const theme of ['light', 'dark']) for (const role of ['agent', 'trainee']) test(`task panel uses shared V2 toggle and preserves preference lifecycle: ${theme}, ${role}`, async t => {
+  const {page, preferences, requests} = await setup(t, {width: 1366, height: 900, theme, role, pageName: 'tickets'});
+  const columns = JSON.stringify(preferences.ticket_list_columns.filter(column => column.key !== 'assignee'));
+  const toggle = page.locator('#taskPanelEnabledInput');
+  await page.locator('#columnsSettingsBtn').click();
+  assert.equal(await toggle.isChecked(), true);
+  assert.equal(await toggle.evaluate(el => el.closest('.columns-modal-foot') !== null && el.parentElement.textContent.trim() === 'Панель задач'), true);
+  const style = await toggle.evaluate(el => {
+    const s = getComputedStyle(el), knob = getComputedStyle(el, '::before');
+    return {appearance: s.appearance, width: s.width, height: s.height, radius: s.borderRadius, knob: knob.width, move: knob.transform};
+  });
+  assert.deepEqual(style, {appearance: 'none', width: '40px', height: '24px', radius: '999px', knob: '18px', move: 'matrix(1, 0, 0, 1, 16, 0)'});
+  const footer = await page.locator('.columns-modal-foot').boundingBox();
+  await toggle.uncheck();
+  assert.equal(preferences.task_panel_enabled, true);
+  assert.equal(requests.some(r => r.method === 'PATCH'), false);
+  assert.equal(await page.locator('#taskPanel').isVisible(), true, 'unsaved toggle is a draft');
+  await page.locator('#closeColumnsModalBtn').click(); await page.locator('#columnsSettingsBtn').click();
+  assert.equal(await toggle.isChecked(), true, 'closing discards the unsaved toggle');
+  await toggle.focus(); await page.keyboard.press('Space');
+  assert.equal(await toggle.isChecked(), false);
+  await page.locator('#saveColumnsBtn').click();
+  await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+  assert.equal(preferences.task_panel_enabled, false);
+  assert.equal(await page.locator('#taskPanel').isVisible(), false);
+  await page.locator('#columnsSettingsBtn').click();
+  assert.equal(await toggle.isChecked(), false);
+  assert.deepEqual(await page.locator('.columns-modal-foot').boundingBox(), footer, 'footer position stays unchanged');
+  await toggle.check(); await page.locator('#saveColumnsBtn').click();
+  await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+  assert.equal(preferences.task_panel_enabled, true);
+  assert.equal(await page.locator('#taskPanel').isVisible(), true);
+  await page.reload(); await page.locator('.ticket-row').first().waitFor();
+  await page.locator('#columnsSettingsBtn').click(); assert.equal(await toggle.isChecked(), true);
+  assert.equal(JSON.stringify(preferences.ticket_list_columns), columns, 'column preferences stay unchanged');
+});
+
+for (const theme of ['light', 'dark']) test(`sidebar avatar diameter is reduced by thirty percent and menu still works: ${theme}`, async t => {
+  const {page} = await setup(t, {width: 1366, height: 900, theme, role: 'agent', pageName: 'tickets'});
+  const avatar = page.locator('.sidebar .agent-avatar');
+  for (const height of [768, 1000]) {
+    await page.setViewportSize({width: 1366, height});
+    const box = await avatar.boundingBox();
+    assert.ok(Math.abs(box.width / 88 - .7) < .001);
+    assert.equal(box.width, box.height); assert.ok(box.y >= 0 && box.y + box.height <= height);
+    assert.equal(await avatar.evaluate(el => getComputedStyle(el).borderRadius), '50%');
+    await avatar.click(); assert.equal(await page.locator('[data-sidebar-user-menu]').isVisible(), true);
+    await page.keyboard.press('Escape'); assert.equal(await avatar.evaluate(el => el === document.activeElement), true);
+    assert.equal(await page.locator('[data-sidebar-user-menu]').isVisible(), false);
+  }
+});
+
+for (const theme of ['light', 'dark']) test(`active staff status has a triple inset frame without layout changes: ${theme}`, async t => {
+  const {page, requests} = await setup(t, {width: 1366, height: 1000, theme, role: 'agent', pageName: 'tickets'});
+  const statuses = ['online', 'on_ticket', 'waiting', 'lunch', 'offline'];
+  const buttons = page.locator('.sidebar [data-availability-status]');
+  assert.equal(await buttons.count(), 5);
+  const measure = () => buttons.evaluateAll(els => els.map(el => {
+    const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+    return {key: el.dataset.availabilityStatus, box: [r.x, r.y, r.width, r.height], padding: s.padding,
+      background: s.backgroundColor, color: s.color, border: s.borderColor, width: s.borderWidth, shadow: s.boxShadow, weight: s.fontWeight};
+  }));
+  await page.mouse.move(0, 0);
+  for (const status of statuses) {
+    const selected = page.locator(`.sidebar [data-availability-status="${status}"]`);
+    await selected.click(); await page.mouse.move(0, 0);
+    await page.waitForFunction(status => document.querySelector(`.sidebar [data-availability-status="${status}"]`).classList.contains('active'), status);
+    // Wait for the existing border/shadow hover transition to finish.
+    await selected.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
+    const current = await measure(), active = current.find(item => item.key === status);
+    assert.equal(active.width, '1px'); assert.equal(active.weight, '700'); assert.equal(active.border, active.color);
+    assert.equal(active.shadow, `${active.color} 0px 0px 0px 5px inset`);
+    const old = await page.addStyleTag({content: `body:has(.layout > .main) :is(.sidebar .agent-status-btn, #appContent[data-shell-page="statuses"] .status-board-btn).agent-status-btn.active {
+      box-shadow:inset 0 0 0 1px currentColor; font-weight:600;
+    }`});
+    await selected.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
+    const previous = await measure(), oldActive = previous.find(item => item.key === status);
+    assert.equal(oldActive.shadow, `${oldActive.color} 0px 0px 0px 1px inset`);
+    assert.equal((1 + 5) / (parseFloat(oldActive.width) + 1), 3, 'total painted border is exactly tripled');
+    for (let i = 0; i < current.length; i++) {
+      assert.deepEqual(current[i].box, previous[i].box); assert.equal(current[i].padding, previous[i].padding);
+      assert.equal(current[i].background, previous[i].background); assert.equal(current[i].color, previous[i].color);
+      if (current[i].key !== status) assert.deepEqual(current[i], previous[i], 'inactive statuses stay unchanged');
+    }
+    await old.evaluate(el => el.remove());
+  }
+  assert.ok(requests.some(r => r.path.endsWith('/users/me/status') && r.method === 'PATCH'), 'existing status selection is used');
+});

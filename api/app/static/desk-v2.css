@@ -206,8 +206,8 @@ body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item { font-size: 
 body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item:hover { background: var(--desk-hover); }
 body:has(.layout > .main) :where(.sidebar) .sidebar-user-menu-item-danger { color: var(--desk-danger); }
 body:has(.layout > .main) :where(.sidebar) .agent-avatar {
-  width: 88px;
-  height: 88px;
+  width: 61.6px;
+  height: 61.6px;
   font-size: 24px;
   border-radius: 50%;
   background: var(--desk-tint);
@@ -241,6 +241,7 @@ body:has(.layout > .main) :is(.sidebar .agent-status-btn, #appContent[data-shell
   &.status-lunch { background: #afd8f9; color: #235b8a; }
   &.status-offline { background: #f5baca; color: #913d59; }
   &.active { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+  &.agent-status-btn.active { box-shadow: inset 0 0 0 5px currentColor; font-weight: 700; }
 }
 body:has(.layout > .main) .toolbar { padding: 6px 24px; gap: 8px; min-height: 57px; }
 body:has(.layout > .main) .toolbar :is(input, select, button.action) {
@@ -435,7 +436,7 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & button.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
   & .table-scroll { padding: 8px 12px 0; }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
-  & th { padding: 14px 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); font-size: 13px; }
+  & th { padding: 14px 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
   & #ticketsTable thead { position: relative; }
   & #ticketsTable thead::after { content: ""; position: absolute; left: -12px; right: -12px; bottom: 0; height: 1px; background: var(--desk-border); pointer-events: none; }
   & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); }
@@ -500,13 +501,22 @@ body[data-theme="dark"].ticket-column-resize-active #appContent.main[data-shell-
 
 body.ticket-colors-disabled #appContent.main[data-shell-page="tickets-list"] tr.ticket-row { background: var(--desk-soft); }
 
-/* Legend retains the same semantic mapping as table rows in either theme. */
+/* Fixed type palette, shared by legend and badges; staff status colors stay local. */
+body #appContent.main[data-shell-page="tickets-list"] {
+  --ticket-type-task-bg: #a9e3c3; --ticket-type-task-text: #155b3e;
+  --ticket-type-request-bg: #f5d4a5; --ticket-type-request-text: #875315;
+  --ticket-type-group-task-bg: #c9b1f4; --ticket-type-group-task-text: #563292;
+  --ticket-type-internal-task-bg: #f2e8ab; --ticket-type-internal-task-text: #695617;
+  --ticket-type-frozen-bg: #afd8f9; --ticket-type-frozen-text: #235b8a;
+  --ticket-type-closed-bg: #f5baca; --ticket-type-closed-text: #302c40;
+}
 body #appContent.main[data-shell-page="tickets-list"] .color-legend { background: var(--desk-surface); border-color: var(--desk-border); color: var(--desk-text); border-radius: 14px; box-shadow: 0 8px 32px #00000018; }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-task, .ticket-type-task) { background: var(--desk-success-bg); color: var(--desk-success); }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-request, .ticket-type-request, .color-legend-internal-task, .ticket-type-internal-task) { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-group-task, .ticket-type-group-task) { background: var(--desk-status-bg); color: var(--desk-status-text); }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-frozen, .ticket-type-frozen) { background: var(--desk-blue-bg); color: var(--desk-blue-text); }
-body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-closed, .ticket-type-closed) { background: var(--desk-danger-bg); color: var(--desk-danger); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-task, .ticket-type-task) { background: var(--ticket-type-task-bg); color: var(--ticket-type-task-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-request, .ticket-type-request) { background: var(--ticket-type-request-bg); color: var(--ticket-type-request-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-group-task, .ticket-type-group-task) { background: var(--ticket-type-group-task-bg); color: var(--ticket-type-group-task-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-internal-task, .ticket-type-internal-task) { background: var(--ticket-type-internal-task-bg); color: var(--ticket-type-internal-task-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-frozen, .ticket-type-frozen) { background: var(--ticket-type-frozen-bg); color: var(--ticket-type-frozen-text); }
+body #appContent.main[data-shell-page="tickets-list"] :is(.color-legend-closed, .ticket-type-closed) { background: var(--ticket-type-closed-bg); color: var(--ticket-type-closed-text); }
 
 /* The quick-reply overlay is mounted in body, outside the ticket page subtree. */
 body:has(#appContent.main[data-shell-page="ticket-card"]) #quickRepliesPanel {
@@ -661,6 +671,35 @@ body:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appCon
 }
 body:has(.layout > .main) #appContent.main[data-shell-page] { --desk-grid-base: transparent; }
 body:has(.layout > .main) #appContent.main .messages { --desk-grid-base: var(--desk-soft); }
+
+/* One continuous workspace edge; transparent legacy borders keep their space. */
+@media (min-width: 701px) {
+  body:has(.layout > .main) .layout > .sidebar { border-right-color: transparent; }
+  body:has(.layout > .main) .layout > .main > .toolbar { border-bottom-color: transparent; }
+  body:has(.layout > .main) #appContent.main {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--desk-surface);
+  }
+  body:has(.layout > .main) #appContent.main::before {
+    content: "";
+    position: absolute;
+    grid-row: 2 / -1;
+    inset: -1px 0 0;
+    z-index: -1;
+    border: solid var(--desk-border);
+    border-width: 1px;
+    border-top-left-radius: 24px;
+    border-top-right-radius: 24px;
+    border-bottom-left-radius: 24px;
+    background-color: var(--bg);
+    background-image: inherit;
+    background-size: inherit;
+    background-position: inherit;
+    background-attachment: inherit;
+    pointer-events: none;
+  }
+}
 
 /* Match the existing tickets-list workspace bounds; inner page layouts stay local. */
 body #appContent.main:is([data-shell-page="settings-home"], [data-shell-page="profile"], [data-shell-page="profile-notification-bot"], [data-shell-page="settings-notification-bot-basic"], [data-shell-page="reviews"], [data-shell-page="management-users"]) {
