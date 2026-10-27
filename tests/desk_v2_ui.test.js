@@ -248,7 +248,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     assert.equal(await row.locator('td.ticket-linked-cell').first().evaluate(el => getComputedStyle(el).textOverflow), 'ellipsis');
     assert.deepEqual(await page.locator('.ticket-channel-icon svg').evaluateAll(nodes => [...new Set(nodes.map(el => {
       const box = el.getBoundingClientRect(); return `${box.width}x${box.height}`;
-    }))]), ['17x17']);
+    }))]), ['26x26']);
 
     // Sample the painted border itself: top edge, curved corner and outer corner.
     for (const side of ['left', 'right']) {
@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-agent-pastel-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-dialog-prompts-v4"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-agent-pastel-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-dialog-prompts-v4"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -1328,7 +1328,17 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     await table.evaluate(el => {el.scrollTop=el.scrollHeight;el.scrollLeft=el.scrollWidth;});
     assert.ok(await table.evaluate(el=>el.scrollTop>0 && el.scrollLeft>0));
     await table.evaluate(el=>{el.scrollTop=0;el.scrollLeft=0;});
-    await page.locator('#columnsSettingsBtn').click();
+    const gear = page.locator('#columnsSettingsBtn');
+    assert.deepEqual(await gear.evaluate(el => [el.offsetWidth, el.offsetHeight, getComputedStyle(el).fontSize]), [36, 36, '20px']);
+    assert.ok((await page.locator('th.ticket-channel-col').boundingBox()).width >= 54);
+    const sort = page.locator('.table-sort-btn[data-sort-key="subject"]');
+    const headerBefore = await sort.boundingBox();
+    await sort.click();
+    assert.equal(await sort.evaluate(el => getComputedStyle(el).fontSize), '16px');
+    assert.equal(await sort.evaluate(el => getComputedStyle(el).textDecorationLine), 'underline');
+    await sort.click();
+    assert.deepEqual(await sort.boundingBox(), headerBefore, 'sorting does not shift headings');
+    await gear.click();
     const modal=page.locator('#columnsModal');
     await modalVisible(page,'#columnsModal');
     const overlay=()=>modal.evaluate(el=>{const s=getComputedStyle(el);return {blur:s.backdropFilter,background:s.backgroundColor,pointer:s.pointerEvents};});
@@ -1336,7 +1346,32 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     assert.equal(normal.blur,'blur(4px)');
     const keys=()=>page.locator('.columns-draft-row').evaluateAll(rows=>rows.map(el=>el.dataset.columnKey));
     const original=await keys();
-    await page.locator('.columns-draft-row').nth(1).dragTo(page.locator('.columns-draft-row').nth(2));
+    assert.deepEqual(await modal.locator('.columns-modal-body > *').evaluateAll(nodes => nodes.map(el => el.id || el.className)),
+      ['editColumnsWidthBtn', 'columns-add-label', 'columnsDraftList']);
+    const controls = await modal.locator('.columns-modal-body > *').evaluateAll(nodes => nodes.map(el => {
+      const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom };
+    }));
+    assert.ok(controls[0].bottom <= controls[1].top && controls[1].bottom <= controls[2].top, 'controls appear above the column list');
+    const select = page.locator('#columnAddSelect');
+    assert.deepEqual(await select.evaluate(el => [el.selectedIndex, el.value, [...el.options].some(o => !o.value)]), [-1, '', false]);
+    assert.equal(await page.locator('.columns-add-label').evaluate(el => getComputedStyle(el).fontSize), '16px');
+    assert.equal(await page.locator('#editColumnsWidthBtn').textContent(), 'Редактирование столбцов');
+    assert.ok(Math.abs((await select.boundingBox()).width - (await page.locator('#editColumnsWidthBtn').boundingBox()).width) < 1);
+    const bubble = await page.locator('#columnsDraftList').evaluate(el => {
+      const s = getComputedStyle(el), first = getComputedStyle(el.firstElementChild), next = getComputedStyle(el.children[1]);
+      return [s.padding, s.borderRadius, first.backgroundColor !== next.backgroundColor, first.borderColor !== next.borderColor];
+    });
+    assert.deepEqual(bubble, ['12px', '16px', true, true]);
+    const removedKey = await page.locator('[data-column-delete]').first().getAttribute('data-column-delete');
+    await page.locator('[data-column-delete]').first().click();
+    await page.locator('#confirmDeleteColumnBtn').click();
+    await select.selectOption(removedKey);
+    assert.equal(await select.evaluate(el => el.selectedIndex), -1, 'selection clears after adding');
+    assert.equal((await keys()).at(-1), removedKey);
+    await page.locator('#closeColumnsModalBtn').click();
+    await gear.click();
+    assert.deepEqual(await keys(), original, 'closing discards column draft');
+    await page.locator('.columns-draft-row').nth(1).locator('.columns-drag-handle').dragTo(page.locator('.columns-draft-row').nth(2), { targetPosition: { x: 40, y: 30 } });
     const reordered=await keys();
     assert.notDeepEqual(reordered,original);
     assert.equal(await modal.locator('.columns-dialog').isVisible(),true);
@@ -1351,6 +1386,12 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     const before=await heading.boundingBox();
     const handle=await heading.locator('.column-resize-handle').boundingBox();
     assert.ok(handle);
+    assert.deepEqual([handle.width, handle.height], [18, 28], 'resize handle geometry is unchanged');
+    if (theme === 'dark') {
+      assert.equal(await heading.evaluate(el => getComputedStyle(el).borderRightColor), 'rgb(184, 166, 238)');
+      assert.equal(await heading.locator('.column-resize-handle').evaluate(el => getComputedStyle(el).color), 'rgb(238, 232, 255)');
+      assert.equal(await page.locator('td[data-column-key="subject"]').first().evaluate(el => getComputedStyle(el).borderRightColor), 'rgb(184, 166, 238)');
+    }
     if (process.env.DESK_V2_SCREENSHOTS) {
       fs.mkdirSync(process.env.DESK_V2_SCREENSHOTS,{recursive:true});
       await page.screenshot({path:path.join(process.env.DESK_V2_SCREENSHOTS,`columns-resize-${theme}-${width}.png`)});
@@ -1405,5 +1446,294 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) fo
     await page.evaluate(() => window.HelpdeskAppShell.navigate('/tickets?tab=active'));
     await page.waitForSelector('.ticket-row');
     assert.deepEqual(await measure(), scrolled);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
+  test(`live column drafts reorder, cancel and persist: ${theme}, ${role}`, async t => {
+    const { page, requests, preferences } = await setup(t, { width: 1920, height: 1080, theme, role, pageName: 'tickets' });
+    const tableKeys = () => page.locator('th[data-column-key]').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey));
+    const draftKeys = () => page.locator('.columns-draft-row').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey));
+    const widths = () => page.locator('th[data-column-key]').evaluateAll(nodes => nodes.map(el => [el.dataset.columnKey, el.style.width]));
+    const writes = () => requests.filter(r => r.method === 'PATCH');
+    const original = await tableKeys(), originalWidths = await widths();
+    const sortState = () => page.evaluate(() => [localStorage.getItem('hd_table_sort_key'), localStorage.getItem('hd_table_sort_dir'),
+      [...document.querySelectorAll('.ticket-row')].map(el => el.querySelector('.ticket-row-link').getAttribute('href'))]);
+    const sorted = await sortState();
+    async function holdMove(source, target, horizontal, before = false) {
+      const targetKey = await target.getAttribute('data-column-key');
+      await source.hover();
+      const { a, b } = await source.evaluate((node, key) => {
+        const other = node.closest('[data-column-key]').parentElement.querySelector(`[data-column-key="${key}"]`);
+        return { a: node.getBoundingClientRect().toJSON(), b: other.getBoundingClientRect().toJSON() };
+      }, targetKey);
+      await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(horizontal ? b.x + (before ? 8 : b.width - 8) : b.x + b.width / 2,
+        horizontal ? b.y + b.height / 2 : b.y + (before ? 8 : b.height - 8), { steps: 8 });
+    }
+    await page.locator('#columnsSettingsBtn').click();
+    const modal = page.locator('#columnsModal');
+    assert.equal(await modal.locator('.modal-head #closeColumnsModalBtn').count(), 0);
+    assert.deepEqual(await modal.locator('.modal-foot > button').evaluateAll(nodes => nodes.map(el => el.id)), ['closeColumnsModalBtn', 'saveColumnsBtn']);
+    assert.equal(await modal.locator('.columns-modal-title').evaluate(el => getComputedStyle(el).fontSize), '17px');
+    // Only the handle starts a modal drag, and the live order changes before mouseup.
+    await holdMove(page.locator('.columns-draft-row').nth(1).locator('.columns-draft-title'), page.locator('.columns-draft-row').nth(2), false);
+    await page.mouse.up(); assert.deepEqual(await draftKeys(), original);
+    await holdMove(page.locator('.columns-drag-handle').nth(1), page.locator('.columns-draft-row').nth(2), false);
+    const moved = await draftKeys(); assert.notDeepEqual(moved, original);
+    assert.equal(await page.locator('.column-reorder-dragging').evaluate(el => getComputedStyle(el).cursor), 'grabbing');
+    assert.ok(await page.locator('.columns-draft-row').evaluateAll(nodes => nodes.some(el => el.getAnimations().length)));
+    assert.equal(writes().length, 0); await page.mouse.up();
+    await holdMove(page.locator('.columns-drag-handle').nth(2), page.locator('.columns-draft-row').nth(1), false, true);
+    assert.deepEqual(await draftKeys(), original, 'live dragging works in reverse'); await page.mouse.up();
+    await page.locator('#closeColumnsModalBtn').click();
+    await page.locator('#columnsSettingsBtn').click(); assert.deepEqual(await draftKeys(), original);
+    await page.locator('#editColumnsWidthBtn').click();
+    const headers = page.locator('th[data-column-key]');
+    assert.equal(await headers.first().evaluate(el => getComputedStyle(el).cursor), 'grab');
+    assert.equal(await headers.first().evaluate(el => getComputedStyle(el).outlineStyle), 'none');
+    const resizedBefore = await widths();
+    await headers.first().click();
+    await page.locator('.table-sort-btn[data-sort-key="subject"]').dispatchEvent('click');
+    assert.deepEqual(await sortState(), sorted, 'editing never changes sorting');
+    await holdMove(headers.nth(1), headers.nth(2), true);
+    const live = await tableKeys(); assert.notDeepEqual(live, original);
+    assert.deepEqual(await page.locator('.ticket-row').first().locator('td[data-column-key]').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey)), live);
+    assert.ok(await headers.evaluateAll(nodes => nodes.some(el => el.getAnimations().length)));
+    assert.equal(writes().length, 0); await page.mouse.up();
+    assert.deepEqual(Object.fromEntries(await widths()), Object.fromEntries(resizedBefore));
+    // Resize remains independent of reordering.
+    const handle = page.locator('th[data-column-key="subject"] .column-resize-handle');
+    const box = await handle.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 5 }); await page.mouse.up();
+    assert.deepEqual(await tableKeys(), live);
+    assert.ok(parseFloat(Object.fromEntries(await widths()).subject) >= parseFloat(Object.fromEntries(resizedBefore).subject) + 35);
+    await page.locator('#cancelResizeColumnsBtn').click();
+    assert.deepEqual(await tableKeys(), original); assert.deepEqual(await widths(), originalWidths);
+    assert.deepEqual(await draftKeys(), original); assert.equal(writes().length, 0);
+    await page.locator('#editColumnsWidthBtn').click();
+    await holdMove(headers.nth(1), headers.nth(2), true); await page.mouse.up();
+    await page.locator('#saveResizeColumnsBtn').click();
+    await page.locator('#closeColumnsModalBtn').click();
+    assert.deepEqual(await tableKeys(), original); assert.deepEqual(await widths(), originalWidths);
+    assert.equal(writes().length, 0, 'closing discards the accepted editor draft');
+    await page.locator('#columnsSettingsBtn').click();
+    await page.locator('#editColumnsWidthBtn').click();
+    await holdMove(headers.nth(1), headers.nth(2), true); await page.mouse.up();
+    await holdMove(headers.nth(2), headers.nth(1), true, true);
+    assert.deepEqual(await tableKeys(), original, 'table dragging works in reverse'); await page.mouse.up();
+    await holdMove(headers.nth(1), headers.nth(2), true); await page.mouse.up();
+    const savedOrder = await tableKeys(), savedWidths = await widths();
+    await page.locator('#saveResizeColumnsBtn').click(); assert.equal(writes().length, 0);
+    assert.deepEqual(await draftKeys(), savedOrder);
+    await page.locator('#saveColumnsBtn').click(); await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+    assert.equal(writes().length, 1);
+    assert.deepEqual(preferences.ticket_list_columns.map(c => c.key), savedOrder);
+    assert.deepEqual(preferences.ticket_list_columns.map(c => [c.key, `${c.width}px`]), savedWidths);
+    await page.locator('#columnsSettingsBtn').click(); assert.deepEqual(await draftKeys(), savedOrder);
+    await page.locator('#closeColumnsModalBtn').click();
+    assert.deepEqual(await sortState(), sorted);
+    await page.locator('.table-sort-btn[data-sort-key="subject"]').click();
+    assert.equal((await sortState())[0], 'subject', 'sorting resumes outside editing');
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
+  test(`automatic columns measure once, fill subject and restore preferences: ${theme}, ${role}`, async t => {
+    const { page, preferences, requests } = await setup(t, { width: 1920, height: 1080, theme, role, pageName: 'tickets' });
+    const keys = ['requester', 'subject', 'department', 'location', ...(role === 'admin' ? ['assignee'] : [])];
+    preferences.ticket_list_columns = keys.map(key => ({ key, width: key === 'subject' ? 340 : 180 }));
+    const samples = ['A', 'B', 'W'.repeat(45), ''].map((name, i) => ({ ...rows[i], is_internal_task: false,
+      requester_display_name: name, requester_department: i === 3 ? '' : 'M'.repeat(i === 1 ? 13 : 12), requester_location_type: '' }));
+    await page.route('**/api/v1/tickets/active?**', route => {
+      const params = new URL(route.request().url()).searchParams;
+      const current = Number(params.get('page') || 1);
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: current === 1 && !params.has('query') ? samples : samples.map(row => ({ ...row,
+        requester_display_name: 'W'.repeat(180), requester_department: 'M'.repeat(120), requester_location_type: 'W'.repeat(90) })), total: 8, pages: 2, page: current }) });
+    });
+    await page.reload(); await page.waitForSelector('.ticket-row');
+    await page.locator('.table-sort-btn[data-sort-key="requester_display_name"]').click();
+    const widths = () => page.locator('th[data-column-key]').evaluateAll(nodes => Object.fromEntries(nodes.map(el => [el.dataset.columnKey, parseFloat(el.style.width)])));
+    const ordinary = value => Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'subject'));
+    const open = async () => { await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click(); };
+    const toggle = page.locator('#columnAutoWidthInput');
+    const finished = () => page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+    await open();
+    const banner = await page.locator('#columnAutoWidthControl').boundingBox(), footer = await page.locator('.table-pagination-footer').boundingBox();
+    assert.ok(banner.height >= 55 && banner.bottom !== 0 && banner.y + banner.height <= footer.y);
+    assert.equal(await toggle.isChecked(), false);
+    assert.equal(await page.locator('th[data-column-key]').first().evaluate(el => getComputedStyle(el).outlineStyle), 'none');
+    assert.equal(await page.locator('.table-sort-btn.active').count(), 0);
+    assert.equal(await page.locator('.table-sort-btn').evaluateAll(nodes => nodes.some(el => /[▲▼]/.test(el.textContent))), false);
+    await toggle.check(); await finished();
+    assert.equal(await page.locator('.column-resize-handle').count(), 0);
+    const calculated = await widths();
+    // Measure actual glyphs independently; padding is added after applying the cap.
+    for (const key of ['requester', 'department']) {
+      const expected = await page.locator(`td[data-column-key="${key}"]`).evaluateAll(cells => {
+        const widths = cells.filter(cell => cell.textContent.trim() && cell.textContent.trim() !== '—').map(cell => {
+          const range = document.createRange(); range.selectNodeContents(cell.querySelector('a')); return range.getBoundingClientRect().width;
+        });
+        const cell = cells[0], link = cell.querySelector('a'), cs = getComputedStyle(cell), ls = getComputedStyle(link);
+        const padding = parseFloat(ls.paddingLeft) + parseFloat(ls.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+        return Math.ceil(Math.min(Math.max(...widths), widths.reduce((a, b) => a + b, 0) / widths.length * 1.5) + padding);
+      });
+      assert.ok(Math.abs(calculated[key] - expected) <= 2, `${key}: ${calculated[key]} versus ${expected}`);
+    }
+    assert.ok(calculated.location >= 60 && calculated.location < 200, 'empty values use the header minimum');
+    if (role === 'admin') assert.ok(calculated.assignee > 100, 'selected assignee and control fit');
+    assert.equal(await page.locator('.table-scroll').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'no extra horizontal scrollbar');
+    // Subject fills the space even when moved to the end.
+    const source = page.locator('th[data-column-key="subject"]'), target = page.locator('th[data-column-key]').last();
+    const a = await source.boundingBox(), b = await target.boundingBox();
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await page.mouse.down();
+    await page.mouse.move(b.x + b.width - 6, b.y + b.height / 2, { steps: 8 }); await page.mouse.up();
+    assert.equal(await page.locator('th[data-column-key]').last().getAttribute('data-column-key'), 'subject');
+    assert.deepEqual(await widths(), calculated, 'widths follow keys during automatic DnD');
+    await page.locator('#saveResizeColumnsBtn').click(); await page.locator('#saveColumnsBtn').click();
+    await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+    assert.equal(preferences.ticket_list_auto_width, true);
+    assert.equal(await page.locator('#columnAutoWidthControl').isVisible(), false);
+    assert.equal(await page.locator('.table-sort-btn.active').count(), 1, 'sort indication returns');
+    const stored = await widths();
+    const renderedWidths = () => page.locator('th[data-column-key]').evaluateAll(nodes => Object.fromEntries(nodes.map(el => [el.dataset.columnKey, el.getBoundingClientRect().width])));
+    const rendered = await renderedWidths();
+    await Promise.all([page.waitForResponse(r => r.url().includes('/tickets/active?') && new URL(r.url()).searchParams.get('page') === '2'), page.locator('#nextPageBtn').click()]);
+    assert.deepEqual(await widths(), stored, 'pagination cannot recalculate widths'); assert.deepEqual(await renderedWidths(), rendered);
+    await page.locator('.table-sort-btn[data-sort-key="requester_display_name"]').click(); assert.deepEqual(await widths(), stored);
+    await page.locator('#searchInput').fill('filter'); await page.locator('#searchInput').press('Enter');
+    await page.waitForResponse(r => r.url().includes('/tickets/active?') && new URL(r.url()).searchParams.get('query') === 'filter');
+    assert.deepEqual(await widths(), stored, 'filters cannot recalculate widths'); assert.deepEqual(await renderedWidths(), rendered);
+    await page.reload(); await page.waitForSelector('.ticket-row'); assert.deepEqual(await widths(), stored, 'reload restores fixed widths and mode');
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.waitForFunction(previous => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) < previous, stored.subject);
+    const smaller = await widths(); assert.deepEqual(ordinary(smaller), ordinary(stored)); assert.ok(smaller.subject >= 180);
+    await page.setViewportSize({ width: 900, height: 900 }); await page.waitForFunction(() => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) === 180);
+    assert.equal(await page.locator('.table-scroll').evaluate(el => el.scrollWidth > el.clientWidth), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await open(); const beforeOff = await widths(); await toggle.uncheck();
+    assert.deepEqual(await widths(), beforeOff, 'turning off keeps current widths');
+    assert.ok(await page.locator('.column-resize-handle').count() > 0);
+    await toggle.check(); await finished();
+    // Current filtered page is wider than the original page; explicit re-enabling recalculates.
+    const recalculated = await widths();
+    assert.ok(recalculated.requester > beforeOff.requester, 'explicit re-enabling uses the current page');
+    assert.equal(preferences.ticket_list_auto_width, true, 'draft does not write preferences');
+    await page.locator('#cancelResizeColumnsBtn').click(); await page.locator('#closeColumnsModalBtn').click();
+    assert.deepEqual(ordinary(await widths()), ordinary(stored)); assert.equal(preferences.ticket_list_auto_width, true);
+    assert.equal(requests.some(r => r.path?.includes('/tickets/closed?')), false);
+    await open(); await toggle.uncheck(); const manual = await widths();
+    await page.locator('#saveResizeColumnsBtn').click(); await page.locator('#saveColumnsBtn').click();
+    await page.waitForFunction(() => document.querySelector('#columnsModal').classList.contains('hidden'));
+    assert.equal(preferences.ticket_list_auto_width, false); assert.deepEqual(await widths(), manual);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const outcome of ['values', 'empty', 'error']) {
+  test(`automatic columns sample closed only when enabled on empty page: ${theme}, ${outcome}`, async t => {
+    const { page, preferences } = await setup(t, { width: 1366, height: 900, theme, pageName: 'tickets', role: 'agent' });
+    preferences.ticket_list_columns = [{ key: 'requester', width: 180 }, { key: 'subject', width: 340 }];
+    let closedCalls = 0;
+    await page.route('**/api/v1/tickets/active?**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [], total: 0, page: 1, pages: 1 }) }));
+    await page.route('**/api/v1/tickets/closed?**', route => {
+      closedCalls++;
+      const url = new URL(route.request().url()); assert.equal(url.searchParams.get('page'), '1'); assert.equal(url.searchParams.has('query'), false);
+      return route.fulfill({ status: outcome === 'error' ? 500 : 200, contentType: 'application/json', body: JSON.stringify({ items: outcome === 'values'
+        ? [{ ...rows[0], is_internal_task: false, requester_display_name: 'W'.repeat(80) }] : [] }) });
+    });
+    await page.reload(); await page.waitForSelector('#emptyText', { state: 'visible' });
+    assert.equal(closedCalls, 0);
+    const url = page.url();
+    await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+    await page.locator('#columnAutoWidthInput').check(); await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+    assert.equal(closedCalls, 1); assert.equal(page.url(), url); assert.equal(await page.locator('.ticket-row').count(), 0);
+    const width = await page.locator('th[data-column-key="requester"]').evaluate(el => parseFloat(el.style.width));
+    assert.ok(outcome === 'values' ? width > 500 : width < 220);
+    await page.locator('#columnAutoWidthInput').uncheck(); assert.equal(closedCalls, 1);
+    await page.locator('#columnAutoWidthInput').check(); await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+    assert.equal(closedCalls, 2);
+    await page.locator('#cancelResizeColumnsBtn').click(); await page.locator('#closeColumnsModalBtn').click();
+    assert.equal(preferences.ticket_list_auto_width, undefined); assert.equal(await page.locator('.ticket-row').count(), 0);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const automatic of [false, true]) {
+  test(`column editor hides all sorting marks and restores them: ${theme}, auto=${automatic}`, async t => {
+    const { page, requests } = await setup(t, { width: 1920, height: 1080, theme, role: 'admin', pageName: 'tickets' });
+    const sort = page.locator('.table-sort-btn[data-sort-key="subject"]');
+    await sort.click();
+    const snapshot = () => sort.evaluate(el => ({ text: el.textContent, decoration: getComputedStyle(el).textDecorationLine,
+      key: localStorage.getItem('hd_table_sort_key'), dir: localStorage.getItem('hd_table_sort_dir') }));
+    const before = await snapshot(); assert.equal(before.decoration, 'underline'); assert.match(before.text, /[▲▼]$/);
+    await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+    if (automatic) {
+      await page.locator('#columnAutoWidthInput').check();
+      await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+    }
+    const marks = await page.locator('.table-sort-btn').evaluateAll(nodes => nodes.map(el => ({
+      text: el.textContent, decoration: getComputedStyle(el).textDecorationLine, grip: getComputedStyle(el, '::before').content,
+    })));
+    for (const mark of marks) { assert.doesNotMatch(mark.text, /[▲▼]/); assert.equal(mark.decoration, 'none'); assert.match(mark.grip, /☰/); }
+    // The editor's CSS must suppress decoration even if an active class is present.
+    assert.equal(await sort.evaluate(el => { el.classList.add('active'); const decoration = getComputedStyle(el).textDecorationLine; el.classList.remove('active'); return decoration; }), 'none');
+    await sort.dispatchEvent('click');
+    const editing = await snapshot(); assert.equal(editing.key, before.key); assert.equal(editing.dir, before.dir);
+    await page.locator('#cancelResizeColumnsBtn').click(); await page.locator('#closeColumnsModalBtn').click();
+    assert.deepEqual(await snapshot(), before, 'sort state and exact indication return');
+    await sort.click(); assert.notEqual((await snapshot()).dir, before.dir, 'normal sorting remains active');
+    assert.equal(requests.some(r => r.method === 'PATCH'), false);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
+  test(`column trash confirms only this draft deletion: ${theme}, ${role}`, async t => {
+    const { page, requests, preferences } = await setup(t, { width: 1366, height: 900, theme, role, pageName: 'tickets' });
+    const keys = () => page.locator('.columns-draft-row').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey));
+    await page.locator('#columnsSettingsBtn').click();
+    const original = await keys(), persisted = JSON.stringify(preferences);
+    assert.equal(await page.locator('.columns-draft-row[data-column-key="subject"] [data-column-delete]').count(), 0);
+    await page.locator('.columns-drag-handle').nth(1).dragTo(page.locator('.columns-draft-row').nth(2), { targetPosition: { x: 40, y: 30 } });
+    const dirtyOrder = await keys(); assert.notDeepEqual(dirtyOrder, original);
+    if (await page.locator('#taskPanelEnabledInput').isVisible()) await page.locator('#taskPanelEnabledInput').uncheck();
+    const draft = () => page.evaluate(() => ({ list: document.querySelector('#columnsDraftList').innerHTML,
+      options: document.querySelector('#columnAddSelect').innerHTML, panel: document.querySelector('#taskPanelEnabledInput').checked }));
+    const before = await draft();
+    const trash = page.locator('[data-column-delete]').first();
+    const key = await trash.getAttribute('data-column-delete');
+    const title = await trash.locator('..').locator('.columns-draft-title').textContent();
+    for (const cancel of ['button', 'Escape', 'backdrop']) {
+      await trash.click(); await modalVisible(page, '#deleteColumnModal');
+      assert.equal(await page.locator('#deleteColumnText').textContent(), `Вы уверены, что хотите удалить столбец „${title}“ из списка?`);
+      assert.deepEqual(await draft(), before, 'opening confirmation never changes the draft');
+      assert.equal(await page.locator('#deleteColumnModal .modal-dialog').evaluate(el => getComputedStyle(el).borderRadius), '24px');
+      assert.equal(await page.locator('#cancelDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Tab'); assert.equal(await page.locator('#confirmDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Tab'); assert.equal(await page.locator('#cancelDeleteColumnBtn').evaluate(el => el === document.activeElement), true);
+      if (cancel === 'button') await page.locator('#cancelDeleteColumnBtn').click();
+      else if (cancel === 'Escape') await page.keyboard.press('Escape');
+      else await page.locator('#deleteColumnModal').click({ position: { x: 4, y: 4 } });
+      assert.equal(await page.locator('#deleteColumnModal').isVisible(), false);
+      assert.equal(await page.locator('#columnsModal').isVisible(), true);
+      assert.deepEqual(await draft(), before, 'cancel preserves the entire existing draft');
+      assert.equal(await trash.evaluate(el => el === document.activeElement), true);
+    }
+    await trash.click(); await page.locator('#confirmDeleteColumnBtn').click();
+    assert.deepEqual(await keys(), dirtyOrder.filter(item => item !== key));
+    assert.equal(await page.locator('#deleteColumnModal').isVisible(), false);
+    assert.equal(await page.locator('#columnsModal').isVisible(), true);
+    assert.equal(await page.locator('#columnsModal').evaluate(el => el.inert), false);
+    assert.equal(JSON.stringify(preferences), persisted); assert.equal(requests.some(r => r.method === 'PATCH'), false);
+    await page.locator('#closeColumnsModalBtn').click(); await page.locator('#columnsSettingsBtn').click();
+    assert.deepEqual(await keys(), original, 'closing still discards unsaved deletion');
+    await page.locator('#closeColumnsModalBtn').click();
+    if (role === 'admin') {
+      await page.locator('.ticket-check').first().check(); await page.locator('#bulkDeleteBtn').click();
+      assert.equal(await page.locator('#bulkActionModal').isVisible(), true);
+      assert.equal(await page.locator('#deleteColumnModal').isVisible(), false, 'bulk deletion uses its existing dialog');
+      await page.locator('#cancelBulkActionBtn').click();
+    }
   });
 }

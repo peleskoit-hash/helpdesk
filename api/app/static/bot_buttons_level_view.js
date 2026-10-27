@@ -333,7 +333,7 @@
     ctx.el.content.querySelectorAll("[data-row-index][data-node-index]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (ctx.state.layoutEditMode) return;
-        if (!ctx.confirmDiscard()) return;
+        if (!await ctx.confirmDiscard()) return;
         ctx.discardEditorChanges();
         const row = rows[Number(btn.dataset.rowIndex)];
         const node = row?.buttons?.[Number(btn.dataset.nodeIndex)];
@@ -390,7 +390,7 @@
       if (!level?.levelKey || !ctx.state.selectedMenu) return;
       const serializedRows = serializeLayoutRows(ctx.state.layoutDraftRows || []);
       if (!serializedRows) {
-        alert("\u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043d\u0435\u043b\u044c\u0437\u044f \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0431\u043e\u043b\u044c\u0448\u0435 3 \u043a\u043d\u043e\u043f\u043e\u043a.");
+        await window.HelpdeskDialogs.alert("\u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043d\u0435\u043b\u044c\u0437\u044f \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0431\u043e\u043b\u044c\u0448\u0435 3 \u043a\u043d\u043e\u043f\u043e\u043a.");
         return;
       }
       ctx.setStatus("Сохранение структуры...");
@@ -435,8 +435,8 @@
     });
     document.getElementById("deleteMenuTypeBtn")?.addEventListener("click", async () => {
       if (!ctx.state.selectedMenu) return;
-      if (!window.confirm("\u0412\u044b \u0443\u0432\u0435\u0440\u0435\u043d\u044b, \u0447\u0442\u043e \u0445\u043e\u0442\u0438\u0442\u0435 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u043c\u0435\u043d\u044e \u043a\u043d\u043e\u043f\u043e\u043a?")) return;
-      if (!window.confirm("\u0412\u044b \u0422\u041e\u0427\u041d\u041e \u0443\u0432\u0435\u0440\u0435\u043d\u044b, \u0447\u0442\u043e \u0445\u043e\u0442\u0438\u0442\u0435 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u043c\u0435\u043d\u044e \u043a\u043d\u043e\u043f\u043e\u043a?")) return;
+      if (!await window.HelpdeskDialogs.confirm("\u0412\u044b \u0443\u0432\u0435\u0440\u0435\u043d\u044b, \u0447\u0442\u043e \u0445\u043e\u0442\u0438\u0442\u0435 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u043c\u0435\u043d\u044e \u043a\u043d\u043e\u043f\u043e\u043a?")) return;
+      if (!await window.HelpdeskDialogs.confirm("\u0412\u044b \u0422\u041e\u0427\u041d\u041e \u0443\u0432\u0435\u0440\u0435\u043d\u044b, \u0447\u0442\u043e \u0445\u043e\u0442\u0438\u0442\u0435 \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u043c\u0435\u043d\u044e \u043a\u043d\u043e\u043f\u043e\u043a?")) return;
       ctx.setStatus("\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u043c\u0435\u043d\u044e...");
       await ctx.api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(ctx.state.selectedMenu)}`, { method: "DELETE" });
       await ctx.loadMenuTypes();
@@ -470,13 +470,13 @@
     document.getElementById("renameSectionBtn")?.addEventListener("click", async () => {
       const currentPreview = ctx.state.preview || {};
       const initial = (currentPreview.item?.button_label_effective || currentPreview.label || "").trim();
-      const next = window.prompt("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0432 \u0431\u043e\u0442\u0435", initial);
+      const next = await window.HelpdeskDialogs.prompt("\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0432 \u0431\u043e\u0442\u0435", initial);
       if (next === null) return;
       await ctx.saveLabelOverrideForNode(currentPreview, next, true);
     });
     document.getElementById("resetSectionLabelBtn")?.addEventListener("click", async () => {
       const currentPreview = ctx.state.preview || {};
-      if (!window.confirm("\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0435\u0440\u0435\u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u043d\u043e\u0435 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0438 \u0432\u0435\u0440\u043d\u0443\u0442\u044c \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0438\u0437 \u0411\u0414?")) return;
+      if (!await window.HelpdeskDialogs.confirm("\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0435\u0440\u0435\u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u043d\u043e\u0435 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0438 \u0432\u0435\u0440\u043d\u0443\u0442\u044c \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0438\u0437 \u0411\u0414?")) return;
       await ctx.saveLabelOverrideForNode(currentPreview, "", false);
     });
   }
@@ -579,7 +579,7 @@
         btn.classList.toggle("bot-layout-drop-forbidden", !allowed);
       });
       btn.addEventListener("dragleave", () => btn.classList.remove("bot-layout-drop-active"));
-      btn.addEventListener("drop", (event) => {
+      btn.addEventListener("drop", async (event) => {
         event.preventDefault();
         event.stopPropagation();
         if (!localAllowed()) { blockLocal(); return; }
@@ -589,7 +589,7 @@
         clearDropClasses(ctx.el.content);
         if (!from || Number.isNaN(toRow) || Number.isNaN(toIndex)) return;
         if (!moveDraftButton(draft, from.row, from.index, toRow, toIndex)) {
-          alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
+          await window.HelpdeskDialogs.alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
           return;
         }
         ctx.render();
@@ -610,7 +610,7 @@
       rowEl.addEventListener("dragleave", () => {
         rowEl.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden");
       });
-      rowEl.addEventListener("drop", (event) => {
+      rowEl.addEventListener("drop", async (event) => {
         event.preventDefault();
         if (!localAllowed()) { blockLocal(); return; }
         const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
@@ -618,7 +618,7 @@
         clearDropClasses(ctx.el.content);
         if (!from || Number.isNaN(toRow)) return;
         if (!moveDraftButton(draft, from.row, from.index, toRow, null)) {
-          alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
+          await window.HelpdeskDialogs.alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
           return;
         }
         ctx.render();

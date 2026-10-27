@@ -89,7 +89,7 @@
 
     function canNavigateAway() {
       if (!isDirty()) return true;
-      return window.confirm("Есть несохранённые изменения. Уйти без сохранения?");
+      return window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Уйти без сохранения?");
     }
 
     function handleBeforeUnload(event) {

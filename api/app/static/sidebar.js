@@ -749,9 +749,9 @@
       countsNode.appendChild(frozenCount);
       item.appendChild(name);
       item.appendChild(countsNode);
-      item.addEventListener("click", (event) => {
+      item.addEventListener("click", async (event) => {
         event.preventDefault();
-        if (!canChangeAssigneeFilter()) return;
+        if (!await canChangeAssigneeFilter()) return;
         const currentSet = new Set(state.adminAssigneeIds || []);
         if (event.ctrlKey && !isAllAgentsSelected()) {
           if (currentSet.has(agent.id)) {
@@ -916,9 +916,9 @@
     }
     const label = header?.querySelector("span");
     if (label) label.textContent = "\u0412\u0441\u0435";
-    const chooseAll = (event) => {
+    const chooseAll = async (event) => {
       event?.preventDefault?.();
-      if (!canChangeAssigneeFilter()) return;
+      if (!await canChangeAssigneeFilter()) return;
       selectAllAssignees();
       renderAgentFilter();
       loadCounts();

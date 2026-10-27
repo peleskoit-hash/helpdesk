@@ -831,7 +831,7 @@ async function toggleSource(sourceId, isActive) {
 async function deleteSource(sourceId) {
   const source = findSourceById(sourceId);
   if (!source) return;
-  if (!window.confirm(`\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u00ab${source.name || source.technical_key || source.id}\u00bb?`)) return;
+  if (!await window.HelpdeskDialogs.confirm(`\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0434\u0430\u043d\u043d\u044b\u0445 \u00ab${source.name || source.technical_key || source.id}\u00bb?`)) return;
   try {
     const sources = await api(`/api/v1/settings/client-card/sources/${sourceId}`, { method: "DELETE" });
     state.clientCard.sources = sources;
@@ -1211,7 +1211,7 @@ async function moveRule(ruleId, direction) {
 async function deleteRule(ruleId) {
   const rule = findRuleById(ruleId);
   if (!rule || rule.is_system) return;
-  if (!window.confirm(`${uiText.deleteRuleConfirmPrefix}${rule.name || rule.id}${uiText.deleteRuleConfirmSuffix}`)) return;
+  if (!await window.HelpdeskDialogs.confirm(`${uiText.deleteRuleConfirmPrefix}${rule.name || rule.id}${uiText.deleteRuleConfirmSuffix}`)) return;
   try {
     const config = await api(`/api/v1/settings/client-card/rules/${ruleId}`, { method: "DELETE" });
     closeRuleModal();
@@ -1522,7 +1522,7 @@ async function moveField(fieldId, direction) {
 async function deleteBlock(blockId) {
   const block = (state.clientCard.blocks || []).find((item) => item.id === blockId);
   if (!block || !isCustomBlock(block)) return;
-  if (!window.confirm(`${uiText.deleteBlockConfirmPrefix}${block.title || block.key}${uiText.deleteBlockConfirmSuffix}`)) return;
+  if (!await window.HelpdeskDialogs.confirm(`${uiText.deleteBlockConfirmPrefix}${block.title || block.key}${uiText.deleteBlockConfirmSuffix}`)) return;
   try {
     const config = await api(`/api/v1/settings/client-card/blocks/${blockId}`, { method: "DELETE" });
     state.expandedBlocks.delete(blockId);
@@ -1537,7 +1537,7 @@ async function deleteBlock(blockId) {
 async function deleteField(fieldId) {
   const field = findFieldById(fieldId);
   if (!field || field.is_system) return;
-  if (!window.confirm(`${uiText.deleteFieldConfirmPrefix}${field.label || field.key}${uiText.deleteFieldConfirmSuffix}`)) return;
+  if (!await window.HelpdeskDialogs.confirm(`${uiText.deleteFieldConfirmPrefix}${field.label || field.key}${uiText.deleteFieldConfirmSuffix}`)) return;
   try {
     const config = await api(`/api/v1/settings/client-card/fields/${fieldId}`, { method: "DELETE" });
     if (state.editingFieldId === fieldId) closeEditFieldModal();

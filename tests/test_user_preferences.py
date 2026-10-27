@@ -971,3 +971,25 @@ def test_client_card_collapse_schema_upgrade_preserves_saved_state(monkeypatch):
     schema_evolution.ensure_user_columns()
     with engine.connect() as conn:
         assert conn.execute(text("SELECT client_card_collapsed_blocks_json FROM users")).scalar_one() == '{"tg": true}'
+
+
+def test_auto_column_width_mode_persists_with_widths_and_partial_patches():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov")
+    current = _current_user(effective_user_id=user.id, real_user_id=user.id)
+    columns = [{"key": "requester", "width": 153}, {"key": "subject", "width": 411}]
+    assert users_router.get_my_preferences(db=session, current_user=current).ticket_list_auto_width is False
+    updated = users_router.update_my_preferences(
+        UserPreferencesUpdate(ticket_list_auto_width=True, ticket_list_columns=columns), db=session, current_user=current,
+    )
+    assert updated.ticket_list_auto_width is True
+    session.expire_all()
+    loaded = users_router.get_my_preferences(db=session, current_user=current)
+    assert loaded.ticket_list_auto_width is True
+    assert [column.model_dump() for column in loaded.ticket_list_columns] == columns
+    users_router.update_my_preferences(UserPreferencesUpdate(color_enabled=False), db=session, current_user=current)
+    assert users_router.get_my_preferences(db=session, current_user=current).ticket_list_auto_width is True
+    disabled = users_router.update_my_preferences(UserPreferencesUpdate(ticket_list_auto_width=False), db=session, current_user=current)
+    assert disabled.ticket_list_auto_width is False
+    assert [column.model_dump() for column in disabled.ticket_list_columns] == columns

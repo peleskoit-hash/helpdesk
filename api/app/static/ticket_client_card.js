@@ -1370,12 +1370,12 @@
 
   function confirmInlineExit(ctx) {
     if (ctx.state.clientCardInline?.saving) return false;
-    return !hasInlineChanges(ctx) || global.confirm("Есть несохранённые изменения. Выйти без сохранения?");
+    return !hasInlineChanges(ctx) || global.HelpdeskDialogs.confirm("Есть несохранённые изменения. Выйти без сохранения?");
   }
 
-  function closeClientModal(ctx, { force = false } = {}) {
+  async function closeClientModal(ctx, { force = false } = {}) {
     if (ctx.inlineClient) {
-      if (!force && !confirmInlineExit(ctx)) return false;
+      if (!force && !await confirmInlineExit(ctx)) return false;
       const editor = inlineEditorState(ctx);
       editor.open = false;
       editor.values = null;

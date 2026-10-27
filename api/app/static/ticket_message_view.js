@@ -245,7 +245,7 @@
     const confirmation = message.message_type === "internal"
       ? "Удалить внутренний комментарий?"
       : "Пометить сообщение удалённым и удалить его в Telegram, если возможно?";
-    if (!window.confirm(confirmation)) return;
+    if (!await window.HelpdeskDialogs.confirm(confirmation)) return;
     try {
       setStatus("Удаляю сообщение...");
       await api(`/api/v1/tickets/${state.ticketId}/messages/${message.id}`, { method: "DELETE" });

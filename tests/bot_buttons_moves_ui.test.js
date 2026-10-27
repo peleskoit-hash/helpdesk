@@ -183,7 +183,7 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
   await page.locator('#cancelLayoutBtn').click();
   assert.equal(calls.filter(call => call.method === 'PUT' && call.p.endsWith('/layout')).length, 0);
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css', 'app_shell.js', 'bot_buttons_level_view.js', 'settings_bot_buttons.js']) {
-    const version = ['styles.css', 'desk-v2.css'].includes(file) ? '20261027-agent-pastel-v2' : file === 'app_shell.js' ? '20261027-chat-quick-replies-v2' : ['bot_buttons_level_view.js', 'settings_bot_buttons.js'].includes(file) ? '20261025-bot-move-v2' : '20261026-bot-editor-v2';
+    const version = ['styles.css','desk-v2.css','app_shell.js','bot_buttons_level_view.js'].includes(file) ? '20261027-dialog-prompts-v4' : file === 'bot-buttons-browser-v2.css' ? '20261027-dialogs-complete-v3' : '20261027-themed-dialogs-v1';
     assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);

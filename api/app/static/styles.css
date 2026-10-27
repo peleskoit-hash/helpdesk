@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261027-agent-pastel-v2");
+@import url("/static/desk-v2.css?v=20261027-dialog-prompts-v4");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -2123,9 +2123,9 @@ th, td {
 }
 
 .ticket-channel-col {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
+  width: 54px;
+  min-width: 54px;
+  max-width: 54px;
   text-align: center;
   padding-left: 6px;
   padding-right: 6px;
@@ -2136,16 +2136,16 @@ th, td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 33px;
+  height: 33px;
   color: #64748b;
   pointer-events: none;
   vertical-align: middle;
 }
 
 .ticket-channel-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 26px;
+  height: 26px;
   fill: currentColor;
 }
 
@@ -2162,6 +2162,12 @@ th, td {
   height: 24px;
   line-height: 1;
   padding: 0;
+}
+
+.ticket-channel-col .mini-icon-btn {
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
 }
 
 .ticket-channel-col .mini-icon-btn,
@@ -2237,12 +2243,14 @@ th button {
   width: 100%;
   padding: 0;
   text-align: center;
-  font-size: 18px;
+  font-size: 21px;
   font-weight: 600;
 }
 
 .table-sort-btn.active {
   color: #0b5f73;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 th.ticket-subject-col,
@@ -2437,6 +2445,10 @@ body.ticket-colors-disabled tr.ticket-color-closed {
   background: #fff;
 }
 
+.columns-modal-title {
+  font-size: 17px;
+}
+
 .columns-dialog {
   max-width: 560px;
 }
@@ -2449,10 +2461,12 @@ body.ticket-colors-disabled tr.ticket-color-closed {
 
 .columns-modal-foot {
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .columns-task-panel-toggle {
+  margin-right: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -2460,15 +2474,30 @@ body.ticket-colors-disabled tr.ticket-color-closed {
   font-weight: 700;
 }
 
-.columns-add-label {
+.columns-modal-body .columns-add-label {
   display: grid;
   gap: 6px;
-  font-size: 13px;
+  font-size: 16px;
+}
+
+.columns-modal-body .columns-add-label select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .columns-draft-list {
   display: grid;
   gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.columns-draft-row:first-child {
+  border-color: var(--accent);
+  font-weight: 700;
 }
 
 .columns-draft-row {
@@ -2483,6 +2512,8 @@ body.ticket-colors-disabled tr.ticket-color-closed {
 }
 
 .columns-drag-handle {
+  touch-action: none;
+  user-select: none;
   cursor: grab;
   color: #64748b;
   text-align: center;

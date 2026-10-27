@@ -303,9 +303,9 @@
     };
 
     const hasUnsavedChanges = () => String(textarea?.value || "") !== initialValue;
-    const requestClose = (force = false) => {
+    const requestClose = async (force = false) => {
       if (!force && hasUnsavedChanges()) {
-        const ok = window.confirm("Есть несохранённые изменения. Закрыть окно без применения?");
+        const ok = await window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Закрыть окно без применения?");
         if (!ok) return;
       }
       closeTextEditorModal();
@@ -380,7 +380,7 @@
         });
       };
       document.querySelectorAll("[data-format-action]").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const action = btn.getAttribute("data-format-action");
           if (!textarea || !action) return;
           if (action !== "emoji") closeEmojiPicker();
@@ -395,10 +395,12 @@
           if (action === "quote") return applyTagToSelection(textarea, "<blockquote>", "</blockquote>");
           if (action === "quote_expandable") return applyTagToSelection(textarea, "<blockquote expandable>", "</blockquote>");
           if (action === "link") {
-            const selected = (textarea.value || "").slice(textarea.selectionStart ?? 0, textarea.selectionEnd ?? 0);
-            const hrefInput = window.prompt("Введите URL (http/https/tg/mailto):", "https://");
+            const start = textarea.selectionStart ?? 0, end = textarea.selectionEnd ?? 0;
+            const selected = (textarea.value || "").slice(start, end);
+            const hrefInput = await window.HelpdeskDialogs.prompt("Введите URL (http/https/tg/mailto):", "https://");
             const safeHref = sanitizeLinkHref(hrefInput || "");
             if (!safeHref) return;
+            textarea.setSelectionRange(start, end);
             if (selected) return applyTagToSelection(textarea, `<a href="${safeHref}">`, "</a>");
             return applyTagToSelection(textarea, `<a href="${safeHref}">ссылка</a>`, "");
           }
@@ -443,6 +445,7 @@
         textarea?.focus();
         return;
       }
+      event.preventDefault();
       requestClose(false);
     };
     document.addEventListener("keydown", textModalEscHandler);
@@ -698,11 +701,11 @@
     botLabelInput?.addEventListener("input", () => {
       state.editorBotLabel = botLabelInput.value;
     });
-    workflowTypeSelectEl?.addEventListener("change", () => {
+    workflowTypeSelectEl?.addEventListener("change", async () => {
       const previous = String(state.editorWorkflowType || resolvedLeafWorkflowType || "").trim().toLowerCase();
       const nextValue = String(workflowTypeSelectEl.value || "").trim().toLowerCase();
       if (typeof editorHelpers.applyWorkflowTypeDraft !== "function") return;
-      const changed = editorHelpers.applyWorkflowTypeDraft(ctx, nextValue);
+      const changed = await editorHelpers.applyWorkflowTypeDraft(ctx, nextValue);
       if (!changed) {
         workflowTypeSelectEl.value = previous;
         return;
@@ -813,7 +816,7 @@
     });
     deleteSubmenuBtn?.addEventListener("click", async () => {
       const message = `Подменю содержит ${nestedChildCount} дочерних элементов.\nПри удалении подменю они также будут удалены из меню.\nВы уверены?`;
-      if (!window.confirm(message)) return;
+      if (!await window.HelpdeskDialogs.confirm(message)) return;
       await archiveMenuButton();
     });
     document.querySelectorAll("[data-add-file-condition]").forEach((btn) => {
@@ -910,7 +913,7 @@
       const message = hasNested
         ? "Будут скрыты также вложенные кнопки. Продолжить?"
         : "Элемент будет скрыт из меню, но настройки сохраняются. Продолжить?";
-      if (!window.confirm(message)) return;
+      if (!await window.HelpdeskDialogs.confirm(message)) return;
       await archiveMenuButton();
     });
 
@@ -921,7 +924,7 @@
         await restoreRemovedSetting();
       });
       delBtn?.addEventListener("click", async () => {
-        if (!window.confirm("Удалить эту запись из удалённых/изменённых?")) return;
+        if (!await window.HelpdeskDialogs.confirm("Удалить эту запись из удалённых/изменённых?")) return;
         await deleteRemovedSetting();
       });
     }

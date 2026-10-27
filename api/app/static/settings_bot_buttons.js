@@ -21,7 +21,7 @@ function bindSystemTicketOpenHandler({ content, onOpen, onOpenGroup, onError, co
     const trigger = event.target?.closest?.(SYSTEM_TICKET_SELECTOR);
     if (!trigger) return;
     event.preventDefault();
-    if (typeof confirmDiscard === "function" && !confirmDiscard()) return;
+    if (typeof confirmDiscard === "function" && !await confirmDiscard()) return;
     if (typeof discardEditorChanges === "function") discardEditorChanges();
     try {
       const key = String(trigger.getAttribute("data-system-ticket-key") || "");
@@ -374,7 +374,7 @@ function discardSystemFirstConnectionChanges() {
 
 function confirmSystemFirstConnectionDiscard() {
   if (!hasSystemFirstConnectionUnsavedChanges()) return true;
-  return window.confirm("\u0415\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f. \u0423\u0439\u0442\u0438 \u0431\u0435\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f?");
+  return window.HelpdeskDialogs.confirm("\u0415\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f. \u0423\u0439\u0442\u0438 \u0431\u0435\u0437 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f?");
 }
 
 function hasSystemButtonGroupUnsavedChanges() {
@@ -448,10 +448,10 @@ async function openParentTaskEditor() {
   if (!level || String(level.kind || "") !== "group_task_parent") return;
   const technicalKey = String(level.technicalKey || "").trim();
   if (!technicalKey) {
-    alert("Не удалось определить технический ключ материнской задачи.");
+    await window.HelpdeskDialogs.alert("Не удалось определить технический ключ материнской задачи.");
     return;
   }
-  if (!confirmDiscard()) return;
+  if (!await confirmDiscard()) return;
   discardEditorChanges();
   await openEditor({
     label: level.label || "Групповая задача",
@@ -468,10 +468,10 @@ async function openSubmenuEditor() {
   if (!level || String(level.kind || "") !== "submenu") return;
   const technicalKey = String(level.technicalKey || "").trim();
   if (!technicalKey) {
-    alert("Не удалось определить технический ключ подменю.");
+    await window.HelpdeskDialogs.alert("Не удалось определить технический ключ подменю.");
     return;
   }
-  if (!confirmDiscard()) return;
+  if (!await confirmDiscard()) return;
   discardEditorChanges();
   await openEditor({
     label: level.label || "Подменю",
@@ -496,7 +496,7 @@ async function saveLabelOverrideForNode(node, nextLabel, enabled) {
   if (!node?.technicalKey || !state.selectedMenu) return;
   const label = String(nextLabel || "").trim();
   if (enabled && !label) {
-    alert("Название в боте не может быть пустым.");
+    await window.HelpdeskDialogs.alert("Название в боте не может быть пустым.");
     return;
   }
   await api(
@@ -653,8 +653,8 @@ function renderSystemFirstConnectionEditor() {
     });
   });
 
-  document.getElementById("backFromSystemEditorBtn")?.addEventListener("click", () => {
-    if (!confirmSystemFirstConnectionDiscard()) return;
+  document.getElementById("backFromSystemEditorBtn")?.addEventListener("click", async () => {
+    if (!await confirmSystemFirstConnectionDiscard()) return;
     discardSystemFirstConnectionChanges();
     state.view = "menu_types";
     render();
@@ -732,8 +732,8 @@ function renderSystemButtonGroupEditor() {
       }
     });
   });
-  document.getElementById("backFromSystemButtonGroupBtn")?.addEventListener("click", () => {
-    if (!confirmDiscard()) return;
+  document.getElementById("backFromSystemButtonGroupBtn")?.addEventListener("click", async () => {
+    if (!await confirmDiscard()) return;
     discardSystemButtonGroupChanges();
     state.view = "menu_types";
     render();
@@ -745,7 +745,7 @@ function renderSystemButtonGroupEditor() {
       button_style: button.buttonStyle || null,
     }));
     if (buttons.some((button) => !button.text)) {
-      alert("\u0422\u0435\u043a\u0441\u0442 \u043a\u043d\u043e\u043f\u043a\u0438 \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u043f\u0443\u0441\u0442\u044b\u043c");
+      await window.HelpdeskDialogs.alert("\u0422\u0435\u043a\u0441\u0442 \u043a\u043d\u043e\u043f\u043a\u0438 \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u043f\u0443\u0441\u0442\u044b\u043c");
       return;
     }
     setStatus(`\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435: ${group.title}...`);
@@ -1153,10 +1153,10 @@ function openCreateItemModal({ isChildTaskLevel = false } = {}) {
     const enabledInput = overlay.querySelector("#botCreateEnabledInput");
     labelInput?.focus();
 
-    const apply = () => {
+    const apply = async () => {
       const label = String(labelInput?.value || "").trim();
       if (!label) {
-        alert("Название обязательно.");
+        await window.HelpdeskDialogs.alert("Название обязательно.");
         labelInput?.focus();
         return;
       }
@@ -1180,7 +1180,7 @@ function openCreateItemModal({ isChildTaskLevel = false } = {}) {
 
 async function createLevelItem() {
   if (!state.selectedMenu) return;
-  if (!confirmDiscard()) return;
+  if (!await confirmDiscard()) return;
   discardEditorChanges();
   const current = currentLevel();
   const parentPath = String(current?.fullPath || "");
@@ -1189,7 +1189,7 @@ async function createLevelItem() {
   if (!result) return;
   const kind = String(result.kind || "").trim().toLowerCase();
   if (!["section", "ticket", "task", "auto", "group_task", "group_task_child"].includes(kind)) {
-    alert("Недопустимый тип кнопки.");
+    await window.HelpdeskDialogs.alert("Недопустимый тип кнопки.");
     return;
   }
   const label = String(result.label || "").trim();
@@ -1212,34 +1212,34 @@ async function createLevelItem() {
   setStatus("Кнопка добавлена");
 }
 
-function handleBack() {
+async function handleBack() {
   if (state.layoutPendingMove || state.layoutSaving) {
     setStatus("Сохраните или отмените перенос перед выходом с уровня.");
     return;
   }
   if (state.view === "system_editor") {
-    if (!confirmSystemFirstConnectionDiscard()) return;
+    if (!await confirmSystemFirstConnectionDiscard()) return;
     discardSystemFirstConnectionChanges();
     state.view = "menu_types";
     render();
     return;
   }
   if (state.view === "system_button_group_editor") {
-    if (!confirmDiscard()) return;
+    if (!await confirmDiscard()) return;
     discardSystemButtonGroupChanges();
     state.view = "menu_types";
     render();
     return;
   }
   if (state.view === "editor") {
-    if (!confirmDiscard()) return;
+    if (!await confirmDiscard()) return;
     discardEditorChanges();
     state.view = "level";
     render();
     return;
   }
   if (state.view === "level") {
-    if (!confirmDiscard()) return;
+    if (!await confirmDiscard()) return;
     discardEditorChanges();
     BotButtonsLevelView.cancelLayoutEdit(state);
     if (state.levelStack.length > 1) {

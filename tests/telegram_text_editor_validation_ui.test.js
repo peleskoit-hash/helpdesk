@@ -212,7 +212,7 @@ test("app shell goBack uses browser history and preserves dirty guard", async ()
       return false;
     },
   });
-  assert.equal(blocked.window.HelpdeskAppShell.goBack(), false);
+  assert.equal(await blocked.window.HelpdeskAppShell.goBack(), false);
   assert.equal(blockedGuardCalls, 1);
   assert.deepEqual(blocked.fetchCalls, []);
   assert.deepEqual(blocked.historyCalls, []);
@@ -232,7 +232,7 @@ test("app shell goBack uses browser history and preserves dirty guard", async ()
       return true;
     },
   });
-  assert.equal(allowed.window.HelpdeskAppShell.goBack(), true);
+  assert.equal(await allowed.window.HelpdeskAppShell.goBack(), true);
   assert.equal(allowedGuardCalls, 1);
   assert.deepEqual(allowed.fetchCalls, []);
   assert.deepEqual(allowed.historyCalls, [["back"]]);
@@ -252,7 +252,7 @@ test("app shell goBack uses browser history and preserves dirty guard", async ()
       return expiredGuardCalls === 1;
     },
   });
-  assert.equal(expired.window.HelpdeskAppShell.goBack(), true);
+  assert.equal(await expired.window.HelpdeskAppShell.goBack(), true);
   expired.runTimers();
   expired.setLocation("/settings");
   await expired.listeners.popstate();
@@ -261,7 +261,7 @@ test("app shell goBack uses browser history and preserves dirty guard", async ()
   assert.deepEqual(expired.historyCalls.map((call) => call[0]), ["back", "pushState"]);
 });
 
-test("app shell delegates data-shell-back clicks to goBack", () => {
+test("app shell delegates data-shell-back clicks to goBack", async () => {
   let guardCalls = 0;
   const shell = loadAppShellHarness({
     guard: () => {
@@ -282,6 +282,7 @@ test("app shell delegates data-shell-back clicks to goBack", () => {
   };
 
   shell.listeners.click(event);
+  await Promise.resolve();
 
   assert.equal(event.preventDefaultCalled, true);
   assert.equal(guardCalls, 1);
@@ -348,7 +349,7 @@ test("notification bot basic dirty guard tracks baseline save and page label", (
   assert.match(source, /state\.baselines\.set\(item\.type, snapshotDraft\(draft\)\)/);
   assert.match(source, /state\.baselines\.set\(normalized\.type, snapshotDraft\(normalized\)\)/);
   assert.match(source, /canNavigateAway/);
-  assert.match(source, /window\.confirm\("Есть несохранённые изменения\. Уйти без сохранения\?"\)/);
+  assert.match(source, /window\.HelpdeskDialogs\.confirm\("Есть несохранённые изменения\. Уйти без сохранения\?"\)/);
   assert.match(source, /window\.addEventListener\("beforeunload", handleBeforeUnload\)/);
   assert.match(source, /window\.removeEventListener\("beforeunload", handleBeforeUnload\)/);
   assert.match(settingsTemplate, /Базовые сообщения бота уведомлений/);
@@ -363,7 +364,7 @@ test("notification bot basic SPA route loads current script and saves active fif
   const templateScript = template.match(/settings_notification_bot_basic\.js\?v=([0-9a-z-]+)"/)?.[1];
   const shellScript = appShellSource.match(/settings_notification_bot_basic\.js\?v=([0-9a-z-]+)"/)?.[1];
 
-  assert.equal(templateScript, "20261021-save-feedback");
+  assert.equal(templateScript, "20261027-dialogs-complete-v3");
   assert.equal(shellScript, templateScript);
   assert.match(source, /const draft = normalizeDraft\(item\);[\s\S]+state\.drafts\.set\(item\.type, draft\);[\s\S]+state\.baselines\.set\(item\.type, snapshotDraft\(draft\)\);/);
   assert.match(source, /state\.activeType = button\.getAttribute\("data-tab-type"\) \|\| state\.activeType/);

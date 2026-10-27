@@ -446,6 +446,7 @@ class UserPreferencesOut(BaseModel):
     send_by_enter: bool = False
     color_enabled: bool = True
     task_panel_enabled: bool = False
+    ticket_list_auto_width: bool = False
     theme_preference: Literal["light", "dark"] = "light"
     accent_preference: AccentPreference = "purple"
     accent_intensity_light: int = Field(default=50, ge=0, le=100, strict=True)
@@ -476,6 +477,7 @@ class UserPreferencesUpdate(BaseModel):
     send_by_enter: bool | None = None
     color_enabled: bool | None = None
     task_panel_enabled: bool | None = None
+    ticket_list_auto_width: StrictBool | None = None
     theme_preference: Literal["light", "dark"] | None = None
     accent_preference: AccentPreference | None = None
     accent_intensity_light: int | None = Field(default=None, ge=0, le=100, strict=True)

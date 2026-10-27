@@ -230,7 +230,7 @@
       const showError = (text) => {
         if (errorBox) errorBox.textContent = text;
       };
-      const apply = () => {
+      const apply = async () => {
         const displayName = String(nameInput?.value || "").trim();
         if (!displayName) {
           showError("Введите название меню.");
@@ -335,7 +335,7 @@
     });
     el.content.querySelectorAll("[data-menu-name]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        if (!confirmDiscard()) return;
+        if (!await confirmDiscard()) return;
         discardEditorChanges();
         await openMenu(btn.dataset.menuName || "");
       });
@@ -344,7 +344,7 @@
       btn.addEventListener("click", async () => {
         const menuName = String(btn.dataset.restoreMenu || "").trim();
         if (!menuName) return;
-        if (!window.confirm(`Восстановить меню "${menuName}"?`)) return;
+        if (!await window.HelpdeskDialogs.confirm(`Восстановить меню "${menuName}"?`)) return;
         setStatus("Восстановление меню...");
         await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(menuName)}/restore`, {
           method: "POST",

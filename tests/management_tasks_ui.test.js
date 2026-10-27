@@ -121,10 +121,10 @@ async function load(handler, dateConstructor = Date, options = {}) {
   const window = {
     HelpdeskSidebar: { init: async () => ({ role: "admin" }) },
     HelpdeskAppShell: { registerPage: (name, value) => { assert.equal(name, "management-tasks"); factory = value; } },
-    confirm: (message) => {
+    HelpdeskDialogs: { confirm: async (message) => {
       confirms.push(message);
       return options.confirm ? options.confirm(message) : true;
-    },
+    } },
   };
   vm.runInNewContext(source, {
     window,
@@ -333,16 +333,19 @@ test("dirty task modal confirms destructive close attempts and keeps clean close
   const rejected = await load(null, Date, { confirm: () => false });
   rejected.el.CreateBtn.fire("click");
   rejected.el.CancelBtn.fire("click");
+  await settle();
   assert.equal(rejected.el.Modal.classList.contains("hidden"), true);
   assert.equal(rejected.confirms.length, 0);
 
   rejected.el.CreateBtn.fire("click");
   rejected.el.Title.value = "Draft";
   rejected.el.CancelBtn.fire("click");
+  await settle();
   assert.equal(rejected.el.Modal.classList.contains("hidden"), false);
   assert.equal(rejected.confirms.at(-1), "Вы уверены, что хотите закрыть окно?\nВсе несохранённые данные будут потеряны.");
 
   rejected.el.CloseModalBtn.fire("click");
+  await settle();
   assert.equal(rejected.el.Modal.classList.contains("hidden"), false);
   assert.equal(rejected.confirms.length, 2);
 
@@ -350,7 +353,9 @@ test("dirty task modal confirms destructive close attempts and keeps clean close
   accepted.el.ScheduledBody.fire("click", { target: { closest: (selector) => (selector === "[data-edit-scheduled]" ? { dataset: { editScheduled: "d2" } } : null) } });
   accepted.el.Title.value = "Changed";
   accepted.el.Modal.fire("pointerdown", { target: accepted.el.Modal });
+  await settle();
   accepted.el.Modal.fire("click", { target: accepted.el.Modal });
+  await settle();
   assert.equal(accepted.el.Modal.classList.contains("hidden"), true);
   assert.equal(accepted.confirms.at(-1), "Вы уверены, что хотите закрыть окно?\nВсе несохранённые данные будут потеряны.");
 });

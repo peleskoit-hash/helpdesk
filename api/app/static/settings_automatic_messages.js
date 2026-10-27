@@ -219,11 +219,15 @@
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    function closeEditorModal(force = false) {
-      const modal = document.getElementById(TEXT_MODAL_ID);
+    function editorDraftChanged() {
       const textarea = document.getElementById("automaticMessageTextarea");
-      if (!force && modal && textarea && state.activeDraft !== String(textarea.value || "")) {
-        const ok = window.confirm("Есть несохранённые изменения. Закрыть окно без применения?");
+      return Boolean(textarea && state.activeDraft !== textarea.value);
+    }
+
+    async function closeEditorModal(force = false) {
+      const modal = document.getElementById(TEXT_MODAL_ID);
+      if (!force && editorDraftChanged()) {
+        const ok = await window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Закрыть окно без применения?");
         if (!ok) return false;
       }
       closeEmojiPicker();
@@ -292,10 +296,9 @@
       `;
     }
 
-    function openEditorModal(item) {
-      closeEditorModal(true);
+    async function openEditorModal(item) {
+      if (!await closeEditorModal()) return;
       state.activeTemplate = item;
-      state.activeDraft = String(item.effective_text || "");
       const overlay = document.createElement("div");
       overlay.id = TEXT_MODAL_ID;
       overlay.className = "modal-overlay";
@@ -343,6 +346,7 @@
       document.body.appendChild(overlay);
 
       const textarea = document.getElementById("automaticMessageTextarea");
+      state.activeDraft = textarea.value;
       const preview = document.getElementById("automaticMessagePreview");
       const toolbar = document.getElementById("automaticMessageToolbar");
       const variableTrigger = overlay.querySelector("[data-variable-trigger]");
@@ -355,7 +359,6 @@
       }
       function syncPreview() {
         preview.innerHTML = renderTelegramPreviewHtml(textarea.value || "");
-        state.activeDraft = String(textarea.value || "");
       }
       function toggleEmojiPicker(triggerBtn) {
         closeVariablePicker();
@@ -425,7 +428,7 @@
       variableTrigger?.addEventListener("mousedown", (event) => event.preventDefault());
       variableTrigger?.addEventListener("click", () => toggleVariablePicker(variableTrigger));
       toolbar.querySelectorAll("[data-format-action]").forEach((button) => {
-        button.addEventListener("click", () => {
+        button.addEventListener("click", async () => {
           const action = button.getAttribute("data-format-action");
           if (action !== "emoji") closeEmojiPicker();
           if (action === "emoji") return toggleEmojiPicker(button);
@@ -439,9 +442,11 @@
           if (action === "quote") return applyTagToSelection(textarea, "<blockquote>", "</blockquote>");
           if (action === "quote_expandable") return applyTagToSelection(textarea, "<blockquote expandable>", "</blockquote>");
           if (action === "link") {
-            const selected = (textarea.value || "").slice(textarea.selectionStart ?? 0, textarea.selectionEnd ?? 0);
-            const safeHref = sanitizeLinkHref(window.prompt("Введите URL (http/https/tg/mailto):", "https://") || "");
+            const start = textarea.selectionStart ?? 0, end = textarea.selectionEnd ?? 0;
+            const selected = (textarea.value || "").slice(start, end);
+            const safeHref = sanitizeLinkHref((await window.HelpdeskDialogs.prompt("Введите URL (http/https/tg/mailto):", "https://")) || "");
             if (!safeHref) return;
+            textarea.setSelectionRange(start, end);
             return selected ? applyTagToSelection(textarea, `<a href="${safeHref}">`, "</a>") : applyTagToSelection(textarea, `<a href="${safeHref}">ссылка</a>`, "");
           }
           if (action === "clear") {
@@ -479,6 +484,7 @@
       });
       state.modalEscHandler = (event) => {
         if (event.key !== "Escape") return;
+        event.preventDefault();
         if (document.getElementById(VARIABLE_PICKER_ID)) {
           event.preventDefault();
           closeVariablePicker();
@@ -587,7 +593,7 @@
     async function resetActiveTemplate() {
       const item = state.activeTemplate;
       if (!item) return;
-      if (!window.confirm("Вернуть этот текст к базовому шаблону?")) return;
+      if (!await window.HelpdeskDialogs.confirm("Вернуть этот текст к базовому шаблону?")) return;
       try {
         await api(`/api/v1/settings/automatic-messages/${encodeURIComponent(item.key)}`, { method: "DELETE" });
         await loadTemplates();
@@ -625,10 +631,13 @@
         if (error?.status !== 401) showError(error.message);
       });
 
-    return () => {
-      closeEditorModal(true);
-      closeError();
-      document.removeEventListener("keydown", handlePageKeydown);
+    return {
+      canNavigateAway: () => !editorDraftChanged() || window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Закрыть окно без применения?"),
+      destroy() {
+        closeEditorModal(true);
+        closeError();
+        document.removeEventListener("keydown", handlePageKeydown);
+      },
     };
   }
 

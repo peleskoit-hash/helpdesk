@@ -1148,3 +1148,23 @@ for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
     assert.deepEqual(navigations, allowed ? ["/reviews"] : []);
   });
 }
+
+for (const all of [false, true]) for (const approved of [false, true]) {
+  test(`async assignee guard waits before mutations: all=${all}, approved=${approved}`, async () => {
+    const { document } = buildSidebarDom();
+    const window = await loadSidebar(document, 'admin', {}, { storage: {
+      hd_admin_assignee_ids: JSON.stringify(['a1']), hd_admin_assignee_login_ts: '1', hd_tab: 'active',
+    }, locationPathname: '/settings/bot-buttons', locationHref: '/settings/bot-buttons' });
+    let answer;
+    window.HelpdeskAppShell = { confirmNavigateAway() { return new Promise(resolve => { answer = resolve; }); } };
+    const fetches = window.__fetchCalls.length;
+    if (all) { const header = document.querySelector('.admin-agent-header'); header.dispatchEvent({ type: 'click', target: header }); }
+    else clickAgent(document, 1);
+    await flushSidebarAsync();
+    assert.deepEqual(sidebarAssignees(window), ['a1']); assert.deepEqual(storedAssignees(window), ['a1']);
+    assert.equal(window.location.href, '/settings/bot-buttons'); assert.equal(window.__fetchCalls.length, fetches);
+    answer(approved); await flushSidebarAsync();
+    assert.deepEqual(sidebarAssignees(window), approved ? all ? ['a1', 'b2', 'c3'] : ['b2'] : ['a1']);
+    assert.equal(window.location.href, approved ? '/tickets?tab=active' : '/settings/bot-buttons');
+  });
+}

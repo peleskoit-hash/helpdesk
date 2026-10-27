@@ -127,6 +127,7 @@ class User(Base):
     appearance_write_state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     client_card_collapsed_blocks_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ticket_list_columns_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    ticket_list_auto_width: Mapped[bool] = mapped_column(default=False, server_default=text("FALSE"), nullable=False)
     legacy_ticket_count: Mapped[int] = mapped_column(default=0)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

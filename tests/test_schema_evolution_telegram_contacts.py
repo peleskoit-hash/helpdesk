@@ -965,3 +965,17 @@ def test_hue_palette_migration_preserves_legacy_and_saved_colors(monkeypatch, ac
     with engine.connect() as conn:
         assert tuple(conn.execute(text("SELECT interface_hue_light, accent_hue_dark, accent_strength_dark FROM users")).one()) == (88,42,0)
     engine.dispose()
+
+
+def test_user_auto_column_width_flag_is_added_idempotently(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    _create_legacy_users_table(engine)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_user_columns()
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT ticket_list_auto_width FROM users WHERE id = 'user-1'")).scalar_one() == 0
+        conn.execute(text("UPDATE users SET ticket_list_auto_width = TRUE WHERE id = 'user-1'"))
+    schema_evolution.ensure_user_columns()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT ticket_list_auto_width FROM users WHERE id = 'user-1'")).scalar_one() == 1
+    assert "ticket_list_auto_width" in User.__table__.columns

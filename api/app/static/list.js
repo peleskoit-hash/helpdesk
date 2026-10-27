@@ -44,6 +44,7 @@ let ownsPopState = false;
 let pendingLoadOptions = null;
 let pageEventController = null;
 let colorLegendHideTimer = null;
+let columnAutoResizeObserver = null;
 const state = {
   tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   appliedSearchQuery: urlState.q,
@@ -72,12 +73,17 @@ const state = {
   taskPanelItems: [],
   taskPanelDropdownOpen: false,
   ticketListColumns: [],
+  ticketListAutoWidth: false,
+  draftTicketListAutoWidth: false,
+  columnResizeAutoWidth: false,
+  columnAutoCalculation: null,
   draftTicketListColumns: null,
   columnDraftPreviewActive: false,
   columnResizeActive: false,
   columnResizeColumns: null,
   columnResizePreviousDraft: null,
   columnResizeDrag: null,
+  columnReorderDrag: null,
 };
 
 const endpointMap = {
@@ -181,6 +187,8 @@ function collectElements() {
     taskPanelMoreBtn: byId("taskPanelMoreBtn"),
     taskPanelDropdown: byId("taskPanelDropdown"),
     taskPanelToggle: root?.querySelector(".columns-task-panel-toggle") || null,
+    columnAutoWidthControl: byId("columnAutoWidthControl"),
+    columnAutoWidthInput: byId("columnAutoWidthInput"),
     ticketsHeaderRow: byId("ticketsHeaderRow"),
     ticketsTable: byId("ticketsTable"),
     ticketsTableBody: byId("ticketsTableBody"),
@@ -208,6 +216,10 @@ function collectElements() {
     cancelBulkActionBtn: byId("cancelBulkActionBtn"),
     confirmBulkActionBtn: byId("confirmBulkActionBtn"),
     columnsModal: byId("columnsModal"),
+    deleteColumnModal: byId("deleteColumnModal"),
+    deleteColumnText: byId("deleteColumnText"),
+    cancelDeleteColumnBtn: byId("cancelDeleteColumnBtn"),
+    confirmDeleteColumnBtn: byId("confirmDeleteColumnBtn"),
     closeColumnsModalBtn: byId("closeColumnsModalBtn"),
     columnAddSelect: byId("columnAddSelect"),
     columnsDraftList: byId("columnsDraftList"),
@@ -267,6 +279,7 @@ function requireListElements() {
 
 let el = collectElements();
 let pendingBulkAction = null;
+let pendingColumnDelete = null;
 
 function normalizeLoadOptions(options = {}) {
   return {
@@ -397,6 +410,7 @@ function applyTaskPanelPreference() {
 
 async function loadPreferences() {
   const preferences = await api("/api/v1/users/me/preferences");
+  state.ticketListAutoWidth = preferences?.ticket_list_auto_width === true;
   state.colorEnabled = preferences?.color_enabled !== false;
   state.taskPanelEnabled = preferences?.task_panel_enabled === true;
   state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || DEFAULT_TICKET_COLUMNS);
@@ -411,7 +425,8 @@ async function updateColorPreference(enabled) {
   applyColorPreference();
   try {
     const preferences = await apiWrite("/api/v1/users/me/preferences", { color_enabled: state.colorEnabled });
-    state.colorEnabled = preferences?.color_enabled !== false;
+    state.ticketListAutoWidth = preferences?.ticket_list_auto_width === true;
+  state.colorEnabled = preferences?.color_enabled !== false;
     applyColorPreference();
     setStatus("Настройка цвета сохранена");
   } catch (e) {
@@ -644,7 +659,7 @@ function refreshSortHeaderUi() {
     const base = btn.textContent.replace(/\s[\u25B2\u25BC?]$/, "");
     btn.textContent = base;
     btn.classList.remove("active");
-    if (btn.dataset.sortKey === state.tableSortKey) {
+    if (!state.columnResizeActive && btn.dataset.sortKey === state.tableSortKey) {
       btn.classList.add("active");
       btn.textContent = `${base} ${state.tableSortDir === "asc" ? "\u25B2" : "\u25BC"}`;
     }
@@ -718,14 +733,30 @@ function clampResizeWidth(key, width) {
   return Math.max(min, Number.isFinite(parsed) ? parsed : min);
 }
 
+function activeTicketAutoWidth() {
+  return state.columnResizeActive ? state.columnResizeAutoWidth
+    : state.columnDraftPreviewActive ? state.draftTicketListAutoWidth : state.ticketListAutoWidth;
+}
+
 function activeTicketColumns() {
-  if (state.columnResizeActive && state.columnResizeColumns) {
-    return normalizeTicketColumns(state.columnResizeColumns);
-  }
-  if (state.columnDraftPreviewActive && state.draftTicketListColumns) {
-    return normalizeTicketColumns(state.draftTicketListColumns);
-  }
-  return normalizeTicketColumns(state.ticketListColumns);
+  const columns = normalizeTicketColumns(state.columnResizeActive && state.columnResizeColumns
+    ? state.columnResizeColumns : state.columnDraftPreviewActive && state.draftTicketListColumns
+      ? state.draftTicketListColumns : state.ticketListColumns);
+  if (!activeTicketAutoWidth() || !el.ticketsTable) return columns;
+  const scroll = el.ticketsTable.closest(".table-scroll");
+  const style = getComputedStyle(scroll);
+  const available = scroll.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  return window.HelpdeskTicketColumnAutoWidth.fill(columns, available, 54 + (state.role === "admin" ? 34 : 0));
+}
+
+function refreshAutoColumnLayout() {
+  if (!activeTicketAutoWidth() || state.columnReorderDrag || !el.ticketsTable) return;
+  const columns = activeTicketColumns();
+  const subject = columns.find((column) => column.key === "subject");
+  el.ticketsTable.style.width = `${columns.reduce((sum, column) => sum + column.width, 54 + (state.role === "admin" ? 34 : 0))}px`;
+  el.ticketsTable.querySelectorAll('[data-column-key="subject"]').forEach((cell) => {
+    cell.style.cssText = columnStyle(subject.width);
+  });
 }
 
 function fixedTableWidth(columns) {
@@ -971,7 +1002,7 @@ function renderTicketHeader() {
   columns.forEach((column) => {
     const def = TICKET_COLUMN_DEFS[column.key];
     const sort = def.sortKey ? ` data-sort-key="${escapeHtml(def.sortKey)}"` : "";
-    const handle = state.columnResizeActive
+    const handle = state.columnResizeActive && !state.columnResizeAutoWidth
       ? `<button class="column-resize-handle" type="button" data-resize-column="${escapeHtml(column.key)}" aria-label="Изменить ширину ${escapeHtml(def.title)}"><span class="resize-handle-icon" aria-hidden="true"></span></button>`
       : "";
     cells.push(`<th class="${def.className}" data-column-key="${escapeHtml(column.key)}" style="${columnStyle(column.width)}"><button type="button" class="table-sort-btn"${sort}>${escapeHtml(def.title)}</button>${handle}</th>`);
@@ -994,6 +1025,11 @@ function renderTicketHeader() {
   document.querySelectorAll(".column-resize-handle").forEach((handle) => {
     handle.addEventListener("pointerdown", startColumnResizeDrag);
   });
+  if (state.columnResizeActive) {
+    el.ticketsHeaderRow.querySelectorAll('th[data-column-key]').forEach((header) => {
+      header.addEventListener("pointerdown", startColumnReorderDrag);
+    });
+  }
   refreshSortHeaderUi();
 }
 
@@ -1009,15 +1045,19 @@ function measureRenderedColumnWidths() {
 function enterColumnResizeMode() {
   state.columnResizePreviousDraft = cloneColumns(normalizeTicketColumns(state.draftTicketListColumns || state.ticketListColumns));
   state.columnResizeColumns = cloneColumns(state.columnResizePreviousDraft);
+  state.columnResizeAutoWidth = state.draftTicketListAutoWidth;
   state.columnResizeActive = true;
   el.columnsModal?.classList.add("columns-resize-mode");
   el.resizeColumnsActions?.classList.remove("hidden");
   renderTable();
-  state.columnResizeColumns = measureRenderedColumnWidths();
+  if (!state.columnResizeAutoWidth) state.columnResizeColumns = measureRenderedColumnWidths();
   renderTable();
 }
 
 function leaveColumnResizeMode() {
+  stopColumnReorderDrag();
+  state.columnAutoCalculation = null;
+  if (el.saveResizeColumnsBtn) el.saveResizeColumnsBtn.disabled = false;
   state.columnResizeActive = false;
   state.columnResizeColumns = null;
   state.columnResizeDrag = null;
@@ -1027,7 +1067,9 @@ function leaveColumnResizeMode() {
 }
 
 function saveColumnResizeDraft() {
-  state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.columnResizeColumns));
+  if (state.columnAutoCalculation) return;
+  state.draftTicketListAutoWidth = state.columnResizeAutoWidth;
+  state.draftTicketListColumns = cloneColumns(activeTicketColumns());
   state.columnDraftPreviewActive = true;
   state.columnResizePreviousDraft = null;
   leaveColumnResizeMode();
@@ -1042,7 +1084,7 @@ function cancelColumnResizeDraft() {
 }
 
 function startColumnResizeDrag(event) {
-  if (!state.columnResizeActive) return;
+  if (!state.columnResizeActive || state.columnResizeAutoWidth) return;
   event.preventDefault();
   event.stopPropagation();
   const key = event.currentTarget?.dataset?.resizeColumn || "";
@@ -1073,13 +1115,56 @@ function stopColumnResizeDrag() {
   state.columnResizeDrag = null;
 }
 
+async function toggleAutoColumnWidth() {
+  if (!state.columnResizeActive) return;
+  const columns = cloneColumns(activeTicketColumns());
+  const samples = [...el.ticketsTableBody.rows].map((row) => row.cloneNode(true));
+  state.columnResizeColumns = columns;
+  state.columnResizeAutoWidth = el.columnAutoWidthInput.checked;
+  state.columnAutoCalculation = null;
+  el.saveResizeColumnsBtn.disabled = false;
+  renderTable();
+  if (!state.columnResizeAutoWidth) return;
+  const calculation = {};
+  state.columnAutoCalculation = calculation;
+  el.saveResizeColumnsBtn.disabled = true;
+  try {
+    if (!samples.length) {
+      try {
+        const payload = await api(`${endpointMap.closed}?sort=created_at&order=desc&page=1&limit=${state.limit}`);
+        const linkedCell = (className, text, width, isHtml = false) =>
+          `<td class="${className} ticket-linked-cell"><a class="ticket-row-link">${isHtml ? text : escapeHtml(text)}</a></td>`;
+        for (const ticket of payload.items || []) {
+          const row = document.createElement("tr");
+          row.className = "ticket-row";
+          row.innerHTML = columns.map((column) => ticketCellHtml(column, ticket, "", linkedCell)).join("");
+          [...row.cells].forEach((cell, index) => { cell.dataset.columnKey = columns[index].key; });
+          row.querySelectorAll(".row-assignee-select").forEach((select) => { select.value = select.dataset.selectedId || ""; });
+          samples.push(row);
+        }
+      } catch (_) { /* Empty samples use header minimums. */ }
+    }
+    await document.fonts.ready;
+    if (state.columnAutoCalculation !== calculation) return;
+    const measured = window.HelpdeskTicketColumnAutoWidth.measure(el.ticketsTable, columns, samples);
+    state.columnResizeColumns = state.columnResizeColumns.map((column) => ({ ...column, width: measured.find((item) => item.key === column.key).width }));
+    renderTable();
+  } finally {
+    if (state.columnAutoCalculation === calculation) {
+      state.columnAutoCalculation = null;
+      el.saveResizeColumnsBtn.disabled = false;
+    }
+  }
+}
+
 function renderColumnsDraft() {
   if (!el.columnsDraftList || !el.columnAddSelect) return;
   const draft = normalizeTicketColumns(state.draftTicketListColumns || state.ticketListColumns);
   state.draftTicketListColumns = draft;
   const existing = new Set(draft.map((column) => column.key));
   const addable = allowedTicketColumnKeys().filter((key) => !existing.has(key));
-  el.columnAddSelect.innerHTML = `<option value="">Добавить колонку</option>${addable.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(TICKET_COLUMN_DEFS[key].title)}</option>`).join("")}`;
+  el.columnAddSelect.innerHTML = `${addable.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(TICKET_COLUMN_DEFS[key].title)}</option>`).join("")}`;
+  el.columnAddSelect.selectedIndex = -1;
   el.columnAddSelect.disabled = addable.length === 0;
   el.columnsDraftList.innerHTML = draft.map((column, index) => {
     const def = TICKET_COLUMN_DEFS[column.key];
@@ -1087,7 +1172,7 @@ function renderColumnsDraft() {
       ? '<span class="columns-delete-spacer" aria-hidden="true"></span>'
       : `<button class="columns-delete-btn" type="button" data-column-delete="${escapeHtml(column.key)}" title="Удалить" aria-label="Удалить ${escapeHtml(def.title)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2 .3 7h1.5l-.2-7H10Zm4 0-.2 7h1.5l.3-7H14Z"/></svg></button>`;
     return `
-      <div class="columns-draft-row" draggable="true" data-column-key="${escapeHtml(column.key)}" data-column-index="${index}">
+      <div class="columns-draft-row" data-column-key="${escapeHtml(column.key)}" data-column-index="${index}">
         <span class="columns-drag-handle" title="Перетащить">☰</span>
         <span class="columns-draft-title">${escapeHtml(def.title)}</span>
         ${deleteButton}
@@ -1097,6 +1182,7 @@ function renderColumnsDraft() {
 }
 
 function openColumnsModal() {
+  state.draftTicketListAutoWidth = state.ticketListAutoWidth;
   state.columnDraftPreviewActive = false;
   state.draftTicketListColumns = cloneColumns(normalizeTicketColumns(state.ticketListColumns));
   applyTaskPanelPreference();
@@ -1106,6 +1192,8 @@ function openColumnsModal() {
 }
 
 function closeColumnsModal() {
+  if (pendingColumnDelete) closeDeleteColumnModal();
+  stopColumnReorderDrag();
   if (state.columnResizeActive) {
     cancelColumnResizeDraft();
   }
@@ -1114,6 +1202,24 @@ function closeColumnsModal() {
   state.draftTicketListColumns = null;
   el.columnsModal?.classList.add("hidden");
   if (hadPreview) renderTable();
+}
+
+function openDeleteColumnModal(key, trigger) {
+  const def = TICKET_COLUMN_DEFS[key];
+  if (!def || def.mandatory) return;
+  pendingColumnDelete = { key, trigger };
+  el.deleteColumnText.textContent = `Вы уверены, что хотите удалить столбец „${def.title}“ из списка?`;
+  el.columnsModal.inert = true;
+  el.deleteColumnModal.classList.remove("hidden");
+  el.cancelDeleteColumnBtn.focus();
+}
+
+function closeDeleteColumnModal() {
+  const trigger = pendingColumnDelete?.trigger;
+  pendingColumnDelete = null;
+  el.deleteColumnModal.classList.add("hidden");
+  el.columnsModal.inert = false;
+  (trigger?.isConnected ? trigger : el.editColumnsWidthBtn)?.focus();
 }
 
 function deleteDraftColumn(key) {
@@ -1132,23 +1238,94 @@ function addDraftColumn(key) {
 }
 
 function moveDraftColumn(fromIndex, toIndex) {
-  const draft = normalizeTicketColumns(state.draftTicketListColumns);
+  const field = state.columnResizeActive ? "columnResizeColumns" : "draftTicketListColumns";
+  const draft = normalizeTicketColumns(state[field]);
   if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= draft.length || toIndex >= draft.length) return;
   const [moved] = draft.splice(fromIndex, 1);
   draft.splice(toIndex, 0, moved);
-  state.draftTicketListColumns = draft;
-  renderColumnsDraft();
+  state[field] = draft;
+  const rows = state.columnResizeActive
+    ? el.ticketsTable.querySelectorAll("tr") : [el.columnsDraftList];
+  rows.forEach((row) => {
+    const nodes = [...row.querySelectorAll(":scope > [data-column-key]")];
+    const before = new Map(nodes.map((node) => [node, node.getBoundingClientRect()]));
+    nodes.forEach((node) => node.getAnimations().forEach((animation) => animation.cancel()));
+    draft.forEach((column, index) => {
+      const node = nodes.find((item) => item.dataset.columnKey === column.key);
+      if (!node) return;
+      row.appendChild(node);
+      if (!state.columnResizeActive) node.dataset.columnIndex = index;
+    });
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    nodes.forEach((node) => {
+      const previous = before.get(node), next = node.getBoundingClientRect();
+      if (previous.x === next.x && previous.y === next.y) return;
+      node.animate([
+        { transform: `translate(${previous.x - next.x}px, ${previous.y - next.y}px)` },
+        { transform: "translate(0, 0)" },
+      ], { duration: 160, easing: "ease-out" });
+    });
+  });
+}
+
+function startColumnReorderDrag(event) {
+  if (event.button !== 0 || state.columnResizeDrag || state.columnReorderDrag) return;
+  const header = event.target.closest("th[data-column-key]");
+  const handle = event.target.closest(".columns-drag-handle");
+  if (header ? (!state.columnResizeActive || event.target.closest(".column-resize-handle")) : !handle) return;
+  const node = header || handle.closest(".columns-draft-row");
+  event.preventDefault();
+  const captureNode = header ? el.ticketsHeaderRow : el.columnsDraftList;
+  captureNode.setPointerCapture(event.pointerId);
+  state.columnReorderDrag = {
+    key: node.dataset.columnKey, node, captureNode, table: Boolean(header),
+    pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moving: false,
+  };
+}
+
+function updateColumnReorderDrag(event) {
+  const drag = state.columnReorderDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  if (!drag.moving && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+  drag.moving = true;
+  drag.node.classList.add("column-reorder-dragging");
+  document.body.classList.add("column-reordering");
+  const parent = drag.table ? el.ticketsHeaderRow : el.columnsDraftList;
+  const nodes = [...parent.querySelectorAll(":scope > [data-column-key]")];
+  const from = nodes.findIndex((node) => node.dataset.columnKey === drag.key);
+  let to = from;
+  nodes.forEach((node, index) => {
+    if (index === from) return;
+    const box = node.getBoundingClientRect();
+    const transform = new DOMMatrix(getComputedStyle(node).transform);
+    const position = drag.table ? event.clientX : event.clientY;
+    const middle = drag.table ? box.x + box.width / 2 - transform.m41 : box.y + box.height / 2 - transform.m42;
+    if (index < from && position <= middle) to = Math.min(to, index);
+    if (index > from && position >= middle) to = Math.max(to, index);
+  });
+  moveDraftColumn(from, to);
+}
+
+function stopColumnReorderDrag() {
+  const drag = state.columnReorderDrag;
+  if (!drag) return;
+  state.columnReorderDrag = null;
+  drag.node.classList.remove("column-reorder-dragging");
+  if (drag.captureNode.hasPointerCapture(drag.pointerId)) drag.captureNode.releasePointerCapture(drag.pointerId);
+  document.body.classList.remove("column-reordering");
+  if (drag.table) renderTable();
 }
 
 async function saveColumnsModal() {
   const payloadColumns = normalizeTicketColumns(state.draftTicketListColumns).map((column) => ({ key: column.key, width: column.width }));
   const nextTaskPanelEnabled = Boolean(el.taskPanelEnabledInput?.checked);
-  const payload = { ticket_list_columns: payloadColumns };
+  const payload = { ticket_list_columns: payloadColumns, ticket_list_auto_width: state.draftTicketListAutoWidth };
   if (canUseTaskPanel()) {
     payload.task_panel_enabled = nextTaskPanelEnabled;
   }
   try {
     const preferences = await apiWrite("/api/v1/users/me/preferences", payload);
+    state.ticketListAutoWidth = preferences?.ticket_list_auto_width ?? state.draftTicketListAutoWidth;
     state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || payloadColumns);
     state.taskPanelEnabled = preferences?.task_panel_enabled === true;
     state.columnDraftPreviewActive = false;
@@ -1195,15 +1372,19 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
 }
 
 function renderTable() {
+  if (state.columnReorderDrag) return;
   const filtered = sortTickets(state.tickets);
   const activeColumns = activeTicketColumns();
   state.visibleTicketIds = filtered.map((t) => t.id);
   state.ticketListColumns = normalizeTicketColumns(state.ticketListColumns);
   document.body.classList.toggle("ticket-column-resize-active", state.columnResizeActive);
+  document.body.classList.toggle("ticket-columns-auto", activeTicketAutoWidth());
+  el.columnAutoWidthControl?.classList.toggle("hidden", !state.columnResizeActive);
+  if (el.columnAutoWidthInput) el.columnAutoWidthInput.checked = state.columnResizeAutoWidth;
   const hasFixedColumns = activeColumns.every((column) => column.width > 0);
   document.body.classList.toggle("ticket-columns-fixed", hasFixedColumns);
   if (el.ticketsTable) {
-    el.ticketsTable.style.width = hasFixedColumns ? `${fixedTableWidth(activeColumns)}px` : "";
+    el.ticketsTable.style.width = hasFixedColumns ? `${activeTicketAutoWidth() ? activeColumns.reduce((sum, column) => sum + column.width, 54 + (state.role === "admin" ? 34 : 0)) : fixedTableWidth(activeColumns)}px` : "";
   }
   renderTicketHeader();
   el.ticketsTableBody.innerHTML = "";
@@ -1615,6 +1796,9 @@ function init() {
   requireListElements();
   if (el.bulkSkipClientNotification) el.bulkSkipClientNotification.checked = false;
   const pageSignal = pageEventController.signal;
+  columnAutoResizeObserver?.disconnect();
+  columnAutoResizeObserver = new ResizeObserver(refreshAutoColumnLayout);
+  if (el.ticketsTable) columnAutoResizeObserver.observe(el.ticketsTable.closest(".table-scroll"));
   if (!endpointMap[state.tab]) state.tab = DEFAULT_TAB;
   applyRoleUi();
   localStorage.setItem("hd_tab", state.tab);
@@ -1705,11 +1889,31 @@ function init() {
     }, { signal: pageSignal });
   }
   if (el.bulkActionModal) closeOnBackdropClick(el.bulkActionModal, closeBulkActionModal);
+  el.cancelDeleteColumnBtn?.addEventListener("click", closeDeleteColumnModal, { signal: pageSignal });
+  el.confirmDeleteColumnBtn?.addEventListener("click", () => {
+    if (!pendingColumnDelete) return;
+    deleteDraftColumn(pendingColumnDelete.key);
+    closeDeleteColumnModal();
+  }, { signal: pageSignal });
+  if (el.deleteColumnModal) {
+    closeOnBackdropClick(el.deleteColumnModal, closeDeleteColumnModal);
+    el.deleteColumnModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.stopPropagation(); closeDeleteColumnModal(); }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        (document.activeElement === el.cancelDeleteColumnBtn ? el.confirmDeleteColumnBtn : el.cancelDeleteColumnBtn).focus();
+      }
+    }, { signal: pageSignal });
+  }
   if (el.closeColumnsModalBtn) el.closeColumnsModalBtn.addEventListener("click", closeColumnsModal, { signal: pageSignal });
   if (el.saveColumnsBtn) el.saveColumnsBtn.addEventListener("click", saveColumnsModal, { signal: pageSignal });
+  el.columnAutoWidthInput?.addEventListener("change", toggleAutoColumnWidth, { signal: pageSignal });
   if (el.editColumnsWidthBtn) el.editColumnsWidthBtn.addEventListener("click", enterColumnResizeMode, { signal: pageSignal });
   if (el.saveResizeColumnsBtn) el.saveResizeColumnsBtn.addEventListener("click", saveColumnResizeDraft, { signal: pageSignal });
   if (el.cancelResizeColumnsBtn) el.cancelResizeColumnsBtn.addEventListener("click", cancelColumnResizeDraft, { signal: pageSignal });
+  document.addEventListener("pointermove", updateColumnReorderDrag, { signal: pageSignal });
+  document.addEventListener("pointerup", stopColumnReorderDrag, { signal: pageSignal });
+  document.addEventListener("pointercancel", stopColumnReorderDrag, { signal: pageSignal });
   document.addEventListener("pointermove", updateColumnResizeDrag, { signal: pageSignal });
   document.addEventListener("pointerup", stopColumnResizeDrag, { signal: pageSignal });
   document.addEventListener("pointercancel", stopColumnResizeDrag, { signal: pageSignal });
@@ -1733,24 +1937,11 @@ function init() {
     el.columnsDraftList.addEventListener("click", (event) => {
       const deleteButton = event.target.closest("[data-column-delete]");
       if (deleteButton) {
-        deleteDraftColumn(deleteButton.dataset.columnDelete || "");
+        openDeleteColumnModal(deleteButton.dataset.columnDelete || "", deleteButton);
         return;
       }
     }, { signal: pageSignal });
-    el.columnsDraftList.addEventListener("dragstart", (event) => {
-      const row = event.target.closest(".columns-draft-row");
-      if (!row) return;
-      event.dataTransfer.setData("text/plain", row.dataset.columnIndex || "0");
-    }, { signal: pageSignal });
-    el.columnsDraftList.addEventListener("dragover", (event) => {
-      if (event.target.closest(".columns-draft-row")) event.preventDefault();
-    }, { signal: pageSignal });
-    el.columnsDraftList.addEventListener("drop", (event) => {
-      const row = event.target.closest(".columns-draft-row");
-      if (!row) return;
-      event.preventDefault();
-      moveDraftColumn(Number(event.dataTransfer.getData("text/plain")), Number(row.dataset.columnIndex || 0));
-    }, { signal: pageSignal });
+    el.columnsDraftList.addEventListener("pointerdown", startColumnReorderDrag, { signal: pageSignal });
   }
 
   el.closeErrorModalBtn.addEventListener("click", closeError, { signal: pageSignal });
@@ -1857,6 +2048,10 @@ runTicketsListPage().catch((error) => {
 
 return {
   destroy() {
+    if (pendingColumnDelete) closeDeleteColumnModal();
+    columnAutoResizeObserver?.disconnect();
+    state.columnAutoCalculation = null;
+    stopColumnReorderDrag();
     hideColorLegend();
     if (pollTimer) {
       window.clearInterval(pollTimer);

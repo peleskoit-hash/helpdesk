@@ -55,81 +55,87 @@
     ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2"] }],
-    ["/management/tasks", { page: "management-tasks", scripts: ["/static/management_tasks.js?v=20261021-all-save-feedback"] }],
-    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/management_saved_files.js?v=20261021-all-save-feedback"] }],
+    ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261027-dialogs-complete-v3"] }],
+    ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_saved_files.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261025-roles-editor-v2"] }],
-    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/settings_client_card.js?v=20261024-client-settings-groups-v2"] }],
+    ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/settings_client_card.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
       scripts: [
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/bot_buttons_api.js?v=20260520a",
-        "/static/bot_buttons_files.js?v=20260629a",
-        "/static/bot_buttons_level_view.js?v=20261025-bot-move-v2",
-        "/static/telegram_text_editor.js?v=20261005a",
+        "/static/bot_buttons_files.js?v=20261027-themed-dialogs-v1",
+        "/static/bot_buttons_level_view.js?v=20261027-dialog-prompts-v4",
+        "/static/telegram_text_editor.js?v=20261027-dialog-prompts-v4",
         "/static/bot_telegram_groups.js?v=20261021-group-copy",
-        "/static/bot_buttons_editor.js?v=20261026-bot-editor-v2",
-        "/static/bot_buttons_menu_view.js?v=20261025-bot-browser-v2",
+        "/static/bot_buttons_editor.js?v=20261027-themed-dialogs-v1",
+        "/static/bot_buttons_menu_view.js?v=20261027-themed-dialogs-v1",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/bot_buttons_editor_view.js?v=20261026-bot-editor-v2",
-        "/static/settings_bot_buttons.js?v=20261025-bot-move-v2",
+        "/static/bot_buttons_editor_view.js?v=20261027-dialog-prompts-v4",
+        "/static/settings_bot_buttons.js?v=20261027-themed-dialogs-v1",
       ],
     }],
     ["/settings/automatic-messages", {
       page: "settings-automatic-messages",
       scripts: [
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/settings_automatic_messages.js?v=20261022-auto-message-sections",
+        "/static/settings_automatic_messages.js?v=20261027-dialog-prompts-v4",
       ],
     }],
     ["/settings/notification-bot-basic", {
       page: "settings-notification-bot-basic",
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/telegram_text_editor.js?v=20261005a",
-        "/static/settings_notification_bot_basic.js?v=20261021-save-feedback",
+        "/static/telegram_text_editor.js?v=20261027-dialog-prompts-v4",
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
+        "/static/settings_notification_bot_basic.js?v=20261027-dialogs-complete-v3",
       ],
     }],
     ["/profile/notification-bot", {
       page: "profile-notification-bot",
       scripts: [
         "/static/bot_buttons_emoji_data.js?v=20260605a",
-        "/static/telegram_text_editor.js?v=20261005a",
-        "/static/profile_notification_bot.js?v=20261024-notification-layout-v2",
+        "/static/telegram_text_editor.js?v=20261027-dialog-prompts-v4",
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
+        "/static/profile_notification_bot.js?v=20261027-dialogs-complete-v3",
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261025-stats-final-v2", "/static/statuses.js?v=20261025-status-log-v2"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
-    ["/quick-replies", { page: "quick-replies", scripts: ["/static/quick_replies.js?v=20261021-profile-quick-save"] }],
+    ["/quick-replies", { page: "quick-replies", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/quick_replies.js?v=20261027-message-dialogs-v2"] }],
     ["/management", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/management/users", {
       page: "management-users",
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261025-bot-browser-v2",
-        "/static/management_users.js?v=20261025-bot-browser-v2",
+        "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
+        "/static/management_users.js?v=20261027-dialogs-complete-v3",
       ],
     }],
     ["/management/integrations", {
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/list.js?v=20261021-task-panel-refresh"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/ticket_column_auto_width.js?v=20261027-list-columns-v3", "/static/list.js?v=20261027-list-final-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {
       page: "ticket-card",
       test: (url) => /^\/tickets\/[^/]+$/.test(url.pathname),
       scripts: [
+        "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/ticket_api.js?v=20260521a",
         "/static/ticket_attachments.js?v=20261020-quotes",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261025-bot-browser-v2",
+        "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_composer.js?v=20261021-chat-file-input",
-        "/static/ticket_controls.js?v=20261025-ticket-sidebar-v2",
-        "/static/ticket_message_view.js?v=20261021-all-save-feedback",
-        "/static/ticket.js?v=20261027-chat-quick-replies-v2",
+        "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
+        "/static/ticket_message_view.js?v=20261027-dialogs-complete-v3",
+        "/static/ticket.js?v=20261027-dialogs-complete-v3",
       ],
     },
   ];
@@ -332,7 +338,7 @@
       window.location.href = `${url.pathname}${url.search}${url.hash}`;
       return false;
     }
-    if (options.skipGuard !== true && typeof current.canNavigateAway === "function" && !current.canNavigateAway()) {
+    if (options.skipGuard !== true && typeof current.canNavigateAway === "function" && !await current.canNavigateAway()) {
       return false;
     }
     let payload = null;
@@ -379,8 +385,8 @@
     return true;
   }
 
-  function goBack() {
-    if (!confirmNavigateAway()) return false;
+  async function goBack() {
+    if (!await confirmNavigateAway()) return false;
     skipNextPopstateGuard = true;
     if (skipNextPopstateGuardTimer) clearTimeout(skipNextPopstateGuardTimer);
     skipNextPopstateGuardTimer = setTimeout(clearSkippedPopstateGuard, 1000);
@@ -433,7 +439,7 @@
       return;
     }
     const previousUrl = current.url || `${window.location.pathname}${window.location.search}`;
-    if (!skipGuard && !confirmNavigateAway()) {
+    if (!skipGuard && !await confirmNavigateAway()) {
       window.history.pushState({ shell: true, url: previousUrl }, "", previousUrl);
       updateSidebarActiveState(new URL(previousUrl, window.location.origin));
       return;

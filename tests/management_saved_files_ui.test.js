@@ -34,7 +34,7 @@ async function setup({ fail = false, failMethod = "PUT", confirm = true, pending
   const item = { id: "file-id", display_filename: "old.pdf", file_size: 4, used, usage_sources: used ? ["bot_buttons", "quick_replies"] : [] };
   let factory, release;
   const window = {
-    confirm: (message) => { confirmations.push(message); return confirm; },
+    HelpdeskDialogs: { confirm: async (message) => { confirmations.push(message); return confirm; } },
     HelpdeskAppShell: { registerPage: (name, init) => { factory = init; } },
   };
   vm.runInNewContext(source, {

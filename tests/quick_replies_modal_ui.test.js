@@ -131,10 +131,10 @@ async function loadQuickReplies({ replies = [], confirm = () => true } = {}) {
         this.factory = value;
       },
     },
-    confirm(message) {
+    HelpdeskDialogs: { confirm(message) {
       confirms.push(message);
-      return confirm(message);
-    },
+      return Promise.resolve(confirm(message));
+    } },
   };
 
   vm.runInNewContext(source, {
@@ -178,11 +178,12 @@ test("quick reply modal closes on Esc and backdrop click, but not inside dialog 
   assert.equal(isModalOpen(el), true);
 
   el.quickReplyModal.fire("click");
+  await settle();
   assert.equal(isModalOpen(el), false);
   assert.deepEqual(confirms, []);
 
   el.createQuickReplyBtn.fire("click");
-  document.fire("keydown", { key: "Escape" });
+  document.fire("keydown", { key: "Escape", preventDefault() {} });
   assert.equal(isModalOpen(el), false);
   assert.deepEqual(confirms, []);
 });
@@ -201,17 +202,20 @@ test("quick reply modal confirms dirty title, body, and file list before closing
   el.quickRepliesList.fire("click", { target: card });
   el.quickReplyTitleInput.value = "New title";
   el.cancelQuickReplyBtn.fire("click");
+  await settle();
   assert.equal(isModalOpen(el), false);
 
   el.quickRepliesList.fire("click", { target: card });
   el.quickReplyBodyInput.value = "New body";
   el.closeQuickReplyModalBtn.fire("click");
+  await settle();
   assert.equal(isModalOpen(el), false);
 
   el.quickRepliesList.fire("click", { target: card });
   el.quickReplyFileInput.files = [{ name: "new.txt" }];
   el.quickReplyFileInput.fire("change");
   el.quickReplyModal.fire("click");
+  await settle();
   assert.equal(isModalOpen(el), false);
   assert.deepEqual(confirms, [dirtyMessage, dirtyMessage, dirtyMessage]);
 });
@@ -232,6 +236,7 @@ test("quick reply modal does not confirm when draft returns to initial values", 
   el.quickReplyBodyInput.value = "Changed";
   el.quickReplyBodyInput.value = "Body";
   el.cancelQuickReplyBtn.fire("click");
+  await settle();
 
   assert.equal(isModalOpen(el), false);
   assert.deepEqual(confirms, []);
@@ -242,6 +247,7 @@ test("quick reply modal keeps dirty draft when close confirmation is rejected", 
   el.createQuickReplyBtn.fire("click");
   el.quickReplyTitleInput.value = "Draft";
   el.cancelQuickReplyBtn.fire("click");
+  await settle();
 
   assert.equal(isModalOpen(el), true);
   assert.equal(el.quickReplyTitleInput.value, "Draft");

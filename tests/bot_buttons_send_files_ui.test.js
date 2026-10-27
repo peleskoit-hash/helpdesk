@@ -189,14 +189,14 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 });
 
 test('client card script cache busting is updated for changed JS files', () => {
-  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
-  assert.match(appShellSource, /settings_client_card\.js\?v=20261024-client-settings-groups-v2/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261027-chat-quick-replies-v2/);
-  assert.match(appShellSource, /ticket\.js\?v=20261027-chat-quick-replies-v2/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261025-bot-browser-v2/);
+  assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(appShellSource, /settings_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(appShellSource, /ticket\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261027-dialogs-complete-v3/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -694,7 +694,7 @@ test('rule cards open editor from free area and keep controls isolated', () => {
 
 test('rule delete asks for explicit confirmation with rule name', () => {
   const deleteSource = sourceBetween(settingsClientCardSource, 'async function deleteRule', 'async function duplicateRule');
-  assert.match(deleteSource, /window\.confirm/);
+  assert.match(deleteSource, /window\.HelpdeskDialogs\.confirm/);
   assert.match(deleteSource, /uiText\.deleteRuleConfirmPrefix/);
   assert.match(deleteSource, /rule\.name \|\| rule\.id/);
   assert.match(deleteSource, /uiText\.deleteRuleConfirmSuffix/);
@@ -1798,7 +1798,7 @@ test('management users UI exposes block and unblock controls', () => {
   assert.match(managementUsersSource, /async function resetClientData/);
   assert.match(managementUsersSource, /\/\$\{action\}/);
   assert.match(managementUsersSource, /\/reset-data/);
-  assert.match(managementUsersSource, /window\.confirm/);
+  assert.match(managementUsersSource, /window\.HelpdeskDialogs\.confirm/);
   assert.match(managementUsersSource, /state\.selectedClientBlocked/);
 });
 
@@ -1844,7 +1844,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261021-task-panel-refresh/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261027-list-final-v1/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
@@ -2029,15 +2029,15 @@ test('layout edit markup has mode shell and no old row controls', () => {
   assert.doesNotMatch(html, /data-layout-row|data-layout-add-row|data-layout-del-row|bot-layout-row-head|bot-layout-cols/);
 });
 
-test('workflow type draft change resets incompatible automation and discard restores saved type', () => {
+test('workflow type draft change resets incompatible automation and discard restores saved type', async () => {
   const confirmations = [];
   const editorSource = fs.readFileSync('api/app/static/bot_buttons_editor.js', 'utf8');
   const window = {
     BotButtonsFiles: helpers,
-    confirm(message) {
+    HelpdeskDialogs: { confirm(message) {
       confirmations.push(message);
-      return true;
-    },
+      return Promise.resolve(true);
+    } },
   };
   const context = vm.createContext({ window, console, JSON, Array, Set, Map, String, Object });
   vm.runInContext(editorSource, context);
@@ -2091,7 +2091,7 @@ test('workflow type draft change resets incompatible automation and discard rest
   };
   const ctx = { state };
 
-  assert.equal(localEditorHelpers.applyWorkflowTypeDraft(ctx, 'ticket'), true);
+  assert.equal(await localEditorHelpers.applyWorkflowTypeDraft(ctx, 'ticket'), true);
   assert.equal(state.editorWorkflowType, 'ticket');
   assert.equal(state.automationTypeValue, 'none');
   assert.equal(confirmations.length, 1);
@@ -3334,9 +3334,9 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261027-agent-pastel-v2/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/quick_replies\.js\?v=20261027-message-dialogs-v2"\] \}\]/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261027-dialog-prompts-v4/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261027-message-dialogs-v2/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
@@ -3414,11 +3414,11 @@ test('quick replies management navigation and file attachment editor are present
   assert.match(quickRepliesSource, /api\("\/api\/v1\/quick-replies\/files", \{\s*method: "POST",\s*body: formData,\s*\}\)/);
   assert.doesNotMatch(quickRepliesSource, /headers: \{ "content-type": "multipart\/form-data"/i);
   assert.match(quickRepliesSource, /state\.draftFiles\.length >= 5/);
-  assert.match(quickRepliesSource, /window\.confirm\(`Отвязать файл/);
+  assert.match(quickRepliesSource, /window\.HelpdeskDialogs\.confirm\(`Отвязать файл/);
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261027-agent-pastel-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261027-dialog-prompts-v4/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

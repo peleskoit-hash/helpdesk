@@ -419,8 +419,8 @@
     el.modal.classList.remove("hidden");
   }
 
-  function closeModal(root, options = {}) {
-    if (!options.force && !shouldCloseModal(root)) return false;
+  async function closeModal(root, options = {}) {
+    if (!options.force && !await shouldCloseModal(root)) return false;
     const el = els(root);
     state.editingDefinitionId = "";
     state.editingKind = "";
@@ -666,8 +666,7 @@
 
   function shouldCloseModal(root) {
     if (!isModalDirty(root)) return true;
-    if (typeof window.confirm !== "function") return true;
-    return window.confirm("Вы уверены, что хотите закрыть окно?\nВсе несохранённые данные будут потеряны.");
+    return window.HelpdeskDialogs.confirm("Вы уверены, что хотите закрыть окно?\nВсе несохранённые данные будут потеряны.");
   }
 
   async function saveTask(root) {
@@ -718,12 +717,11 @@
   }
 
   function confirmAction(message) {
-    if (typeof window.confirm !== "function") return true;
-    return window.confirm(message);
+    return window.HelpdeskDialogs.confirm(message);
   }
 
   async function deleteMaterialized(root, ticketId) {
-    if (!ticketId || !confirmAction("Удалить задачу? Это действие нельзя отменить.")) return;
+    if (!ticketId || !await confirmAction("Удалить задачу? Это действие нельзя отменить.")) return;
     try {
       await api(`/api/v1/management/internal-tasks/materialized/${encodeURIComponent(ticketId)}`, { method: "DELETE" });
       setValidation(root, "");
@@ -734,7 +732,7 @@
   }
 
   async function deleteScheduled(root, definitionId) {
-    if (!definitionId || !confirmAction("Удалить задачу? Это действие нельзя отменить.")) return;
+    if (!definitionId || !await confirmAction("Удалить задачу? Это действие нельзя отменить.")) return;
     try {
       await api(`/api/v1/management/internal-tasks/scheduled/${encodeURIComponent(definitionId)}`, { method: "DELETE" });
       setValidation(root, "");
@@ -745,7 +743,7 @@
   }
 
   async function deleteRecurring(root, definitionId) {
-    if (!definitionId || !confirmAction("Удалить регулярную задачу?\nНовые задачи по этому расписанию больше создаваться не будут.\nУже созданные задачи останутся.")) return;
+    if (!definitionId || !await confirmAction("Удалить регулярную задачу?\nНовые задачи по этому расписанию больше создаваться не будут.\nУже созданные задачи останутся.")) return;
     try {
       await api(`/api/v1/management/internal-tasks/recurring/${encodeURIComponent(definitionId)}`, { method: "DELETE" });
       setValidation(root, "");
@@ -760,7 +758,7 @@
     const item = findRecurring(definitionId);
     const launchTime = formatLaunchDateTime(item?.next_occurrence_at);
     const message = `Пропустить ближайший запуск ${launchTime}?\nСледующие запуски продолжат работать по расписанию.`;
-    if (!definitionId || !item?.next_occurrence_at || !confirmAction(message)) return;
+    if (!definitionId || !item?.next_occurrence_at || !await confirmAction(message)) return;
     const el = els(root);
     if (el.skipNextBtn) el.skipNextBtn.disabled = true;
     try {
@@ -869,6 +867,7 @@
     }).catch(() => loadData(root));
 
     return {
+      canNavigateAway: () => shouldCloseModal(root),
       destroy() {
         listeners.forEach((remove) => remove());
       },

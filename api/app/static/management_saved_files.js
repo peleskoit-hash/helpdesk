@@ -171,7 +171,7 @@
       const item = state.items.find((value) => value.id === state.replaceId);
       try {
         if (!item) return;
-        if (!window.confirm(`Заменить файл "${item.display_filename}" на "${file.name}"? Новый файл будет использоваться во всех существующих привязках, включая кнопки Telegram-бота и быстрые ответы.`)) return;
+        if (!await window.HelpdeskDialogs.confirm(`Заменить файл "${item.display_filename}" на "${file.name}"? Новый файл будет использоваться во всех существующих привязках, включая кнопки Telegram-бота и быстрые ответы.`)) return;
         state.replacing = true;
         updateActions();
         setStatus("Замена файла...");
@@ -257,7 +257,7 @@
         updateActions();
         return;
       }
-      if (!window.confirm(`Удалить файл "${item.display_filename}"?`)) return;
+      if (!await window.HelpdeskDialogs.confirm(`Удалить файл "${item.display_filename}"?`)) return;
       setStatus("Удаление...");
       try {
         await fetchJson(`${API}/${encodeURIComponent(item.id)}`, { method: "DELETE" });

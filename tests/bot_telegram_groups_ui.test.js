@@ -16,7 +16,7 @@ async function setup(t) {
   await page.evaluate(() => {
     window.errors = [];
     window.calls = [];
-    window.alert = message => window.errors.push(message);
+    window.HelpdeskDialogs = { alert: async message => window.errors.push(message), confirm: async () => true };
     const verified = {id: 'ok', title: '<b>Тестовая группа</b>', chat_id: '-100', status: 'verified'};
     const unavailable = {id: 'bad', title: 'Нет доступа', chat_id: '-200', status: 'unavailable'};
     window.groups = [verified, unavailable];
@@ -134,7 +134,7 @@ for (const key of ['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'clie
     await page.addScriptTag({content: fs.readFileSync('api/app/static/bot_buttons_editor_view.js', 'utf8')});
     await page.evaluate(key => {
       const ctx = window.ctx;
-      window.confirm = () => true;
+      window.HelpdeskDialogs.confirm = async () => true;
       Object.assign(ctx.state, {editorWorkflowType: 'task', automationTypeValue: key, telegramGroupId: 'ok',
         availableAutomations: [
           {key: 'none', title: 'Нет', workflow_types: ['task', 'auto']},
@@ -168,11 +168,11 @@ for (const key of ['bitrix_deal_phone_lookup', 'bitrix_phone_deal_lookup', 'clie
 }
 
 test('direct and shell loading agree; every shell HTML entrypoint has the new shell version', () => {
-  const version = '20261027-chat-quick-replies-v2';
+  const version = '20261027-dialog-prompts-v4';
   const template = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   for (const file of ['bot_telegram_groups.js', 'bot_buttons_editor.js', 'bot_buttons_editor_view.js']) {
-    const resourceVersion = file === 'bot_telegram_groups.js' ? '20261021-group-copy' : '20261026-bot-editor-v2';
+    const resourceVersion = file === 'bot_buttons_editor_view.js' ? '20261027-dialog-prompts-v4' : file === 'bot_telegram_groups.js' ? '20261021-group-copy' : '20261027-themed-dialogs-v1';
     assert.ok(template.includes(`/static/${file}?v=${resourceVersion}`), file);
     assert.ok(shell.includes(`/static/${file}?v=${resourceVersion}`), file);
   }

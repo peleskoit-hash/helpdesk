@@ -194,9 +194,9 @@
       el.modal.classList.add("hidden");
     }
 
-    function requestCloseModal() {
+    async function requestCloseModal() {
       if (el.modal.classList.contains("hidden")) return;
-      if (draftChanged() && !window.confirm("Есть несохранённые изменения. Закрыть без сохранения?")) return;
+      if (draftChanged() && !await window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Закрыть без сохранения?")) return;
       closeModal();
     }
 
@@ -294,11 +294,11 @@
       }
     }
 
-    function detachDraftFile(fileId) {
+    async function detachDraftFile(fileId) {
       if (!canEditCurrentReply()) return;
       const file = state.draftFiles.find((item) => String(item.id) === String(fileId));
       if (!file) return;
-      if (!window.confirm(`Отвязать файл «${fileName(file)}» от быстрого ответа?`)) return;
+      if (!await window.HelpdeskDialogs.confirm(`Отвязать файл «${fileName(file)}» от быстрого ответа?`)) return;
       state.draftFiles = state.draftFiles.filter((item) => String(item.id) !== String(fileId));
       renderDraftFiles();
     }
@@ -328,7 +328,7 @@
       if (!canDelete() || !reply?.id) return;
       const replyId = String(reply.id);
       if (state.deletingIds.has(replyId)) return;
-      if (!window.confirm(`Удалить быстрый ответ «${reply.short_title || reply.id}»?`)) return;
+      if (!await window.HelpdeskDialogs.confirm(`Удалить быстрый ответ «${reply.short_title || reply.id}»?`)) return;
       state.deletingIds.add(replyId);
       renderReplies();
       try {
@@ -392,7 +392,10 @@
       if (event.target === el.modal) requestCloseModal();
     });
     const keydownHandler = (event) => {
-      if (event.key === "Escape") requestCloseModal();
+      if (event.key === "Escape" && !el.modal.classList.contains("hidden")) {
+        event.preventDefault();
+        requestCloseModal();
+      }
     };
     document.addEventListener("keydown", keydownHandler);
 

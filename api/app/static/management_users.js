@@ -268,9 +268,9 @@
     return loadUsers(root);
   }
 
-  function closeClientModal(root, { force = false } = {}) {
-    if (!force && !window.TicketClientCard?.confirmInlineExit?.(clientCardCtx(root))) return false;
-    window.TicketClientCard?.closeClientModal?.(clientCardCtx(root));
+  async function closeClientModal(root, { force = false } = {}) {
+    if (!force && !await window.TicketClientCard?.confirmInlineExit?.(clientCardCtx(root))) return false;
+    await window.TicketClientCard?.closeClientModal?.(clientCardCtx(root), { force: true });
     const modal = els(root).clientModal;
     if (modal) modal.classList.add("hidden");
     if (state.clientCardInline) state.clientCardInline.open = false;
@@ -328,7 +328,7 @@
     if (!state.selectedClientId) return;
     const nextBlocked = !state.selectedClientBlocked;
     if (nextBlocked) {
-      const ok = window.confirm("\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f? \u041e\u043d \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u0441\u043c\u043e\u0436\u0435\u0442 \u0432\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u0442\u044c \u0441 Telegram-\u0431\u043e\u0442\u043e\u043c \u0434\u043e \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0438.");
+      const ok = await window.HelpdeskDialogs.confirm("\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f? \u041e\u043d \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u0441\u043c\u043e\u0436\u0435\u0442 \u0432\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u0442\u044c \u0441 Telegram-\u0431\u043e\u0442\u043e\u043c \u0434\u043e \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0438.");
       if (!ok) return;
     }
     const action = nextBlocked ? "block" : "unblock";
@@ -344,7 +344,7 @@
 
   async function resetClientData(root) {
     if (!state.selectedClientId || !window.TicketClientCard) return;
-    const ok = window.confirm(
+    const ok = await window.HelpdeskDialogs.confirm(
       "\u0421\u0442\u0435\u0440\u0435\u0442\u044c \u0432\u0441\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f?\n\n" +
       "\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f \u0438 \u0432\u0435\u0440\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u0431\u0443\u0434\u0443\u0442 \u0443\u0434\u0430\u043b\u0435\u043d\u044b. \u041f\u0440\u0438 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0438 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043f\u0440\u043e\u0439\u0434\u0451\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439 \u043f\u0435\u0440\u0432\u043e\u0433\u043e \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u0437\u0430\u043d\u043e\u0432\u043e.\n\n" +
       "\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0437\u0430\u044f\u0432\u043e\u043a \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f.\n" +
@@ -435,7 +435,7 @@
     applyFilterState(root, filterFromPageUrl(url || window.location.href), { resetOffset: false });
     bind(root);
     const handlePageKeydown = (event) => {
-      if (event.key === "Escape" && !els(root).clientModal?.classList.contains("hidden")) closeClientModal(root);
+      if (event.key === "Escape" && !els(root).clientModal?.classList.contains("hidden")) { event.preventDefault(); closeClientModal(root); }
     };
     document.addEventListener("keydown", handlePageKeydown);
     const destroy = () => document.removeEventListener("keydown", handlePageKeydown);

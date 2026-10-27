@@ -287,11 +287,11 @@
     `;
   }
 
-  function openFilePickerModal(ctx) {
+  async function openFilePickerModal(ctx) {
     const currentFiles = new Set(getSendFileEntries(ctx).map((entry) => entry.file));
     const available = (ctx.state.availableFiles || []).filter((file) => !currentFiles.has(file));
     if (!available.length) {
-      alert("В папке TG buttons/files нет новых доступных файлов");
+      await window.HelpdeskDialogs.alert("В папке TG buttons/files нет новых доступных файлов");
       return;
     }
     const items = available.map((file) => `

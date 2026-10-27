@@ -1904,6 +1904,7 @@ function bindPageHandlers() {
       return;
     }
     if (e.key === "Escape" && !el.clientModal.classList.contains("hidden")) {
+      e.preventDefault();
       closeClientModal();
       return;
     }

@@ -1,4 +1,5 @@
-@import url("/static/bot-buttons-browser-v2.css?v=20261026-bot-editor-v2");
+@import url("/static/desk-dialogs.css?v=20261027-dialog-prompts-v4");
+@import url("/static/bot-buttons-browser-v2.css?v=20261027-dialogs-complete-v3");
 @import url("/static/profile-settings-v2.css?v=20261024-notification-layout-v2");
 @import url("/static/client-card-settings-v2.css?v=20261024-client-settings-panel-v2");
 @import url("/static/admin-pages-v2.css?v=20261027-visual-controls-v2");
@@ -437,7 +438,7 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & th { padding: 14px 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); font-size: 13px; }
   & #ticketsTable thead { position: relative; }
   & #ticketsTable thead::after { content: ""; position: absolute; left: -12px; right: -12px; bottom: 0; height: 1px; background: var(--desk-border); pointer-events: none; }
-  & .table-sort-btn { color: var(--desk-muted); font: 600 13px var(--desk-font); }
+  & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); }
   & button.mini-check-btn { display: inline-grid; place-items: center; padding: 0; line-height: 1; vertical-align: middle; }
   & td { font-size: 16px; padding: 8px 12px; line-height: 1.5; color: var(--desk-text); }
   & td.ticket-linked-cell { padding: 0; }
@@ -463,7 +464,38 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & button.action.table-page-btn { display: inline-grid; place-items: center; padding-block: 0; line-height: 1; }
   & .table-page-number { border-radius: 12px; min-height: 36px; min-width: 36px; background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); font: 600 14px var(--desk-font); }
   & .table-page-number.active { background: var(--desk-tint); border-color: var(--desk-accent); color: var(--desk-on-tint); }
+  & .columns-modal-title { font-size: 17px; }
+  & .columns-modal-body .columns-add-label { font-size: 16px; }
+  & .columns-draft-list { background: var(--desk-surface); border-color: var(--desk-border); }
   & :is(.columns-draft-item, .columns-draft-row) { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); }
+  & .columns-draft-row:first-child { background: var(--desk-tint); border-color: var(--desk-accent); }
+}
+
+body.ticket-column-resize-active #appContent.main[data-shell-page="tickets-list"] th[data-column-key] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  & .table-sort-btn { text-decoration: none; }
+  & .table-sort-btn::before { content: "☰"; margin-right: 6px; }
+}
+
+body #appContent.main[data-shell-page="tickets-list"] {
+  & .column-auto-width-control { display: flex; align-items: center; gap: 14px; margin: 12px 14px; padding: 18px 20px; border: 1px solid var(--desk-accent); border-radius: 16px; background: var(--desk-tint); color: var(--desk-text); font-size: 17px; font-weight: 700; cursor: pointer; }
+  & .column-auto-width-control input { width: 22px; height: 22px; flex-shrink: 0; }
+}
+body.ticket-columns-auto #appContent.main[data-shell-page="tickets-list"] {
+  & :is(.ticket-channel-col, .admin-select-col, .ticket-check-cell) { box-sizing: border-box; padding-inline: 4px; }
+  & .ticket-channel-col { padding-inline: 8px; }
+  & .table-sort-btn, & .ticket-row-link, & .ticket-main-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+body.ticket-column-resize-active.ticket-columns-auto #appContent.main[data-shell-page="tickets-list"] :is(th, td)[data-column-key] { border-right-color: transparent !important; }
+
+body.column-reordering, body.column-reordering * { cursor: grabbing !important; }
+.column-reorder-dragging { opacity: .65; }
+
+body[data-theme="dark"].ticket-column-resize-active #appContent.main[data-shell-page="tickets-list"] {
+  & :is(th, td)[data-column-key] { border-right-color: #b8a6ee; }
+  & .column-resize-handle { color: #eee8ff; }
 }
 
 body.ticket-colors-disabled #appContent.main[data-shell-page="tickets-list"] tr.ticket-row { background: var(--desk-soft); }

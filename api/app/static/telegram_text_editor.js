@@ -381,7 +381,7 @@
       if (event.target?.closest?.("[data-format-action], .bot-emoji-picker")) event.preventDefault();
     });
     toolbar.querySelectorAll("[data-format-action]").forEach((button) => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         const action = button.getAttribute("data-format-action");
         if (action !== "emoji") closeEmojiPicker();
         if (action === "emoji") {
@@ -429,9 +429,11 @@
         if (action === "quote") return applyTagToSelection(textarea, "<blockquote>", "</blockquote>");
         if (action === "quote_expandable") return applyTagToSelection(textarea, "<blockquote expandable>", "</blockquote>");
         if (action === "link") {
-          const selected = (textarea.value || "").slice(textarea.selectionStart ?? 0, textarea.selectionEnd ?? 0);
-          const safeHref = sanitizeLinkHref(window.prompt("Введите URL (http/https/tg/mailto):", "https://") || "");
+          const start = textarea.selectionStart ?? 0, end = textarea.selectionEnd ?? 0;
+          const selected = (textarea.value || "").slice(start, end);
+          const safeHref = sanitizeLinkHref((await window.HelpdeskDialogs.prompt("Введите URL (http/https/tg/mailto):", "https://")) || "");
           if (!safeHref) return;
+          textarea.setSelectionRange(start, end);
           return selected ? applyTagToSelection(textarea, `<a href="${safeHref}">`, "</a>") : applyTagToSelection(textarea, `<a href="${safeHref}">ссылка</a>`, "");
         }
         if (action === "clear") {

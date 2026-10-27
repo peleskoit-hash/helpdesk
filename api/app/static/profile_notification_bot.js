@@ -488,7 +488,7 @@
 
     async function restoreBase() {
       const activeType = state.activeType;
-      if (!window.confirm("Текущий персональный текст будет заменён актуальной базовой настройкой. Продолжить?")) {
+      if (!await window.HelpdeskDialogs.confirm("Текущий персональный текст будет заменён актуальной базовой настройкой. Продолжить?")) {
         return;
       }
       setStatus("Восстанавливаю базовые настройки...");

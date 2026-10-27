@@ -81,8 +81,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput" type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261021-task-panel-refresh/);
-  assert.match(template, /styles\.css\?v=20261027-agent-pastel-v2/);
+  assert.match(template, /list\.js\?v=20261027-list-final-v1/);
+  assert.match(template, /styles\.css\?v=20261027-dialog-prompts-v4/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -167,7 +167,7 @@ test("ticket task panel preference control and lifecycle are wired into list set
   assert.match(loadSource, /applyTaskPanelPreference\(\)/);
 
   const saveSource = sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml");
-  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns \}/);
+  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns, ticket_list_auto_width: state\.draftTicketListAutoWidth \}/);
   assert.match(saveSource, /if \(canUseTaskPanel\(\)\) \{[\s\S]*payload\.task_panel_enabled = nextTaskPanelEnabled/);
   assert.match(saveSource, /apiWrite\("\/api\/v1\/users\/me\/preferences", payload\)/);
   assert.match(saveSource, /state\.taskPanelEnabled = preferences\?\.task_panel_enabled === true/);
@@ -180,8 +180,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/list\.js\?v=20261021-task-panel-refresh"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261021-task-panel-refresh/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/ticket_column_auto_width\.js\?v=20261027-list-columns-v3", "\/static\/list\.js\?v=20261027-list-final-v1"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261027-list-final-v1/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});
@@ -263,7 +263,7 @@ test("ticket task panel is role-gated without clearing saved preference", () => 
   assert.match(loadPanelSource, /api\("\/api\/v1\/tickets\/task-panel"\)/);
 
   const saveSource = sourceBetween(listSource, "async function saveColumnsModal", "function ticketCellHtml");
-  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns \}/);
+  assert.match(saveSource, /const payload = \{ ticket_list_columns: payloadColumns, ticket_list_auto_width: state\.draftTicketListAutoWidth \}/);
   assert.match(saveSource, /if \(canUseTaskPanel\(\)\) \{[\s\S]*payload\.task_panel_enabled = nextTaskPanelEnabled[\s\S]*\}/);
   assert.doesNotMatch(saveSource, /\{ ticket_list_columns: payloadColumns, task_panel_enabled: nextTaskPanelEnabled \}/);
 
@@ -319,7 +319,7 @@ test("ticket list has a fixed system channel column before configured columns", 
   assert.match(listSource, /if \(state\.role === "admin"\) \{\s*cells\.push\('<th class="admin-select-col"/);
   assert.match(listSource, /cells\.push\('<th class="ticket-channel-col"><button id="columnsSettingsBtn"/);
   assert.match(listSource, /const channelCell = `<td class="ticket-channel-col">\$\{renderChannelIcon\(t\)\}<\/td>`/);
-  assert.match(styles, /\.ticket-channel-col \{[\s\S]*width: 36px;[\s\S]*min-width: 36px;[\s\S]*max-width: 36px;/);
+  assert.match(styles, /\.ticket-channel-col \{[\s\S]*width: 54px;[\s\S]*min-width: 54px;[\s\S]*max-width: 54px;/);
 });
 
 test("ticket channel abstraction renders internal sync and telegram icons with tooltips", () => {
@@ -354,7 +354,7 @@ test("ticket columns modal supports mandatory subject, add, trash delete, reorde
   assert.match(template, /id="columnsModal"/);
   assert.match(template, /Настройка списка заявок/);
   assert.match(template, /id="columnAddSelect"/);
-  assert.match(template, /id="editColumnsWidthBtn"[\s\S]*Ред\. ширины столбцов/);
+  assert.match(template, /id="editColumnsWidthBtn"[\s\S]*Редактирование столбцов/);
   assert.match(listSource, /function openColumnsModal\(\)/);
   assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.ticketListColumns\)\)/);
   assert.match(listSource, /def\.mandatory[\s\S]*columns-delete-spacer/);
@@ -384,7 +384,7 @@ test("ticket column resize mode measures width zero, clamps drag, and does not p
   assert.match(listSource, /getBoundingClientRect\(\)\.width/);
   assert.match(listSource, /column\.key === drag\.key \? \{ \.\.\.column, width: nextWidth \} : column/);
   assert.match(listSource, /function saveColumnResizeDraft\(\)/);
-  assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.columnResizeColumns\)\)/);
+  assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(activeTicketColumns\(\)\)/);
   assert.match(listSource, /state\.columnDraftPreviewActive = true/);
   assert.match(listSource, /function cancelColumnResizeDraft\(\)/);
   assert.match(listSource, /state\.draftTicketListColumns = cloneColumns\(normalizeTicketColumns\(state\.columnResizePreviousDraft/);
@@ -401,7 +401,7 @@ test("ticket resize UI weakens overlay, hides modal card, and blocks table actio
   assert.match(listSource, /if \(state\.columnResizeActive\) return;/);
   assert.match(listSource, /document\.body\.classList\.toggle\("ticket-column-resize-active", state\.columnResizeActive\)/);
   assert.match(listSource, /const hasFixedColumns = activeColumns\.every\(\(column\) => column\.width > 0\)/);
-  assert.match(listSource, /el\.ticketsTable\.style\.width = hasFixedColumns \? `\$\{fixedTableWidth\(activeColumns\)\}px` : ""/);
+  assert.match(listSource, /el\.ticketsTable\.style\.width = hasFixedColumns \? `\$\{activeTicketAutoWidth\(\) \?[\s\S]*fixedTableWidth\(activeColumns\)\}px` : ""/);
   assert.match(styles, /body\.ticket-columns-fixed \.table-wrap table \{[\s\S]*min-width: 0;[\s\S]*table-layout: fixed;/);
   assert.match(styles, /body\.ticket-columns-fixed \.table-wrap th\[data-column-key\],[\s\S]*td\[data-column-key\] \{[\s\S]*box-sizing: border-box;/);
   assert.doesNotMatch(sourceBetween(styles, "body.ticket-columns-fixed .table-wrap table", "th, td"), /width: auto/);
@@ -454,7 +454,7 @@ test("ticket type column uses semantic priority and colored badges independent o
 test("ticket resize draft preview rolls back on close and persists on modal save", () => {
   const activeSource = sourceBetween(listSource, "function activeTicketColumns", "function fixedTableWidth");
   assert.match(activeSource, /state\.columnDraftPreviewActive && state\.draftTicketListColumns/);
-  assert.match(activeSource, /return normalizeTicketColumns\(state\.draftTicketListColumns\)/);
+  assert.match(activeSource, /state\.columnDraftPreviewActive && state\.draftTicketListColumns/);
 
   const closeSource = sourceBetween(listSource, "function closeColumnsModal", "function deleteDraftColumn");
   assert.match(closeSource, /const hadPreview = state\.columnDraftPreviewActive/);

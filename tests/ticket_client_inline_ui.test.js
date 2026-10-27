@@ -81,7 +81,7 @@ function fixture({ inline = true, savedPassword = false, required = false, runti
     if (options?.method === 'PATCH') return { ...profile, ...JSON.parse(options.body) };
     return profile;
   };
-  const window = { crypto, confirm: (message) => { confirmations.push(message); return allowExit; } };
+  const window = { crypto, HelpdeskDialogs: { confirm: async (message) => { confirmations.push(message); return allowExit; } } };
   if (web) vm.runInNewContext(fs.readFileSync('api/app/static/client_web_credentials.js', 'utf8'), { window });
   vm.runInNewContext(source, { window, console, setTimeout, clearTimeout, Uint8Array, ...runtime });
   const card = window.TicketClientCard;
@@ -124,7 +124,7 @@ test('WEB password is omitted until explicitly edited; changes and cancellation 
   assert.equal(f.dirty(), true);
   assert.equal(f.card.getModalPayload(f.ctx).custom_fields.custom_web_password, '  Manual-A1!  ');
   f.allowExit(true);
-  f.close();
+  await f.close();
   assert.equal(password.value, '');
   assert.equal(password.dataset.webPasswordDirty, '0');
   assert.equal(patchCalls(f).length, 0);
@@ -179,7 +179,7 @@ test('open and clean cancel switch modes without confirm or PATCH; fields retain
   assert.equal(f.panel.classList.contains('client-editing'), true);
   assert.equal(f.el.editClientBtn.textContent, 'Редактирование');
   assert.equal(f.dirty(), false);
-  assert.equal(f.close(), true);
+  assert.equal(await f.close(), true);
   assert.equal(f.panel.classList.contains('client-editing'), false);
   assert.equal(f.el.clientModal.classList.contains('hidden'), true);
   assert.equal(f.el.editClientBtn.textContent, 'Редактировать');
@@ -206,12 +206,12 @@ test('cancel decline preserves every value; acceptance clears draft without PATC
   const f = fixture();
   await f.open();
   f.custom[0].value = 'draft';
-  assert.equal(f.close(), false);
+  assert.equal(await f.close(), false);
   assert.equal(f.custom[0].value, 'draft');
   assert.equal(f.panel.classList.contains('client-editing'), true);
   assert.equal(f.confirmations[0], 'Есть несохранённые изменения. Выйти без сохранения?');
   f.allowExit(true);
-  assert.equal(f.close(), true);
+  assert.equal(await f.close(), true);
   assert.equal(f.custom[0].value, '');
   assert.equal(patchCalls(f).length, 0);
   await f.open();
@@ -245,7 +245,7 @@ test('new Bitrix password can be typed and erased back to clean; cancel clears s
   assert.equal(f.dirty(), true);
   password.value = ''; password.handlers.input();
   assert.equal(f.dirty(), false);
-  f.close();
+  await f.close();
   assert.equal(f.ctx.state.clientCardBitrixPassword.draftValue, '');
   assert.equal(f.ctx.state.clientCardBitrixPassword.originalValue, null);
 });
@@ -263,7 +263,7 @@ test('save uses existing PATCH/payload, blocks duplicate submission and exits on
   assert.equal(f.el.saveClientBtn.disabled, true);
   assert.equal(f.el.closeClientModalBtn.disabled, true);
   assert.equal(f.body.inert, true);
-  assert.equal(f.close(), false);
+  assert.equal(await f.close(), false);
   const call = patchCalls(f)[0];
   assert.equal(call.url, '/api/v1/tickets/ticket-1/client-profile');
   const payload = JSON.parse(call.options.body);
@@ -342,7 +342,7 @@ test('Users modal behavior/markup are unchanged; shared generator and payload re
   const f = fixture({ inline: false });
   await f.open();
   f.el.fContactName.value = 'Changed';
-  assert.equal(f.close(), true);
+  assert.equal(await f.close(), true);
   assert.equal(f.panel.classList.contains('client-editing'), false);
   assert.equal(f.confirmations.length, 0);
   assert.equal(f.ctx.state.clientCardInline, undefined);
@@ -365,7 +365,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261027-chat-quick-replies-v2' : resource === 'ticket_client_card.js' ? '20261025-bot-browser-v2' : '20261027-chat-quick-replies-v2']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261027-dialog-prompts-v4' : resource === 'ticket_client_card.js' ? '20261027-dialogs-complete-v3' : '20261027-dialogs-complete-v3']);
   }
 });
 
@@ -390,7 +390,7 @@ test('actual AppShell navigation/back guard keeps declined draft and confirms ac
   assert.equal(f.ctx.state.clientCardInline.open, true);
   const confirmations = f.confirmations.length;
   f.allowExit(true);
-  assert.equal(window.HelpdeskAppShell.goBack(), true);
+  assert.equal(await window.HelpdeskAppShell.goBack(), true);
   assert.equal(backCalls, 1);
   assert.equal(f.confirmations.length, confirmations + 1);
   assert.equal(f.ctx.state.clientCardInline.open, false);
@@ -663,7 +663,7 @@ test('password mask survives polling rerenders and inline editor hide/reopen', a
   await f.el.fBitrixPassword.handlers.focus();
   f.el.fBitrixPassword.handlers.blur();
   assert.equal(f.el.fBitrixPassword.value, mask);
-  f.close();
+  await f.close();
   await f.open();
   assert.equal(f.el.fBitrixPassword.value, mask);
 });
@@ -673,7 +673,7 @@ test('inline editor cancel restores the client panel scroll position', async () 
   f.el.clientDynamicCard = { scrollTop: 175 };
   await f.open();
   f.el.clientDynamicCard.scrollTop = 0;
-  f.close();
+  await f.close();
   assert.equal(f.el.clientDynamicCard.scrollTop, 175);
 });
 

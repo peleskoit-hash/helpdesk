@@ -68,7 +68,7 @@
     }));
   };
 
-  Editor.applyWorkflowTypeDraft = function applyWorkflowTypeDraft(ctx, nextWorkflowType) {
+  Editor.applyWorkflowTypeDraft = async function applyWorkflowTypeDraft(ctx, nextWorkflowType) {
     const { state } = ctx;
     const nextType = Editor.normalizeWorkflowType(nextWorkflowType);
     const currentType = Editor.normalizeWorkflowType(
@@ -78,7 +78,7 @@
     if (!Editor.canChangeWorkflowType(state.selectedLeaf) || !Editor.isEditableWorkflowType(nextType)) return false;
     const currentLabel = Editor.getWorkflowTypeLabel(currentType);
     const nextLabel = Editor.getWorkflowTypeLabel(nextType);
-    const confirmed = window.confirm(
+    const confirmed = await window.HelpdeskDialogs.confirm(
       `\u0412\u044b \u043c\u0435\u043d\u044f\u0435\u0442\u0435 \u0442\u0438\u043f \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044e\u0449\u0435\u0439 \u043a\u043d\u043e\u043f\u043a\u0438 \u0441 "${currentLabel}" \u043d\u0430 "${nextLabel}".\n\n` +
       `\u0427\u0430\u0441\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0445 \u043c\u043e\u0436\u0435\u0442 \u0441\u0442\u0430\u0442\u044c \u043d\u0435\u043f\u0440\u0438\u043c\u0435\u043d\u0438\u043c\u043e\u0439 \u0434\u043b\u044f \u043d\u043e\u0432\u043e\u0433\u043e \u0442\u0438\u043f\u0430. \u0422\u0430\u043a\u0438\u0435 \u043f\u043e\u043b\u044f \u0431\u0443\u0434\u0443\u0442 \u043e\u0447\u0438\u0449\u0435\u043d\u044b \u0438\u043b\u0438 \u043d\u0435 \u0431\u0443\u0434\u0443\u0442 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b.\n\n` +
       `\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c?`
@@ -156,7 +156,7 @@
 
   Editor.confirmDiscard = function confirmDiscard(ctx) {
     if (!Editor.hasUnsavedChanges(ctx)) return true;
-    return window.confirm("Есть несохранённые изменения. Уйти без сохранения?");
+    return window.HelpdeskDialogs.confirm("Есть несохранённые изменения. Уйти без сохранения?");
   };
 
   Editor.discardEditorChanges = function discardEditorChanges(ctx) {
@@ -304,18 +304,18 @@
     if (state.automationTypeValue === "telegram_group" && !(state.telegramGroups || []).some(
       group => group.id === state.telegramGroupId && group.status === "verified"
     )) {
-      alert("Выберите проверенную Telegram-группу.");
+      await window.HelpdeskDialogs.alert("Выберите проверенную Telegram-группу.");
       return;
     }
     const requestWorkflowType = Editor.normalizeWorkflowType(state.editorWorkflowType || Editor.resolveLeafWorkflowType(leaf));
     const isSubmenu = requestWorkflowType === "submenu";
     const isGroupTaskChild = Editor.isGroupTaskChildWorkflow(requestWorkflowType);
     if (!String(state.editorBotLabel || "").trim()) {
-      alert("Название в боте не может быть пустым.");
+      await window.HelpdeskDialogs.alert("Название в боте не может быть пустым.");
       return;
     }
     if (!isSubmenu && state.fixedAssigneeEnabled && !state.fixedAssigneeUserId) {
-      alert("Выберите фиксированного ответственного.");
+      await window.HelpdeskDialogs.alert("Выберите фиксированного ответственного.");
       return;
     }
 
@@ -326,7 +326,7 @@
           conditionalRules: JSON.parse(JSON.stringify(state.conditionalRules || [])),
         };
     if (!isSubmenu && state.sendFilesProjectionError) {
-      alert(state.sendFilesProjectionError);
+      await window.HelpdeskDialogs.alert(state.sendFilesProjectionError);
       return;
     }
     let conditionalPayload = null;
@@ -336,7 +336,7 @@
         const rule = rules[ridx];
         const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
         if (!conditions.length) {
-          alert(`Правило ${ridx + 1}: добавьте хотя бы одно условие.`);
+          await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: добавьте хотя бы одно условие.`);
           return;
         }
         for (let cidx = 0; cidx < conditions.length; cidx += 1) {
@@ -344,20 +344,20 @@
           const meta = fieldMeta(condition.field);
           const type = meta?.type || "text";
           if (condition.field && !meta) {
-            alert(`Правило ${ridx + 1}: поле "${condition.field}" больше недоступно. Удалите или замените это условие.`);
+            await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: поле "${condition.field}" больше недоступно. Удалите или замените это условие.`);
             return;
           }
           if (!condition.field) {
-            alert(`Правило ${ridx + 1}: выберите поле в условии ${cidx + 1}.`);
+            await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: выберите поле в условии ${cidx + 1}.`);
             return;
           }
           if (type !== "bool" && !condition.operator) {
-            alert(`Правило ${ridx + 1}: выберите оператор в условии ${cidx + 1}.`);
+            await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: выберите оператор в условии ${cidx + 1}.`);
             return;
           }
           if (type === "bool") {
             if (!["true", "false"].includes(String(condition.value || "").toLowerCase())) {
-              alert(`Правило ${ridx + 1}: для поля "${fieldLabel(condition.field)}" выберите Да или Нет.`);
+              await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: для поля "${fieldLabel(condition.field)}" выберите Да или Нет.`);
               return;
             }
             condition.operator = "eq";
@@ -365,13 +365,13 @@
           } else if (["empty", "not_empty"].includes(condition.operator)) {
             condition.value = null;
           } else if (!String(condition.value || "").trim()) {
-            alert(`Правило ${ridx + 1}: укажите значение в условии ${cidx + 1}.`);
+            await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: укажите значение в условии ${cidx + 1}.`);
             return;
           }
         }
         const files = Array.isArray(rule.files) ? rule.files : [];
         if (!files.length) {
-          alert(`Правило ${ridx + 1}: выберите хотя бы один файл.`);
+          await window.HelpdeskDialogs.alert(`Правило ${ridx + 1}: выберите хотя бы один файл.`);
           return;
         }
       }
@@ -379,7 +379,7 @@
     }
 
     if (AUTO_ONLY_AUTOMATIONS.has(state.automationTypeValue) && requestWorkflowType !== "auto") {
-      alert("Для этой автоматизации выберите тип «Автоматическая задача».");
+      await window.HelpdeskDialogs.alert("Для этой автоматизации выберите тип «Автоматическая задача».");
       return;
     }
     setStatus("Сохранение...");

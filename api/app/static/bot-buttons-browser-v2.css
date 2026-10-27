@@ -1,9 +1,9 @@
+body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-breadcrumb { display: flex; align-items: center; box-sizing: border-box; min-height: 66px; margin: 0 0 18px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); font: 700 21px/1.2 var(--desk-font); }
 /* Scoped V2 styles for button browsing, structure and the concrete editor. */
 body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v2-browse) {
   min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr);
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
   & .bot-buttons-v2-browse { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; padding: 21px; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); font: 21px/1.5 var(--desk-font); }
-  & .bot-buttons-breadcrumb { margin: 0 0 18px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); font-size: 21px; }
   & .bot-buttons-description { color: var(--desk-muted); font-size: 18px; }
   & .bot-buttons-v2-list { display: block; }
   & .bot-buttons-split-left { width: 100%; min-width: 0; padding: 0; }
@@ -68,9 +68,10 @@ body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v
 body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-editor) {
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
   & .bot-buttons-panel { box-sizing: border-box; height: 100%; padding: 20px; overflow: auto; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); }
+  & .bot-buttons-breadcrumb { position: relative; top: 1px; }
   & .bot-instruction-editor { padding: 0; border: 0; background: transparent; box-shadow: none; font: 16.8px/1.5 var(--desk-font); }
   & .bot-editor-section { background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); padding: 16px; border-radius: 16px; }
-  & :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
+  & .bot-instruction-editor :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
   & :is(input:not([type="checkbox"]), select) { padding: 8px 10px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); box-sizing: border-box; }
   & .checkbox-label { display: flex; align-items: center; gap: 10px; width: fit-content; cursor: pointer; }
   & input[type="checkbox"]:not(.desk-toggle) { width: 18px; height: 18px; accent-color: var(--desk-accent); }
