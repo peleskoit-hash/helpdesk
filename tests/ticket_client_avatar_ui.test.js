@@ -320,7 +320,7 @@ test('avatar resources use matching versions on direct pages and AppShell mounts
     const versions = files.flatMap(file => [...fs.readFileSync(file, 'utf8').matchAll(
       new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map(match => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'ticket_client_card.js' ? '20261024-client-controls-v2' : resource === 'ticket.js' ? '20261021-task-panel-refresh' : '20261020-quotes']);
+    assert.deepEqual([...new Set(versions)], [resource === 'ticket_client_card.js' ? '20261025-bot-browser-v2' : resource === 'ticket.js' ? '20261027-chat-quick-replies-v2' : '20261020-quotes']);
   }
 });
 

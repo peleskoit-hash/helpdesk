@@ -9,6 +9,205 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 
+for (const theme of ['light', 'dark']) test(`agent pastel background and all message text remain readable: ${theme}`, async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme, pageName: 'ticket',
+    cardPatch: { messages: card.messages.map(message => message.message_type === 'agent'
+      ? { ...message, message_status: 'edited', status_note: 'Сообщение исправлено' } : message) } });
+  const agent = page.locator('.message.agent').first();
+  const style = await agent.evaluate(el => {
+    const rgb = color => color.match(/\d+/g).slice(0, 3).map(Number);
+    const luminance = color => rgb(color).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; })
+      .reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+    const background = getComputedStyle(el).backgroundColor, b = luminance(background);
+    return { background, texts: ['.message-header strong', '.message-body', '.message-date', '.message-status-note'].map(selector => {
+      const node = el.querySelector(selector), s = getComputedStyle(node), a = luminance(s.color);
+      return { selector, color: s.color, opacity: s.opacity, contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+    }) };
+  });
+  assert.equal(style.background, theme === 'dark' ? 'rgb(200, 175, 246)' : 'rgb(201, 177, 244)');
+  for (const text of style.texts) {
+    assert.equal(text.color, 'rgb(48, 44, 64)'); assert.equal(text.opacity, '1');
+    assert.ok(text.contrast >= 4.5, JSON.stringify(text));
+  }
+  const hsl = values => {
+    const [r, g, b] = values.map(value => value / 255), max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2;
+    return { h: ((r - g) / d + 4) * 60, s: d / (1 - Math.abs(2 * l - 1)), l };
+  };
+  const light = hsl([201, 177, 244]), dark = hsl([200, 175, 246]);
+  assert.ok(Math.abs(dark.l - light.l) < .001 && Math.abs(dark.h - light.h) < 1);
+  // Allow one-channel quantization when the +7% HSL result is stored as 8-bit RGB.
+  assert.ok(Math.abs(dark.s / light.s - 1.07) < .015);
+});
+
+for (const theme of ['light', 'dark']) test(`quick reply accordion V2 populated rows, stable hover and actions: ${theme}`, async t => {
+  const replies = [0, 1].map(i => ({ id: `reply-${i}`, short_title: `Useful ${i}`, body: `Saved answer ${i}`, can_edit: true, saved_files: [] }));
+  const { page, requests } = await setup(t, { width: 1440, height: 1000, theme, role: 'agent', pageName: 'ticket', quickReplies: replies });
+  const agent = await page.locator('.message.agent').first().evaluate(el => ({ background: getComputedStyle(el).backgroundColor,
+    frozen: getComputedStyle(document.body).getPropertyValue('--desk-blue-bg').trim() }));
+  assert.equal(agent.background, theme === 'dark' ? 'rgb(200, 175, 246)' : 'rgb(201, 177, 244)');
+  assert.notEqual(agent.background, agent.frozen);
+  await page.locator('#ticketMessageBody').fill('Start end');
+  await page.locator('#ticketMessageBody').evaluate(el => el.setSelectionRange(6, 6));
+  await page.locator('#quickRepliesBtn').click();
+  const panel = page.locator('#quickRepliesPanel'), rows = panel.locator('[data-quick-reply-id]');
+  await page.waitForFunction(() => document.querySelectorAll('#quickRepliesPanel [data-quick-reply-id]').length === 2);
+  assert.equal(await panel.locator('.quick-replies-panel-placeholder').count(), 0);
+  const shortHeight = (await panel.boundingBox()).height;
+  const preview = rows.first().locator('.quick-replies-panel-preview');
+  const metrics = () => preview.evaluate(el => { const s = getComputedStyle(el), r = el.getBoundingClientRect(); return [s.fontWeight, s.fontSize, s.lineHeight, r.width, r.height]; });
+  const normal = await metrics();
+  await rows.first().hover(); assert.deepEqual(await metrics(), normal);
+  assert.equal(normal[0], '400');
+  const colors = await panel.evaluate(el => {
+    const search = el.querySelector('input'), row = el.querySelector('[data-quick-reply-id]');
+    return { panel: getComputedStyle(el).backgroundColor, search: getComputedStyle(search).backgroundColor,
+      text: getComputedStyle(search).color, row: getComputedStyle(row).backgroundColor,
+      surface: getComputedStyle(document.body).getPropertyValue('--desk-surface').trim(),
+      soft: getComputedStyle(document.body).getPropertyValue('--desk-soft').trim() };
+  });
+  assert.equal(colors.panel, colors.surface); assert.equal(colors.search, colors.soft);
+  assert.notEqual(colors.text, colors.search);
+  await rows.first().click();
+  await page.waitForFunction(() => document.getElementById('ticketMessageBody').value === 'Start Saved answer 0end');
+  assert.equal(await panel.isVisible(), false);
+  assert.equal(requests.filter(r => r.path.endsWith('/reply-0/use')).length, 1);
+  await page.locator('#quickRepliesBtn').click();
+  async function search(query, count) {
+    await page.locator('#quickRepliesSearchInput').fill(query);
+    await page.waitForResponse(response => response.url().includes('/quick-replies/search?') && new URL(response.url()).searchParams.get('q') === query);
+    await page.waitForFunction(count => document.querySelectorAll('#quickRepliesPanel [data-quick-reply-id]').length === count, count);
+    assert.equal(await panel.locator('.quick-replies-panel-placeholder').count(), 0);
+  }
+  await search('not found', 0);
+  assert.equal(await page.locator('#quickRepliesEditorRow').isVisible(), true);
+  await search('Useful 1', 1);
+  replies.push(...[2, 3, 4, 5].map(i => ({ id: `reply-${i}`, short_title: `Other ${i}`, body: `Saved answer ${i}`, can_edit: true, saved_files: [] })));
+  await search('', 5);
+  assert.ok((await panel.boundingBox()).height > shortHeight);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+q');
+  await page.locator('#quickRepliesSearchInput').waitFor({ state: 'visible' });
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await rows.first().evaluate(el => el.classList.contains('highlighted')), true);
+  assert.deepEqual(await preview.evaluate(el => [getComputedStyle(el).fontWeight]), ['400']);
+  await page.locator('#quickRepliesEditorRow').click();
+  await page.waitForURL(/\/quick-replies\?ticket_id=demo-0/);
+  assert.equal(await page.locator('#quickRepliesList').isVisible(), true);
+  await page.goBack(); await page.waitForSelector('.message');
+  await page.locator('#quickRepliesBtn').click();
+  await page.waitForFunction(() => document.querySelectorAll('#quickRepliesPanel [data-quick-reply-id]').length === 5);
+  assert.equal(await panel.locator('.quick-replies-panel-placeholder').count(), 0);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`visual controls stay painted across theme and settings changes: ${theme}`, async t => {
+    const { page, requests } = await setup(t, { width: 1366, height: 900, theme, role: 'agent', pageName: 'tickets' });
+    const palette = { online: 'rgb(169, 227, 195)', on_ticket: 'rgb(201, 177, 244)', waiting: 'rgb(245, 212, 165)',
+      lunch: 'rgb(175, 216, 249)', offline: 'rgb(245, 186, 202)' };
+    const textPalette = { online: 'rgb(21, 91, 62)', on_ticket: 'rgb(86, 50, 146)', waiting: 'rgb(135, 83, 21)',
+      lunch: 'rgb(35, 91, 138)', offline: 'rgb(145, 61, 89)' };
+    for (const [status, color] of Object.entries(palette)) {
+      const button = page.locator(`.agent-status-btn[data-availability-status="${status}"]`);
+      assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), color);
+      assert.equal(await button.evaluate(el => getComputedStyle(el).color), textPalette[status]);
+      await button.click();
+      assert.equal(await button.evaluate(el => el.classList.contains('active')), true);
+      assert.notEqual(await button.evaluate(el => getComputedStyle(el).boxShadow), 'none');
+    }
+    assert.ok(requests.filter(r => r.path.endsWith('/users/me/status') && r.method === 'PATCH').length >= 5);
+    await page.locator('#themeToggleBtn').click();
+    async function assertTracksPainted() {
+      await page.locator('#appearanceMenu').waitFor({ state: 'visible' });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const rects = await page.locator('#appearanceMenu input[type="range"]').evaluateAll(nodes => nodes.map(el => {
+        const r = el.getBoundingClientRect();
+        return { id: el.id, x: r.x, y: r.y, width: r.width, height: r.height, appearance: getComputedStyle(el).appearance };
+      }));
+      const png = await page.screenshot();
+      const samples = await page.evaluate(async ({ base64, rects }) => {
+        const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
+        const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+        return rects.map(r => {
+          const pixels = ctx.getImageData(Math.ceil(r.x) + 12, Math.floor(r.y + r.height / 2), Math.floor(r.width) - 24, 1).data;
+          const colors = new Set(); let chromatic = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            colors.add([pixels[i], pixels[i + 1], pixels[i + 2]].map(v => Math.round(v / 8)).join(','));
+            if (Math.max(pixels[i], pixels[i + 1], pixels[i + 2]) - Math.min(pixels[i], pixels[i + 1], pixels[i + 2]) > 30) chromatic++;
+          }
+          return { id: r.id, appearance: r.appearance, colors: colors.size, chromatic };
+        });
+      }, { base64: png.toString('base64'), rects });
+      for (const sample of samples) {
+        assert.equal(sample.appearance, 'none');
+        assert.ok(sample.colors > 12 && sample.chromatic > 20, JSON.stringify(sample));
+      }
+    }
+    await assertTracksPainted();
+    for (const mode of [theme === 'light' ? 'dark' : 'light', theme]) {
+      await page.locator(`[data-appearance-theme="${mode}"]`).click();
+      await page.locator('#appearance-interface-hue').fill('184');
+      await page.locator('#appearance-accent-hue').fill('29');
+      await page.locator('#appearance-interface-intensity').fill('0');
+      await page.locator('#appearance-accent-intensity').fill('100');
+      await page.waitForFunction(() => !saveInFlight);
+      await assertTracksPainted();
+      for (const [status, color] of Object.entries(palette)) {
+        assert.equal(await page.locator(`.agent-status-btn[data-availability-status="${status}"]`).evaluate(el => getComputedStyle(el).backgroundColor), color);
+        assert.equal(await page.locator(`.agent-status-btn[data-availability-status="${status}"]`).evaluate(el => getComputedStyle(el).color), textPalette[status]);
+      }
+    }
+    await page.reload(); await page.waitForSelector('.ticket-row');
+    await page.locator('#themeToggleBtn').click(); await assertTracksPainted();
+    await page.keyboard.press('Escape');
+    await page.locator('.ticket-row-link').first().click(); await page.waitForSelector('.message');
+    await page.locator('#themeToggleBtn').click(); await assertTracksPainted();
+  });
+}
+
+for (const height of [768, 900]) for (const theme of ['light', 'dark']) {
+  test(`list arrows, header separator and hanging logo geometry: ${theme}, ${height}`, async t => {
+    const { page } = await setup(t, { width: 1366, height, theme, pageName: 'tickets' });
+    const geometry = await page.evaluate(() => {
+      const brand = document.querySelector('.sidebar-brand'), bs = getComputedStyle(brand), br = brand.getBoundingClientRect();
+      const scroll = document.querySelector('.table-scroll'), sr = scroll.getBoundingClientRect(), head = document.querySelector('thead').getBoundingClientRect();
+      return { brand: { x: br.x + parseFloat(bs.paddingLeft), y: br.y, before: getComputedStyle(brand, "::before").content, background: getComputedStyle(brand.closest('.sidebar')).backgroundColor, color: bs.color, text: brand.textContent, size: bs.fontSize, family: bs.fontFamily },
+        line: { y: Math.floor(head.bottom) - 1, left: sr.left + 1, right: sr.left + scroll.clientWidth - 2, color: getComputedStyle(document.querySelector('th')).borderBottomColor },
+        buttons: ['prevPageBtn', 'nextPageBtn'].map(id => {
+          const el = document.getElementById(id), r = el.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(el);
+          const text = range.getBoundingClientRect();
+          return { width: r.width, height: r.height, dx: (text.left + text.right - r.left - r.right) / 2, dy: (text.top + text.bottom - r.top - r.bottom) / 2 };
+        }) };
+    });
+    for (const button of geometry.buttons) {
+      assert.ok(Math.abs(button.width - 34.609375) < .5); assert.equal(button.height, 30);
+      assert.ok(Math.abs(button.dx) < .5 && Math.abs(button.dy) < 1, JSON.stringify(button));
+    }
+    assert.equal(geometry.brand.text, 'ES DESK'); assert.equal(geometry.brand.size, '34px');
+    assert.match(geometry.brand.family, /ESHelpdeskLogo/);
+    assert.equal(geometry.brand.before, 'none');
+    assert.equal(geometry.brand.x, 28);
+    assert.equal(geometry.brand.y, 4);
+    const png = await page.screenshot();
+    const painted = await page.evaluate(async ({ base64, geometry }) => {
+      const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+      const rgb = value => value.match(/\d+/g).slice(0, 3).map(Number);
+      const distance = (p, c) => Math.max(...c.map((v, i) => Math.abs(p[i] - v)));
+      const pixel = (x, y) => ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+      let threads = 0, previous = false;
+      for (let x = Math.floor(geometry.brand.x); x < geometry.brand.x + 130; x++) {
+        const hit = distance(pixel(x, 1), rgb(geometry.brand.background)) > 25;
+        if (hit && !previous) threads++; previous = hit;
+      }
+      return { threads, line: [geometry.line.left, geometry.line.right].map(x => distance(pixel(x, geometry.line.y), rgb(geometry.line.color))) };
+    }, { base64: png.toString('base64'), geometry });
+    assert.equal(painted.threads, 6);
+    assert.ok(painted.line.every(distance => distance < 10), JSON.stringify(painted));
+  });
+}
+
 for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
   test(`list row rounded hover and icon overflow: ${theme}, ${role}`, async t => {
     const { page } = await setup(t, { width: 1366, height: 900, theme, role, pageName: 'tickets' });
@@ -76,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-ticket-row-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-agent-pastel-v2"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-ticket-row-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-agent-pastel-v2"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -277,7 +476,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
   });
 }
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name }) {
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [] }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
@@ -295,7 +494,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
       return route.fulfill({ body: fs.readFileSync(file), contentType: { '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' }[ext] || 'application/octet-stream' });
     }
     if (!p.startsWith('/api/')) {
-      const template = p === '/profile/notification-bot' ? 'profile_notification_bot' : p === '/tickets' ? 'tickets' : p.startsWith('/tickets/') ? 'ticket' : 'profile';
+      const template = p === '/quick-replies' ? 'quick_replies' : p === '/profile/notification-bot' ? 'profile_notification_bot' : p === '/tickets' ? 'tickets' : p.startsWith('/tickets/') ? 'ticket' : 'profile';
       return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${template}.html`, 'utf8') });
     }
     requests.push({ path: p, method: req.method(), query: url.search });
@@ -317,6 +516,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     } else if (p === '/api/v1/me/notification-bot') result = { role, use_base_settings: false, delivery: {}, telegram_binding: { active: true },
       items: [{ type: role === 'admin' ? 'internal_task_completion' : 'new_assignment', title: 'Заявка', enabled: true, template: 'Текст', tag_items: [] }] };
     else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
+    else if (p === '/api/v1/users/me/status' && req.method() === 'PATCH') { Object.assign(me, req.postDataJSON()); result = me; }
     else if (p === '/api/v1/users/me' || p === '/api/v1/users/me/profile') result = me;
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me, { ...me, id: 'agent-2', full_name: 'Елена Александровна Волкова' }];
     else if (p.endsWith('/counts')) result = { active: 28, unassigned: 3, frozen: 4, closed: 158, special: 1,
@@ -328,7 +528,9 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType,
       client_profile: { ...card.client_profile, telegram_avatar_present: clientAvatar }, ...cardPatch };
     else if (p.endsWith('/client-profile')) result = { ...card.client_profile, telegram_avatar_present: clientAvatar };
-    else if (p === '/api/v1/quick-replies/search') result = { items: [] };
+    else if (p === '/api/v1/quick-replies/search') result = quickReplies.filter(reply => `${reply.short_title} ${reply.body}`.toLowerCase().includes((url.searchParams.get('q') || '').toLowerCase())).slice(0, 5);
+    else if (/\/api\/v1\/quick-replies\/[^/]+\/use$/.test(p)) result = { ...quickReplies.find(reply => p.includes(`/${reply.id}/use`)), saved_files: [] };
+    else if (p === '/api/v1/quick-replies') result = quickReplies;
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });
   });
   await page.goto(`http://desk.test/${pageName === 'ticket' ? 'tickets/demo-0' : 'tickets'}`);
@@ -687,7 +889,7 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           assert.equal(system.font, '15px');
           assert.notEqual(system.background, 'rgba(0, 0, 0, 0)');
           assert.equal(system.color, theme === 'dark' ? 'rgb(237, 234, 245)' : 'rgb(48, 44, 64)');
-          assert.equal(await page.locator('.message.agent').first().evaluate(el => getComputedStyle(el).backgroundColor), theme === 'dark' ? 'rgb(42, 53, 78)' : 'rgb(234, 240, 250)');
+          assert.equal(await page.locator('.message.agent').first().evaluate(el => getComputedStyle(el).backgroundColor), theme === 'dark' ? 'rgb(200, 175, 246)' : 'rgb(201, 177, 244)');
           const badgeColors = await page.evaluate(() => {
             const wrap = document.createElement('div');
             document.querySelector('#appContent').appendChild(wrap);

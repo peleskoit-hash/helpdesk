@@ -102,12 +102,6 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .status-board-btn { border-radius: 12px; padding: 15px 18px; font: 600 21px/1.4 var(--desk-font); box-shadow: none; transform: none; min-width: 0; overflow-wrap: anywhere; }
   & .status-board-btn-time { font-size: 19.5px; }
   & .status-board-btn.active { flex-wrap: wrap; gap: 12px; }
-  & .status-board-btn.active { border-color: var(--desk-accent); box-shadow: none; }
-  & .status-offline { background: var(--desk-surface); color: var(--desk-muted); }
-  & .status-online { background: var(--desk-success-bg); color: var(--desk-success); }
-  & .status-on-ticket { background: var(--desk-tint); color: var(--desk-on-tint); }
-  & .status-waiting { background: var(--desk-warning-bg); color: var(--desk-warning-text); }
-  & .status-lunch { background: var(--desk-blue-bg); color: var(--desk-blue-text); }
   & .quick-replies-workspace { grid-template-rows: auto minmax(0, 1fr); gap: 18px; }
   & .quick-replies-list { gap: 12px; }
   & .quick-reply-row { gap: 12px; }

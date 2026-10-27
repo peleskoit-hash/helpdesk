@@ -129,6 +129,8 @@ function applyTheme(theme) {
   });
   appearanceMenu.querySelectorAll("[data-appearance-field]").forEach(input => {
     input.value = appearance[`${input.dataset.appearanceField}_${mode}`];
+    const role = input.dataset.appearanceField.startsWith("interface_") ? "interface" : "accent";
+    input.style.setProperty("--appearance-hue", appearance[`${role}_hue_${mode}`]);
   });
 }
 

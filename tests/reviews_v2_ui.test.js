@@ -91,7 +91,7 @@ for (const theme of ['light', 'dark']) {
       assert.equal(queries.at(-1).page, '2');
       if (role === 'admin') assert.equal(queries.at(-1).employee_id, 'agent-1');
       assert.ok(assets.includes('/static/reviews.css?v=20261024-reviews-v2'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261027-ticket-row-v2'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261027-agent-pastel-v2'));
       makeEmpty();
       await page.locator('#reviewDateFrom').fill('2026-10-02');
       await page.waitForFunction(() => document.querySelector('#reviewStatus').textContent.includes('отзывов нет'));

@@ -129,7 +129,7 @@
         "/static/ticket_composer.js?v=20261021-chat-file-input",
         "/static/ticket_controls.js?v=20261025-ticket-sidebar-v2",
         "/static/ticket_message_view.js?v=20261021-all-save-feedback",
-        "/static/ticket.js?v=20261021-task-panel-refresh",
+        "/static/ticket.js?v=20261027-chat-quick-replies-v2",
       ],
     },
   ];

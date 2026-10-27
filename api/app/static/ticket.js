@@ -640,11 +640,6 @@ function renderQuickReplyPanelRows() {
     `;
     el.quickRepliesPanelRows.appendChild(row);
   }
-  for (let index = state.quickReplies.length; index < 5; index += 1) {
-    const placeholder = document.createElement("div");
-    placeholder.className = "quick-replies-panel-row quick-replies-panel-placeholder";
-    el.quickRepliesPanelRows.appendChild(placeholder);
-  }
   if (el.quickRepliesEditorRow) {
     el.quickRepliesEditorRow.disabled = !canUseQuickRepliesEditor();
   }

@@ -12,6 +12,43 @@ const pages = {
   '/management/feedback': 'management_feedback', '/management/statistics': 'management_statistics',
   '/management/saved-files': 'management_saved_files', '/quick-replies': 'quick_replies',
 };
+
+for (const theme of ['light', 'dark']) test(`status controls share one readable palette: ${theme}`, async t => {
+  const { page } = await setup(t, theme, 1366, '/statuses');
+  const expected = ['rgb(169, 227, 195)', 'rgb(201, 177, 244)', 'rgb(245, 212, 165)', 'rgb(175, 216, 249)', 'rgb(245, 186, 202)'];
+  const expectedText = ['rgb(21, 91, 62)', 'rgb(86, 50, 146)', 'rgb(135, 83, 21)', 'rgb(35, 91, 138)', 'rgb(145, 61, 89)'];
+  const board = await page.locator('.status-board-btn').evaluateAll(nodes => nodes.map(el => {
+    const style = getComputedStyle(el), sidebar = document.querySelector(`.agent-status-btn[data-availability-status="${el.dataset.status}"]`);
+    const rgb = value => value.match(/\d+/g).slice(0, 3).map(Number);
+    const lum = value => rgb(value).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; })
+      .reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+    const a = lum(style.color), b = lum(style.backgroundColor);
+    return { status: el.dataset.status, color: style.color, sidebarColor: getComputedStyle(sidebar).color,
+      background: style.backgroundColor, sidebar: getComputedStyle(sidebar).backgroundColor, contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+  }));
+  assert.deepEqual(board.map(row => row.background), expected);
+  assert.deepEqual(board.map(row => row.color), expectedText);
+  for (const row of board) {
+    assert.equal(row.background, row.sidebar); assert.equal(row.color, row.sidebarColor);
+    // The prescribed offline foreground/background pair has approximately 4.23:1 contrast.
+    assert.ok(row.contrast >= (row.status === 'offline' ? 4.2 : 4.5));
+  }
+  await page.locator('.status-board-btn[data-status="waiting"]').click();
+  await page.waitForFunction(() => document.querySelector('.status-board-btn[data-status="waiting"]').classList.contains('active'));
+  assert.notEqual(await page.locator('.status-board-btn.active').evaluate(el => getComputedStyle(el).boxShadow), 'none');
+  await page.locator('#themeToggleBtn').click();
+  await page.locator(`[data-appearance-theme="${theme === 'light' ? 'dark' : 'light'}"]`).click();
+  assert.deepEqual(await page.locator('.status-board-btn').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).backgroundColor)), expected);
+  assert.deepEqual(await page.locator('.status-board-btn').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).color)), expectedText);
+  await page.goto('http://desk.test/management/feedback');
+  await page.waitForFunction(() => document.body.dataset.sidebarReady === '1');
+  await page.evaluate(() => { window.paletteSidebar = document.querySelector('.sidebar'); });
+  await page.locator('.sidebar a[href="/statuses"]').click();
+  await page.waitForSelector('.status-board-btn');
+  assert.equal(await page.evaluate(() => window.paletteSidebar === document.querySelector('.sidebar')), true);
+  assert.deepEqual(await page.locator('.status-board-btn').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).backgroundColor)), expected);
+  assert.deepEqual(await page.locator('.status-board-btn').evaluateAll(nodes => nodes.map(el => getComputedStyle(el).color)), expectedText);
+});
 async function setup(t, theme, width, target = '/statuses') {
   const page = await browser.newPage({ viewport: { width, height: width >= 1000 ? 768 : width === 640 ? 740 : 844 }, reducedMotion: 'reduce' });
   t.after(() => page.close());

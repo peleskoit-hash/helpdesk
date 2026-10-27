@@ -1359,15 +1359,15 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261025-bot-browser-v2"
-    bot_buttons_editor_version = "20261023-auto-only"
+    app_shell_version = "20261027-chat-quick-replies-v2"
+    bot_buttons_editor_version = "20261026-bot-editor-v2"
     ticket_message_view_version = "20261021-all-save-feedback"
     ticket_static_version = "20261021-chat-file-input"
     ticket_attachments_template_version = "20261020-quotes"
     ticket_attachments_shell_version = "20261020-quotes"
     ticket_controls_version = "20261025-ticket-sidebar-v2"
-    ticket_page_version = "20261021-task-panel-refresh"
-    ticket_styles_version = "20261027-ticket-row-v2"
+    ticket_page_version = "20261027-chat-quick-replies-v2"
+    ticket_styles_version = "20261027-agent-pastel-v2"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")

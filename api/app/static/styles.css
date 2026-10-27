@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261027-ticket-row-v2");
+@import url("/static/desk-v2.css?v=20261027-agent-pastel-v2");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -2033,7 +2033,6 @@ th, td {
   border-color: var(--accent);
   background: #e7f2ff;
   box-shadow: 0 0 0 3px rgba(34, 113, 179, 0.34);
-  font-weight: 700;
 }
 
 .quick-replies-panel-row:disabled {

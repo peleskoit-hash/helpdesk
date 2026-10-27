@@ -48,6 +48,7 @@ const helpers = loadHelpers();
 const settingsClientCardSource = fs.readFileSync('api/app/static/settings_client_card.js', 'utf8');
 const settingsClientCardTemplate = fs.readFileSync('api/app/templates/settings_client_card.html', 'utf8');
 const stylesSource = fs.readFileSync('api/app/static/styles.css', 'utf8');
+const deskV2Source = fs.readFileSync('api/app/static/desk-v2.css', 'utf8');
 const ticketClientCardSource = fs.readFileSync('api/app/static/ticket_client_card.js', 'utf8');
 const ticketPageSource = fs.readFileSync('api/app/static/ticket.js', 'utf8');
 const ticketControlsSource = fs.readFileSync('api/app/static/ticket_controls.js', 'utf8');
@@ -193,8 +194,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261025-bot-browser-v2/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261021-task-panel-refresh/);
-  assert.match(appShellSource, /ticket\.js\?v=20261021-task-panel-refresh/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261027-chat-quick-replies-v2/);
+  assert.match(appShellSource, /ticket\.js\?v=20261027-chat-quick-replies-v2/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261025-bot-browser-v2/);
 });
 
@@ -3334,7 +3335,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/quick_replies\.js\?v=20261021-profile-quick-save"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261027-ticket-row-v2/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261027-agent-pastel-v2/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261021-profile-quick-save/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3417,7 +3418,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261027-ticket-row-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261027-agent-pastel-v2/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);
@@ -3437,7 +3438,7 @@ test('ticket quick reply button shows visual Ctrl+Q tooltip on hover and focus',
   assert.match(toggleStyle, /pointer-events: none;/);
 });
 
-test('ticket quick replies panel is fixed height overlay with five result slots plus editor row', () => {
+test('ticket quick replies overlay sizes to populated results plus editor row', () => {
   const panelStyle = sourceBetween(stylesSource, '.quick-replies-panel {', '.quick-replies-search {');
   assert.match(ticketTemplate, /id="quickRepliesPanel" class="quick-replies-panel hidden"/);
   assert.match(ticketTemplate, /id="quickRepliesSearchInput"/);
@@ -3446,9 +3447,11 @@ test('ticket quick replies panel is fixed height overlay with five result slots 
   assert.match(panelStyle, /position: fixed;/);
   assert.match(panelStyle, /left: 0;[\s\S]*bottom: 0;[\s\S]*transform: translateX\(-50%\);/);
   assert.match(panelStyle, /width: min\(460px, calc\(100vw - 28px\)\);/);
-  assert.match(panelStyle, /height: 306px;/);
+  assert.match(deskV2Source, /#quickRepliesPanel \{[\s\S]*height: auto; max-height:/);
   assert.match(panelStyle, /grid-template-rows: auto 1fr auto;/);
-  assert.match(stylesSource, /\.quick-replies-panel-rows \{[\s\S]*grid-template-rows: repeat\(5, 1fr\);/);
+  assert.match(deskV2Source, /\.quick-replies-panel-rows \{[^}]*grid-template-rows: none;[^}]*grid-auto-rows: minmax\(48px, auto\)/);
+  const renderRows = sourceBetween(ticketPageSource, 'function renderQuickReplyPanelRows()', 'async function searchQuickReplies(');
+  assert.doesNotMatch(renderRows, /placeholder|index < 5/);
   assert.doesNotMatch(panelStyle, /overflow-y: auto/);
 });
 
@@ -3493,11 +3496,13 @@ test('ticket quick replies use is single-flight to avoid double insertion', () =
   assert.match(useSource, /finally \{[\s\S]*state\.quickReplyUseInFlight = false;[\s\S]*\}/);
 });
 
-test('ticket quick replies active highlight and editor row are visually distinct', () => {
-  assert.match(stylesSource, /\.quick-replies-search\.highlighted \{[\s\S]*outline: 3px solid rgba\(34, 113, 179, 0\.42\);[\s\S]*outline-offset: 3px;/);
-  assert.match(stylesSource, /\.quick-replies-panel-row:hover,\s*\.quick-replies-panel-row\.highlighted \{[\s\S]*box-shadow: 0 0 0 3px rgba\(34, 113, 179, 0\.34\);[\s\S]*font-weight: 700;/);
-  assert.match(stylesSource, /\.quick-replies-editor-row \{[\s\S]*border: 1px solid var\(--border\);[\s\S]*background: rgba\(255, 202, 158, 0\.78\);[\s\S]*text-align: center;[\s\S]*justify-content: center;/);
-  assert.match(stylesSource, /\.quick-replies-editor-row:hover,\s*\.quick-replies-editor-row\.highlighted \{[\s\S]*background: rgba\(255, 202, 158, 0\.78\);[\s\S]*box-shadow: 0 0 0 3px rgba\(34, 113, 179, 0\.34\), 0 4px 12px rgba\(15, 23, 42, 0\.12\);/);
+test('ticket quick replies highlight preserves preview metrics and uses V2 tokens', () => {
+  const scope = sourceBetween(deskV2Source, 'body:has(#appContent.main[data-shell-page="ticket-card"]) #quickRepliesPanel {', '/* Appearance is shared chrome;');
+  assert.match(scope, /\.quick-replies-panel-preview \{[^}]*font-weight: 400;/);
+  assert.match(scope, /\.quick-replies-panel-row:is\(:hover, \.highlighted\) \{[^}]*font-weight: 400;/);
+  assert.match(scope, /background: var\(--desk-surface\);/);
+  assert.match(scope, /\.quick-replies-search \{[^}]*background: var\(--desk-soft\);[^}]*color: var\(--desk-text\);/);
+  assert.match(scope, /\.quick-replies-editor-row[^}]*background: var\(--desk-tint\);/);
 });
 
 test('ticket quick replies search uses backend MRU, allows one char, and ignores stale responses', () => {
