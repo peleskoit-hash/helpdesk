@@ -1,0 +1,73 @@
+/* All scene layers and controls share the reference image's 1672×941 plane. */
+* { box-sizing: border-box; }
+body.login-page {
+  margin: 0;
+  color-scheme: dark;
+  --matrix-ink: #ffbd66;
+  background: #130e0c;
+  color: #fff1dc;
+  font-family: "Segoe UI", sans-serif;
+}
+.login-scene { position: relative; min-height: 100svh; overflow: hidden; background: radial-gradient(ellipse at 50% 20%, #633014, #130e0c 70%); }
+.login-scene-plane {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: max(100%, calc(100svh * 1672 / 941)); aspect-ratio: 1672 / 941;
+  container-type: inline-size;
+}
+.scene-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; object-fit: contain; }
+.scene-people { opacity: 0; transition: opacity .6s; }
+[data-theme="light"] .scene-people { opacity: 1; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.matrix-field, .login-submit, .login-error { position: absolute; left: 50%; transform: translateX(-50%); }
+.matrix-field {
+  width: 25.6%; max-width: calc(100vw - 40px); height: 6.1%;
+  background: linear-gradient(110deg, #140f0ce8, #151719ed); border-radius: 4px;
+}
+.matrix-login { top: 21.4%; }
+.matrix-password { top: 30.3%; }
+.matrix-field canvas { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.matrix-field input {
+  position: absolute; inset: 0; width: 100%; height: 100%; min-height: 36px;
+  margin: 0; border: 0; border-radius: inherit; padding: 0 16px;
+  background: transparent; color: var(--matrix-ink); font: 20px monospace; caret-color: var(--matrix-ink);
+}
+.matrix-field input:focus { outline: none; }
+.matrix-ready input {
+  color: transparent; -webkit-text-fill-color: transparent; caret-color: transparent;
+  /* Native selection remains editable; the canvas draws the selected cells. */
+}
+.matrix-ready input::selection { background: transparent; }
+.matrix-ready input:is(:autofill, :-webkit-autofill) {
+  -webkit-text-fill-color: transparent; caret-color: transparent;
+  box-shadow: inset 0 0 0 1000px #141518;
+}
+.matrix-ready:focus-within::after {
+  content: ""; position: absolute; z-index: 2; left: var(--matrix-caret, 16px); top: 24%; height: 52%; width: 2px;
+  pointer-events: none; background: var(--matrix-ink); box-shadow: 0 0 7px var(--matrix-ink); animation: matrix-blink 1s steps(1) infinite;
+}
+@keyframes matrix-blink { 50% { opacity: 0; } }
+.login-submit {
+  /* Inset within the new panel at source coordinates (652, 372)–(1018, 432). */
+  top: 40.35%; width: 20.6%; max-width: calc(100vw - 56px); height: 4.5%;
+  cursor: pointer; border: 2px solid #805024; border-radius: 5px;
+  background: repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 3px), linear-gradient(100deg, #754018, #e0a051 18%, #ac6f31 48%, #e7ab59 80%, #764019);
+  color: #211207; font: 700 clamp(10px, 1.55cqw, 32px)/1 Georgia, serif; letter-spacing: .22em;
+  text-shadow: 0 1px 0 #f4c77c; box-shadow: inset 0 2px 1px #ffdc9580, inset 0 -3px 3px #593010, 0 4px 0 #211409, 0 6px 8px #000a;
+  transition: transform .08s, box-shadow .08s;
+}
+.login-submit::before, .login-submit::after { content: "⊖"; position: absolute; top: 50%; transform: translateY(-50%); color: #44270f; font-size: 14px; letter-spacing: 0; }
+.login-submit::before { left: 12px; } .login-submit::after { right: 12px; }
+.login-submit:active { transform: translate(-50%, 3px); box-shadow: inset 0 3px 8px #40220de0, 0 1px 0 #211409; }
+.login-submit:focus-visible { outline: 2px solid #fff1cc; outline-offset: 5px; }
+.login-error { top: max(46.5%, calc(40.1% + 48px)); width: 39%; max-width: calc(100vw - 32px); margin: 0; text-align: center; color: #ffe2d2; background: #1d0907e8; border-radius: 4px; padding: 7px 10px; font-size: clamp(12px, .9cqw, 17px); }
+.login-error:empty { display: none; }
+.lamp-hotspot { position: absolute; min-width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.lamp-hotspot:focus-visible { outline: 2px dashed #fff1cc; outline-offset: 3px; background: #ffe8ad18; }
+.lamp-large { left: 13%; top: 4%; width: 7%; height: 10%; }
+.lamp-left { left: 35.3%; top: 3.2%; width: 5.5%; height: 5.8%; }
+.lamp-right { left: 59.3%; top: 3.2%; width: 5.5%; height: 5.8%; }
+.lamp-desk { left: 85%; top: 37%; width: 6%; height: 7%; }
+.login-noscript { position: fixed; bottom: 0; padding: 12px; background: #211409; color: #fff1dc; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

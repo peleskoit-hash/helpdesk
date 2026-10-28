@@ -3,43 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ES DESK — Вход</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261027-active-status-v1" />
+  <title>ES DESK+</title>
+  <link rel="stylesheet" href="/static/login-v2.css?v=20261028-studio-final-v2" />
 </head>
-<body class="login-page">
-  <main class="login-wrap">
-    <section class="login-card">
-      <h1 class="login-title">ES DESK</h1>
-      <p class="login-subtitle">Вход в Helpdesk</p>
+<body class="login-page" data-theme="dark">
+  <main class="login-scene" aria-labelledby="loginTitle">
+    <div class="login-scene-plane">
+      <img class="scene-layer scene-base" src="/static/неоновая_киберпанк_студия_es_desk.png?v=20261028-studio-final-v2" width="1672" height="941" alt="" fetchpriority="high" />
+      <img class="scene-layer scene-people" src="/static/esdesk_light_people.png?v=20261028-studio-final-v2" width="1672" height="941" alt="" />
+      <h1 id="loginTitle" class="visually-hidden">ES DESK+</h1>
       <form method="post" action="/login" class="login-form" autocomplete="on">
         <input type="hidden" name="next" value="{{NEXT_VALUE}}" />
-        <label class="login-field">Login
-          <input
-            id="loginInput"
-            name="username"
-            type="text"
-            value="{{LOGIN_VALUE}}"
-            autocomplete="username"
-            autocapitalize="none"
-            autocorrect="off"
-            spellcheck="false"
-            required
-          />
-        </label>
-        <label class="login-field">Password
-          <input
-            id="passwordInput"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            required
-          />
-        </label>
-        <div class="login-error">{{LOGIN_ERROR}}</div>
-        <button type="submit" class="action primary">Войти</button>
+        <div class="matrix-field matrix-login">
+          <canvas aria-hidden="true"></canvas>
+          <input id="loginInput" name="username" type="text" value="{{LOGIN_VALUE}}" aria-label="Логин" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus />
+        </div>
+        <div class="matrix-field matrix-password">
+          <canvas aria-hidden="true"></canvas>
+          <input id="passwordInput" name="password" type="password" aria-label="Пароль" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="login-submit">LOG IN</button>
+        <div class="login-error" id="loginError" role="alert">{{LOGIN_ERROR}}</div>
       </form>
-    </section>
+      <button type="button" class="lamp-hotspot lamp-large" aria-label="Сменить освещение: включить светлую тему" aria-pressed="false" title="Сменить освещение"></button>
+      <button type="button" class="lamp-hotspot lamp-left" aria-label="Сменить освещение: включить светлую тему" aria-pressed="false" title="Сменить освещение"></button>
+      <button type="button" class="lamp-hotspot lamp-right" aria-label="Сменить освещение: включить светлую тему" aria-pressed="false" title="Сменить освещение"></button>
+      <button type="button" class="lamp-hotspot lamp-desk" aria-label="Сменить освещение: включить светлую тему" aria-pressed="false" title="Сменить освещение"></button>
+    </div>
   </main>
+  <noscript><p class="login-noscript">Для отображения электронных табло включите JavaScript. Поля входа доступны в обычном виде.</p></noscript>
+  <script src="/static/login.js?v=20261028-studio-final-v2"></script>
 </body>
 </html>
-
