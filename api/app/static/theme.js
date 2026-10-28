@@ -3,7 +3,7 @@ const THEME_PREFERENCES_URL = "/api/v1/users/me/preferences";
 // Legacy keys are accepted only when restoring preferences from an older server/client.
 const LEGACY_ACCENT_HUES = { purple: 259, blue: 215, red: 350, green: 153, orange: 29, teal: 184, mono: 0 };
 const COLOR_ROLES = ["interface_hue", "interface_intensity", "accent_hue", "accent_strength"];
-const APPEARANCE_DEFAULTS = { theme_preference: "light", appearance_revision: null };
+const APPEARANCE_DEFAULTS = { theme_preference: "light", appearance_revision: null, background_patterns: null };
 for (const theme of ["light", "dark"]) for (const role of COLOR_ROLES) {
   APPEARANCE_DEFAULTS[`${role}_${theme}`] = role === "interface_hue" && theme === "dark" ? 225 : role.endsWith("hue") ? 259 : 50;
 }
@@ -20,12 +20,29 @@ let saveInFlight = false;
 let appearanceButton = null;
 let appearanceMenu = null;
 
-// In-memory only: untouched themes retain the legacy CSS grid, independently of this UI.
-const backgroundPatterns = Object.fromEntries(["light", "dark"].map(theme => [theme,
-  { type: "grid", intensity: 50, scale: 100, variable: false, changed: false, seeds: {} }]));
+function mergeAppearance(base, patch) {
+  const merged = { ...base, ...patch };
+  if (patch.background_patterns) {
+    merged.background_patterns = { ...base.background_patterns };
+    for (const [theme, changes] of Object.entries(patch.background_patterns)) {
+      const previous = base.background_patterns?.[theme];
+      const next = { ...previous, ...changes };
+      if (changes.patterns) {
+        next.patterns = { ...previous?.patterns };
+        for (const [kind, parameters] of Object.entries(changes.patterns)) {
+          next.patterns[kind] = { ...previous?.patterns?.[kind], ...parameters };
+        }
+      }
+      merged.background_patterns[theme] = next;
+    }
+  }
+  return merged;
+}
 
 function renderBackgroundPattern() {
-  const mode = appearance.theme_preference, state = backgroundPatterns[mode];
+  const mode = appearance.theme_preference, theme = appearance.background_patterns?.[mode];
+  const type = theme?.selected ?? "grid";
+  const state = { scale: 100, intensity: 50, variable: false, ...theme?.patterns?.[type], type, changed: !!theme };
   document.body.toggleAttribute("data-pattern-custom", state.changed);
   document.body.dataset.patternKind = state.type;
   document.body.dataset.patternVariable = String(state.variable);
@@ -40,10 +57,8 @@ function renderBackgroundPattern() {
         waves: '<path d="M0 21C7 7 14 7 21 21S35 35 42 21"/>',
         relief: '<path d="M-42 0C-42 21 0 21 0 42M-21 0C-21 21 21 21 21 42M0 0C0 21 42 21 42 42M21 0C21 21 63 21 63 42M42 0C42 21 84 21 84 42"/>',
       };
-      if (state.variable && !state.seeds[state.type]) {
-        state.seeds[state.type] = crypto.getRandomValues(new Uint32Array(1))[0] % 65535 + 1;
-      }
-      const seed = state.seeds[state.type];
+      // Only the server creates seeds. Use a fixed preview until its first acknowledgement.
+      const seed = state.seed ?? 1;
       // A stitched, low-frequency mask changes only pattern visibility, never the surface.
       const mask = state.variable ? `<filter id="noise" x="0" y="0" width="840" height="840" filterUnits="userSpaceOnUse"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="2" seed="${seed}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2 0 0 0 -.35"/></filter><mask id="visibility"><rect width="840" height="840" filter="url(#noise)"/></mask>` : "";
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="840" viewBox="0 0 840 840"><defs><pattern id="p" width="42" height="42" patternUnits="userSpaceOnUse"><g color="${ink}" stroke="currentColor" fill="none" stroke-width="1">${shapes[state.type]}</g></pattern>${mask}</defs><rect width="840" height="840" fill="url(#p)" opacity="${state.variable ? .1 : state.intensity * .0008}" ${state.variable ? 'mask="url(#visibility)"' : ""}/></svg>`;
@@ -61,7 +76,7 @@ function renderBackgroundPattern() {
   section.querySelector("#patternIntensity").disabled = state.variable;
   section.querySelector("#patternScale").value = state.scale;
   section.querySelector("#patternVariable").checked = state.variable;
-  section.querySelector(".pattern-code span").textContent = state.variable && state.type !== "none" ? String(state.seeds[state.type]) : "—";
+  section.querySelector(".pattern-code span").textContent = state.variable && state.type !== "none" && state.seed ? String(state.seed) : "—";
 }
 
 function normalizeTheme(theme) { return theme === "dark" ? "dark" : "light"; }
@@ -70,6 +85,7 @@ function normalizeAppearance(payload) {
   const result = { ...APPEARANCE_DEFAULTS };
   result.theme_preference = normalizeTheme(payload?.theme_preference);
   result.appearance_revision = payload?.appearance_revision ?? null;
+  result.background_patterns = payload?.background_patterns ?? null;
   for (const theme of ["light", "dark"]) {
     if (Object.hasOwn(LEGACY_ACCENT_HUES, payload?.accent_preference)) {
       result[`accent_hue_${theme}`] = LEGACY_ACCENT_HUES[payload.accent_preference];
@@ -184,16 +200,20 @@ function setAppearanceStatus(message) {
   if (status) status.textContent = message;
 }
 
+async function fetchAppearance() {
+  const response = await fetch(THEME_PREFERENCES_URL, {
+    headers: { accept: "application/json" }, credentials: "include", cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return normalizeAppearance(await response.json());
+}
+
 async function loadThemePreference() {
   if (!preferencesLoadPromise) {
     preferencesLoadPromise = (async () => {
       try {
-        const response = await fetch(THEME_PREFERENCES_URL, {
-          headers: { accept: "application/json" }, credentials: "include", cache: "no-store",
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        confirmedAppearance = normalizeAppearance(await response.json());
-        appearance = { ...confirmedAppearance, ...pendingAppearance };
+        confirmedAppearance = await fetchAppearance();
+        appearance = mergeAppearance(confirmedAppearance, pendingAppearance);
         applyTheme(appearance.theme_preference);
       } catch {
         setAppearanceStatus("Не удалось загрузить оформление. Попробуйте обновить страницу.");
@@ -240,6 +260,7 @@ async function flushAppearanceSaveQueue() {
       const sequence = pendingAppearanceSequence;
       pendingAppearance = {};
       savingAppearance = patch;
+      let reconciled = false;
       try {
         await getAppearanceWriter(patch, sequence);
         const response = await fetch(THEME_PREFERENCES_URL, {
@@ -252,6 +273,7 @@ async function flushAppearanceSaveQueue() {
             const payload = await response.json();
             if (payload?.detail?.error?.code === "appearance_session_expired") {
               confirmedAppearance = normalizeAppearance(payload.detail.preferences);
+              reconciled = true;
               appearanceWriterId = null;
               appearanceSessionPromise = null;
             }
@@ -261,9 +283,12 @@ async function flushAppearanceSaveQueue() {
         confirmedAppearance = normalizeAppearance(await response.json());
         setAppearanceStatus("");
       } catch {
-        setAppearanceStatus("Не удалось сохранить оформление. Изменение отменено.");
+        if (!reconciled) {
+          try { confirmedAppearance = await fetchAppearance(); } catch { /* Retain the last server acknowledgement offline. */ }
+        }
+        setAppearanceStatus("Не удалось подтвердить сохранение оформления. Проверьте настройки.");
       }
-      appearance = { ...confirmedAppearance, ...pendingAppearance };
+      appearance = mergeAppearance(confirmedAppearance, pendingAppearance);
       applyTheme(appearance.theme_preference);
       savingAppearance = {};
     }
@@ -274,8 +299,8 @@ async function flushAppearanceSaveQueue() {
 
 function changeAppearance(patch) {
   pendingAppearanceSequence = ++appearanceSequence;
-  Object.assign(appearance, patch);
-  Object.assign(pendingAppearance, patch);
+  appearance = mergeAppearance(appearance, patch);
+  pendingAppearance = mergeAppearance(pendingAppearance, patch);
   applyTheme(appearance.theme_preference);
   void flushAppearanceSaveQueue();
 }
@@ -296,7 +321,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-render-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-api-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.remove();
@@ -353,18 +378,22 @@ function initThemeToggle() {
     const patternSection = appearanceMenu.querySelector(".appearance-pattern");
     patternSection.addEventListener("toggle", positionAppearanceMenu);
     patternSection.addEventListener("input", event => {
-      const state = backgroundPatterns[appearance.theme_preference], input = event.target;
-      if (input.name === "appearance-pattern") state.type = input.value;
-      else if (input.id === "patternVariable") state.variable = input.checked;
-      else if (input.id === "patternIntensity") state.intensity = Number(input.value);
-      else if (input.id === "patternScale") state.scale = Number(input.value);
+      const mode = appearance.theme_preference, input = event.target;
+      const kind = appearance.background_patterns?.[mode]?.selected ?? "grid";
+      let changes;
+      if (input.name === "appearance-pattern") changes = { selected: input.value };
+      else if (input.id === "patternVariable") changes = { patterns: { [kind]: { variable: input.checked } } };
+      else if (input.id === "patternIntensity") changes = { patterns: { [kind]: { intensity: Number(input.value) } } };
+      else if (input.id === "patternScale") changes = { patterns: { [kind]: { scale: Number(input.value) } } };
       else return;
-      state.changed = true;
-      renderBackgroundPattern();
+      changeAppearance({ background_patterns: { [mode]: changes } });
       positionAppearanceMenu();
     });
     // Follow the invoker in DOM order for native popover keyboard navigation.
     button.after(appearanceMenu);
+    appearanceMenu.addEventListener("beforetoggle", event => {
+      if (event.newState === "open") patternSection.open = false;
+    });
     appearanceMenu.addEventListener("toggle", event => {
       button.setAttribute("aria-expanded", String(event.newState === "open"));
       positionAppearanceMenu();
@@ -399,7 +428,7 @@ window.addEventListener("pagehide", () => {
   void fetch(THEME_PREFERENCES_URL, {
     method: "PATCH", credentials: "include", keepalive: true,
     headers: { accept: "application/json", "content-type": "application/json" },
-    body: appearanceWriteBody({ ...savingAppearance, ...pendingAppearance }, pendingAppearanceSequence),
+    body: appearanceWriteBody(mergeAppearance(savingAppearance, pendingAppearance), pendingAppearanceSequence),
   }).catch(() => {});
 });
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initThemeToggle);

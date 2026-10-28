@@ -50,16 +50,6 @@ body[data-pattern-custom]:has(.layout > .main) :is(#appContent.main, #appContent
   background-position: 0 0;
   background-attachment: fixed;
 }
-/* Native checkbox behavior, with the same V2 switch geometry as the menu. */
-body .color-toggle input.v2-switch {
-  appearance: none; flex: 0 0 40px; width: 40px; height: 24px; margin: 0; padding: 2px;
-  border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-border); cursor: pointer;
-}
-body .color-toggle input.v2-switch::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--desk-text); }
-body .color-toggle input.v2-switch:checked { background: var(--desk-primary); border-color: var(--desk-primary); }
-body .color-toggle input.v2-switch:checked::before { transform: translateX(16px); background: var(--desk-on-accent); }
-body .color-toggle input.v2-switch:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 2px; }
-
 body[data-pattern-custom][data-pattern-kind="grid"][data-pattern-variable="false"]:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
   background-image: linear-gradient(var(--desk-grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--desk-grid-line) 1px, transparent 1px);
 }

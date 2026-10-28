@@ -35,7 +35,7 @@ async function setup(t, { width = 1440, height = 900, theme = 'light' } = {}) {
   });
   await page.goto('http://helpdesk.test/tickets?tab=active&page=1');
   await page.addStyleTag({ content: styles });
-  await page.addStyleTag({ content: fs.readFileSync('api/app/static/appearance-pattern.css', 'utf8') });
+  await page.addStyleTag({ content: fs.readFileSync('api/app/static/profile-settings-v2.css', 'utf8') });
   assert.equal(await page.locator('#colorEnabledInput').getAttribute('role'), 'switch');
   assert.equal(await page.locator('#colorEnabledInput').evaluate(el => getComputedStyle(el).width), '40px');
   await page.evaluate(theme => {
@@ -206,4 +206,32 @@ test('page cleanup hides the top-layer tooltip and removes handlers', async t =>
   await page.locator('#colorToggleText').hover();
   assert.equal(await page.locator('#colorLegend').evaluate(node => node.matches(':popover-open')), false);
   assert.equal(await page.locator('#colorLegend').count(), 1);
+});
+
+for (const theme of ['light', 'dark']) test(`color switch reuses the standard V2 skin in both states: ${theme}`, async t => {
+  const { page, writes } = await setup(t, { theme });
+  await page.addStyleTag({ content: fs.readFileSync('api/app/static/desk-v2.css', 'utf8').replace(/@import[^;]+;/g, '') });
+  const input = page.locator('#colorEnabledInput');
+  assert.equal(await input.getAttribute('class'), 'desk-toggle');
+  assert.doesNotMatch(fs.readFileSync('api/app/static/appearance-pattern.css', 'utf8'), /color-toggle|v2-switch/);
+  const geometry = () => input.evaluate(el => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; });
+  const before = await geometry();
+  for (const checked of [true, false]) {
+    await input.setChecked(checked);
+    await page.waitForFunction(checked => document.body.classList.contains('ticket-colors-disabled') === !checked, checked);
+    await page.waitForTimeout(180);
+    const result = await input.evaluate(el => {
+      const reference = document.createElement('input'); reference.type = 'checkbox'; reference.className = 'desk-toggle'; reference.checked = el.checked;
+      reference.style.transition = 'none'; document.body.appendChild(reference);
+      const skin = node => { const s = getComputedStyle(node), knob = getComputedStyle(node, '::before');
+        return [s.width, s.height, s.backgroundColor, s.borderRadius, knob.backgroundColor, knob.width, knob.transform]; };
+      const result = [skin(el), skin(reference)]; reference.remove(); return result;
+    });
+    assert.deepEqual(result[0], result[1]);
+    assert.deepEqual(result[0].slice(0,2), ['40px', '24px']);
+    assert.equal(result[0][4], 'rgb(255, 255, 255)');
+    assert.deepEqual(await geometry(), before);
+    if (process.env.SWITCH_SCREENSHOT_DIR) await page.locator('.display-settings').screenshot({ path: `${process.env.SWITCH_SCREENSHOT_DIR}/color-switch-${theme}-${checked ? 'on' : 'off'}.png` });
+  }
+  assert.deepEqual(writes.at(-1), { color_enabled: false });
 });

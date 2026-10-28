@@ -288,7 +288,7 @@ test('AppShell toolbar replacement keeps the native appearance menu usable witho
       menu: listenerRegistrations.get(currentMenu),
       input: listenerRegistrations.get(currentMenu.querySelector('input')),
       globals: Object.fromEntries(['resize', 'scroll', 'pagehide'].map(key => [key, listenerRegistrations.get(window)[key]])),
-    })), { menu: { toggle: 1, click: 1, input: 1 }, input: undefined, globals: globalListeners });
+    })), { menu: { beforetoggle: 1, toggle: 1, click: 1, input: 1 }, input: undefined, globals: globalListeners });
     await page.locator('#themeToggleBtn').click();
     await page.waitForFunction(() => currentMenu.matches(':popover-open'));
     const count = writes.length;
