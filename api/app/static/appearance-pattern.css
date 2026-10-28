@@ -1,4 +1,4 @@
-/* Stage 1: menu controls and card previews only; no application background rules. */
+/* Local background controls and the existing viewport-aligned paint surfaces. */
 body #appearanceMenu.appearance-menu .appearance-pattern { margin-top: 20px; border-top: 1px solid var(--desk-border); }
 body #appearanceMenu.appearance-menu .appearance-pattern > summary {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -41,4 +41,25 @@ body #appearanceMenu.appearance-menu .pattern-parameters input:disabled { opacit
 body #appearanceMenu.appearance-menu .pattern-code { display: flex; justify-content: space-between; margin-top: 12px; color: var(--desk-muted); font-size: 12px; }
 @media (max-width: 600px) {
   body #appearanceMenu.appearance-menu .pattern-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+body[data-pattern-custom]:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
+  --desk-grid-line: color-mix(in srgb, var(--desk-grid-ink) var(--desk-pattern-strength), var(--desk-grid-base));
+  background-image: var(--desk-pattern-image);
+  background-size: var(--desk-pattern-size) var(--desk-pattern-size);
+  background-position: 0 0;
+  background-attachment: fixed;
+}
+/* Native checkbox behavior, with the same V2 switch geometry as the menu. */
+body .color-toggle input.v2-switch {
+  appearance: none; flex: 0 0 40px; width: 40px; height: 24px; margin: 0; padding: 2px;
+  border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-border); cursor: pointer;
+}
+body .color-toggle input.v2-switch::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--desk-text); }
+body .color-toggle input.v2-switch:checked { background: var(--desk-primary); border-color: var(--desk-primary); }
+body .color-toggle input.v2-switch:checked::before { transform: translateX(16px); background: var(--desk-on-accent); }
+body .color-toggle input.v2-switch:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 2px; }
+
+body[data-pattern-custom][data-pattern-kind="grid"][data-pattern-variable="false"]:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
+  background-image: linear-gradient(var(--desk-grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--desk-grid-line) 1px, transparent 1px);
 }

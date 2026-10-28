@@ -20,6 +20,50 @@ let saveInFlight = false;
 let appearanceButton = null;
 let appearanceMenu = null;
 
+// In-memory only: untouched themes retain the legacy CSS grid, independently of this UI.
+const backgroundPatterns = Object.fromEntries(["light", "dark"].map(theme => [theme,
+  { type: "grid", intensity: 50, scale: 100, variable: false, changed: false, seeds: {} }]));
+
+function renderBackgroundPattern() {
+  const mode = appearance.theme_preference, state = backgroundPatterns[mode];
+  document.body.toggleAttribute("data-pattern-custom", state.changed);
+  document.body.dataset.patternKind = state.type;
+  document.body.dataset.patternVariable = String(state.variable);
+  if (state.changed) {
+    let image = "none";
+    if (state.type !== "none") {
+      const ink = mode === "dark" ? "white" : "black";
+      const shapes = {
+        grid: '<path d="M0 .5H42M.5 0V42"/>',
+        dots: '<circle cx="21" cy="21" r="1.5" stroke="none" fill="currentColor"/>',
+        diagonals: '<path d="M-1 1L1 -1M0 42L42 0M41 43L43 41"/>',
+        waves: '<path d="M0 21C7 7 14 7 21 21S35 35 42 21"/>',
+        relief: '<path d="M-42 0C-42 21 0 21 0 42M-21 0C-21 21 21 21 21 42M0 0C0 21 42 21 42 42M21 0C21 21 63 21 63 42M42 0C42 21 84 21 84 42"/>',
+      };
+      if (state.variable && !state.seeds[state.type]) {
+        state.seeds[state.type] = crypto.getRandomValues(new Uint32Array(1))[0] % 65535 + 1;
+      }
+      const seed = state.seeds[state.type];
+      // A stitched, low-frequency mask changes only pattern visibility, never the surface.
+      const mask = state.variable ? `<filter id="noise" x="0" y="0" width="840" height="840" filterUnits="userSpaceOnUse"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="2" seed="${seed}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2 0 0 0 -.35"/></filter><mask id="visibility"><rect width="840" height="840" filter="url(#noise)"/></mask>` : "";
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="840" viewBox="0 0 840 840"><defs><pattern id="p" width="42" height="42" patternUnits="userSpaceOnUse"><g color="${ink}" stroke="currentColor" fill="none" stroke-width="1">${shapes[state.type]}</g></pattern>${mask}</defs><rect width="840" height="840" fill="url(#p)" opacity="${state.variable ? .1 : state.intensity * .0008}" ${state.variable ? 'mask="url(#visibility)"' : ""}/></svg>`;
+      image = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+    }
+    document.body.style.setProperty("--desk-pattern-image", image);
+    document.body.style.setProperty("--desk-pattern-size", `${(state.type === "grid" && !state.variable ? 42 : 840) * state.scale / 100}px`);
+    document.body.style.setProperty("--desk-pattern-strength", `${state.intensity * .08}%`);
+  }
+  if (!appearanceMenu) return;
+  const section = appearanceMenu.querySelector(".appearance-pattern");
+  section.querySelector(`input[value="${state.type}"]`).checked = true;
+  section.querySelector(".pattern-parameters").hidden = state.type === "none";
+  section.querySelector("#patternIntensity").value = state.intensity;
+  section.querySelector("#patternIntensity").disabled = state.variable;
+  section.querySelector("#patternScale").value = state.scale;
+  section.querySelector("#patternVariable").checked = state.variable;
+  section.querySelector(".pattern-code span").textContent = state.variable && state.type !== "none" ? String(state.seeds[state.type]) : "—";
+}
+
 function normalizeTheme(theme) { return theme === "dark" ? "dark" : "light"; }
 
 function normalizeAppearance(payload) {
@@ -123,6 +167,7 @@ function applyTheme(theme) {
   });
   tokens["--accent"] = tokens["--desk-focus"];
   for (const [key, value] of Object.entries(tokens)) document.body.style.setProperty(key, value);
+  renderBackgroundPattern();
   if (!appearanceMenu) return;
   appearanceMenu.querySelectorAll("[data-appearance-theme]").forEach(button => {
     button.setAttribute("aria-pressed", String(button.dataset.appearanceTheme === mode));
@@ -251,7 +296,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-section-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-render-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.remove();
@@ -288,12 +333,12 @@ function initThemeToggle() {
           <legend class="pattern-sr-only">Вид узора</legend>
           ${[["none", "Без узора"], ["grid", "Сетка"], ["dots", "Точки"], ["diagonals", "Диагонали"], ["waves", "Волны"], ["relief", "Рельеф"]].map(([value, label]) => `
             <label class="pattern-card">
-              <input type="radio" name="appearance-pattern" value="${value}" ${value === "none" ? "checked" : ""}>
+              <input type="radio" name="appearance-pattern" value="${value}" ${value === "grid" ? "checked" : ""}>
               <span class="pattern-sample pattern-${value}" aria-hidden="true"></span>
               <span>${label}</span>
             </label>`).join("")}
         </fieldset>
-        <div class="pattern-parameters" hidden>
+        <div class="pattern-parameters">
           <label class="pattern-switch" for="patternVariable">
             <span>Разноинтенсивный узор</span><input id="patternVariable" type="checkbox" role="switch">
           </label>
@@ -307,11 +352,15 @@ function initThemeToggle() {
       <div class="appearance-status" role="status" aria-live="polite"></div>`;
     const patternSection = appearanceMenu.querySelector(".appearance-pattern");
     patternSection.addEventListener("toggle", positionAppearanceMenu);
-    // Stage 1 is native, menu-local state only; do not route it through appearance saves.
-    patternSection.addEventListener("change", () => {
-      patternSection.querySelector(".pattern-parameters").hidden =
-        patternSection.querySelector("input[name='appearance-pattern']:checked").value === "none";
-      patternSection.querySelector("#patternIntensity").disabled = patternSection.querySelector("#patternVariable").checked;
+    patternSection.addEventListener("input", event => {
+      const state = backgroundPatterns[appearance.theme_preference], input = event.target;
+      if (input.name === "appearance-pattern") state.type = input.value;
+      else if (input.id === "patternVariable") state.variable = input.checked;
+      else if (input.id === "patternIntensity") state.intensity = Number(input.value);
+      else if (input.id === "patternScale") state.scale = Number(input.value);
+      else return;
+      state.changed = true;
+      renderBackgroundPattern();
       positionAppearanceMenu();
     });
     // Follow the invoker in DOM order for native popover keyboard navigation.

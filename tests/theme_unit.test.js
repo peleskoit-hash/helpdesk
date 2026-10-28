@@ -13,7 +13,7 @@ function harness({ delayLoad = false, delaySession = false } = {}) {
   let releaseLoad, completeSession;
   const tokens = {};
   const context = vm.createContext({
-    document: { readyState: 'complete', body: { dataset: {}, style: { setProperty(key, value) { tokens[key] = value; } } },
+    document: { readyState: 'complete', body: { dataset: {}, toggleAttribute() {}, style: { setProperty(key, value) { tokens[key] = value; } } },
       getElementById: () => null, querySelectorAll: () => [] },
     window: { addEventListener: (name, handler) => { windowEvents[name] = handler; } }, localStorage: { removeItem() {} },
     fetch: async (url, options = {}) => {

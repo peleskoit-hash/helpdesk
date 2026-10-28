@@ -191,7 +191,7 @@ test("display settings container wraps theme toggle and keeps ticket color contr
   const tickets = fs.readFileSync(path.join(templatesDir, "tickets.html"), "utf8");
   const ticketsScope = sourceBetween(tickets, '<div class="display-settings">', "</div>");
   assert.ok(ticketsScope.indexOf('id="colorToggleLabel"') < ticketsScope.indexOf('id="themeToggleBtn"'));
-  assert.match(ticketsScope, /id="colorEnabledInput" type="checkbox"/);
+  assert.match(ticketsScope, /id="colorEnabledInput"[^>]*type="checkbox"/);
   assert.match(ticketsScope, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
   assert.match(ticketsScope, /id="colorLegend" class="color-legend" role="tooltip" aria-hidden="true"/);
 

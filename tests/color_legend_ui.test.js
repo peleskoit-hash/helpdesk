@@ -35,6 +35,9 @@ async function setup(t, { width = 1440, height = 900, theme = 'light' } = {}) {
   });
   await page.goto('http://helpdesk.test/tickets?tab=active&page=1');
   await page.addStyleTag({ content: styles });
+  await page.addStyleTag({ content: fs.readFileSync('api/app/static/appearance-pattern.css', 'utf8') });
+  assert.equal(await page.locator('#colorEnabledInput').getAttribute('role'), 'switch');
+  assert.equal(await page.locator('#colorEnabledInput').evaluate(el => getComputedStyle(el).width), '40px');
   await page.evaluate(theme => {
     document.body.dataset.sidebarReady = '1';
     document.body.dataset.theme = theme;
