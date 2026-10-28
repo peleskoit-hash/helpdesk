@@ -102,7 +102,7 @@ test('fullscreen reference, identical layer geometry, accessible inputs and lamp
       }
     }
   }
-  assert.equal(await page.title(), 'ES DESK+');
+  assert.equal(await page.title(), 'ES DESK');
   assert.equal(await page.locator('label').count(), 0);
   assert.equal(assets.some(asset => asset.includes('preview') || asset.includes('theme.js') || asset.includes('mask') || asset.includes('overlay')), false);
   for (const name of ['неоновая_киберпанк_студия_es_desk.png', 'esdesk_light_people.png']) assert.ok(assets.some(asset => asset.endsWith(name)), name);
@@ -134,7 +134,7 @@ test('metal lettering comes only from the reference and remains unchanged betwee
   await page.evaluate(() => { document.body.dataset.theme = 'light'; });
   // A transparent composited layer can change isolated rounded channels by one step.
   assert.ok(await maxPixelDifference(page, await page.screenshot({ clip }), dark) <= 1, 'metal lettering must not change');
-  assert.equal(await page.locator('h1').textContent(), 'ES DESK+');
+  assert.equal(await page.locator('h1').textContent(), 'ES DESK');
   assert.equal(await page.locator('h1').evaluate(el => getComputedStyle(el).clipPath), 'inset(50%)');
 });
 

@@ -35,8 +35,8 @@ def test_login_v2_real_routes_preserve_saved_appearance(saved_theme):
         with TestClient(app) as client:
             page = client.get("/login?next=/profile")
             assert page.status_code == 200
-            assert 'ES DESK+' in page.text and 'Вход в Helpdesk' not in page.text
-            assert '<title>ES DESK+</title>' in page.text
+            assert 'ES DESK' in page.text and 'Вход в Helpdesk' not in page.text
+            assert '<title>ES DESK</title>' in page.text
             assert '/static/login-v2.css?v=20261028-studio-final-v2' in page.text
             assert '/static/login.js?v=20261028-studio-final-v2' in page.text
             assert '/static/theme.js' not in page.text
