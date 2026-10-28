@@ -1,4 +1,54 @@
 /* Local background controls and the existing viewport-aligned paint surfaces. */
+body #appearanceMenu.appearance-menu .pattern-library {
+  box-sizing: border-box; max-height: 560px; overflow-y: auto;
+  padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px;
+  background: var(--desk-surface);
+}
+body #appearanceMenu.appearance-menu .contour-heading { margin: 18px 0 12px; font: inherit; font-weight: 800; }
+body #appearanceMenu.appearance-menu .contour-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+body #appearanceMenu.appearance-menu .contour-card {
+  display: grid; gap: 8px; min-width: 0; padding: 10px;
+  border: 1px dashed var(--desk-focus); border-radius: 12px; background: var(--desk-soft);
+}
+body #appearanceMenu.appearance-menu .contour-card:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: -3px; }
+body #appearanceMenu.appearance-menu .contour-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+body #appearanceMenu.appearance-menu .contour-preview { display: block; width: 100%; height: 64px; object-fit: contain; }
+body #appearanceMenu.appearance-menu .contour-preview[hidden] { display: none; }
+body #appearanceMenu.appearance-menu .contour-image-missing::before { content: "Превью недоступно"; grid-row: 2; grid-column: 1; height: 64px; display: grid; place-items: center; color: var(--desk-muted); font-size: 12px; }
+body #appearanceMenu.appearance-menu .contour-image-missing .contour-name { grid-row: 1; }
+body #appearanceMenu.appearance-menu .contour-image-missing .contour-footer { grid-row: 3; }
+body #appearanceMenu.appearance-menu .contour-footer { display: flex; align-items: center; min-width: 0; gap: 6px; opacity: 0; pointer-events: none; }
+body #appearanceMenu.appearance-menu .contour-card:is(:hover, :focus-within) .contour-footer { opacity: 1; pointer-events: auto; }
+body #appearanceMenu.appearance-menu .contour-author { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--desk-muted); }
+body #appearanceMenu.appearance-menu .contour-actions { display: flex; border: 1px solid var(--desk-border); border-radius: 8px; overflow: hidden; }
+body #appearanceMenu.appearance-menu .contour-action-hint { display: flex; }
+body #appearanceMenu.appearance-menu .contour-action-hint + .contour-action-hint { border-left: 1px solid var(--desk-border); }
+body #appearanceMenu.appearance-menu button.contour-action {
+  display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0;
+  border: 0; border-radius: 0; background: var(--desk-surface); color: var(--desk-text); box-shadow: none;
+}
+body #appearanceMenu.appearance-menu button.contour-action:hover:not(:disabled) { background: var(--desk-hover); }
+body #appearanceMenu.appearance-menu button.contour-action:disabled { color: var(--desk-muted); opacity: .45; cursor: not-allowed; pointer-events: none; }
+body #appearanceMenu.appearance-menu .contour-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+body #appearanceMenu.appearance-menu .contour-status { margin: 12px 0 0; font-size: 12px; color: var(--desk-muted); }
+body #appearanceMenu.appearance-menu .contour-status:empty, body #appearanceMenu.appearance-menu .contour-retry[hidden] { display: none; }
+body #appearanceMenu.appearance-menu .contour-create { margin-top: 14px; }
+body #appearanceMenu.appearance-menu .contour-create button, body #appearanceMenu.appearance-menu .contour-retry {
+  padding: 9px 12px; border: 1px solid var(--desk-border); border-radius: 12px;
+  background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none;
+}
+body #appearanceMenu.appearance-menu .contour-create button:disabled { color: var(--desk-muted); opacity: .6; cursor: not-allowed; }
+body #appearanceMenu.appearance-menu .contour-create small { display: block; margin-top: 6px; color: var(--desk-muted); font-size: 12px; }
+@media (max-width: 600px) {
+  body #appearanceMenu.appearance-menu .contour-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body #appearanceMenu.appearance-menu .contour-footer { flex-wrap: wrap; }
+  body #appearanceMenu.appearance-menu .contour-author { flex-basis: 100%; }
+  body #appearanceMenu.appearance-menu .contour-actions { margin-left: auto; }
+}
+@media (hover: none), (pointer: coarse) {
+  body #appearanceMenu.appearance-menu .contour-footer { opacity: 1; pointer-events: auto; }
+  body #appearanceMenu.appearance-menu button.contour-action { width: 40px; height: 40px; }
+}
 body #appearanceMenu.appearance-menu .appearance-pattern { margin-top: 20px; border-top: 1px solid var(--desk-border); }
 body #appearanceMenu.appearance-menu .appearance-pattern > summary {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;

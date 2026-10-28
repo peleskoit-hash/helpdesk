@@ -196,7 +196,7 @@ function applyTheme(theme) {
 }
 
 function setAppearanceStatus(message) {
-  const status = appearanceMenu?.querySelector("[role='status']");
+  const status = appearanceMenu?.querySelector(".appearance-status");
   if (status) status.textContent = message;
 }
 
@@ -321,7 +321,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-api-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261028-contour-library-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.remove();
@@ -354,6 +354,7 @@ function initThemeToggle() {
       </div>
       <details class="appearance-pattern">
         <summary>Фоновый узор</summary>
+        <div class="pattern-library">
         <fieldset class="pattern-cards">
           <legend class="pattern-sr-only">Вид узора</legend>
           ${[["none", "Без узора"], ["grid", "Сетка"], ["dots", "Точки"], ["diagonals", "Диагонали"], ["waves", "Волны"], ["relief", "Рельеф"]].map(([value, label]) => `
@@ -363,6 +364,15 @@ function initThemeToggle() {
               <span>${label}</span>
             </label>`).join("")}
         </fieldset>
+          <h3 class="contour-heading" id="contourLibraryHeading">Пользовательские</h3>
+          <div class="contour-list" aria-labelledby="contourLibraryHeading"></div>
+          <p class="contour-status" role="status" aria-live="polite"></p>
+          <button type="button" class="action contour-retry" hidden>Повторить загрузку</button>
+        </div>
+        <div class="contour-create" title="Редактор будет добавлен на следующем этапе">
+          <button type="button" class="action" disabled aria-describedby="contourCreateHint">Создать свой узор</button>
+          <small id="contourCreateHint">Редактор будет добавлен на следующем этапе.</small>
+        </div>
         <div class="pattern-parameters">
           <label class="pattern-switch" for="patternVariable">
             <span>Разноинтенсивный узор</span><input id="patternVariable" type="checkbox" role="switch">
@@ -376,6 +386,11 @@ function initThemeToggle() {
       </details>
       <div class="appearance-status" role="status" aria-live="polite"></div>`;
     const patternSection = appearanceMenu.querySelector(".appearance-pattern");
+    void import("/static/appearance_contours.js?v=20261028-contour-library-v1").then(({ initContourLibrary }) => {
+      if (patternSection.isConnected) initContourLibrary(patternSection, positionAppearanceMenu);
+    }).catch(() => {
+      patternSection.querySelector(".contour-status").textContent = "Не удалось загрузить библиотеку. Обновите страницу.";
+    });
     patternSection.addEventListener("toggle", positionAppearanceMenu);
     patternSection.addEventListener("input", event => {
       const mode = appearance.theme_preference, input = event.target;

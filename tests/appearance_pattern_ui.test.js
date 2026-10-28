@@ -70,6 +70,7 @@ async function setup(t, theme = 'light', viewport = { width: 1440, height: 1000 
       const file = path.resolve('api/app', url.pathname.slice(1));
       return route.fulfill({ body: fs.readFileSync(file), contentType: { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' }[path.extname(file)] || 'application/octet-stream' });
     }
+    if (url.pathname === '/api/v1/background-contours') return route.fulfill({ json: { items: [] } });
     if (url.pathname.startsWith('/api/')) {
       calls.push({ method: request.method(), path: url.pathname, body: request.postData() ? request.postDataJSON() : null });
       return server.respond(route);
@@ -466,8 +467,8 @@ test('theme and pattern CSS entry points are versioned consistently', () => {
   const pages = fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'));
   const references = pages.flatMap(file => [...fs.readFileSync(`api/app/templates/${file}`, 'utf8').matchAll(/\/static\/theme\.js\?v=([^"']+)/g)].map(match => match[1]));
   assert.ok(references.length > 0);
-  assert.deepEqual([...new Set(references)], ['20261028-pattern-api-v1']);
-  assert.match(fs.readFileSync('api/app/static/theme.js', 'utf8'), /appearance-pattern\.css\?v=20261028-pattern-api-v1/);
+  assert.deepEqual([...new Set(references)], ['20261028-contour-library-v1']);
+  assert.match(fs.readFileSync('api/app/static/theme.js', 'utf8'), /appearance-pattern\.css\?v=20261028-contour-library-v1/);
 });
 
 for (const [width, height] of [[1440,1000], [390,600], [640,360]]) for (const theme of ['light', 'dark']) test(`real pattern paint, scale, intensity and stable per-pattern seeds: ${theme} ${width}`, async t => {
