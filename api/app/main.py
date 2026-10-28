@@ -21,6 +21,7 @@ from .auth import (
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
 from .models import User
+from .routers.background_contours import router as background_contours_router
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.integrations import router as integrations_router
 from .routers.internal_tasks import router as internal_tasks_router
@@ -50,6 +51,7 @@ from .services import telegram_client_avatar_cleanup  # Register post-commit cle
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (
+    ensure_background_contours_table,
     ensure_bot_menu_level_layouts_table,
     ensure_bot_menu_profiles_tables,
     ensure_bot_button_settings_table,
@@ -101,6 +103,7 @@ app.include_router(ticket_client_avatars_router)
 app.include_router(telegram_router)
 app.include_router(telegram_groups_router)
 app.include_router(users_router)
+app.include_router(background_contours_router)
 app.include_router(web_auth_router)
 app.include_router(settings_router)
 app.include_router(settings_automatic_messages_router)
@@ -161,6 +164,7 @@ async def on_startup():
             ensure_internal_task_tables()
             ensure_integration_logs_table()
             ensure_saved_files_table()
+            ensure_background_contours_table()
             ensure_stats_foundation_tables()
             ensure_quick_reply_tables()
             with SessionLocal() as db:

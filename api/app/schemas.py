@@ -467,6 +467,32 @@ class BackgroundPatternTheme(BaseModel):
     patterns: dict[BackgroundPatternKind, BackgroundPatternParameters] = Field(default_factory=dict)
 
 
+class BackgroundContourComposition(BaseModel):
+    rotation: float = Field(default=0, ge=0, le=360, allow_inf_nan=False)
+    rings: int = Field(default=0, ge=0, le=2)
+    distance: float = Field(default=20, ge=0, le=200, allow_inf_nan=False,
+                            description="Ring spacing as a percentage of the contour size")
+    base_scale: float = Field(default=100, ge=50, le=200, allow_inf_nan=False,
+                              description="Base scale in percent")
+
+
+class BackgroundContourOut(BackgroundContourComposition):
+    id: str
+    name: str
+    author_user_id: str
+    author_name: str
+    created_at: datetime
+    format: Literal["png", "webp"]
+    file_size: int
+    image_url: str
+    can_delete: bool
+    can_edit: bool
+
+
+class BackgroundContourListOut(BaseModel):
+    items: list[BackgroundContourOut]
+
+
 class UserPreferencesOut(BaseModel):
     appearance_revision: str = ""
     background_patterns: dict[Literal["light", "dark"], BackgroundPatternTheme] | None = None

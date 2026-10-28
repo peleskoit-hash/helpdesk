@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -458,6 +458,33 @@ class QuickReplyUsage(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
     quick_reply_id: Mapped[str] = mapped_column(ForeignKey("quick_replies.id"), primary_key=True)
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BackgroundContour(Base):
+    __tablename__ = "background_contours"
+    __table_args__ = (
+        Index("ix_background_contours_created", "created_at", "id"),
+        CheckConstraint("rotation >= 0 AND rotation <= 360", name="ck_background_contours_rotation"),
+        CheckConstraint("rings >= 0 AND rings <= 2", name="ck_background_contours_rings"),
+        CheckConstraint("distance >= 0 AND distance <= 200", name="ck_background_contours_distance"),
+        CheckConstraint("base_scale >= 50 AND base_scale <= 200", name="ck_background_contours_scale"),
+        CheckConstraint("file_size > 0 AND file_size <= 2097152", name="ck_background_contours_size"),
+        CheckConstraint("format IN ('png', 'webp')", name="ck_background_contours_format"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Immutable attribution snapshots; deleting a user must retain both ID and name.
+    author_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    author_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    format: Mapped[str] = mapped_column(String(4), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    rotation: Mapped[float] = mapped_column(Float, nullable=False)
+    rings: Mapped[int] = mapped_column(Integer, nullable=False)
+    distance: Mapped[float] = mapped_column(Float, nullable=False)
+    base_scale: Mapped[float] = mapped_column(Float, nullable=False)
 
 
 class SavedFile(Base):

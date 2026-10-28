@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     attachment_storage_dir: str = "/app/storage/attachments"
     saved_file_storage_dir: str = "/app/storage/saved_files"
     avatar_storage_dir: str = "/app/storage/avatars"
+    background_contour_storage_dir: str = "/app/storage/background_contours"
     telegram_client_avatar_storage_dir: str = "/app/storage/telegram_client_avatars"
     bitrix_webhook_base: str | None = None
     bitrix_deal_mark_webhook_base: str | None = None

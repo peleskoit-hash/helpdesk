@@ -91,6 +91,13 @@ def _postgres_has_equivalent_unique_invariant(conn, table_name: str, columns: tu
     return any(_postgres_is_equivalent_unique_invariant(row, columns) for row in rows)
 
 
+def ensure_background_contours_table() -> None:
+    from ..models import BackgroundContour
+
+    with engine.begin() as conn:
+        BackgroundContour.__table__.create(bind=conn, checkfirst=True)
+
+
 def ensure_saved_files_table() -> None:
     with engine.begin() as conn:
         dialect = conn.dialect.name
