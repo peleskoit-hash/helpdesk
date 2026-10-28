@@ -1,0 +1,44 @@
+/* Stage 1: menu controls and card previews only; no application background rules. */
+body #appearanceMenu.appearance-menu .appearance-pattern { margin-top: 20px; border-top: 1px solid var(--desk-border); }
+body #appearanceMenu.appearance-menu .appearance-pattern > summary {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 14px 0; cursor: pointer; list-style: none; font-weight: 800;
+}
+body #appearanceMenu.appearance-menu .appearance-pattern > summary::-webkit-details-marker { display: none; }
+body #appearanceMenu.appearance-menu .appearance-pattern > summary::after { content: "+"; font-size: 20px; line-height: 1; }
+body #appearanceMenu.appearance-menu .appearance-pattern[open] > summary::after { content: "−"; }
+body #appearanceMenu.appearance-menu .appearance-pattern > summary:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 2px; border-radius: 8px; }
+body #appearanceMenu.appearance-menu .pattern-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+body #appearanceMenu.appearance-menu .pattern-card {
+  position: relative; display: grid; gap: 7px; min-width: 0; margin: 0; padding: 10px;
+  border: 1px solid var(--desk-border); border-radius: 12px; text-align: center;
+  color: var(--desk-text); background: var(--desk-surface); cursor: pointer;
+}
+body #appearanceMenu.appearance-menu .pattern-card > input,
+body #appearanceMenu.appearance-menu .pattern-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; clip-path: inset(50%);
+}
+body #appearanceMenu.appearance-menu .pattern-card:has(input:checked) { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-focus); }
+body #appearanceMenu.appearance-menu .pattern-card:has(input:focus-visible) { outline: 2px solid var(--desk-focus); outline-offset: 2px; }
+body #appearanceMenu.appearance-menu .pattern-sample { height: 36px; border-radius: 6px; color: var(--desk-muted); }
+body #appearanceMenu.appearance-menu .pattern-grid { background: linear-gradient(currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px); background-size: 12px 12px; }
+body #appearanceMenu.appearance-menu .pattern-dots { background: radial-gradient(circle, currentColor 1px, transparent 1.5px) center / 10px 10px; }
+body #appearanceMenu.appearance-menu .pattern-diagonals { background: repeating-linear-gradient(135deg, transparent 0 8px, currentColor 8px 9px, transparent 9px 16px); }
+body #appearanceMenu.appearance-menu .pattern-waves { background: radial-gradient(ellipse at 50% 0, transparent 6px, currentColor 7px 8px, transparent 9px) 0 0 / 24px 12px; }
+body #appearanceMenu.appearance-menu .pattern-relief { background: repeating-radial-gradient(ellipse at 0 50%, transparent 0 8px, currentColor 9px 10px, transparent 11px 18px); }
+body #appearanceMenu.appearance-menu .pattern-parameters { padding-top: 16px; }
+body #appearanceMenu.appearance-menu .pattern-parameters[hidden] { display: none; }
+body #appearanceMenu.appearance-menu .pattern-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+body #appearanceMenu.appearance-menu .pattern-switch > input {
+  flex: 0 0 auto; appearance: none; width: 40px; height: 24px; margin: 0; padding: 2px;
+  border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-border); cursor: pointer;
+}
+body #appearanceMenu.appearance-menu .pattern-switch > input::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--desk-text); }
+body #appearanceMenu.appearance-menu .pattern-switch > input:checked { background: var(--desk-primary); border-color: var(--desk-primary); }
+body #appearanceMenu.appearance-menu .pattern-switch > input:checked::before { transform: translateX(16px); background: var(--desk-on-accent); }
+body #appearanceMenu.appearance-menu .pattern-parameters input[type="range"] { --appearance-track: linear-gradient(to right, var(--desk-border), var(--desk-accent)); }
+body #appearanceMenu.appearance-menu .pattern-parameters input:disabled { opacity: .45; cursor: not-allowed; }
+body #appearanceMenu.appearance-menu .pattern-code { display: flex; justify-content: space-between; margin-top: 12px; color: var(--desk-muted); font-size: 12px; }
+@media (max-width: 600px) {
+  body #appearanceMenu.appearance-menu .pattern-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

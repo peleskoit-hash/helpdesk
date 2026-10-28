@@ -247,6 +247,13 @@ function initThemeToggle() {
   try { localStorage.removeItem(LEGACY_THEME_STORAGE_KEY); } catch { /* Storage may be unavailable. */ }
   const button = document.getElementById("themeToggleBtn");
   if (button && button !== appearanceButton) {
+    if (!document.getElementById("appearancePatternStyles")) {
+      const styles = document.createElement("link");
+      styles.id = "appearancePatternStyles";
+      styles.rel = "stylesheet";
+      styles.href = "/static/appearance-pattern.css?v=20261028-pattern-section-v1";
+      document.head.appendChild(styles);
+    }
     appearanceMenu?.remove();
     appearanceButton = button;
     button.textContent = "Оформление";
@@ -275,7 +282,38 @@ function initThemeToggle() {
             <input id="appearance-${role}-intensity" data-appearance-field="${role === "interface" ? "interface_intensity" : "accent_strength"}" type="range" min="0" max="100" step="1">
           </fieldset>`).join("")}
       </div>
+      <details class="appearance-pattern">
+        <summary>Фоновый узор</summary>
+        <fieldset class="pattern-cards">
+          <legend class="pattern-sr-only">Вид узора</legend>
+          ${[["none", "Без узора"], ["grid", "Сетка"], ["dots", "Точки"], ["diagonals", "Диагонали"], ["waves", "Волны"], ["relief", "Рельеф"]].map(([value, label]) => `
+            <label class="pattern-card">
+              <input type="radio" name="appearance-pattern" value="${value}" ${value === "none" ? "checked" : ""}>
+              <span class="pattern-sample pattern-${value}" aria-hidden="true"></span>
+              <span>${label}</span>
+            </label>`).join("")}
+        </fieldset>
+        <div class="pattern-parameters" hidden>
+          <label class="pattern-switch" for="patternVariable">
+            <span>Разноинтенсивный узор</span><input id="patternVariable" type="checkbox" role="switch">
+          </label>
+          <label for="patternIntensity">Интенсивность</label>
+          <input id="patternIntensity" type="range" min="0" max="100" value="50">
+          <label for="patternScale">Масштаб</label>
+          <input id="patternScale" type="range" min="50" max="200" value="100">
+          <div class="pattern-code">Код рисунка <span>—</span></div>
+        </div>
+      </details>
       <div class="appearance-status" role="status" aria-live="polite"></div>`;
+    const patternSection = appearanceMenu.querySelector(".appearance-pattern");
+    patternSection.addEventListener("toggle", positionAppearanceMenu);
+    // Stage 1 is native, menu-local state only; do not route it through appearance saves.
+    patternSection.addEventListener("change", () => {
+      patternSection.querySelector(".pattern-parameters").hidden =
+        patternSection.querySelector("input[name='appearance-pattern']:checked").value === "none";
+      patternSection.querySelector("#patternIntensity").disabled = patternSection.querySelector("#patternVariable").checked;
+      positionAppearanceMenu();
+    });
     // Follow the invoker in DOM order for native popover keyboard navigation.
     button.after(appearanceMenu);
     appearanceMenu.addEventListener("toggle", event => {
