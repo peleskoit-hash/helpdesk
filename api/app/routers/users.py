@@ -37,6 +37,7 @@ from ..services.user_appearance import (
     appearance_colors,
     appearance_revision,
     convert_legacy_appearance,
+    merge_background_patterns,
     COLOR_FIELDS,
     register_appearance_session,
 )
@@ -246,6 +247,7 @@ def get_user_avatar(
 def _preferences_out(user: User) -> UserPreferencesOut:
     return UserPreferencesOut(
         appearance_revision=appearance_revision(user),
+        background_patterns=user.background_patterns_json,
         send_by_enter=bool(user.send_by_enter),
         color_enabled=bool(user.color_enabled),
         task_panel_enabled=bool(user.task_panel_enabled),
@@ -317,6 +319,8 @@ def update_my_preferences(
         user.task_panel_enabled = bool(updates["task_panel_enabled"])
     if "theme_preference" in updates:
         user.theme_preference = updates["theme_preference"]
+    if "background_patterns" in updates:
+        merge_background_patterns(user, updates["background_patterns"])
     for field in ("accent_preference", "accent_intensity_light", "accent_intensity_dark"):
         if field in updates:
             setattr(user, field, updates[field])

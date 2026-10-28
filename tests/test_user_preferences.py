@@ -112,6 +112,235 @@ def _appearance_patch(factory, actor, writer, sequence, **fields):
         )
 
 
+def test_background_patterns_absent_stays_null(appearance_context, preferences_client):
+    factory, actor, writer, _ = appearance_context
+    before = preferences_client.get("/api/v1/users/me/preferences").json()
+    assert before["background_patterns"] is None
+    assert preferences_client.patch("/api/v1/users/me/preferences", json={"send_by_enter": True}).status_code == 200
+    _appearance_patch(factory, actor, writer, 1, accent_hue_dark=42)
+    _appearance_patch(factory, actor, writer, 2, background_patterns={"light": {}})
+    for _ in range(2):
+        assert preferences_client.get("/api/v1/users/me/preferences").json()["background_patterns"] is None
+    with factory() as db:
+        from sqlalchemy import text
+        assert db.get(User, actor.real_user_id).background_patterns_json is None
+        assert db.execute(text("SELECT background_patterns_json FROM users WHERE id = :id"),
+                          {"id": actor.real_user_id}).scalar_one() is None
+
+
+def test_background_patterns_http_partial_merge_and_seed(appearance_context, preferences_client):
+    factory, actor, writer, other_id = appearance_context
+    sequence = 0
+    def patch(patterns):
+        nonlocal sequence
+        sequence += 1
+        response = preferences_client.patch("/api/v1/users/me/preferences", json={
+            "background_patterns": patterns, "appearance_write": {"writer_id": writer, "sequence": sequence},
+        })
+        assert response.status_code == 200, response.text
+        return response.json()["background_patterns"]
+
+    saved = patch({
+        "light": {"selected": "dots", "patterns": {"dots": {"scale": 50, "intensity": 0, "variable": True, "seed": 1}}},
+        "dark": {"selected": "relief", "patterns": {"relief": {"scale": 200, "intensity": 100, "seed": 65535}}},
+    })
+    original_dots = saved["light"]["patterns"]["dots"]
+    original_dark = saved["dark"]
+    saved = patch({"light": {"selected": "waves"}})
+    waves_seed = saved["light"]["patterns"]["waves"]["seed"]
+    assert 1 <= waves_seed <= 65535
+    assert saved["light"]["patterns"]["waves"] == {"scale": 100, "intensity": 50, "variable": False, "seed": waves_seed}
+    saved = patch({"light": {"patterns": {"dots": {"intensity": 73}}}})
+    assert saved["light"]["selected"] == "waves"
+    assert saved["light"]["patterns"]["dots"] == {**original_dots, "intensity": 73}
+    saved = patch({"light": {"selected": "none", "patterns": {}}})
+    assert saved["light"]["patterns"]["waves"]["seed"] == waves_seed
+    saved = patch({"light": {"selected": "dots"}})
+    saved = patch({"light": {"patterns": {"waves": {"variable": True}}}})
+    assert saved["light"]["patterns"]["waves"]["seed"] == waves_seed
+    assert saved["light"]["patterns"]["dots"] == {**original_dots, "intensity": 73}
+    assert saved["dark"] == original_dark
+    for _ in range(2):
+        assert preferences_client.get("/api/v1/users/me/preferences").json()["background_patterns"] == saved
+    with factory() as db:
+        user = db.get(User, actor.real_user_id)
+        assert user.background_patterns_json == saved
+        assert user.appearance_write_state_json[writer]["sequence"] == sequence
+        assert "background_patterns" not in user.appearance_write_state_json
+        assert db.get(User, other_id).background_patterns_json is None
+
+
+@pytest.mark.parametrize("value", [
+    None, [], "grid", {"sepia": {}}, {"light": None}, {"light": []},
+    {"light": {"selected": "unknown"}}, {"light": {"selected": None}},
+    {"light": {"unknown": True}}, {"light": {"patterns": None}},
+    {"light": {"patterns": []}}, {"light": {"patterns": {"unknown": {}}}},
+    {"light": {"patterns": {"none": {}}}}, {"light": {"patterns": {"grid": None}}},
+    *({"dark": {"patterns": {"grid": {key: invalid}}}}
+      for key, invalids in {
+          "scale": [49, 201, True, "100", 100.5, None],
+          "intensity": [-1, 101, False, "50", 50.5, None],
+          "variable": [0, 1, "false", None],
+          "seed": [0, 65536, True, "12", 1.5, None],
+          "unknown": [10],
+      }.items() for invalid in invalids),
+])
+def test_background_patterns_invalid_http_is_atomic(appearance_context, preferences_client, value):
+    factory, actor, writer, _ = appearance_context
+    before = preferences_client.get("/api/v1/users/me/preferences").json()
+    response = preferences_client.patch("/api/v1/users/me/preferences", json={
+        "background_patterns": value, "send_by_enter": True,
+        "appearance_write": {"writer_id": writer, "sequence": 1},
+    })
+    assert response.status_code == 422
+    assert preferences_client.get("/api/v1/users/me/preferences").json() == before
+    with factory() as db:
+        assert db.get(User, actor.real_user_id).appearance_write_state_json[writer]["sequence"] == 0
+
+
+def test_background_patterns_require_writer_and_reject_expired_session(appearance_context, preferences_client):
+    _, _, writer, _ = appearance_context
+    patch = {"background_patterns": {"light": {"selected": "dots"}}}
+    before = preferences_client.get("/api/v1/users/me/preferences").json()
+    assert preferences_client.patch("/api/v1/users/me/preferences", json=patch).status_code == 422
+    patch["appearance_write"] = {"writer_id": str(uuid.uuid4()), "sequence": 1}
+    response = preferences_client.patch("/api/v1/users/me/preferences", json=patch)
+    assert response.status_code == 409
+    assert response.json()["detail"]["preferences"]["background_patterns"] is None
+    assert preferences_client.get("/api/v1/users/me/preferences").json() == before
+    patch["appearance_write"]["writer_id"] = writer
+    assert preferences_client.patch("/api/v1/users/me/preferences", json=patch).status_code == 200
+
+
+def test_background_patterns_reject_old_sequences_and_stale_initial_snapshot(appearance_context, preferences_client):
+    factory, actor, writer, _ = appearance_context
+    revision = preferences_client.get("/api/v1/users/me/preferences").json()["appearance_revision"]
+    saved = _appearance_patch(factory, actor, writer, 3, background_patterns={
+        "light": {"selected": "waves", "patterns": {"waves": {"seed": 42}}},
+    }).model_dump()["background_patterns"]
+    for sequence in (1, 2, 3):
+        result = _appearance_patch(factory, actor, writer, sequence, background_patterns={
+            "light": {"selected": "none"}, "dark": {"selected": "dots"},
+        })
+        assert result.model_dump()["background_patterns"] == saved
+    assert preferences_client.get("/api/v1/users/me/preferences").json()["appearance_revision"] != revision
+    response = preferences_client.post("/api/v1/users/me/preferences/appearance-session", json={
+        "expected_revision": revision, "sequence": 4,
+        "preferences": {"background_patterns": {"light": {"selected": "none"}}},
+    })
+    assert response.status_code == 200
+    assert response.json()["preferences"]["background_patterns"] == saved
+    revision = response.json()["preferences"]["appearance_revision"]
+    response = preferences_client.post("/api/v1/users/me/preferences/appearance-session", json={
+        "expected_revision": revision, "sequence": 5,
+        "preferences": {"background_patterns": {"dark": {"selected": "relief"}}},
+    })
+    assert response.status_code == 200
+    assert response.json()["preferences"]["background_patterns"]["light"] == saved["light"]
+    assert response.json()["preferences"]["background_patterns"]["dark"]["selected"] == "relief"
+
+
+def test_background_patterns_tabs_merge_under_lock(appearance_context):
+    factory, actor, writer, _ = appearance_context
+    with factory() as db:
+        second_writer = str(users_router.create_my_appearance_session(db=db, current_user=actor).writer_id)
+    locked, release, loaded = Event(), Event(), Event()
+    def first_request():
+        with factory() as db:
+            refresh = db.refresh
+            def pause_after_lock(*args, **kwargs):
+                refresh(*args, **kwargs)
+                if kwargs.get("attribute_names"):
+                    locked.set()
+                    assert release.wait(5)
+            db.refresh = pause_after_lock
+            return users_router.update_my_preferences(UserPreferencesUpdate(
+                background_patterns={"light": {"patterns": {"grid": {"scale": 150, "seed": 19}}}},
+                appearance_write={"writer_id": writer, "sequence": 1},
+            ), db=db, current_user=actor)
+    def second_request():
+        with factory() as db:
+            # Keep the stale ORM object loaded before the other tab commits.
+            user = db.get(User, actor.real_user_id)
+            assert user.background_patterns_json is None
+            loaded.set()
+            return users_router.update_my_preferences(UserPreferencesUpdate(
+                background_patterns={"light": {"patterns": {"grid": {"intensity": 81}}},
+                                     "dark": {"selected": "diagonals"}},
+                appearance_write={"writer_id": second_writer, "sequence": 1},
+            ), db=db, current_user=actor)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(first_request)
+        assert locked.wait(5)
+        second = pool.submit(second_request)
+        try:
+            assert loaded.wait(5)
+            assert not second.done()
+        finally:
+            release.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+    with factory() as db:
+        user = db.get(User, actor.real_user_id)
+        assert user.background_patterns_json["light"]["patterns"]["grid"] == {
+            "scale": 150, "intensity": 81, "variable": False, "seed": 19,
+        }
+        assert user.background_patterns_json["dark"]["selected"] == "diagonals"
+        assert all(user.appearance_write_state_json[key]["sequence"] == 1 for key in (writer, second_writer))
+
+
+@pytest.mark.parametrize("initial", [False, True])
+def test_background_patterns_and_revision_roll_back_together(appearance_context, monkeypatch, initial):
+    factory, actor, writer, _ = appearance_context
+    saved = _appearance_patch(factory, actor, writer, 1, background_patterns={
+        "light": {"selected": "dots", "patterns": {"dots": {"seed": 17}}},
+    }).model_dump()["background_patterns"]
+    with factory() as db:
+        user = db.get(User, actor.real_user_id)
+        revision = users_router.appearance_revision(user)
+        def fail_commit():
+            db.flush()
+            raise RuntimeError("commit failed")
+        monkeypatch.setattr(db, "commit", fail_commit)
+        changes = {"background_patterns": {"light": {"patterns": {"dots": {"seed": 42}}}}}
+        with pytest.raises(RuntimeError, match="commit failed"):
+            if initial:
+                users_router.register_appearance_session(db, user, changes, 2, revision)
+            else:
+                users_router.update_my_preferences(UserPreferencesUpdate(
+                    **changes, appearance_write={"writer_id": writer, "sequence": 2},
+                ), db=db, current_user=actor)
+        db.rollback()
+    with factory() as db:
+        user = db.get(User, actor.real_user_id)
+        assert user.background_patterns_json == saved
+        assert users_router.appearance_revision(user) == revision
+
+
+def test_background_patterns_schema_upgrade_is_nullable_and_repeatable(monkeypatch):
+    from sqlalchemy import inspect, text
+    from api.app.services import schema_evolution
+
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE users (id VARCHAR(36) PRIMARY KEY, email VARCHAR(255))"))
+        conn.execute(text("INSERT INTO users (id, email) VALUES ('existing', 'existing@example.test')"))
+    schema_evolution.ensure_user_columns()
+    column = next(c for c in inspect(engine).get_columns("users") if c["name"] == "background_patterns_json")
+    assert column["nullable"] is True
+    assert column["default"] is None
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT background_patterns_json FROM users")).scalar_one() is None
+        conn.execute(text("UPDATE users SET background_patterns_json = :value"),
+                     {"value": '{"light":{"selected":"none","patterns":{}}}'})
+    schema_evolution.ensure_user_columns()
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT email, background_patterns_json FROM users")).one()
+        assert row == ('existing@example.test', '{"light":{"selected":"none","patterns":{}}}')
+    engine.dispose()
+
+
 @pytest.mark.parametrize("field", ["accent_intensity_light", *COLOR_FIELDS])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_appearance_delayed_request_order_is_persisted_atomically(appearance_context, reverse, field):

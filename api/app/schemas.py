@@ -441,8 +441,35 @@ class UserStatusUpdate(BaseModel):
 AccentPreference = Literal["purple", "blue", "red", "green", "orange", "teal", "mono"]
 
 
+BackgroundPatternKind = Literal["grid", "dots", "diagonals", "waves", "relief"]
+
+
+class BackgroundPatternParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scale: int = Field(default=100, ge=50, le=200, strict=True)
+    intensity: int = Field(default=50, ge=0, le=100, strict=True)
+    variable: StrictBool = False
+    seed: int | None = Field(default=None, ge=1, le=65535, strict=True)
+
+    @field_validator("seed")
+    @classmethod
+    def reject_null_seed(cls, value):
+        if value is None:
+            raise ValueError("seed cannot be null")
+        return value
+
+
+class BackgroundPatternTheme(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected: Literal["none", "grid", "dots", "diagonals", "waves", "relief"] = "grid"
+    patterns: dict[BackgroundPatternKind, BackgroundPatternParameters] = Field(default_factory=dict)
+
+
 class UserPreferencesOut(BaseModel):
     appearance_revision: str = ""
+    background_patterns: dict[Literal["light", "dark"], BackgroundPatternTheme] | None = None
     send_by_enter: bool = False
     color_enabled: bool = True
     task_panel_enabled: bool = False
@@ -474,6 +501,7 @@ class AppearanceSessionOut(BaseModel):
 
 
 class UserPreferencesUpdate(BaseModel):
+    background_patterns: dict[Literal["light", "dark"], BackgroundPatternTheme] | None = None
     send_by_enter: bool | None = None
     color_enabled: bool | None = None
     task_panel_enabled: bool | None = None
@@ -494,7 +522,7 @@ class UserPreferencesUpdate(BaseModel):
     client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     appearance_write: AppearanceWrite | None = None
 
-    @field_validator("theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark",
+    @field_validator("background_patterns", "theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark",
                      "interface_hue_light", "interface_intensity_light", "accent_hue_light", "accent_strength_light", "interface_hue_dark", "interface_intensity_dark", "accent_hue_dark", "accent_strength_dark")
     @classmethod
     def validate_appearance_preference(cls, value):

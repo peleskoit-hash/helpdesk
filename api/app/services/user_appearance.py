@@ -1,6 +1,8 @@
 import hashlib
 import json
+from copy import deepcopy
 from datetime import datetime
+from secrets import randbelow
 from uuid import uuid4
 
 from sqlalchemy import update
@@ -13,7 +15,32 @@ MAX_APPEARANCE_SESSIONS = 32
 LEGACY_ACCENT_HUES = {"purple": 259, "blue": 215, "red": 350, "green": 153, "orange": 29, "teal": 184, "mono": 0}
 COLOR_FIELDS = tuple(f"{role}_{theme}" for theme in ("light", "dark")
                      for role in ("interface_hue", "interface_intensity", "accent_hue", "accent_strength"))
-APPEARANCE_FIELDS = ("theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark", *COLOR_FIELDS)
+APPEARANCE_FIELDS = ("theme_preference", "accent_preference", "accent_intensity_light", "accent_intensity_dark", *COLOR_FIELDS,
+                     "background_patterns")
+
+
+def merge_background_patterns(user: User, patch: dict) -> None:
+    # Merge under the appearance row lock; never replace another theme/pattern.
+    stored = deepcopy(user.background_patterns_json or {})
+    for theme, changes in patch.items():
+        if not changes:
+            continue
+        target = stored.setdefault(theme, {"selected": "grid", "patterns": {}})
+        if "selected" in changes:
+            target["selected"] = changes["selected"]
+        parameters = changes.get("patterns", {})
+        kinds = set(parameters)
+        if target["selected"] != "none":
+            kinds.add(target["selected"])
+        for kind in sorted(kinds):
+            if kind not in target["patterns"]:
+                target["patterns"][kind] = {
+                    "scale": 100, "intensity": 50, "variable": False,
+                    "seed": parameters.get(kind, {}).get("seed", randbelow(65535) + 1),
+                }
+            target["patterns"][kind].update(parameters.get(kind, {}))
+    if stored:
+        user.background_patterns_json = stored
 
 
 def appearance_colors(user: User) -> dict[str, int]:
@@ -51,7 +78,8 @@ def _lock_appearance(db: Session, user: User) -> None:
         .values(appearance_write_state_json=User.appearance_write_state_json)
         .execution_options(synchronize_session=False)
     )
-    db.refresh(user, attribute_names=["appearance_write_state_json", *APPEARANCE_FIELDS])
+    db.refresh(user, attribute_names=["appearance_write_state_json", "background_patterns_json",
+                                     *(field for field in APPEARANCE_FIELDS if field != "background_patterns")])
 
 
 def appearance_revision(user: User) -> str:
@@ -78,7 +106,10 @@ def register_appearance_session(
     # The first keepalive POST saves its snapshot without waiting for unloaded JS.
     updates = dict(initial_preferences or {}) if accept_initial else {}
     for field, value in updates.items():
-        setattr(user, field, value)
+        if field == "background_patterns":
+            merge_background_patterns(user, value)
+        else:
+            setattr(user, field, value)
     convert_legacy_appearance(user, updates)
     for field in COLOR_FIELDS:
         if field in updates:

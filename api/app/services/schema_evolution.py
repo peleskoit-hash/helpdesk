@@ -943,6 +943,7 @@ def ensure_user_columns() -> None:
             "accent_hue_dark": "INTEGER",
             "accent_strength_dark": "INTEGER",
             "appearance_write_state_json": json_type,
+            "background_patterns_json": json_type,
             "ticket_list_columns_json": json_type,
             "ticket_list_auto_width": "BOOLEAN NOT NULL DEFAULT FALSE",
             "client_card_collapsed_blocks_json": json_type,
