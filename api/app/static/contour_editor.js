@@ -1,3 +1,5 @@
+import { prepareContourPNG } from '/static/contour_export.js?v=20261029-contour-save-v1';
+
 const MAX_BYTES = 20 * 1024 * 1024;
 let active = null, opening = null, styles = null;
 
@@ -5,7 +7,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-contour-processing-v1';
+    link.href = '/static/contour-editor.css?v=20261029-contour-save-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -38,7 +40,7 @@ function createEditor(invoker) {
     <header class="modal-head"><h2 id="contourEditorTitle">Создать свой узор</h2>
       <button type="button" class="action editor-close" aria-label="Закрыть редактор" data-editor-close>×</button></header>
     <div class="modal-body">
-      <p id="contourEditorAvailability" class="editor-notice">Обработка выполняется локально, без отправки фото на сервер. Сохранение пока недоступно.</p>
+      <p id="contourEditorAvailability" class="editor-notice">Обработка выполняется локально. В общую библиотеку отправляется только готовый прозрачный контур.</p>
       <div class="editor-fields">
         <label for="contourEditorName">Название контура<input id="contourEditorName" maxlength="120" autocomplete="off" autofocus placeholder="Название нового контура"></label>
         <label for="contourEditorFile">Исходная фотография<input id="contourEditorFile" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="contourEditorFileHint"></label>
@@ -88,15 +90,15 @@ function createEditor(invoker) {
             <label class="editor-switch">Повторения<input id="contourRepeat" class="desk-toggle" type="checkbox" role="switch"></label>
             <label for="contourRings">Количество колец<select id="contourRings" disabled><option value="1">1 кольцо — 9 элементов</option><option value="2">2 кольца — 25 элементов</option></select></label>
             <label for="contourDistance">Расстояние между повторами <output for="contourDistance">20%</output><input id="contourDistance" type="range" min="0" max="200" value="20"></label>
-            <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="10" max="400" value="100"></label>
+            <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="50" max="200" value="100"></label>
             <button type="button" class="action" data-editor-fit>Вписать в область</button>
           </div>
         </section>
       </div>
     </div>
-    <footer class="modal-foot"><span class="editor-help">Сохранение на сервер пока не подключено.</span>
+    <footer class="modal-foot"><span class="editor-help">В библиотеке появится контур без исходной фотографии.</span>
       <button type="button" class="action" data-editor-close>Отмена</button>
-      <button type="button" class="action primary" disabled title="Сохранение на сервер будет подключено следующим этапом" aria-describedby="contourEditorAvailability">Сохранить</button></footer>`;
+      <button type="button" class="action primary" disabled data-editor-save title="Укажите название и дождитесь готового контура" aria-describedby="contourEditorAvailability">Сохранить</button></footer>`;
 
   const find = selector => dialog.querySelector(selector);
   const stage = find('.editor-photo-stage'), cropBox = find('.editor-crop');
@@ -106,6 +108,8 @@ function createEditor(invoker) {
   const processing = find('.editor-processing'), processingStatus = find('.editor-processing-status');
   const resultImage = find('.editor-contour-stage img'), resultEmpty = find('.editor-result-empty');
   const retryProcessing = find('[data-process-retry]');
+  const nameInput = find('#contourEditorName'), saveButton = find('[data-editor-save]');
+  let saving = false;
   let dirty = false, closed = false, closing = false, loading = false, generation = 0;
   let photo = null, photoURL = null, crop = { x: 0, y: 0, width: 100, height: 100 }, drag = null;
   const urls = new Set(), pendingImages = new Set();
@@ -137,7 +141,10 @@ function createEditor(invoker) {
     const width = aspect >= 1 ? 60 : 60 * aspect, height = aspect >= 1 ? 60 / aspect : 60;
     const extent = Math.max(width * Math.abs(Math.cos(radians)) + height * Math.abs(Math.sin(radians)), width * Math.abs(Math.sin(radians)) + height * Math.abs(Math.cos(radians)));
     const bounds = count * 2 * 60 * (1 + Number(distance.value) / 100) + extent;
-    scale.value = String(Math.max(10, Math.min(400, Math.floor(260 / bounds * 100))));
+    scale.value = String(Math.max(50, Math.min(200, Math.floor(260 / bounds * 100))));
+    // At the API's minimum scale, widen the preview rather than changing the saved scale.
+    const side = Math.max(300, bounds * Number(scale.value) / 100 + 40);
+    scheme.setAttribute('viewBox', `${-side / 2} ${-side / 2} ${side} ${side}`);
     renderScheme();
   }
   function photoBounds() {
@@ -160,7 +167,7 @@ function createEditor(invoker) {
     result = null;
     resultImage.removeAttribute('src'); resultImage.hidden = true;
     resultEmpty.textContent = message; resultEmpty.hidden = false;
-    renderScheme();
+    renderScheme(); updateSave();
   }
   function stopWorker() {
     clearTimeout(processingWatchdog); processingWatchdog = null;
@@ -207,7 +214,7 @@ function createEditor(invoker) {
     processingStatus.textContent = 'Подготовка обработки…';
     processingWatchdog = setTimeout(() => processingFailed('Не удалось загрузить Worker. Попробуйте ещё раз.'), 10000);
     try {
-      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-processing-v1', { type: 'module' });
+      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-save-v1', { type: 'module' });
       worker = instance;
       instance.onerror = event => { event.preventDefault(); if (!closed && worker === instance) processingFailed('Ошибка загрузки или выполнения Worker. Повторите обработку.'); };
       instance.addEventListener('messageerror', () => { if (!closed && worker === instance) processingFailed('Не удалось прочитать ответ Worker.'); });
@@ -240,10 +247,10 @@ function createEditor(invoker) {
               candidate.src = url; await candidate.decode();
               if (!closed && worker === instance && message.id === processingRevision && !loading) {
                 if (candidate.naturalWidth !== message.width || candidate.naturalHeight !== message.height) throw new Error('Размер результата не совпадает.');
-                result = { url, width: message.width, height: message.height }; adopted = true;
+                result = { blob: message.blob, url, width: message.width, height: message.height }; adopted = true;
                 resultImage.src = url; resultImage.hidden = false; resultEmpty.hidden = true;
-                processingStatus.textContent = `Готово: ${message.width}×${message.height} px. Прозрачный PNG, без сохранения на сервер.`;
-                renderScheme();
+                processingStatus.textContent = `Готово: ${message.width}×${message.height} px. Прозрачный PNG, готов к сохранению.`;
+                renderScheme(); updateSave();
               }
             } catch {
               if (!closed && worker === instance && message.id === processingRevision) processingFailed('Не удалось прочитать обработанный контур. Повторите обработку.');
@@ -314,6 +321,7 @@ function createEditor(invoker) {
 
   function cleanup() {
     closed = true; generation++;
+    window.removeEventListener('beforeunload', warnBeforeUnload);
     clearTimeout(processingTimer); processingTimer = null; pendingProcessing = false;
     stopWorker();
     observer?.disconnect();
@@ -327,23 +335,68 @@ function createEditor(invoker) {
     scheme.replaceChildren();
     find('.editor-photo-name').textContent = '';
   }
+  function finishClose() {
+    cleanup(); dialog.close(); dialog.remove(); active = null;
+    if (restoreMenu && menu?.isConnected) {
+      menu.showPopover(); section.open = expanded;
+      menu.scrollTop = menuScroll; bubble.scrollTop = bubbleScroll;
+    }
+    if (invoker?.isConnected) invoker.focus({ preventScroll: true });
+  }
   async function requestClose() {
     if (closing || closed) return;
+    if (saving) { error.textContent = 'Сохранение ещё выполняется. Дождитесь ответа сервера перед закрытием редактора.'; error.scrollIntoView({ block: 'nearest' }); return; }
     closing = true;
     try {
       if ((dirty || loading) && !await window.HelpdeskDialogs.confirm('Есть несохранённые изменения. Закрыть редактор и удалить загруженную фотографию?',
         { title: 'Закрыть редактор?', acceptLabel: 'Закрыть без сохранения' })) return;
-      cleanup(); dialog.close(); dialog.remove(); active = null;
-      if (restoreMenu && menu?.isConnected) {
-        menu.showPopover(); section.open = expanded;
-        menu.scrollTop = menuScroll; bubble.scrollTop = bubbleScroll;
-      }
-      if (invoker?.isConnected) invoker.focus({ preventScroll: true });
+      finishClose();
     } finally { closing = false; }
+  }
+  function updateSave() {
+    saveButton.disabled = closed || saving || !nameInput.value.trim() || !result;
+    saveButton.title = saveButton.disabled ? 'Укажите название и дождитесь готового контура' : 'Сохранить контур в общую библиотеку';
+  }
+  function warnBeforeUnload(event) { event.preventDefault(); event.returnValue = ''; }
+  async function saveContour() {
+    if (saving || closing || closed || !result || !nameInput.value.trim()) return;
+    saving = true; drag = null; error.textContent = '';
+    const controls = [...dialog.querySelectorAll('input, select, button:not([data-editor-close])')].map(element => [element, element.disabled]);
+    controls.forEach(([element]) => { element.disabled = true; });
+    saveButton.textContent = 'Сохранение…'; dialog.setAttribute('aria-busy', 'true');
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    try {
+      const prepared = await prepareContourPNG(result.blob);
+      const data = new FormData();
+      data.append('name', nameInput.value.trim());
+      data.append('file', prepared.blob, 'contour.png');
+      data.append('rotation', rotation.value);
+      data.append('rings', repeat.checked ? rings.value : '0');
+      data.append('distance', distance.value);
+      data.append('base_scale', scale.value);
+      const response = await fetch('/api/v1/background-contours', { method: 'POST', credentials: 'include', body: data })
+        .catch(() => { throw new Error('Сетевая ошибка: сохранение не подтверждено. Проверьте библиотеку перед повторной попыткой.'); });
+      let payload;
+      try { payload = await response.json(); } catch { /* A proxy may return a non-JSON error. */ }
+      if (!response.ok) throw new Error(payload?.detail?.error?.message || `Не удалось сохранить контур (HTTP ${response.status}).`);
+      if (response.status !== 201 || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(payload?.id || '')) throw new Error('Сервер не подтвердил сохранение контура. Проверьте библиотеку перед повторной попыткой.');
+      finishClose();
+      document.querySelector('#appearanceMenu .appearance-pattern')?.dispatchEvent(new Event('contour-created'));
+    } catch (failure) {
+      if (!closed) { error.textContent = failure.message || 'Не удалось сохранить контур. Попробуйте ещё раз.'; error.scrollIntoView({ block: 'nearest' }); }
+    } finally {
+      window.removeEventListener('beforeunload', warnBeforeUnload);
+      saving = false;
+      if (!closed) {
+        controls.forEach(([element, disabled]) => { element.disabled = disabled; });
+        saveButton.textContent = 'Сохранить'; dialog.removeAttribute('aria-busy'); updateSave();
+      }
+    }
   }
 
   fileInput.addEventListener('change', () => void loadPhoto());
-  find('#contourEditorName').addEventListener('input', () => { dirty = true; });
+  nameInput.addEventListener('input', () => { dirty = true; updateSave(); });
+  saveButton.addEventListener('click', () => void saveContour());
   for (const input of [rotation, distance, scale]) input.addEventListener('input', () => { dirty = true; renderScheme(); });
   repeat.addEventListener('change', () => {
     dirty = true; rings.disabled = !repeat.checked;
@@ -373,7 +426,7 @@ function createEditor(invoker) {
       y: Math.max(0, Math.min(100, (event.clientY - rect.top - stage.clientTop - bounds.top) / bounds.height * 100)) };
   }
   stage.addEventListener('pointerdown', event => {
-    if (!photo || !event.isPrimary || event.button !== 0) return;
+    if (saving || !photo || !event.isPrimary || event.button !== 0) return;
     event.preventDefault(); stage.setPointerCapture(event.pointerId);
     drag = { start: point(event), crop: { ...crop } };
   });

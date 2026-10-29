@@ -7,12 +7,12 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 
-async function setup(t, { theme = 'light', viewport = { width: 1440, height: 1000 }, touch = false, workerMode = '' } = {}) {
+async function setup(t, { theme = 'light', viewport = { width: 1440, height: 1000 }, touch = false, workerMode = '', publishing = false } = {}) {
   const context = await browser.newContext({ viewport, hasTouch: touch });
   const page = await context.newPage(), errors = [], mutations = [];
   let before;
   page.on('pageerror', error => errors.push(error.message));
-  context.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/') && request.method() !== 'GET') mutations.push(request.method() + ' ' + request.url()); });
+  context.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/') && request.method() !== 'GET' && !(publishing && request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/background-contours')) mutations.push(request.method() + ' ' + request.url()); });
   t.after(async () => {
     try {
       assert.deepEqual(errors, []); assert.deepEqual(mutations, []);
@@ -35,6 +35,11 @@ async function setup(t, { theme = 'light', viewport = { width: 1440, height: 100
         super(...args); workerState.created++; window.currentEditorWorker = this;
         let held = false;
         this.addEventListener('message', event => {
+          if (mode === 'oversized-result' && event.data.blob) {
+            event.stopImmediatePropagation();
+            const blob = new Blob([event.data.blob, new Uint8Array(2 * 1024 * 1024)], { type: 'image/png' });
+            this.onmessage?.({ data: { ...event.data, blob } });
+          }
           if (mode === 'hold-first' && event.data.id && !held) {
             held = true; event.stopImmediatePropagation();
             window.releaseWorkerResult = () => this.onmessage?.({ data: event.data });
@@ -53,15 +58,32 @@ async function setup(t, { theme = 'light', viewport = { width: 1440, height: 100
       terminate() { workerState.terminated++; return super.terminate(); }
     };
   }, workerMode);
-  const flags = { workerLoadError: workerMode === 'load-error' };
-  await context.route('http://desk.test/**', route => {
+  const flags = { workerLoadError: workerMode === 'load-error', postError: null, posts: [], items: [], getCount: 0, getError: false, postHold: null };
+  await context.route('http://desk.test/**', async route => {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/static/')) {
       if (flags.workerLoadError && url.pathname.endsWith('/contour_worker.js')) return route.fulfill({ status: 503, body: '' });
       const file = path.resolve('api/app', url.pathname.slice(1));
       return route.fulfill({ body: fs.readFileSync(file), contentType: { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf' }[path.extname(file)] || 'application/octet-stream' });
     }
-    if (url.pathname === '/api/v1/background-contours') return route.fulfill({ json: { items: [] } });
+    if (url.pathname === '/api/v1/background-contours' && route.request().method() === 'POST') {
+      const request = route.request();
+      const form = await new Request(request.url(), { method: 'POST', headers: request.headers(), body: request.postDataBuffer() }).formData();
+      const file = form.get('file'), buffer = Buffer.from(await file.arrayBuffer());
+      const fields = Object.fromEntries([...form].filter(([, value]) => typeof value === 'string'));
+      flags.posts.push({ fields, keys: [...form.keys()], buffer, type: file.type, filename: file.name });
+      if (flags.postHold) await flags.postHold;
+      if (flags.postError === 'network') return route.abort('failed');
+      if (flags.postError === 'malformed') return route.fulfill({ status: 201, json: {} });
+      if (flags.postError) return route.fulfill({ status: flags.postError, json: { detail: { error: { message: 'Ошибка сохранения контура ' + flags.postError } } } });
+      const item = { id: `10000000-0000-4000-8000-${String(flags.posts.length).padStart(12, '0')}`,
+        ...fields, rotation: Number(fields.rotation), rings: Number(fields.rings), distance: Number(fields.distance), base_scale: Number(fields.base_scale),
+        author_name: 'Тестовый автор', can_edit: true, can_delete: true };
+      flags.items.unshift(item); flags.publishedImage = buffer;
+      return route.fulfill({ status: 201, json: item });
+    }
+    if (url.pathname === '/api/v1/background-contours') { flags.getCount++; return route.fulfill(flags.getError ? { status: 503, body: '' } : { json: { items: flags.items } }); }
+    if (url.pathname.startsWith('/api/v1/background-contours/') && url.pathname.endsWith('/image')) return route.fulfill({ contentType: 'image/png', body: flags.publishedImage });
     if (url.pathname.startsWith('/api/')) return route.fulfill({ json: { theme_preference: theme, appearance_revision: '0', background_patterns: null } });
     return route.fulfill({ contentType: 'text/html', body: fs.readFileSync('api/app/templates/settings.html', 'utf8')
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, script => script.includes('/static/theme.js?') ? script : '') });
@@ -248,7 +270,7 @@ test('manual fit contains the rotated frames; later changes may clip them withou
     });
   });
   assert.equal(await fits(), true);
-  await h.editor.locator('#contourScale').fill('400');
+  await h.editor.locator('#contourScale').fill('200');
   assert.equal(await fits(), false);
   assert.equal(await h.editor.locator('.editor-scheme svg').evaluate(el => getComputedStyle(el).overflow), 'hidden');
 });
@@ -483,4 +505,208 @@ test('closing while the processed PNG decodes revokes its pending URL', async t 
   assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
   assert.equal(await h.page.evaluate(() => workerState.terminated), 1);
   assert.equal(await h.page.locator('#contourEditor').count(), 0);
+});
+
+for (const [theme, width, rings] of [['light', 1440, 0], ['dark', 1440, 1], ['light', 390, 2], ['dark', 390, 2]]) test(`publish exact processed PNG and refresh library without selecting it: ${theme} ${width} ${rings}`, async t => {
+  const h = await setup(t, { theme, viewport: { width, height: width === 390 ? 844 : 1000 }, touch: width === 390, publishing: true });
+  await h.editor.locator('#contourEditorName').fill('   Мой контур   ');
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true);
+  const original = await photo(h.page, 'image/jpeg');
+  await load(h, original); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('   ');
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true);
+  await h.editor.locator('#contourEditorName').fill('   Мой контур   ');
+  assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
+  if (rings) { await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption(String(rings)); }
+  await h.editor.locator('#contourRotation').fill('47');
+  await h.editor.locator('#contourDistance').fill('73');
+  await h.editor.locator('#contourScale').fill('135');
+  const expected = Buffer.from(await h.editor.locator('.editor-contour-image').evaluate(async image => [...new Uint8Array(await (await fetch(image.src)).arrayBuffer())]));
+  const gets = h.flags.getCount;
+  if (process.env.EDITOR_SCREENSHOT_DIR) {
+    await h.editor.locator('[data-editor-save]').scrollIntoViewIfNeeded();
+    await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `publish-${theme}-${width}.png`) });
+  }
+  await h.editor.locator('[data-editor-save]').click();
+  await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  await h.page.locator('.contour-card').waitFor();
+  assert.equal(h.flags.posts.length, 1);
+  const post = h.flags.posts[0];
+  assert.deepEqual(post.keys.sort(), ['base_scale', 'distance', 'file', 'name', 'rings', 'rotation']);
+  assert.deepEqual(post.fields, { name: 'Мой контур', rotation: '47', rings: String(rings), distance: '73', base_scale: '135' });
+  assert.equal(post.type, 'image/png'); assert.equal(post.filename, 'contour.png');
+  assert.deepEqual(post.buffer, expected); assert.notDeepEqual(post.buffer, original.buffer);
+  assert.ok(post.buffer.length <= 2 * 1024 * 1024); assert.ok(h.flags.getCount > gets);
+  assert.deepEqual(await h.page.evaluate(() => [editorMemory.live.size, workerState.created, workerState.terminated]), [0, 1, 1]);
+  assert.equal(await h.page.locator('.contour-select').getAttribute('aria-pressed'), 'false');
+  assert.equal(await h.page.locator('.contour-select').isEnabled(), true);
+  assert.equal(await h.page.locator('.contour-name').textContent(), 'Мой контур');
+  assert.deepEqual(await h.page.evaluate(() => [Object.keys(localStorage), Object.keys(sessionStorage)]), [[], []]);
+});
+
+test('save is invalidated by pending processing, uniform crop and photo replacement', async t => {
+  const h = await setup(t); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Контур');
+  assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
+  await h.editor.locator('#contourThickness').fill('3');
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true); await processed(h.page);
+  await h.editor.locator('[data-crop="x"]').fill('50');
+  await h.page.waitForFunction(() => document.querySelector('.editor-processing-status').textContent.startsWith('Контуры не найдены'));
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true);
+  await load(h, await photo(h.page));
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true); await processed(h.page);
+  assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
+});
+
+test('API scale bounds apply to the visible preview and fit before saving', async t => {
+  const h = await setup(t, { publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  assert.deepEqual(await h.editor.locator('#contourScale').evaluate(el => [el.min, el.max]), ['50', '200']);
+  await h.editor.locator('#contourEditorName').fill('Масштаб');
+  await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption('2');
+  await h.editor.locator('#contourDistance').fill('200'); await h.editor.locator('#contourRotation').fill('45');
+  await h.editor.locator('[data-editor-fit]').click();
+  assert.equal(await h.editor.locator('#contourScale').inputValue(), '50');
+  const shownScale = await h.editor.locator('output[for="contourScale"]').textContent();
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  assert.equal(h.flags.posts[0].fields.base_scale + '%', shownScale);
+});
+
+for (const postError of [403, 413, 422, 503, 'network', 'malformed']) test(`POST ${postError} preserves the contour, name and composition for manual retry`, async t => {
+  const h = await setup(t, { publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Повторить');
+  await h.editor.locator('#contourRotation').fill('91');
+  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  h.flags.postError = postError;
+  await h.editor.locator('[data-editor-save]').click();
+  await h.page.waitForFunction(() => !document.querySelector('[data-editor-save]').disabled && document.querySelector('#contourEditorError').textContent.length > 0);
+  assert.equal(h.flags.posts.length, 1);
+  assert.equal(await h.editor.locator('#contourEditorFile').isEnabled(), true);
+  assert.equal(await h.editor.locator('#contourSensitivity').isEnabled(), true);
+  assert.equal(await h.page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }), false);
+  assert.equal(await h.editor.locator('#contourEditorName').inputValue(), 'Повторить');
+  assert.equal(await h.editor.locator('#contourRotation').inputValue(), '91');
+  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), url);
+  assert.equal(await h.page.evaluate(() => editorMemory.live.size), 2);
+  assert.equal(await h.page.locator('.contour-card').count(), 0);
+  h.flags.postError = null;
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  assert.equal(h.flags.posts.length, 2); assert.deepEqual(h.flags.posts[0].buffer, h.flags.posts[1].buffer);
+  assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
+});
+
+test('pending POST blocks duplicate submission, edits, Escape/cancel/cross and warns before leaving', async t => {
+  const h = await setup(t, { publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Ожидание');
+  let release; h.flags.postHold = new Promise(resolve => { release = resolve; });
+  await h.editor.locator('.editor-photo-stage').scrollIntoViewIfNeeded();
+  const stage = await h.editor.locator('.editor-photo-stage').boundingBox();
+  const contourURL = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  await h.page.mouse.move(stage.x + stage.width * .2, stage.y + stage.height * .2); await h.page.mouse.down();
+  await h.page.evaluate(() => { const button = document.querySelector('[data-editor-save]'); button.click(); button.click(); });
+  await h.page.waitForFunction(() => document.querySelector('#contourEditor')?.getAttribute('aria-busy') === 'true');
+  await h.page.mouse.move(stage.x + stage.width * .8, stage.y + stage.height * .8); await h.page.mouse.up();
+  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), contourURL);
+  assert.equal(await h.editor.locator('[data-crop="width"]').inputValue(), '100');
+  assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true);
+  assert.equal(await h.editor.locator('#contourEditorName').isDisabled(), true);
+  assert.equal(await h.editor.locator('#contourScale').isDisabled(), true);
+  assert.equal(await h.page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }), true);
+  for (const action of ['escape', 'cross', 'cancel']) {
+    if (action === 'escape') await h.page.keyboard.press('Escape');
+    else await h.editor.locator(action === 'cross' ? '.editor-close' : '.modal-foot [data-editor-close]').click();
+    assert.equal(await h.editor.isVisible(), true);
+    assert.match(await h.editor.locator('#contourEditorError').textContent(), /Сохранение ещё выполняется/);
+    assert.equal(await h.page.locator('.desk-dialog:not(#contourEditor)').count(), 0);
+  }
+  release(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  assert.equal(h.flags.posts.length, 1);
+  assert.equal(await h.page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }), false);
+});
+
+test('oversized processed PNG is reduced proportionally with transparency and lines before POST', async t => {
+  const h = await setup(t, { workerMode: 'oversized-result', publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  const bytes = await h.editor.locator('.editor-contour-image').evaluate(async image => (await (await fetch(image.src)).blob()).size);
+  assert.ok(bytes > 2 * 1024 * 1024);
+  await h.editor.locator('#contourEditorName').fill('Уменьшенный');
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  const file = h.flags.posts[0].buffer;
+  assert.ok(file.length <= 2 * 1024 * 1024);
+  assert.equal(file.readUInt32BE(16), 480); assert.equal(file.readUInt32BE(20), 360);
+  const inspected = await h.page.evaluate(async bytes => {
+    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext('2d'); ctx.drawImage(bitmap, 0, 0); bitmap.close();
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    return { transparent: data.some((value, i) => i % 4 === 3 && value === 0), visible: data.some((value, i) => i % 4 === 3 && value > 0) };
+  }, [...file]);
+  assert.deepEqual(inspected, { transparent: true, visible: true });
+});
+
+test('failed PNG reduction sends nothing and preserves processed data for another attempt', async t => {
+  const h = await setup(t, { workerMode: 'oversized-result', publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Большой');
+  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  await h.page.evaluate(() => {
+    window.originalConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
+    OffscreenCanvas.prototype.convertToBlob = async function () { const blob = await originalConvertToBlob.call(this, { type: 'image/png' }); return new Blob([blob, new Uint8Array(2 * 1024 * 1024)], { type: 'image/png' }); };
+  });
+  await h.editor.locator('[data-editor-save]').click();
+  await h.page.waitForFunction(() => document.querySelector('#contourEditorError').textContent.includes('до 2 МБ'));
+  assert.equal(h.flags.posts.length, 0);
+  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), url);
+  assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
+  await h.page.evaluate(() => { OffscreenCanvas.prototype.convertToBlob = originalConvertToBlob; });
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  assert.equal(h.flags.posts.length, 1);
+});
+
+test('PNG preflight rejects wrong content, oversized dimensions, opacity and missing lines', async t => {
+  const h = await setup(t);
+  const messages = await h.page.evaluate(async () => {
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-save-v1');
+    const make = async (width, height, opaque, empty) => {
+      const canvas = new OffscreenCanvas(width, height), ctx = canvas.getContext('2d');
+      if (opaque) { ctx.fillStyle = 'white'; ctx.fillRect(0, 0, width, height); }
+      if (!empty) ctx.fillRect(1, 1, 20, 20);
+      return canvas.convertToBlob({ type: 'image/png' });
+    };
+    const blobs = [new Blob(['not PNG'], { type: 'image/png' }), await make(2049, 1, false, false), await make(32, 32, true, false), await make(32, 32, false, true)];
+    const messages = [];
+    for (const blob of blobs) { try { await prepareContourPNG(blob); messages.push('accepted'); } catch (error) { messages.push(error.message); } }
+    return messages;
+  });
+  assert.match(messages[0], /PNG/); assert.match(messages[1], /2048/); assert.match(messages[2], /прозрачном фоне/); assert.match(messages[3], /видимый контур/);
+});
+
+test('confirmed publish stays closed if library refresh fails; library Retry reveals the published contour', async t => {
+  const h = await setup(t, { publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Опубликован'); h.flags.getError = true;
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  await h.page.waitForFunction(() => !document.querySelector('.contour-retry').hidden);
+  assert.equal(h.flags.posts.length, 1); assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
+  assert.match(await h.page.locator('.contour-status').textContent(), /Не удалось загрузить/);
+  h.flags.getError = false;
+  await h.page.locator('.contour-retry').click(); await h.page.locator('.contour-card').waitFor();
+  assert.equal(h.flags.posts.length, 1);
+  assert.equal(await h.page.locator('.contour-select').getAttribute('aria-pressed'), 'false');
+});
+
+test('PNG accepts exactly 2048px and 2 MB without hidden resizing and releases native export resources', async t => {
+  const h = await setup(t);
+  const result = await h.page.evaluate(async () => {
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-save-v1');
+    const canvas = new OffscreenCanvas(2048, 1024), ctx = canvas.getContext('2d'); ctx.fillRect(500, 200, 20, 200);
+    const png = await canvas.convertToBlob({ type: 'image/png' });
+    const blob = new Blob([png, new Uint8Array(2 * 1024 * 1024 - png.size)], { type: 'image/png' });
+    const create = window.createImageBitmap; let closed = 0;
+    window.createImageBitmap = async (...args) => { const bitmap = await create(...args), close = bitmap.close.bind(bitmap); bitmap.close = () => { closed++; close(); }; return bitmap; };
+    const prepared = await prepareContourPNG(blob);
+    let message;
+    try { await prepareContourPNG(new Blob([png.slice(0, 20)], { type: 'image/png' })); } catch (error) { message = error.message; }
+    const Canvas = window.OffscreenCanvas;
+    window.OffscreenCanvas = class extends Canvas { getContext() { return null; } };
+    try { await prepareContourPNG(blob); } catch (error) { message = error.message; }
+    finally { window.OffscreenCanvas = Canvas; window.createImageBitmap = create; }
+    return { same: prepared.blob === blob, size: prepared.blob.size, width: prepared.width, height: prepared.height, closed, message };
+  });
+  assert.deepEqual(result, { same: true, size: 2 * 1024 * 1024, width: 2048, height: 1024, closed: 2, message: 'Не удалось проверить PNG: Canvas 2D недоступен.' });
 });

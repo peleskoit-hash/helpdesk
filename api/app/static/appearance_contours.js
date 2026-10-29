@@ -161,6 +161,10 @@ export function initContourLibrary(section, onChange, selectContour) {
     }
   }
 
+  section.addEventListener('contour-created', async () => {
+    await loading;
+    if (section.isConnected) void load();
+  });
   retry.addEventListener("click", () => void load());
   section.addEventListener("toggle", () => { if (section.open && !busy) void load(); });
   if (section.open) void load();
