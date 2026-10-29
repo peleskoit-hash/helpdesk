@@ -1,6 +1,6 @@
 /* Local background controls and the existing viewport-aligned paint surfaces. */
 body #appearanceMenu.appearance-menu .pattern-library {
-  box-sizing: border-box; max-height: 560px; overflow-y: auto;
+  box-sizing: border-box; max-height: 440px; overflow-y: auto;
   padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px;
   background: var(--desk-surface);
 }
@@ -35,11 +35,12 @@ body #appearanceMenu.appearance-menu button.contour-action:disabled { color: var
 body #appearanceMenu.appearance-menu .contour-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 body #appearanceMenu.appearance-menu .contour-status { margin: 12px 0 0; font-size: 12px; color: var(--desk-muted); }
 body #appearanceMenu.appearance-menu .contour-status:empty, body #appearanceMenu.appearance-menu .contour-retry[hidden] { display: none; }
-body #appearanceMenu.appearance-menu .contour-create { margin-top: 14px; }
+body #appearanceMenu.appearance-menu .contour-create { margin-top: 12px; text-align: center; }
 body #appearanceMenu.appearance-menu .contour-create button, body #appearanceMenu.appearance-menu .contour-retry {
   padding: 9px 12px; border: 1px solid var(--desk-border); border-radius: 12px;
   background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none;
 }
+body #appearanceMenu.appearance-menu .contour-create button { display: block; margin-inline: auto; font-size: 18px; font-weight: 700; text-align: center; }
 body #appearanceMenu.appearance-menu .contour-create button:disabled { color: var(--desk-muted); opacity: .6; cursor: not-allowed; }
 body #appearanceMenu.appearance-menu .contour-create small { display: block; margin-top: 6px; color: var(--desk-muted); font-size: 12px; }
 @media (max-width: 600px) {

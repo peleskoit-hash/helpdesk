@@ -4,15 +4,17 @@ body #contourEditor.contour-editor {
   font: 15px/1.5 var(--desk-font, 'Segoe UI', sans-serif); overflow: hidden;
 }
 body #contourEditor[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-body #contourEditor .modal-head, body #contourEditor .modal-foot { display: flex; align-items: center; gap: 12px; padding: 18px 24px; background: var(--desk-surface); }
+body #contourEditor .modal-head, body #contourEditor .modal-foot { display: flex; align-items: center; gap: 12px; padding: 12px 18px; background: var(--desk-surface); }
 body #contourEditor .modal-head { justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--desk-border); }
-body #contourEditor .editor-heading { min-width: 0; }
-body #contourEditor .editor-heading .editor-help { margin: 4px 0 0; }
+body #contourEditor .editor-heading { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+body #contourEditor .editor-heading h2 { flex: 0 1 auto; }
+body #contourEditor .editor-header-hint { flex: 0 1 390px; min-width: 0; margin: 0; padding: 6px 10px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-soft); color: var(--desk-muted); font-size: 12px; line-height: 1.35; }
+body #contourEditor .editor-file-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+body #contourEditor .editor-file-caption small { min-width: 0; font-size: 11px; line-height: 1.3; color: var(--desk-muted); text-align: right; }
 body #contourEditor h2 { margin: 0; font-size: 24px; line-height: 1.3; }
-body #contourEditor h3 { margin: 0 0 14px; font-size: 16px; }
-body #contourEditor .modal-body { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; }
+body #contourEditor h3 { margin: 0 0 8px; font-size: 16px; }
+body #contourEditor .modal-body { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 18px; }
 body #contourEditor .modal-foot { justify-content: flex-end; flex-wrap: wrap; border-top: 1px solid var(--desk-border); }
-body #contourEditor .modal-foot > span { margin-right: auto; }
 body #contourEditor :is(button, input, select) { box-sizing: border-box; font: inherit; accent-color: var(--desk-accent); }
 body #contourEditor button { min-height: 40px; padding: 9px 14px; border-radius: 12px; border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); box-shadow: none; }
 body #contourEditor button:hover:not(:disabled) { background: var(--desk-hover); }
@@ -24,15 +26,15 @@ body #contourEditor :is(input:not([type='checkbox']):not([type='range']), select
 body #contourEditor input[type='file'] { padding: 7px; }
 body #contourEditor input[type='range'] { width: 100%; display: block; margin: 8px 0 0; }
 body #contourEditor label { display: block; min-width: 0; }
-body #contourEditor label > :is(input:not([type='checkbox']), select) { margin-top: 6px; }
+body #contourEditor label > :is(input:not([type='checkbox']), select) { margin-top: 4px; }
 body #contourEditor output { float: right; color: var(--desk-muted); }
-body #contourEditor .editor-fields, body #contourEditor .editor-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-body #contourEditor .editor-previews { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; margin: 18px 0; }
-body #contourEditor .editor-panel { min-width: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); }
-body #contourEditor .editor-help { font-size: 12px; color: var(--desk-muted); margin: 10px 0; }
-body #contourEditor .editor-error { color: var(--desk-danger); margin: 10px 0; }
+body #contourEditor .editor-fields, body #contourEditor .editor-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+body #contourEditor .editor-previews { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; margin: 10px 0; }
+body #contourEditor .editor-panel { min-width: 0; padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); }
+body #contourEditor .editor-help { font-size: 12px; color: var(--desk-muted); margin: 6px 0; }
+body #contourEditor .editor-error { color: var(--desk-danger); margin: 6px 0; }
 body #contourEditor .editor-error:empty { display: none; }
-body #contourEditor .editor-processing, body #contourEditor .editor-composition { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 12px; min-width: 0; border: 0; padding: 0; margin: 0; }
+body #contourEditor .editor-processing, body #contourEditor .editor-composition { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 8px; min-width: 0; border: 0; padding: 0; margin: 0; }
 body #contourEditor .editor-processing:disabled { opacity: .55; }
 body #contourEditor .editor-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 body #contourEditor .editor-switch input { flex-shrink: 0; }
@@ -42,22 +44,25 @@ body #contourEditor .editor-photo-stage, body #contourEditor .editor-scheme {
 }
 body #contourEditor .editor-photo-stage { display: grid; place-items: center; touch-action: none; cursor: crosshair; user-select: none; }
 body #contourEditor .editor-photo-stage > img { display: block; width: 100%; height: 100%; position: absolute; inset: 0; object-fit: contain; pointer-events: none; }
-body #contourEditor .editor-photo-empty { padding: 16px; color: var(--desk-muted); text-align: center; }
+body #contourEditor .editor-photo-empty { padding: 12px; color: var(--desk-muted); text-align: center; }
 body #contourEditor .editor-photo-name { overflow-wrap: anywhere; }
 body #contourEditor .editor-crop { position: absolute; box-sizing: border-box; border: 2px solid var(--desk-focus); box-shadow: 0 0 0 1000px #00000066; pointer-events: none; }
 body #contourEditor [hidden] { display: none !important; }
-body #contourEditor .editor-result-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 16px; color: var(--desk-muted); text-align: center; pointer-events: none; }
+body #contourEditor .editor-result-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 12px; color: var(--desk-muted); text-align: center; pointer-events: none; }
 body[data-theme='dark'] #contourEditor .editor-scheme svg { filter: invert(1); }
 body #contourEditor .editor-scheme svg { display: block; width: 100%; height: 100%; overflow: hidden; }
 body #contourEditor .editor-scheme-count { margin: 10px 0 0; font-size: 13px; }
-body #contourEditor .editor-crop-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; border: 0; margin: 14px 0; min-width: 0; }
+body #contourEditor .editor-crop-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; border: 0; margin: 8px 0; min-width: 0; }
 body #contourEditor .editor-crop-fields legend { margin-bottom: 8px; color: var(--desk-muted); font-size: 13px; }
 body #contourEditor summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; font-weight: 600; }
 body #contourEditor summary::-webkit-details-marker { display: none; }
 body #contourEditor summary::after { content: "+"; font-size: 20px; line-height: 1; }
 body #contourEditor details[open] > summary::after { content: "−"; }
-body #contourEditor .editor-settings details[open] > summary { margin-bottom: 12px; }
-body #contourEditor .editor-crop-section { margin-top: 10px; }
+body #contourEditor .editor-settings details[open] > summary { margin-bottom: 8px; }
+body #contourEditor .editor-crop-section { position: relative; margin-top: 6px; }
+body #contourEditor .editor-crop-popup { position: absolute; top: calc(100% + 4px); inset-inline: 0; z-index: 10; box-sizing: border-box; padding: 12px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); box-shadow: 0 8px 24px #0003; overflow-y: auto; }
+body #contourEditor .editor-crop-popup > .editor-help { margin-top: 0; }
+body #contourEditor .editor-settings { position: relative; z-index: 1; }
 body #contourEditor .editor-composition > button { align-self: end; }
 body #contourEditor .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 850px) {
@@ -67,11 +72,12 @@ body #contourEditor .editor-sr-only { position: absolute; width: 1px; height: 1p
 }
 @media (max-width: 560px) {
   body #contourEditor.contour-editor { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
-  body #contourEditor .modal-head, body #contourEditor .modal-foot, body #contourEditor .modal-body { padding: 14px; }
+  body #contourEditor .modal-head, body #contourEditor .modal-foot, body #contourEditor .modal-body { padding: 10px; }
+  body #contourEditor .editor-heading { gap: 8px; }
+  body #contourEditor .editor-header-hint { flex-basis: 50%; padding: 5px 7px; font-size: 11px; }
   body #contourEditor h2 { font-size: 21px; }
   body #contourEditor .editor-panel { padding: 12px; }
   body #contourEditor .editor-processing, body #contourEditor .editor-composition { grid-template-columns: minmax(0, 1fr); }
   body #contourEditor .editor-crop-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   body #contourEditor :is(input, select) { font-size: 16px; }
-  body #contourEditor .modal-foot > span { flex-basis: 100%; }
 }

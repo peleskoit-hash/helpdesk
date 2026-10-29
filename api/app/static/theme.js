@@ -346,6 +346,11 @@ function changeAppearance(patch) {
 
 function positionAppearanceMenu() {
   if (!appearanceMenu?.matches(":popover-open")) return;
+  const library = appearanceMenu.querySelector('.pattern-library'), first = library?.querySelector('.contour-card');
+  if (first && appearanceMenu.querySelector('.appearance-pattern').open) {
+    const top = library.getBoundingClientRect().top, row = first.getBoundingClientRect();
+    library.style.maxHeight = `${Math.ceil(row.top - top + library.scrollTop + row.height / 2 + 1)}px`;
+  } else if (!first) library?.style.removeProperty('max-height');
   const rect = appearanceButton.getBoundingClientRect();
   appearanceMenu.style.top = `${rect.bottom + 8}px`;
   appearanceMenu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - appearanceMenu.offsetWidth - 8))}px`;
@@ -360,7 +365,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-contour-geometry-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-appearance-compact-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -410,7 +415,7 @@ function initThemeToggle() {
           <button type="button" class="action contour-retry" hidden>Повторить загрузку</button>
         </div>
         <div class="contour-create">
-          <button type="button" class="action" data-contour-create aria-describedby="contourCreateHint">Создать свой узор</button>
+          <button type="button" class="action" data-contour-create aria-describedby="contourCreateHint">Добавить свой узор +</button>
           <small id="contourCreateHint">Создайте прозрачный контур и добавьте его в общую библиотеку.</small>
         </div>
         <div class="pattern-parameters">
@@ -429,13 +434,13 @@ function initThemeToggle() {
     const createContourButton = patternSection.querySelector('[data-contour-create]');
     createContourButton.addEventListener('click', async () => {
       try {
-        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-contour-spacing-v1');
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-appearance-compact-v1');
         if (createContourButton.isConnected) await openContourEditor(createContourButton);
       } catch {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';
       }
     });
-    void import("/static/appearance_contours.js?v=20261029-contour-spacing-v1").then(module => {
+    void import("/static/appearance_contours.js?v=20261029-appearance-compact-v1").then(module => {
       contourPaint = module;
       module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
         catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });

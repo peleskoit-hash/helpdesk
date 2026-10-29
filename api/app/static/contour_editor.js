@@ -8,7 +8,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-contour-aspect-v1';
+    link.href = '/static/contour-editor.css?v=20261029-appearance-compact-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -39,14 +39,13 @@ function createEditor(invoker) {
   dialog.setAttribute('aria-describedby', 'contourEditorAvailability');
   dialog.innerHTML = `
     <header class="modal-head"><div class="editor-heading"><h2 id="contourEditorTitle">Создать свой узор</h2>
-      <p id="contourEditorAvailability" class="editor-help">Обработка выполняется локально. В общую библиотеку отправляется только готовый прозрачный контур.</p></div>
+      <p id="contourEditorAvailability" class="editor-header-hint">Обработка локально. Отправляется только готовый контур.</p></div>
       <button type="button" class="action editor-close" aria-label="Закрыть редактор" data-editor-close>×</button></header>
     <div class="modal-body">
       <div class="editor-fields">
         <label for="contourEditorName">Название контура<input id="contourEditorName" maxlength="120" autocomplete="off" autofocus placeholder="Название нового контура"></label>
-        <label for="contourEditorFile">Исходная фотография<input id="contourEditorFile" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="contourEditorFileHint"></label>
+        <label for="contourEditorFile"><span class="editor-file-caption"><span id="contourEditorFileLabel">Исходная фотография</span><small id="contourEditorFileHint">JPG, PNG или WebP до 20 МБ · фото только в памяти</small></span><input id="contourEditorFile" type="file" accept="image/jpeg,image/png,image/webp" aria-labelledby="contourEditorFileLabel" aria-describedby="contourEditorFileHint"></label>
       </div>
-      <p class="editor-help" id="contourEditorFileHint">JPG, PNG или WebP до 20 МБ. Фото остаётся только в памяти этой вкладки и не отправляется на сервер.</p>
       <p class="editor-error" id="contourEditorError" role="status" aria-live="polite"></p>
       <div class="editor-previews">
         <section class="editor-panel"><h3>Оригинал</h3>
@@ -55,6 +54,7 @@ function createEditor(invoker) {
           </div>
           <p class="editor-help editor-photo-name" hidden></p>
           <details class="editor-crop-section"><summary>Кадрирование</summary>
+          <div class="editor-crop-popup">
           <p class="editor-help">Проведите мышью или пальцем по фото, чтобы выделить кадр. Координаты можно задать ниже в процентах.</p>
           <fieldset class="editor-crop-fields" disabled><legend>Кадрирование, %</legend>
             <label>X<input data-crop="x" type="number" min="0" max="99" step="1" value="0"></label>
@@ -63,7 +63,7 @@ function createEditor(invoker) {
             <label>Высота<input data-crop="height" type="number" min="1" max="100" step="1" value="100"></label>
           </fieldset>
           <button type="button" class="action" data-crop-reset disabled>Сбросить кадрирование</button>
-          </details>
+          </div></details>
         </section>
         <section class="editor-panel"><h3>Фоновый узор</h3>
           <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Предпросмотр композиции"></svg><span class="editor-result-empty">Загрузите фотографию для обработки.</span></div>
@@ -73,7 +73,7 @@ function createEditor(invoker) {
         </section>
       </div>
       <div class="editor-settings">
-        <details class="editor-panel editor-processing-section"><summary>Обработка</summary>
+        <details class="editor-panel editor-processing-section" open><summary>Обработка</summary>
           <p class="editor-help" id="contourProcessingHint">Инверсия меняет сторону границы. Очистка удаляет контуры, связанные с краями кадра.</p>
           <fieldset class="editor-processing" disabled aria-describedby="contourProcessingHint"><legend class="editor-sr-only">Настройки обработки</legend>
             <label for="contourSensitivity">Чувствительность<input id="contourSensitivity" type="range" min="0" max="100" value="50"></label>
@@ -83,7 +83,7 @@ function createEditor(invoker) {
             <label class="editor-switch">Очистка фона<input id="contourCleanup" class="desk-toggle" type="checkbox" role="switch" checked></label>
           </fieldset>
         </details>
-        <details class="editor-panel editor-composition-section"><summary>Композиция</summary>
+        <details class="editor-panel editor-composition-section" open><summary>Композиция</summary>
           <div class="editor-composition">
             <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="50" max="200" value="100"></label>
             <label for="contourRotation">Поворот <output for="contourRotation">0°</output><input id="contourRotation" type="range" min="0" max="360" value="0"></label>
@@ -95,12 +95,13 @@ function createEditor(invoker) {
         </details>
       </div>
     </div>
-    <footer class="modal-foot"><span class="editor-help">В библиотеке появится контур без исходной фотографии.</span>
+    <footer class="modal-foot">
       <button type="button" class="action" data-editor-close>Отмена</button>
       <button type="button" class="action primary" disabled data-editor-save title="Укажите название и дождитесь готового контура" aria-describedby="contourEditorAvailability">Сохранить</button></footer>`;
 
   const find = selector => dialog.querySelector(selector);
   const stage = find('.editor-photo-stage'), cropBox = find('.editor-crop');
+  const cropDetails = find('.editor-crop-section'), cropPopup = find('.editor-crop-popup');
   const fileInput = find('#contourEditorFile'), error = find('#contourEditorError');
   const rotation = find('#contourRotation'), repeat = find('#contourRepeat'), rings = find('#contourRings');
   const distance = find('#contourDistance'), scale = find('#contourScale'), scheme = find('.editor-scheme svg');
@@ -141,18 +142,33 @@ function createEditor(invoker) {
     const width = photo.naturalWidth * factor, height = photo.naturalHeight * factor;
     return { width, height, left: (stage.clientWidth - width) / 2, top: (stage.clientHeight - height) / 2 };
   }
+  function positionCropPopup() {
+    if (!cropDetails.open) return;
+    const body = find('.modal-body').getBoundingClientRect(), anchor = cropDetails.querySelector('summary').getBoundingClientRect();
+    cropPopup.style.maxHeight = `${Math.max(0, Math.min(320, body.height - 8))}px`;
+    const height = cropPopup.getBoundingClientRect().height;
+    let top = anchor.bottom + 4;
+    if (top + height > body.bottom - 4) top = anchor.top - height - 4;
+    top = Math.max(body.top + 4, Math.min(top, body.bottom - height - 4));
+    cropPopup.style.top = `${top - cropDetails.getBoundingClientRect().top}px`;
+
+  }
+  cropDetails.addEventListener('toggle', positionCropPopup);
+  cropDetails.querySelector('summary').addEventListener('click', () => queueMicrotask(positionCropPopup));
+  find('.modal-body').addEventListener('scroll', positionCropPopup);
   function renderCrop() {
     if (!photo) return;
     const bounds = photoBounds();
     Object.assign(cropBox.style, { left: `${bounds.left + bounds.width * crop.x / 100}px`, top: `${bounds.top + bounds.height * crop.y / 100}px`,
       width: `${bounds.width * crop.width / 100}px`, height: `${bounds.height * crop.height / 100}px` });
     for (const input of dialog.querySelectorAll('[data-crop]')) input.value = String(Math.round(crop[input.dataset.crop] * 10) / 10);
+    positionCropPopup();
   }
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(renderCrop) : null;
   observer?.observe(stage);
   function resizePreviews() {
     dialog.style.setProperty('--editor-preview-ratio', String(window.innerWidth / window.innerHeight));
-    renderScheme(); renderCrop();
+    renderScheme(); renderCrop(); positionCropPopup();
   }
   window.addEventListener('resize', resizePreviews);
 

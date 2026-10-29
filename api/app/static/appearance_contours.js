@@ -1,5 +1,5 @@
-import { loadContours, notifyContourDeletion, contourImage } from "/static/background_contour_paint.js?v=20261029-contour-spacing-v1";
-export { configureContourPaint, paintContour, notifyAppearance } from "/static/background_contour_paint.js?v=20261029-contour-spacing-v1";
+import { loadContours, notifyContourDeletion, contourImage } from "/static/background_contour_paint.js?v=20261029-appearance-compact-v1";
+export { configureContourPaint, paintContour, notifyAppearance } from "/static/background_contour_paint.js?v=20261029-appearance-compact-v1";
 const API = "/api/v1/background-contours";
 
 async function request(path, options = {}) {

@@ -15,8 +15,8 @@ function contour(n, overrides = {}) {
 }
 
 async function setup(t, { items = [contour(3), contour(2), contour(1)], theme = 'light', touch = false,
-  viewport = { width: 1440, height: 1100 }, listError = 0, imageError = false, patterns, server, clock = false } = {}) {
-  const context = await browser.newContext({ viewport, hasTouch: touch });
+  viewport = { width: 1440, height: 1100 }, listError = 0, imageError = false, patterns, server, clock = false, deviceScaleFactor = 1 } = {}) {
+  const context = await browser.newContext({ viewport, hasTouch: touch, deviceScaleFactor });
   t.after(() => context.close());
   const page = await context.newPage(), errors = [], calls = [];
   if (clock) await page.clock.install();
@@ -128,7 +128,7 @@ for (const theme of ['light', 'dark']) test(`server order, previews, safe text a
   assert.deepEqual(mutationCalls(calls), []);
   assert.equal(await page.locator('.pattern-card input').count(), 6);
   assert.deepEqual(await page.locator('.pattern-card input').evaluateAll(inputs => inputs.map(input => input.value)), ['none', 'grid', 'dots', 'diagonals', 'waves', 'relief']);
-  assert.equal(await page.getByRole('button', { name: 'Создать свой узор' }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Добавить свой узор +' }).isEnabled(), true);
   assert.match(await page.locator('#contourCreateHint').textContent(), /добавьте его в общую библиотеку/);
   assert.equal(await page.locator('dialog').count(), 0);
   if (process.env.CONTOUR_SCREENSHOT_DIR) await page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `library-${theme}.png`) });
@@ -221,7 +221,7 @@ test('a missing preview leaves the card and its actions usable', async t => {
   assert.equal(await remove(h.page, 3).isEnabled(), true);
 });
 
-for (const width of [1440, 390]) test(`few cards and empty library have no inner scrollbar: ${width}`, async t => {
+for (const width of [1440, 390]) test(`one partial row scrolls while an empty library fits: ${width}`, async t => {
   const h = await setup(t, { viewport: { width, height: 1100 }, items: [contour(1)] }); await h.open();
   for (const empty of [false, true]) {
     if (empty) {
@@ -231,7 +231,7 @@ for (const width of [1440, 390]) test(`few cards and empty library have no inner
     }
     const metrics = await h.page.locator('.pattern-library').evaluate(el => ({ height: el.clientHeight, scroll: el.scrollHeight,
       width: el.clientWidth, scrollWidth: el.scrollWidth, overflow: getComputedStyle(el).overflowY, radius: getComputedStyle(el).borderRadius }));
-    assert.equal(metrics.height, metrics.scroll);
+    assert.equal(metrics.scroll > metrics.height, !empty);
     assert.equal(metrics.width, metrics.scrollWidth);
     assert.equal(metrics.overflow, 'auto');
     assert.equal(metrics.radius, '16px');
@@ -258,7 +258,7 @@ test('touch users can access both actions without hover and open the editor', as
   await h.page.locator('.desk-dialog').waitFor();
   await h.page.locator('[data-dialog-cancel]').tap();
   if (process.env.CONTOUR_SCREENSHOT_DIR) await h.page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, 'library-touch.png') });
-  await h.page.getByRole('button', { name: 'Создать свой узор' }).tap();
+  await h.page.getByRole('button', { name: 'Добавить свой узор +' }).tap();
   await h.page.locator('#contourEditor').waitFor();
   assert.equal(await h.page.locator('#contourEditor').getByRole('button', { name: 'Сохранить', exact: true }).isDisabled(), true);
   await h.page.locator('#contourEditor [data-editor-close]').first().tap();
@@ -319,7 +319,7 @@ for (const theme of ['light', 'dark']) for (const rings of [0, 1, 2]) test(`cust
   await h.page.locator('#patternScale').fill('150'); await idle(h.page);
   assert.ok(Math.abs((await composition(h.page)).width - size * 1.5) < 1e-6);
   await h.page.locator('#patternIntensity').fill('80'); await idle(h.page);
-  assert.equal((await composition(h.page)).opacity, '0.08');
+  assert.equal((await composition(h.page)).opacity, '0.8');
   await h.page.locator('#patternVariable').check(); await idle(h.page);
   const seed = await h.page.locator('.pattern-code span').textContent();
   assert.match((await composition(h.page)).svg, new RegExp(`seed="${seed}"`));
@@ -496,4 +496,65 @@ for (const theme of ['light', 'dark']) for (const rings of [1, 2]) test(`zero-ga
     assert.equal(h.state.items[index].base_scale, 137);
     assert.ok(paint.transforms.every(value => value.endsWith(`rotate(${rotation})`)));
   }
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1440, 390]) test(`bounded library reveals half a user row and never grows with more items: ${theme} ${width}`, async t => {
+  const h = await setup(t, { theme, viewport: { width, height: 1100 }, items: [contour(1)] }); await h.open();
+  const measure = () => h.page.locator('.pattern-library').evaluate(el => {
+    const r = el.getBoundingClientRect(), card = el.querySelector('.contour-card').getBoundingClientRect();
+    return { height: r.height, scroll: el.scrollHeight, fraction: (r.bottom - 1 - card.top) / card.height,
+      builtIns: el.querySelector('.pattern-cards').getBoundingClientRect().bottom <= r.bottom,
+      heading: el.querySelector('h3').getBoundingClientRect().bottom <= r.bottom };
+  });
+  const first = await measure();
+  if (process.env.CONTOUR_SCREENSHOT_DIR) await h.page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `bounded-${theme}-${width}.png`) });
+  assert.ok(first.fraction >= .48 && first.fraction <= .53, JSON.stringify(first)); assert.equal(first.builtIns, true); assert.equal(first.heading, true);
+  h.state.items = Array.from({ length: 40 }, (_, n) => contour(40 - n));
+  await h.page.locator('.appearance-pattern summary').click(); await h.open();
+  await h.page.waitForFunction(() => document.querySelectorAll('.contour-card').length === 40);
+  const many = await measure(); assert.equal(many.height, first.height); assert.ok(many.scroll > first.scroll);
+  await card(h.page, 1).scrollIntoViewIfNeeded();
+  assert.equal((await measure()).height, first.height, 'inner scrolling must not recalculate a smaller height');
+  const button = h.page.getByRole('button', { name: 'Добавить свой узор +', exact: true });
+  await button.scrollIntoViewIfNeeded();
+  const buttonBox = await button.boundingBox(), library = await h.page.locator('.pattern-library').boundingBox();
+  assert.ok(Math.abs(buttonBox.x + buttonBox.width / 2 - library.x - library.width / 2) < 1);
+  assert.ok(await button.evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 18));
+  assert.equal(await button.evaluate(el => el.closest('.pattern-library') === null), true);
+});
+for (const theme of ['light', 'dark']) test(`custom intensity spans zero to opaque white/black without changing stored values: ${theme}`, async t => {
+  const id = contour(1).id, patterns = { light: { selected: id, patterns: { [id]: { scale: 100, intensity: 50, variable: false, seed: 71 } } },
+    dark: { selected: id, patterns: { [id]: { scale: 100, intensity: 50, variable: false, seed: 72 } } } };
+  const h = await setup(t, { theme, items: [contour(1)], patterns }); await h.open(); await choose(h, 1);
+  const other = JSON.stringify(h.preferences.background_patterns[theme === 'light' ? 'dark' : 'light']);
+  for (const intensity of [0, 25, 50, 75, 100]) {
+    await h.page.locator('#patternIntensity').fill(String(intensity)); await idle(h.page);
+    assert.equal(Number((await composition(h.page)).opacity), intensity / 100);
+    assert.equal(h.preferences.background_patterns[theme].patterns[id].intensity, intensity);
+  }
+  const pixels = await h.page.evaluate(async svg => {
+    const image = new Image(); image.src = 'data:image/svg+xml,' + encodeURIComponent(svg); await image.decode();
+    const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight), ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let p = 0; p < data.length; p += 4) if (data[p + 3] >= 254) return [...data.slice(p, p + 4)];
+    return null;
+  }, (await composition(h.page)).svg);
+  assert.ok(pixels, '100% has fully opaque line pixels');
+  assert.deepEqual(pixels.slice(0, 3), theme === 'dark' ? [255, 255, 255] : [0, 0, 0]);
+  assert.equal(JSON.stringify(h.preferences.background_patterns[theme === 'light' ? 'dark' : 'light']), other);
+  assert.equal(h.preferences.background_patterns[theme].patterns[id].seed, theme === 'light' ? 71 : 72);
+});
+
+for (const theme of ['light', 'dark']) test(`appearance inner scroll and add action remain reachable at simulated 200% browser zoom: ${theme}`, async t => {
+  const h = await setup(t, { theme, viewport: { width: 720, height: 450 }, deviceScaleFactor: 2, items: Array.from({ length: 30 }, (_, n) => contour(30 - n)) });
+  await h.open(); assert.equal(await h.page.evaluate(() => devicePixelRatio), 2);
+  await h.page.locator('.pattern-library').scrollIntoViewIfNeeded();
+  const before = await h.page.locator('.pattern-library').evaluate(el => ({ height: el.clientHeight, scroll: el.scrollHeight, width: el.clientWidth, scrollWidth: el.scrollWidth }));
+  assert.ok(before.scroll > before.height); assert.equal(before.width, before.scrollWidth);
+  await card(h.page, 1).scrollIntoViewIfNeeded();
+  assert.equal(await h.page.locator('.pattern-library').evaluate(el => el.clientHeight), before.height);
+  const button = h.page.getByRole('button', { name: 'Добавить свой узор +', exact: true });
+  await button.click(); await h.page.locator('#contourEditor').waitFor();
+  assert.equal(await h.page.locator('#contourEditor .editor-processing-section').evaluate(el => el.open), true);
+  await h.page.locator('#contourEditor .editor-close').click();
 });
