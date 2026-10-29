@@ -120,7 +120,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261027-list-columns-v3", "/static/list.js?v=20261027-type-palette-dialogs-v1"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261027-list-columns-v3", "/static/list.js?v=20261029-ticket-history-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -129,13 +129,13 @@
       scripts: [
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/ticket_api.js?v=20260521a",
-        "/static/ticket_attachments.js?v=20261020-quotes",
+        "/static/ticket_attachments.js?v=20261029-image-actions-v1",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_composer.js?v=20261021-chat-file-input",
         "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_message_view.js?v=20261027-dialogs-complete-v3",
-        "/static/ticket.js?v=20261027-dialogs-complete-v3",
+        "/static/ticket.js?v=20261029-ticket-history-v1",
       ],
     },
   ];

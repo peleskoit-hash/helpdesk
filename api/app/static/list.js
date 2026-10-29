@@ -432,14 +432,7 @@ async function updateColorPreference(enabled) {
 }
 
 function ticketHref(ticketId) {
-  const currentListUrl = `${window.location.pathname}${window.location.search}`;
-  const ticketUrl = new URL(`/tickets/${ticketId}`, window.location.origin);
-  ticketUrl.searchParams.set("tab", state.tab || DEFAULT_TAB);
-  ticketUrl.searchParams.set("page", String(parsePage(state.page)));
-  const appliedQuery = (state.appliedSearchQuery || "").trim();
-  if (appliedQuery) ticketUrl.searchParams.set("q", appliedQuery);
-  ticketUrl.searchParams.set("return_url", currentListUrl);
-  return `${ticketUrl.pathname}${ticketUrl.search}`;
+  return `/tickets/${ticketId}`;
 }
 
 function taskPanelItemHtml(item, className) {
@@ -1393,15 +1386,8 @@ function renderTable() {
       rowClasses.push("ticket-row-unseen");
     }
     tr.className = rowClasses.join(" ");
-    const currentListUrl = `${window.location.pathname}${window.location.search}`;
     const publicId = t.ticket_number || t.id;
-    const ticketUrl = new URL(`/tickets/${publicId}`, window.location.origin);
-    ticketUrl.searchParams.set("tab", state.tab || DEFAULT_TAB);
-    ticketUrl.searchParams.set("page", String(parsePage(state.page)));
-    const appliedQuery = (state.appliedSearchQuery || "").trim();
-    if (appliedQuery) ticketUrl.searchParams.set("q", appliedQuery);
-    ticketUrl.searchParams.set("return_url", currentListUrl);
-    const ticketHref = `${ticketUrl.pathname}${ticketUrl.search}`;
+    const ticketHref = `/tickets/${publicId}`;
     const linkedCell = (className, textValue, width = 0, isHtml = false) => (
       `<td class="${className} ticket-linked-cell" data-column-key="${escapeHtml(Object.keys(TICKET_COLUMN_DEFS).find((key) => TICKET_COLUMN_DEFS[key].className === className) || "")}" style="${columnStyle(width)}"><a class="ticket-row-link" href="${escapeHtml(ticketHref)}">${isHtml ? textValue : escapeHtml(textValue)}</a></td>`
     );
@@ -1421,23 +1407,17 @@ function renderTable() {
   }
 
   el.ticketsTableBody.querySelectorAll(".ticket-row-link").forEach((link) => {
-    const persistReturnUrl = () => {
-      const currentListUrl = `${window.location.pathname}${window.location.search}`;
-      sessionStorage.setItem("ticketListReturnUrl", currentListUrl);
-    };
     link.addEventListener("click", (event) => {
       if (state.columnResizeActive) {
         event.preventDefault();
         return;
       }
-      persistReturnUrl();
     });
     link.addEventListener("auxclick", (event) => {
       if (state.columnResizeActive) {
     event.preventDefault();
     return;
   }
-  if (event.button === 1) persistReturnUrl();
   });
 });
   el.ticketsTableBody.querySelectorAll(".ticket-check").forEach((checkbox) => {

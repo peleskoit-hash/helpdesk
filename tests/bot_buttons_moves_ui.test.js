@@ -102,6 +102,27 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
     while (await page.locator('#editSubmenuBtn').count()) await page.locator('#botButtonsBackBtn').click();
   }
   await page.goto('http://desk.test/settings/bot-buttons');
+  const deep = folder('deep', 'Вложенный раздел');
+  a.children_rows.push({ columns: 1, buttons: [deep] });
+  await page.locator('[data-menu-name]').first().click();
+  const menuUrl = page.url(), menuHistory = await page.evaluate(() => history.length);
+  await page.evaluate(() => {
+    window.botShellBackCalls = 0; window.botHistoryBackCalls = 0;
+    const shellBack = HelpdeskAppShell.goBack, browserBack = history.back.bind(history);
+    HelpdeskAppShell.goBack = (...args) => { botShellBackCalls++; return shellBack(...args); };
+    history.back = () => { botHistoryBackCalls++; browserBack(); };
+  });
+  await keyButton('a').click(); await keyButton('deep').click();
+  const up = page.locator('#botButtonsBackBtn');
+  assert.equal(await up.textContent(), 'На уровень вверх');
+  await up.click(); await keyButton('child').waitFor();
+  await up.click(); await keyButton('a').waitFor();
+  await up.click(); await page.locator('[data-menu-name]').first().waitFor();
+  assert.equal(await up.textContent(), 'Назад');
+  assert.equal(page.url(), menuUrl);
+  assert.deepEqual(await page.evaluate(() => [history.length, botShellBackCalls, botHistoryBackCalls]), [menuHistory, 0, 0]);
+  assert.equal(await up.getAttribute('data-shell-back'), null);
+  a.children_rows.pop();
   await page.locator('[data-menu-name]').first().click();
   await edit();
   // A draft does not write; cancel restores the original list.
@@ -183,7 +204,7 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
   await page.locator('#cancelLayoutBtn').click();
   assert.equal(calls.filter(call => call.method === 'PUT' && call.p.endsWith('/layout')).length, 0);
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css', 'app_shell.js', 'bot_buttons_level_view.js', 'settings_bot_buttons.js']) {
-    const version = file === 'desk-v2.css' ? '20261027-active-status-v1' : file === 'styles.css' ? '20261027-active-status-v1' : ['styles.css','desk-v2.css','app_shell.js'].includes(file) ? '20261027-type-palette-dialogs-v1' : ['styles.css','desk-v2.css','app_shell.js','bot_buttons_level_view.js'].includes(file) ? '20261027-dialog-prompts-v4' : file === 'bot-buttons-browser-v2.css' ? '20261027-dialogs-complete-v3' : '20261027-themed-dialogs-v1';
+    const version = file === 'desk-v2.css' ? '20261027-active-status-v1' : file === 'styles.css' ? '20261029-image-actions-v1' : ['styles.css','desk-v2.css','app_shell.js'].includes(file) ? '20261029-ticket-history-v1' : ['styles.css','desk-v2.css','app_shell.js','bot_buttons_level_view.js'].includes(file) ? '20261027-dialog-prompts-v4' : file === 'bot-buttons-browser-v2.css' ? '20261027-dialogs-complete-v3' : '20261027-themed-dialogs-v1';
     assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);

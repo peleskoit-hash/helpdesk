@@ -81,8 +81,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput"[^>]*type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261027-type-palette-dialogs-v1/);
-  assert.match(template, /styles\.css\?v=20261027-active-status-v1/);
+  assert.match(template, /list\.js\?v=20261029-ticket-history-v1/);
+  assert.match(template, /styles\.css\?v=20261029-image-actions-v1/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -180,8 +180,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261027-list-columns-v3", "\/static\/list\.js\?v=20261027-type-palette-dialogs-v1"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261027-type-palette-dialogs-v1/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261027-list-columns-v3", "\/static\/list\.js\?v=20261029-ticket-history-v1"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261029-ticket-history-v1/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});
@@ -274,7 +274,8 @@ test("ticket task panel is role-gated without clearing saved preference", () => 
 test("ticket task panel renders eight fixed slots, overflow menu, subjects only, and unread markers", () => {
   const panelSource = sourceBetween(listSource, "function ticketHref", "async function loadTaskPanel");
   const panelStyles = sourceBetween(styles, ".task-panel {", "#searchInput.search-active");
-  assert.match(panelSource, /ticketUrl\.searchParams\.set\("return_url", currentListUrl\)/);
+  assert.ok(panelSource.includes("return `/tickets/${ticketId}`;"));
+  assert.doesNotMatch(panelSource, /return_url|ticketListReturnUrl|searchParams/);
   assert.match(panelSource, /const visibleItems = items\.slice\(0, 8\)/);
   assert.match(panelSource, /const overflowItems = items\.slice\(8\)/);
   assert.match(panelSource, /taskPanelItemHtml\(item, "task-panel-chip"\)/);

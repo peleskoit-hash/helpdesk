@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-active-status-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261029-image-actions-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261027-active-status-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261029-image-actions-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -476,7 +476,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
   });
 }
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [], ticketRows = rows }) {
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [], ticketRows = rows, initialPath = null, replaceInitial = false }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
@@ -525,7 +525,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: ticketRows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
-    else if (p === '/api/v1/tickets/demo-0') result = { ...card, workflow_type: workflowType,
+    else if (/^\/api\/v1\/tickets\/demo-\d+$/.test(p)) result = { ...card, id: p.split('/').pop(), workflow_type: workflowType,
       client_profile: { ...card.client_profile, telegram_avatar_present: clientAvatar }, ...cardPatch };
     else if (p.endsWith('/client-profile')) result = { ...card.client_profile, telegram_avatar_present: clientAvatar };
     else if (p === '/api/v1/quick-replies/search') result = quickReplies.filter(reply => `${reply.short_title} ${reply.body}`.toLowerCase().includes((url.searchParams.get('q') || '').toLowerCase())).slice(0, 5);
@@ -533,7 +533,9 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p === '/api/v1/quick-replies') result = quickReplies;
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });
   });
-  await page.goto(`http://desk.test/${pageName === 'ticket' ? 'tickets/demo-0' : 'tickets'}`);
+  const initialUrl = `http://desk.test${initialPath || (pageName === 'ticket' ? '/tickets/demo-0' : '/tickets')}`;
+  if (replaceInitial) await Promise.all([page.waitForURL(initialUrl), page.evaluate(url => location.replace(url), initialUrl)]);
+  else await page.goto(initialUrl);
   await page.waitForFunction(() => document.body.dataset.sidebarReady === '1');
   await page.waitForSelector(pageName === 'ticket' ? '.message' : '.ticket-row');
   await page.evaluate(() => document.fonts.ready);
@@ -1900,4 +1902,83 @@ for (const theme of ['light', 'dark']) test(`active staff status has a triple in
     await old.evaluate(el => el.remove());
   }
   assert.ok(requests.some(r => r.path.endsWith('/users/me/status') && r.method === 'PATCH'), 'existing status selection is used');
+});
+
+for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticket links preserve list search, pagination and browser history: ${theme} ${width}`, async t => {
+  const { page, requests } = await setup(t, { width, height: 900, theme, pageName: 'tickets' });
+  const listReady = async (tab, pageNumber, query = '') => {
+    await page.waitForFunction(({ tab, pageNumber, query }) => {
+      const url = new URL(location.href);
+      return url.pathname === '/tickets' && url.searchParams.get('tab') === tab && url.searchParams.get('page') === String(pageNumber) && (url.searchParams.get('q') || '') === query && document.querySelector('#searchInput')?.value === query && !!document.querySelector('.ticket-row');
+    }, { tab, pageNumber, query });
+  };
+  await listReady('active', 1);
+  await page.locator('.tab-btn[data-tab="frozen"]').click(); await listReady('frozen', 1);
+  await page.locator('#searchInput').fill('почта'); await page.locator('#searchInput').press('Enter'); await listReady('frozen', 1, 'почта');
+  await page.locator('#nextPageBtn').click(); await listReady('frozen', 2, 'почта');
+  const listUrl = page.url(), historyLength = await page.evaluate(() => history.length);
+  const filter = await page.evaluate(() => localStorage.getItem('hd_admin_assignee_ids'));
+  const filterQuery = new URLSearchParams(requests.filter(r => r.path === '/api/v1/tickets/frozen').at(-1).query).getAll('assignee_ids');
+  assert.ok((await page.locator('.ticket-row-link').evaluateAll(nodes => nodes.map(n => n.getAttribute('href')))).every(href => /^\/tickets\/[^/?#]+$/.test(href)));
+  await page.locator('.ticket-row-link').first().click(); await page.waitForSelector('.message');
+  assert.equal(new URL(page.url()).search, ''); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
+  assert.equal(await page.evaluate(() => history.length), historyLength + 1);
+  await page.reload(); await page.waitForSelector('.message');
+  assert.equal(new URL(page.url()).search, '');
+  await page.locator('#backToListBtn').click(); await listReady('frozen', 2, 'почта'); assert.equal(page.url(), listUrl);
+  assert.equal(await page.evaluate(() => history.length), historyLength + 1, 'back traverses history instead of adding a list entry');
+  assert.equal(await page.evaluate(() => localStorage.getItem('hd_admin_assignee_ids')), filter);
+  assert.deepEqual(new URLSearchParams(requests.filter(r => r.path === '/api/v1/tickets/frozen').at(-1).query).getAll('assignee_ids'), filterQuery);
+  await page.goForward(); await page.waitForSelector('.message'); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
+  await page.goBack(); await listReady('frozen', 2, 'почта');
+  await page.goBack(); await listReady('frozen', 1, 'почта');
+  await page.goBack(); await listReady('frozen', 1);
+  await page.goBack(); await listReady('active', 1);
+  await page.goForward(); await listReady('frozen', 1);
+  await page.goForward(); await listReady('frozen', 1, 'почта');
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('ticketListReturnUrl')), null);
+});
+
+test('short task panel links use the previous card as Back destination', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role: 'agent' });
+  const panelLinks = page.locator('#taskPanel a'); await panelLinks.first().waitFor();
+  assert.ok((await panelLinks.evaluateAll(nodes => nodes.map(n => n.getAttribute('href')))).every(href => /^\/tickets\/[^/?#]+$/.test(href)));
+  await panelLinks.first().click(); await page.waitForSelector('.message');
+  await page.locator('#taskPanel a[href="/tickets/demo-1"]').click();
+  await page.waitForFunction(() => location.pathname === '/tickets/demo-1' && !!document.querySelector('.message'));
+  assert.equal(new URL(page.url()).search, '');
+  await page.locator('#backToListBtn').click();
+  await page.waitForFunction(() => location.pathname === '/tickets/demo-0' && !!document.querySelector('.message'));
+  await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
+  assert.equal(new URL(page.url()).pathname, '/tickets');
+  await page.goForward(); await page.waitForSelector('.message');
+  assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
+});
+
+test('a direct short ticket with no previous history falls back to the list', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'ticket', replaceInitial: true });
+  assert.equal(await page.evaluate(() => history.length), 1);
+  await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
+  assert.equal(new URL(page.url()).pathname, '/tickets');
+});
+
+test('short notification links and card Back preserve ordinary browser history', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'dark', pageName: 'tickets' });
+  await page.goto('http://desk.test/profile/notification-bot');
+  await page.waitForFunction(() => document.body.dataset.sidebarReady === '1');
+  await page.evaluate(() => { const link = document.createElement('a'); link.id = 'notificationTicket'; link.href = '/tickets/demo-0'; link.textContent = 'Уведомление о заявке'; document.querySelector('#appContent').append(link); });
+  await page.locator('#notificationTicket').click(); await page.waitForSelector('.message');
+  assert.equal(new URL(page.url()).pathname, '/tickets/demo-0'); assert.equal(new URL(page.url()).search, '');
+  await page.locator('#backToListBtn').click();
+  await page.waitForURL('**/profile/notification-bot');
+  await page.goForward(); await page.waitForSelector('.message'); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
+});
+
+test('ticket Back can return to an external previous page without a separate guard', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets' });
+  await page.route('http://outside.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><p>Previous external page</p>' }));
+  await page.goto('http://outside.test/start');
+  await page.goto('http://desk.test/tickets/demo-0'); await page.waitForSelector('.message');
+  await page.locator('#backToListBtn').click(); await page.waitForURL('http://outside.test/start');
+  assert.equal(await page.locator('p').textContent(), 'Previous external page');
 });

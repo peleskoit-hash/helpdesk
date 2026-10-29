@@ -194,8 +194,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(appShellSource, /ticket\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261029-ticket-history-v1/);
+  assert.match(appShellSource, /ticket\.js\?v=20261029-ticket-history-v1/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261027-dialogs-complete-v3/);
 });
 
@@ -229,7 +229,7 @@ test('ticket page binds static handlers before sidebar async initialization', ()
   assert.ok(runSource.indexOf('startPolling();') > runSource.indexOf('await Promise.all([loadCard(), loadTabCounts()]);'));
 });
 
-test('ticket page task panel mirrors list behavior and preserves return url', () => {
+test('ticket page task panel mirrors list behavior with short card links', () => {
   assert.match(ticketTemplate, /id="taskPanel"/);
   assert.match(ticketTemplate, /id="taskPanelSlots"/);
   assert.match(ticketTemplate, /id="taskPanelMoreBtn"[\s\S]*…/);
@@ -242,7 +242,7 @@ test('ticket page task panel mirrors list behavior and preserves return url', ()
   assert.match(stateSource, /taskPanelItems: \[\]/);
   assert.match(stateSource, /taskPanelDropdownOpen: false/);
 
-  const roleSource = sourceBetween(ticketPageSource, 'function canUseTaskPanel', 'function taskPanelReturnUrl');
+  const roleSource = sourceBetween(ticketPageSource, 'function canUseTaskPanel', 'function taskPanelTicketHref');
   assert.match(roleSource, /return role === "agent" \|\| role === "trainee"/);
   assert.doesNotMatch(roleSource, /admin|chiki_piki/);
   const roleContext = vm.createContext({ state: { role: 'agent' } });
@@ -264,12 +264,10 @@ test('ticket page task panel mirrors list behavior and preserves return url', ()
   assert.ok(loadCardSource.indexOf('api(`/api/v1/tickets/${state.ticketId}`)') < loadCardSource.indexOf('await loadTaskPanel({ silent: true });'));
   assert.ok(loadCardSource.indexOf('renderCard();') < loadCardSource.indexOf('await loadTaskPanel({ silent: true });'));
 
-  const returnUrlSource = sourceBetween(ticketPageSource, 'function taskPanelReturnUrl', 'function taskPanelTicketHref');
-  assert.match(returnUrlSource, /normalizeTicketsReturnUrl\(params\.get\("return_url"\)\)/);
-  assert.match(returnUrlSource, /normalizeTicketsReturnUrl\(sessionStorage\.getItem\("ticketListReturnUrl"\)\)/);
+  assert.doesNotMatch(ticketPageSource, /taskPanelReturnUrl|return_url|ticketListReturnUrl/);
   const hrefSource = sourceBetween(ticketPageSource, 'function taskPanelTicketHref', 'function taskPanelItemHtml');
-  assert.match(hrefSource, /ticketUrl\.searchParams\.set\("return_url", taskPanelReturnUrl\(\)\)/);
-  assert.doesNotMatch(hrefSource, /window\.location\.pathname/);
+  assert.ok(hrefSource.includes('return `/tickets/${panelTicketId}`;'));
+  assert.doesNotMatch(hrefSource, /searchParams/);
 
   const bindSource = sourceBetween(ticketPageSource, 'function bindPageHandlers()', 'function initPostSidebarState()');
   assert.match(bindSource, /taskPanelMoreBtn[\s\S]*state\.taskPanelDropdownOpen = !state\.taskPanelDropdownOpen/);
@@ -1844,7 +1842,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261027-type-palette-dialogs-v1/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261029-ticket-history-v1/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \|\| ticket\.client_name \|\| "", column\.width\)/);
@@ -2330,7 +2328,7 @@ test('first connection editor does not render or save duplicated client text', (
   assert.doesNotMatch(source, /clientText: String\(item\?\.client_text_effective/);
 });
 
-test('bot buttons breadcrumb save button invokes editor save once after rerender', async () => {
+test('bot Back climbs nested levels without history calls and binds once after rerender', async () => {
   class MockElement {
     constructor(id = '') {
       this.id = id;
@@ -2478,8 +2476,14 @@ test('bot buttons breadcrumb save button invokes editor save once after rerender
   assert.equal(levelCtx.state.selectedMenu, 'menu-a');
   allowDiscard = true;
   levelCtx.state.levelStack.push({ label: 'Nested', rows: [], levelKey: 'menu-a|level|nested' });
+  levelCtx.state.levelStack.push({ label: 'Deep', rows: [], levelKey: 'menu-a|level|deep' });
+  await backButton.click();
+  assert.equal(levelCtx.state.levelStack.length, 2);
+  assert.deepEqual(saveCalls, []);
+  assert.equal((backButton.listeners.click || []).length, 1);
   await backButton.click();
   assert.equal(levelCtx.state.levelStack.length, 1);
+  assert.deepEqual(saveCalls, [], 'moving up never invokes shell or browser back');
   assert.equal(backButton.textContent, 'На уровень вверх');
   await backButton.click();
   assert.equal(levelCtx.state.view, 'menu_types');
@@ -3335,7 +3339,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/quick_replies\.js\?v=20261027-message-dialogs-v2"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261027-active-status-v1/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261029-image-actions-v1/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261027-message-dialogs-v2/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3418,7 +3422,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261027-active-status-v1/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261029-image-actions-v1/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);
@@ -3688,3 +3692,15 @@ for (const [initialKeyType, initialWorkflow, changes] of [
     assert.equal(refreshes, changes.length);
   });
 }
+
+test('ticket Back and bot level-up are distinct DOM controls with independent handlers', () => {
+  const ticket = fs.readFileSync('api/app/static/ticket.js', 'utf8'), bot = fs.readFileSync('api/app/static/settings_bot_buttons.js', 'utf8');
+  const ticketHtml = fs.readFileSync('api/app/templates/ticket.html', 'utf8'), botHtml = fs.readFileSync('api/app/templates/settings_bot_buttons.html', 'utf8');
+  assert.match(ticketHtml, /<button id="backToListBtn"[^>]*>Назад<\/button>/);
+  assert.match(botHtml, /<button id="botButtonsBackBtn"[^>]*>Назад<\/button>/);
+  assert.doesNotMatch(botHtml.match(/<button id="botButtonsBackBtn"[^>]*>/)[0], /data-shell-back/);
+  assert.match(ticket, /el\.backToListBtn\.addEventListener\("click"/);
+  assert.doesNotMatch(ticket, /botButtonsBackBtn|На уровень вверх/);
+  assert.match(bot, /const isRoot = state\.view === "menu_types";[\s\S]*isRoot \? "Назад" : "На уровень вверх"/);
+  assert.match(bot, /el\.backButton\?\.addEventListener\("click", \(\) => \{[\s\S]*if \(state\.view === "menu_types"\)[\s\S]*handleBack\(\);/);
+});

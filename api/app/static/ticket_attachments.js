@@ -280,7 +280,18 @@
     const download = document.createElement("button");
     download.type = "button";
     download.className = "image-preview-download";
-    download.textContent = "↓";
+    const open = document.createElement("a");
+    open.className = "image-preview-open";
+    open.title = "Открыть в новой вкладке";
+    open.setAttribute("aria-label", open.title);
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    const iconFilter = document.createElement("span");
+    // The supplied JPEG has a baked-in checkerboard: remove light pixels only at display time.
+    iconFilter.innerHTML = '<svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs><filter id="attachmentIconInk" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 -3 -3 -3 0 1"/><feComposite in2="SourceAlpha" operator="in"/></filter></defs></svg>';
+    open.innerHTML = '<svg viewBox="0 0 512 512" aria-hidden="true"><image width="512" height="512" href="/static/icons/image-open-original.png" filter="url(#attachmentIconInk)"/></svg>';
+    download.innerHTML = '<svg viewBox="155 55 510 710" aria-hidden="true"><image width="820" height="820" href="/static/icons/image-download.jpg" filter="url(#attachmentIconInk)"/></svg>';
+    download.setAttribute("aria-label", "Скачать");
     download.title = "Скачать";
     const img = document.createElement("img");
     img.className = "image-preview-img";
@@ -289,7 +300,7 @@
     loading.className = "image-preview-avatar-loading hidden";
     loading.textContent = "Загрузка…";
     loading.setAttribute("role", "status");
-    dialog.append(download, close, img, loading);
+    dialog.append(iconFilter, open, download, close, img, loading);
     modal.appendChild(dialog);
     document.body.appendChild(modal);
 
@@ -316,6 +327,7 @@
     el.imagePreviewImg = img;
     el.imagePreviewClose = close;
     el.imagePreviewDownload = download;
+    el.imagePreviewOpen = open;
     el.imagePreviewAvatarLoading = loading;
   }
 
@@ -329,6 +341,7 @@
       if (revision !== imagePreviewRevision) return;
       imagePreviewAttachment = attachment;
       imagePreviewScale = 1;
+      el.imagePreviewOpen.href = objectUrl;
       el.imagePreviewImg.src = objectUrl;
       el.imagePreviewImg.alt = attachment.original_filename || "";
       el.imagePreviewImg.style.transform = "scale(1)";
@@ -346,6 +359,8 @@
     el.imagePreviewModal.classList.remove("avatar-preview", "avatar-preview-full");
     el.imagePreviewAvatarLoading?.classList.add("hidden");
     el.imagePreviewDownload?.classList.remove("hidden");
+    el.imagePreviewOpen?.classList.remove("hidden");
+    el.imagePreviewOpen?.removeAttribute("href");
     el.imagePreviewImg.removeAttribute("src");
   }
 
@@ -361,6 +376,7 @@
     el.imagePreviewImg.alt = "Фотография клиента";
     el.imagePreviewImg.src = thumbnailUrl;
     el.imagePreviewDownload.classList.add("hidden");
+    el.imagePreviewOpen.classList.add("hidden");
     el.imagePreviewModal.classList.add("avatar-preview");
     el.imagePreviewAvatarLoading.classList.remove("hidden");
     el.imagePreviewModal.classList.remove("hidden");

@@ -3057,6 +3057,7 @@ body.ticket-column-resize-active th[data-column-key] {
 }
 
 .image-preview-close,
+.image-preview-open,
 .image-preview-download {
   position: absolute;
   top: 10px;
@@ -3076,10 +3077,19 @@ body.ticket-column-resize-active th[data-column-key] {
   right: 10px;
 }
 
+.image-preview-open,
 .image-preview-download {
-  right: 52px;
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
 }
+
+.image-preview-open { right: 94px; }
+.image-preview-open svg { display: block; width: 22px; height: 22px; }
+.image-preview-download svg { display: block; width: 18px; height: 18px; }
+.image-preview-download { right: 52px; }
 
 .card-actions {
   border-top: 1px solid var(--border);
