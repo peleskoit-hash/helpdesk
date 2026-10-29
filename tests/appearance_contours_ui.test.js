@@ -291,8 +291,8 @@ const composition = page => page.evaluate(() => {
   const svg = decodeURIComponent(source.slice(source.indexOf(',') + 1, source.lastIndexOf('"')));
   const root = new DOMParser().parseFromString(svg, 'image/svg+xml');
   return { svg, count: root.querySelectorAll('use').length, transforms: [...root.querySelectorAll('use')].map(node => node.getAttribute('transform')),
-    images: root.querySelectorAll('image').length, width: Number(root.querySelector('image')?.getAttribute('width')), opacity: root.querySelector('svg > g')?.getAttribute('opacity'),
-    size: document.body.style.getPropertyValue('--desk-pattern-size') };
+    images: root.querySelectorAll('image').length, width: Number(root.querySelector('svg#contour')?.getAttribute('width')), height: Number(root.querySelector('svg#contour')?.getAttribute('height')), viewBox: root.documentElement.getAttribute('viewBox'), opacity: root.querySelector('svg > g')?.getAttribute('opacity'),
+    size: document.body.style.getPropertyValue('--desk-contour-size') };
 });
 
 for (const theme of ['light', 'dark']) for (const rings of [0, 1, 2]) test(`custom composition ${[1, 9, 25][rings]} rotated elements and shared bitmap: ${theme}`, async t => {
@@ -304,19 +304,20 @@ for (const theme of ['light', 'dark']) for (const rings of [0, 1, 2]) test(`cust
   const paint = await composition(h.page);
   assert.equal(paint.count, [1, 9, 25][rings]);
   assert.equal(paint.images, 1);
-  assert.equal(paint.width, 162);
-  assert.ok(paint.transforms.every(transform => /translate\([\d.]+ [\d.]+\) rotate\(47\)$/.test(transform)));
+  assert.ok(paint.width > 0);
+  assert.equal(paint.viewBox, '-720 -550 1440 1100');
+  assert.ok(paint.transforms.every(transform => /translate\([-\d.]+ [-\d.]+\) rotate\(47\)$/.test(transform)));
   if (rings) {
-    const positions = paint.transforms.map(value => value.match(/translate\(([\d.]+) ([\d.]+)\)/).slice(1).map(Number));
+    const positions = paint.transforms.map(value => value.match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number));
     assert.equal(new Set(positions.map(point => point[0])).size, rings * 2 + 1);
     assert.equal(new Set(positions.map(point => point[1])).size, rings * 2 + 1);
-    assert.ok(Math.abs(positions[1][0] - positions[0][0] - 162 * 1.7) < 1e-6);
+    assert.ok(Math.abs(positions[1][0] - positions[0][0] - (paint.width * Math.abs(Math.cos(47 * Math.PI / 180)) + paint.height * Math.abs(Math.sin(47 * Math.PI / 180))) * 1.7) < 1e-6);
   }
   assert.match(paint.svg, new RegExp(`flood-color="${theme === 'dark' ? 'white' : 'black'}"`));
   assert.equal(h.calls.filter(c => c.path === `${API}/${contour(1).id}/image`).length, 1, 'preview and background reuse the bitmap');
-  const size = Number.parseFloat(paint.size);
+  const size = paint.width;
   await h.page.locator('#patternScale').fill('150'); await idle(h.page);
-  assert.ok(Math.abs(Number.parseFloat((await composition(h.page)).size) - size * 1.5) < 1e-6);
+  assert.ok(Math.abs((await composition(h.page)).width - size * 1.5) < 1e-6);
   await h.page.locator('#patternIntensity').fill('80'); await idle(h.page);
   assert.equal((await composition(h.page)).opacity, '0.08');
   await h.page.locator('#patternVariable').check(); await idle(h.page);
@@ -328,7 +329,7 @@ for (const theme of ['light', 'dark']) for (const rings of [0, 1, 2]) test(`cust
   if (theme === 'light' && rings === 2) {
     await h.page.evaluate(() => {
       const probe = document.createElement('div'); probe.id = 'contourPaintProbe'; probe.className = 'panel';
-      probe.style.cssText = 'position:fixed;left:0;top:0;width:500px;height:500px;z-index:100;border:0;border-radius:0;background-color:var(--desk-surface)';
+      probe.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:100;border:0;border-radius:0;background-color:var(--desk-surface)';
       document.querySelector('#appContent').appendChild(probe);
     });
     const painted = await h.page.locator('#contourPaintProbe').screenshot();
@@ -438,4 +439,61 @@ test('a stale card cannot save a UUID removed before the click; canonical select
   assert.equal(h.preferences.background_patterns.light.selected, contour(3).id);
   assert.equal(await card(h.page, 3).locator('.contour-select').getAttribute('aria-pressed'), 'true');
   assert.match(await h.page.locator('.appearance-status').textContent(), /Не удалось/);
+});
+
+for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }]) test(`old contour at 100% fills the viewport, zoom clips and resize updates without image requests: ${theme} ${viewport.width}`, async t => {
+  const item = contour(1), id = item.id;
+  const h = await setup(t, { theme, viewport, items: [item], patterns: { [theme]: { selected: id, patterns: { [id]: { scale: 100, intensity: 100, variable: false, seed: 88 } } } } });
+  await h.page.waitForFunction(() => document.body.hasAttribute('data-pattern-custom') && document.body.dataset.patternKind === 'contour');
+  const paint = await composition(h.page);
+  assert.ok(Math.abs(Math.max(paint.width / viewport.width, paint.height / viewport.height) - .94) < 1e-9);
+  assert.equal(paint.count, 1);
+  const css = await h.page.locator('#appContent').evaluate(el => {
+    const style = getComputedStyle(el); return [style.backgroundSize, style.backgroundRepeat, style.backgroundPosition, style.backgroundAttachment];
+  });
+  assert.deepEqual(css, [`${viewport.width}px ${viewport.height}px`, 'no-repeat', '50% 50%', 'fixed']);
+  const raster = await h.page.evaluate(async svg => {
+    const image = new Image(); image.src = 'data:image/svg+xml,' + encodeURIComponent(svg); await image.decode();
+    const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight), ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    const { alphaBounds } = await import('/static/contour_geometry.js?v=20261029-contour-spacing-v1');
+    return alphaBounds(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+  }, paint.svg);
+  assert.ok(Math.max(raster.width / viewport.width, raster.height / viewport.height) > .90, 'real pixels occupy almost the whole area');
+  assert.equal(h.calls.filter(call => call.method !== 'GET').length, 0, 'old metadata needs no writes or migration');
+  await h.open(); await h.page.locator('#patternScale').fill('150'); await idle(h.page);
+  const zoomed = await composition(h.page);
+  assert.ok(Math.abs(zoomed.width - paint.width * 1.5) < 1e-6);
+  assert.ok(zoomed.width > viewport.width || zoomed.height > viewport.height);
+  await h.page.locator('#patternScale').fill('50'); await idle(h.page);
+  assert.ok(Math.abs((await composition(h.page)).width - paint.width * .5) < 1e-6);
+  const next = viewport.width === 390 ? { width: 844, height: 390 } : { width: 1280, height: 720 };
+  await h.page.setViewportSize(next);
+  await h.page.waitForFunction(next => document.body.style.getPropertyValue('--desk-contour-size') === `${next.width}px ${next.height}px`, next);
+  assert.equal((await composition(h.page)).viewBox, `${-next.width / 2} ${-next.height / 2} ${next.width} ${next.height}`);
+  assert.equal(h.calls.filter(call => call.path === `${API}/${id}/image`).length, 1);
+  if (process.env.CONTOUR_SCREENSHOT_DIR) {
+    await h.page.evaluate(() => appearanceMenu.hidePopover());
+    await h.page.screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `viewport-${theme}-${viewport.width}.png`) });
+  }
+});
+
+for (const theme of ['light', 'dark']) for (const rings of [1, 2]) test(`zero-gap background uses touching rotated bounds horizontally and vertically: ${theme} ${rings}`, async t => {
+  const h = await setup(t, { theme, items: [0, 45, 90].map((rotation, index) => contour(index + 1, { rotation, rings, distance: 0, base_scale: 137 })) });
+  await h.open();
+  for (const [index, rotation] of [0, 45, 90].entries()) {
+    await choose(h, index + 1);
+    const paint = await composition(h.page), side = rings * 2 + 1;
+    assert.equal(paint.count, side ** 2);
+    const positions = paint.transforms.map(value => value.match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number));
+    const angle = rotation * Math.PI / 180;
+    const width = paint.width * Math.abs(Math.cos(angle)) + paint.height * Math.abs(Math.sin(angle));
+    const height = paint.width * Math.abs(Math.sin(angle)) + paint.height * Math.abs(Math.cos(angle));
+    for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+      const p = positions[y * side + x];
+      if (x + 1 < side) { const n = positions[y * side + x + 1]; assert.ok(Math.abs(n[0] - p[0] - width) < 1e-6); assert.equal(n[1], p[1]); }
+      if (y + 1 < side) { const n = positions[(y + 1) * side + x]; assert.ok(Math.abs(n[1] - p[1] - height) < 1e-6); assert.equal(n[0], p[0]); }
+    }
+    assert.equal(h.state.items[index].base_scale, 137);
+    assert.ok(paint.transforms.every(value => value.endsWith(`rotate(${rotation})`)));
+  }
 });

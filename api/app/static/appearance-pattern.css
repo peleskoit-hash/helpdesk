@@ -106,3 +106,9 @@ body[data-pattern-custom]:has(.layout > .main) :is(#appContent.main, #appContent
 body[data-pattern-custom][data-pattern-kind="grid"][data-pattern-variable="false"]:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
   background-image: linear-gradient(var(--desk-grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--desk-grid-line) 1px, transparent 1px);
 }
+
+body[data-pattern-custom][data-pattern-kind="contour"]:has(.layout > .main) :is(#appContent.main, #appContent.main .panel, #appContent.main .messages, .layout > .sidebar, .layout > .main > .toolbar) {
+  background-size: var(--desk-contour-size);
+  background-position: center center;
+  background-repeat: no-repeat;
+}

@@ -264,16 +264,22 @@ test('manual fit contains the rotated frames; later changes may clip them withou
   await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption('2');
   await h.editor.locator('#contourDistance').fill('200'); await h.editor.locator('#contourRotation').fill('45');
   await h.editor.locator('[data-editor-fit]').click();
-  const fits = () => h.editor.locator('.editor-scheme svg').evaluate(svg => {
-    const area = svg.getBoundingClientRect();
+  const fits = () => h.editor.locator('.editor-scheme svg').first().evaluate(svg => {
+    const area = svg.viewBox.baseVal, image = svg.querySelector('svg#editorContour');
+    const width = Number(image.getAttribute('width')), height = Number(image.getAttribute('height'));
     return [...svg.querySelectorAll('use')].every(node => {
-      const r = node.getBoundingClientRect(); return r.left >= area.left && r.right <= area.right && r.top >= area.top && r.bottom <= area.bottom;
+      const [x, y, angle] = node.getAttribute('transform').match(/-?[\d.]+/g).map(Number), radians = angle * Math.PI / 180;
+      return [-1, 1].every(dx => [-1, 1].every(dy => {
+        const px = x + dx * width / 2 * Math.cos(radians) - dy * height / 2 * Math.sin(radians);
+        const py = y + dx * width / 2 * Math.sin(radians) + dy * height / 2 * Math.cos(radians);
+        return px >= area.x && px <= area.x + area.width && py >= area.y && py <= area.y + area.height;
+      }));
     });
   });
   assert.equal(await fits(), true);
   await h.editor.locator('#contourScale').fill('200');
   assert.equal(await fits(), false);
-  assert.equal(await h.editor.locator('.editor-scheme svg').evaluate(el => getComputedStyle(el).overflow), 'hidden');
+  assert.equal(await h.editor.locator('.editor-scheme > svg').evaluate(el => getComputedStyle(el).overflow), 'hidden');
 });
 
 for (const source of ['escape', 'cross', 'cancel']) test(`dirty ${source} requests confirmation and declining preserves the local photo`, async t => {
@@ -369,7 +375,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['dark', 390]]) t
   const result = await pixels(h.page);
   assert.deepEqual([result.width, result.height, result.colored, result.corner, result.center], [640, 480, 0, 0, 0]);
   assert.ok(result.count > 100 && result.count < 640 * 480 / 10);
-  assert.equal(await h.editor.locator('.editor-scheme svg').evaluate(el => getComputedStyle(el).filter), theme === 'dark' ? 'invert(1)' : 'none');
+  assert.equal(await h.editor.locator('.editor-scheme > svg').evaluate(el => getComputedStyle(el).filter), theme === 'dark' ? 'invert(1)' : 'none');
   const url = await h.editor.locator('.editor-scheme image').getAttribute('href');
   assert.equal(await frames(h.page), 1);
   await h.editor.locator('#contourRepeat').check(); assert.equal(await frames(h.page), 9);
@@ -572,7 +578,7 @@ test('API scale bounds apply to the visible preview and fit before saving', asyn
   await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption('2');
   await h.editor.locator('#contourDistance').fill('200'); await h.editor.locator('#contourRotation').fill('45');
   await h.editor.locator('[data-editor-fit]').click();
-  assert.equal(await h.editor.locator('#contourScale').inputValue(), '50');
+  assert.ok(Number(await h.editor.locator('#contourScale').inputValue()) >= 50);
   const shownScale = await h.editor.locator('output[for="contourScale"]').textContent();
   await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
   assert.equal(h.flags.posts[0].fields.base_scale + '%', shownScale);
@@ -592,6 +598,10 @@ for (const postError of [403, 413, 422, 503, 'network', 'malformed']) test(`POST
   assert.equal(await h.page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }), false);
   assert.equal(await h.editor.locator('#contourEditorName').inputValue(), 'Повторить');
   assert.equal(await h.editor.locator('#contourRotation').inputValue(), '91');
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url);
+  const preservedPNG = await pixels(h.page);
+  assert.ok(preservedPNG.count > 0); assert.equal(preservedPNG.corner, 0);
+  assert.equal(await h.editor.locator('.editor-scheme use').count(), 1);
   assert.equal(await h.page.evaluate(() => editorMemory.live.size), 2);
   assert.equal(await h.page.locator('.contour-card').count(), 0);
   h.flags.postError = null;
@@ -667,7 +677,7 @@ test('failed PNG reduction sends nothing and preserves processed data for anothe
 test('PNG preflight rejects wrong content, oversized dimensions, opacity and missing lines', async t => {
   const h = await setup(t);
   const messages = await h.page.evaluate(async () => {
-    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-layout-v1');
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-geometry-v1');
     const make = async (width, height, opaque, empty) => {
       const canvas = new OffscreenCanvas(width, height), ctx = canvas.getContext('2d');
       if (opaque) { ctx.fillStyle = 'white'; ctx.fillRect(0, 0, width, height); }
@@ -698,7 +708,7 @@ test('confirmed publish stays closed if library refresh fails; library Retry rev
 test('PNG accepts exactly 2048px and 2 MB without hidden resizing and releases native export resources', async t => {
   const h = await setup(t);
   const result = await h.page.evaluate(async () => {
-    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-layout-v1');
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-geometry-v1');
     const canvas = new OffscreenCanvas(2048, 1024), ctx = canvas.getContext('2d'); ctx.fillRect(500, 200, 20, 200);
     const png = await canvas.convertToBlob({ type: 'image/png' });
     const blob = new Blob([png, new Uint8Array(2 * 1024 * 1024 - png.size)], { type: 'image/png' });
@@ -792,4 +802,192 @@ test('expansion alone does not mark the editor dirty and all sections reset on a
   assert.equal(await h.page.locator('.desk-dialog').count(), 0);
   await h.open();
   assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, false, false]);
+});
+
+for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }]) test(`editor and published background share viewport geometry and keep the same PNG: ${theme} ${viewport.width}`, async t => {
+  const h = await setup(t, { theme, viewport, publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Полноэкранный контур');
+  assert.equal(await h.editor.locator('#contourRepeat').isChecked(), false);
+  const read = () => h.editor.locator('.editor-scheme > svg').evaluate(svg => {
+    const picture = svg.querySelector('svg#editorContour');
+    return { viewBox: svg.getAttribute('viewBox'), width: Number(picture.getAttribute('width')), height: Number(picture.getAttribute('height')),
+      transforms: [...svg.querySelectorAll('use')].map(node => node.getAttribute('transform')) };
+  });
+  const normal = await read();
+  assert.equal(normal.viewBox, `${-viewport.width / 2} ${-viewport.height / 2} ${viewport.width} ${viewport.height}`);
+  assert.ok(Math.abs(Math.max(normal.width / viewport.width, normal.height / viewport.height) - .94) < 1e-9);
+  await h.editor.locator('#contourScale').fill('150'); const zoom = await read();
+  assert.ok(Math.abs(zoom.width / normal.width - 1.5) < 1e-9);
+  assert.ok(zoom.width > viewport.width || zoom.height > viewport.height);
+  await h.editor.locator('#contourScale').fill('50'); assert.ok(Math.abs((await read()).width / normal.width - .5) < 1e-9);
+  await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption('2');
+  await h.editor.locator('#contourRotation').fill('47'); await h.editor.locator('#contourDistance').fill('70'); await h.editor.locator('#contourScale').fill('135');
+  const expected = await read(), url = await h.editor.locator('.editor-scheme image').getAttribute('href');
+  const png = Buffer.from(await h.editor.locator('.editor-scheme image').evaluate(async node => [...new Uint8Array(await (await fetch(node.getAttribute('href'))).arrayBuffer())]));
+  assert.equal(expected.transforms.length, 25);
+  assert.ok(expected.transforms.every(value => value.endsWith('rotate(47)')));
+  if (process.env.EDITOR_SCREENSHOT_DIR) {
+    await h.editor.locator('.editor-scheme').scrollIntoViewIfNeeded();
+    await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `geometry-${theme}-${viewport.width}.png`) });
+  }
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  await h.page.locator('.contour-card .contour-select').waitFor();
+  assert.deepEqual(h.flags.posts[0].buffer, png);
+  const actual = await h.page.evaluate(async item => {
+    const module = await import('/static/background_contour_paint.js?v=20261029-contour-spacing-v1');
+    await module.loadContours(true); await module.contourImage(item.id);
+    const paint = module.paintContour({ type: item.id, scale: 100, intensity: 100, variable: false, seed: 1 }, document.body.dataset.theme === 'dark', { width: innerWidth, height: innerHeight });
+    const text = decodeURIComponent(paint.image.slice(paint.image.indexOf(',') + 1, paint.image.lastIndexOf('"')));
+    const root = new DOMParser().parseFromString(text, 'image/svg+xml'), picture = root.querySelector('svg#contour');
+    return { viewBox: root.documentElement.getAttribute('viewBox'), width: Number(picture.getAttribute('width')), height: Number(picture.getAttribute('height')),
+      transforms: [...root.querySelectorAll('use')].map(node => node.getAttribute('transform')) };
+  }, h.flags.items[0]);
+  assert.deepEqual(actual, expected, 'saving keeps the exact viewport layout, including the visible PNG bounds');
+  assert.equal(await h.page.evaluate(url => editorMemory.revoked.includes(url), url), true);
+  assert.equal(await h.page.locator('.contour-select').getAttribute('aria-pressed'), 'false');
+});
+
+test('viewport aspect ratio refreshes even when the editor preview has reached its CSS maximum height', async t => {
+  const h = await setup(t, { viewport: { width: 1920, height: 1200 } }); await load(h, await photo(h.page)); await processed(h.page);
+  const before = await h.editor.locator('.editor-scheme').boundingBox(), url = await h.editor.locator('.editor-scheme image').getAttribute('href');
+  const jobs = await h.page.evaluate(() => workerState.jobs.length);
+  await h.page.setViewportSize({ width: 1920, height: 1300 });
+  await h.page.waitForFunction(() => document.querySelector('.editor-scheme > svg').getAttribute('viewBox') === '-960 -650 1920 1300');
+  assert.ok(Math.abs((await h.editor.locator('.editor-scheme').boundingBox()).height - before.height) < 1);
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url);
+  assert.equal(await h.page.evaluate(() => workerState.jobs.length), jobs);
+  await discard(h.page);
+  await h.page.setViewportSize({ width: 1440, height: 1000 });
+  assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
+});
+
+test('repetitions chosen before photo processing fit once; manual settings override a pending fit', async t => {
+  const h = await setup(t);
+  await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption('2');
+  await load(h, await photo(h.page)); await processed(h.page);
+  assert.equal(await frames(h.page), 25);
+  const fitted = await h.editor.locator('#contourScale').inputValue();
+  await h.editor.locator('#contourThickness').fill('7'); await processed(h.page);
+  assert.equal(await h.editor.locator('#contourScale').inputValue(), fitted);
+  await discard(h.page); await h.open();
+  await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourScale').fill('137');
+  await load(h, await photo(h.page)); await processed(h.page);
+  assert.equal(await h.editor.locator('#contourScale').inputValue(), '137');
+});
+
+async function previewSizes(page) {
+  return page.locator('.editor-photo-stage, .editor-scheme').evaluateAll(nodes => nodes.map(node => {
+    const r = node.getBoundingClientRect();
+    return { width: r.width, height: r.height, x: r.x, y: r.y, panelWidth: node.parentElement.clientWidth };
+  }));
+}
+function assertPreviewRatio(sizes, viewport) {
+  const ratio = viewport.width / viewport.height;
+  assert.equal(sizes.length, 2);
+  for (const size of sizes) {
+    assert.ok(Math.abs(size.width - size.height * ratio) <= 1, JSON.stringify({ size, ratio }));
+    assert.ok(size.width <= size.panelWidth);
+    const cap = viewport.width <= 850 ? Math.min(viewport.height * .7, 600) : Math.min(viewport.height * .4, 420);
+    assert.ok(size.height <= cap + 1, JSON.stringify({ size, cap }));
+  }
+  assert.ok(Math.abs(sizes[0].width - sizes[1].width) < .1);
+  assert.ok(Math.abs(sizes[0].height - sizes[1].height) < .1);
+  if (viewport.width > 850) assert.equal(sizes[0].y, sizes[1].y);
+  else assert.ok(sizes[1].y > sizes[0].y + sizes[0].height);
+}
+async function containedPhoto(page) {
+  return page.locator('.editor-photo-stage').evaluate(stage => {
+    const image = stage.querySelector('img'), r = stage.getBoundingClientRect();
+    const factor = Math.min(stage.clientWidth / image.naturalWidth, stage.clientHeight / image.naturalHeight);
+    const width = image.naturalWidth * factor, height = image.naturalHeight * factor;
+    const crop = stage.querySelector('.editor-crop').getBoundingClientRect();
+    return { width, height, x: r.x + stage.clientLeft + (stage.clientWidth - width) / 2,
+      y: r.y + stage.clientTop + (stage.clientHeight - height) / 2,
+      crop: { width: crop.width, height: crop.height, x: crop.x, y: crop.y }, fit: getComputedStyle(image).objectFit };
+  });
+}
+function assertCropBox(photo, { x = 0, y = 0, width = 100, height = 100 } = {}) {
+  assert.equal(photo.fit, 'contain');
+  assert.ok(Math.abs(photo.width / photo.height - 640 / 480) < 1e-9);
+  for (const [actual, expected] of [[photo.crop.x, photo.x + photo.width * x / 100], [photo.crop.y, photo.y + photo.height * y / 100],
+    [photo.crop.width, photo.width * width / 100], [photo.crop.height, photo.height * height / 100]]) assert.ok(Math.abs(actual - expected) < 1);
+}
+for (const theme of ['light', 'dark']) for (const viewport of [
+  { width: 1920, height: 1080 }, { width: 1600, height: 1000 }, { width: 1379, height: 907 }, { width: 390, height: 844 }, { width: 844, height: 390 },
+]) test(`actual preview DOM windows share the viewport ratio and contain the photo: ${theme} ${viewport.width}x${viewport.height}`, async t => {
+  const h = await setup(t, { theme, viewport, touch: viewport.width === 390, expand: false });
+  assertPreviewRatio(await previewSizes(h.page), viewport);
+  await load(h, await photo(h.page)); await processed(h.page);
+  assertPreviewRatio(await previewSizes(h.page), viewport);
+  assertCropBox(await containedPhoto(h.page));
+  const modal = await h.editor.boundingBox();
+  assert.ok(modal.x >= 0 && modal.y >= 0 && modal.x + modal.width <= viewport.width && modal.y + modal.height <= viewport.height);
+  assert.equal(await h.editor.locator('.modal-body').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  if (process.env.EDITOR_SCREENSHOT_DIR) await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `aspect-${theme}-${viewport.width}x${viewport.height}.png`) });
+});
+for (const theme of ['light', 'dark']) test(`resizing preserves processed PNG and numeric/drag crop coordinates: ${theme}`, async t => {
+  const h = await setup(t, { theme, viewport: { width: 1920, height: 1080 }, expand: false });
+  await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('.editor-crop-section > summary').click();
+  for (const [key, value] of Object.entries({ x: 5, y: 5, width: 80, height: 90 })) await h.editor.locator(`[data-crop="${key}"]`).fill(String(value));
+  await processed(h.page);
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href'), jobs = await h.page.evaluate(() => workerState.jobs.length);
+  for (const viewport of [{ width: 1600, height: 1000 }, { width: 1379, height: 907 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await h.page.setViewportSize(viewport);
+    await h.page.waitForFunction(viewport => {
+      const stages = [...document.querySelectorAll('.editor-photo-stage, .editor-scheme')];
+      return stages.every(node => { const r = node.getBoundingClientRect(); return Math.abs(r.width - r.height * viewport.width / viewport.height) <= 1; });
+    }, viewport);
+    assertPreviewRatio(await previewSizes(h.page), viewport);
+    assertCropBox(await containedPhoto(h.page), { x: 5, y: 5, width: 80, height: 90 });
+    assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url);
+    assert.equal(await h.page.evaluate(() => workerState.jobs.length), jobs);
+  }
+  await h.page.setViewportSize({ width: 390, height: 844 });
+  await h.editor.locator('[data-crop-reset]').click(); await processed(h.page);
+  await h.editor.locator('.editor-photo-stage').scrollIntoViewIfNeeded();
+  const content = await containedPhoto(h.page);
+  await h.page.mouse.move(content.x + content.width * .15, content.y + content.height * .2); await h.page.mouse.down();
+  await h.page.mouse.move(content.x + content.width * .75, content.y + content.height * .8); await h.page.mouse.up();
+  for (const [key, expected] of Object.entries({ x: 15, y: 20, width: 60, height: 60 })) assert.ok(Math.abs(Number(await h.editor.locator(`[data-crop="${key}"]`).inputValue()) - expected) <= 1);
+  assertCropBox(await containedPhoto(h.page), { x: 15, y: 20, width: 60, height: 60 });
+  await discard(h.page);
+});
+
+for (const theme of ['light', 'dark']) test(`editor distance grows gaps without changing scale or PNG; fit respects new extents: ${theme}`, async t => {
+  const h = await setup(t, { theme }); await load(h, await photo(h.page, 'image/png', '#7760a8', theme === 'light' ? 640 : 960, theme === 'light' ? 480 : 320)); await processed(h.page);
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href'), jobs = await h.page.evaluate(() => workerState.jobs.length);
+  await h.editor.locator('#contourRepeat').check();
+  const read = () => h.editor.locator('.editor-scheme > svg').evaluate(svg => {
+    const image = svg.querySelector('#editorContour');
+    return { width: Number(image.getAttribute('width')), height: Number(image.getAttribute('height')),
+      positions: [...svg.querySelectorAll('use')].map(node => node.getAttribute('transform').match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number)) };
+  });
+  for (const rings of [1, 2]) {
+    await h.editor.locator('#contourRings').selectOption(String(rings));
+    const side = rings * 2 + 1;
+    for (const rotation of [0, 45, 90]) {
+      await h.editor.locator('#contourRotation').fill(String(rotation)); await h.editor.locator('#contourScale').fill('137');
+      await h.editor.locator('#contourDistance').fill('0'); const zero = await read();
+      const angle = rotation * Math.PI / 180;
+      const projectedWidth = zero.width * Math.abs(Math.cos(angle)) + zero.height * Math.abs(Math.sin(angle));
+      const projectedHeight = zero.width * Math.abs(Math.sin(angle)) + zero.height * Math.abs(Math.cos(angle));
+      assert.equal(zero.positions.length, side ** 2);
+      for (const distance of [0, 100, 200]) {
+        await h.editor.locator('#contourDistance').fill(String(distance)); const current = await read();
+        assert.equal(await h.editor.locator('#contourScale').inputValue(), '137');
+        assert.equal(current.width, zero.width); assert.equal(current.height, zero.height);
+        assert.ok(Math.abs(current.positions[1][0] - current.positions[0][0] - projectedWidth * (1 + distance / 100)) < 1e-6);
+        assert.ok(Math.abs(current.positions[side][1] - current.positions[0][1] - projectedHeight * (1 + distance / 100)) < 1e-6);
+      }
+    }
+  }
+  await h.editor.locator('[data-editor-fit]').click();
+  const value = Number(await h.editor.locator('#contourScale').inputValue()), fitted = await read();
+  assert.ok(value >= 50 && value <= 200);
+  // The final angle is 90 degrees: rotated height and width swap.
+  assert.ok(fitted.height + fitted.positions.at(-1)[0] * 2 <= 1440 * .94 + 1e-6);
+  assert.ok(fitted.width + fitted.positions.at(-1)[1] * 2 <= 1000 * .94 + 1e-6);
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url);
+  assert.equal(await h.page.evaluate(() => workerState.jobs.length), jobs);
 });

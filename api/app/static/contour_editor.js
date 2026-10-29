@@ -1,4 +1,5 @@
-import { prepareContourPNG } from '/static/contour_export.js?v=20261029-contour-layout-v1';
+import { imageBounds, contourLayout, fitContourScale, contourMarkup } from '/static/contour_geometry.js?v=20261029-contour-spacing-v1';
+import { prepareContourPNG } from '/static/contour_export.js?v=20261029-contour-geometry-v1';
 
 const MAX_BYTES = 20 * 1024 * 1024;
 let active = null, opening = null, styles = null;
@@ -7,7 +8,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-contour-layout-v1';
+    link.href = '/static/contour-editor.css?v=20261029-contour-aspect-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -107,7 +108,7 @@ function createEditor(invoker) {
   const resultEmpty = find('.editor-result-empty');
   const retryProcessing = find('[data-process-retry]');
   const nameInput = find('#contourEditorName'), saveButton = find('[data-editor-save]');
-  let saving = false;
+  let saving = false, pendingFit = false;
   let dirty = false, closed = false, closing = false, loading = false, generation = 0;
   let photo = null, photoURL = null, crop = { x: 0, y: 0, width: 100, height: 100 }, drag = null;
   const urls = new Set(), pendingImages = new Set();
@@ -117,15 +118,11 @@ function createEditor(invoker) {
   function release(url) { if (urls.delete(url)) URL.revokeObjectURL(url); }
   function renderScheme() {
     const count = repeat.checked ? Number(rings.value) : 0;
-    const zoom = Number(scale.value) / 100, step = 60 * (1 + Number(distance.value) / 100) * zoom;
-    const elements = [];
-    const aspect = result ? result.width / result.height : 1;
-    const width = aspect >= 1 ? 60 * zoom : 60 * zoom * aspect;
-    const height = aspect >= 1 ? 60 * zoom / aspect : 60 * zoom;
-    for (let y = -count; y <= count; y++) for (let x = -count; x <= count; x++) {
-      if (result) elements.push(`<use href="#editorContour" x="${-width / 2}" y="${-height / 2}" transform="translate(${x * step} ${y * step}) rotate(${rotation.value})"/>`);
-    }
-    scheme.innerHTML = result ? `<defs><image id="editorContour" width="${width}" height="${height}" href="${result.url}"/></defs>${elements.join('')}` : '';
+    const area = { width: window.innerWidth, height: window.innerHeight };
+    const composition = { rings: count, rotation: Number(rotation.value), distance: Number(distance.value), base_scale: Number(scale.value) };
+    scheme.setAttribute('viewBox', `${-area.width / 2} ${-area.height / 2} ${area.width} ${area.height}`);
+    const clip = `<defs><clipPath id="editorArea"><rect x="${-area.width / 2}" y="${-area.height / 2}" width="${area.width}" height="${area.height}"/></clipPath></defs>`;
+    scheme.innerHTML = result ? `${clip}<g clip-path="url(#editorArea)">${contourMarkup(result, composition, contourLayout(result, composition, area), 'editorContour', result.url)}</g>` : '';
     const total = (count * 2 + 1) ** 2;
     scheme.setAttribute('aria-label', result ? `Композиция: ${total} элементов.` : 'Нет обработанного контура.');
     const label = result ? `Композиция: ${total} ${total === 1 ? 'элемент' : 'элементов'}.` : 'Нет обработанного контура.';
@@ -133,16 +130,10 @@ function createEditor(invoker) {
     for (const input of [rotation, distance, scale]) find(`output[for="${input.id}"]`).textContent = input.value + (input === rotation ? '°' : '%');
   }
   function fit() {
-    const count = repeat.checked ? Number(rings.value) : 0;
-    const radians = Number(rotation.value) * Math.PI / 180;
-    const aspect = result ? result.width / result.height : 1;
-    const width = aspect >= 1 ? 60 : 60 * aspect, height = aspect >= 1 ? 60 / aspect : 60;
-    const extent = Math.max(width * Math.abs(Math.cos(radians)) + height * Math.abs(Math.sin(radians)), width * Math.abs(Math.sin(radians)) + height * Math.abs(Math.cos(radians)));
-    const bounds = count * 2 * 60 * (1 + Number(distance.value) / 100) + extent;
-    scale.value = String(Math.max(50, Math.min(200, Math.floor(260 / bounds * 100))));
-    // At the API's minimum scale, widen the preview rather than changing the saved scale.
-    const side = Math.max(300, bounds * Number(scale.value) / 100 + 40);
-    scheme.setAttribute('viewBox', `${-side / 2} ${-side / 2} ${side} ${side}`);
+    if (!result) { pendingFit = true; return; }
+    pendingFit = false;
+    const composition = { rings: repeat.checked ? Number(rings.value) : 0, rotation: Number(rotation.value), distance: Number(distance.value) };
+    scale.value = String(fitContourScale(result, composition, { width: window.innerWidth, height: window.innerHeight }));
     renderScheme();
   }
   function photoBounds() {
@@ -159,6 +150,11 @@ function createEditor(invoker) {
   }
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(renderCrop) : null;
   observer?.observe(stage);
+  function resizePreviews() {
+    dialog.style.setProperty('--editor-preview-ratio', String(window.innerWidth / window.innerHeight));
+    renderScheme(); renderCrop();
+  }
+  window.addEventListener('resize', resizePreviews);
 
   function clearResult(message = 'Обновление контура…') {
     if (result) release(result.url);
@@ -211,7 +207,7 @@ function createEditor(invoker) {
     processingStatus.textContent = 'Подготовка обработки…';
     processingWatchdog = setTimeout(() => processingFailed('Не удалось загрузить Worker. Попробуйте ещё раз.'), 10000);
     try {
-      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-layout-v1', { type: 'module' });
+      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-geometry-v1', { type: 'module' });
       worker = instance;
       instance.onerror = event => { event.preventDefault(); if (!closed && worker === instance) processingFailed('Ошибка загрузки или выполнения Worker. Повторите обработку.'); };
       instance.addEventListener('messageerror', () => { if (!closed && worker === instance) processingFailed('Не удалось прочитать ответ Worker.'); });
@@ -244,10 +240,11 @@ function createEditor(invoker) {
               candidate.src = url; await candidate.decode();
               if (!closed && worker === instance && message.id === processingRevision && !loading) {
                 if (candidate.naturalWidth !== message.width || candidate.naturalHeight !== message.height) throw new Error('Размер результата не совпадает.');
-                result = { blob: message.blob, url, width: message.width, height: message.height }; adopted = true;
+                result = { blob: message.blob, url, width: message.width, height: message.height, bounds: imageBounds(candidate) }; adopted = true;
                 resultEmpty.hidden = true;
                 processingStatus.textContent = `Готово: ${message.width}×${message.height} px. Прозрачный PNG, готов к сохранению.`;
-                renderScheme(); updateSave();
+                if (pendingFit) fit(); else renderScheme();
+                updateSave();
               }
             } catch {
               if (!closed && worker === instance && message.id === processingRevision) processingFailed('Не удалось прочитать обработанный контур. Повторите обработку.');
@@ -322,6 +319,7 @@ function createEditor(invoker) {
     clearTimeout(processingTimer); processingTimer = null; pendingProcessing = false;
     stopWorker();
     observer?.disconnect();
+    window.removeEventListener('resize', resizePreviews);
     for (const image of pendingImages) image.removeAttribute('src');
     pendingImages.clear();
     if (photo) { photo.removeAttribute('src'); photo.remove(); }
@@ -393,10 +391,10 @@ function createEditor(invoker) {
   fileInput.addEventListener('change', () => void loadPhoto());
   nameInput.addEventListener('input', () => { dirty = true; updateSave(); });
   saveButton.addEventListener('click', () => void saveContour());
-  for (const input of [rotation, distance, scale]) input.addEventListener('input', () => { dirty = true; renderScheme(); });
+  for (const input of [rotation, distance, scale]) input.addEventListener('input', () => { dirty = true; pendingFit = false; renderScheme(); });
   repeat.addEventListener('change', () => {
     dirty = true; rings.disabled = !repeat.checked;
-    if (repeat.checked) { rings.value = '1'; fit(); } else renderScheme();
+    if (repeat.checked) { rings.value = '1'; fit(); } else { pendingFit = false; renderScheme(); }
   });
   let previousRings = 1;
   rings.addEventListener('change', () => {
@@ -442,6 +440,6 @@ function createEditor(invoker) {
   dialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => void requestClose()));
   dialog.addEventListener('close', () => { if (!closed) { cleanup(); dialog.remove(); active = null; } });
   document.body.appendChild(dialog); active = dialog;
-  renderScheme(); dialog.showModal(); startWorker();
+  resizePreviews(); dialog.showModal(); startWorker();
   return dialog;
 }

@@ -1,3 +1,4 @@
+import { imageBounds, contourLayout, contourMarkup } from '/static/contour_geometry.js?v=20261029-contour-spacing-v1';
 const API = "/api/v1/background-contours";
 let items = new Map(), available = false, loading = null, loadedAt = 0;
 const images = new Map(), tiles = new Map();
@@ -35,15 +36,16 @@ async function image(id) {
   if (!['image/png', 'image/webp'].includes(blob.type) || blob.size > 2097152) throw new Error("Некорректное изображение контура");
   const bitmap = await createImageBitmap(blob);
   const width = bitmap.width, height = bitmap.height;
-  bitmap.close();
-  if (!width || !height || Math.max(width, height) > 2048) throw new Error("Некорректный размер контура");
+  if (!width || !height || Math.max(width, height) > 2048) { bitmap.close(); throw new Error("Некорректный размер контура"); }
+  let bounds;
+  try { bounds = imageBounds(bitmap); } finally { bitmap.close(); }
   const data = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-  return { data, width, height };
+  return { data, width, height, bounds };
 }
 
 export function contourImage(id) {
@@ -64,7 +66,7 @@ export function contourImage(id) {
   return images.get(id).promise;
 }
 
-export function paintContour(state, dark) {
+export function paintContour(state, dark, area) {
   if (!available) {
     if (!loadedAt && !loading) { loadedAt = Date.now(); void loadContours().catch(() => {}); }
     return null;
@@ -76,24 +78,19 @@ export function paintContour(state, dark) {
   if (!images.has(item.id)) void contourImage(item.id).catch(() => {});
   const asset = images.get(item.id).asset;
   if (!asset) return null;
-  const key = JSON.stringify([item, dark, state.intensity, state.variable, state.seed]);
+  const key = JSON.stringify([item, dark, state.intensity, state.variable, state.seed, state.scale, area]);
   if (!tiles.has(key)) {
-    const size = 120 * item.base_scale / 100, step = size * (1 + item.distance / 100);
-    const side = item.rings * 2 + 1, tile = 360 + (side - 1) * step;
-    const width = size * asset.width / Math.max(asset.width, asset.height);
-    const height = size * asset.height / Math.max(asset.width, asset.height);
-    const elements = [];
-    for (let y = -item.rings; y <= item.rings; y++) for (let x = -item.rings; x <= item.rings; x++) {
-      elements.push(`<use href="#contour" x="${-width / 2}" y="${-height / 2}" transform="translate(${tile / 2 + x * step} ${tile / 2 + y * step}) rotate(${item.rotation})"/>`);
-    }
-    const mask = state.variable ? `<filter id="noise"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="2" seed="${state.seed ?? 1}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2 0 0 0 -.35"/></filter><mask id="variation"><rect width="100%" height="100%" filter="url(#noise)"/></mask>` : "";
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="840" viewBox="0 0 ${tile} ${tile}"><defs><filter id="ink"><feFlood flood-color="${dark ? 'white' : 'black'}"/><feComposite in2="SourceAlpha" operator="in"/></filter><image id="contour" width="${width}" height="${height}" href="${asset.data}" filter="url(#ink)"/>${mask}</defs><g opacity="${state.intensity / 1000}" ${state.variable ? 'mask="url(#variation)"' : ''}>${elements.join('')}</g></svg>`;
+    const layout = contourLayout(asset, item, area, state.scale);
+    const content = contourMarkup(asset, item, layout, 'contour', asset.data, 'filter="url(#ink)"');
+    const mask = state.variable ? `<filter id="noise"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="2" seed="${state.seed ?? 1}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2 0 0 0 -.35"/></filter><mask id="variation" maskUnits="userSpaceOnUse" x="${-area.width / 2}" y="${-area.height / 2}" width="${area.width}" height="${area.height}"><rect x="${-area.width / 2}" y="${-area.height / 2}" width="${area.width}" height="${area.height}" filter="url(#noise)"/></mask>` : "";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${area.width}" height="${area.height}" viewBox="${-area.width / 2} ${-area.height / 2} ${area.width} ${area.height}" overflow="hidden"><defs><filter id="ink"><feFlood flood-color="${dark ? 'white' : 'black'}"/><feComposite in2="SourceAlpha" operator="in"/></filter>${mask}</defs><g opacity="${state.intensity / 1000}" ${state.variable ? 'mask="url(#variation)"' : ''}>${content}</g></svg>`;
+
     // Keep only recent slider states, with a single embedded bitmap shared by all 25 uses.
     if (tiles.size >= 8) tiles.delete(tiles.keys().next().value);
-    tiles.set(key, { image: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, size: tile });
+    tiles.set(key, { image: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, size: `${area.width}px ${area.height}px` });
   }
   const result = tiles.get(key);
-  return { image: result.image, size: result.size * state.scale / 100 };
+  return { image: result.image, size: result.size };
 }
 
 export function configureContourPaint(callbacks) {
@@ -115,6 +112,12 @@ export function configureContourPaint(callbacks) {
     if (event.data === 'contours') { available = false; loadedAt = 0; void refresh(); }
     if (event.data === 'appearance') void hooks.refresh();
   };
+  let resizeFrame;
+  window.addEventListener('resize', () => {
+    if (!usesContours()) return;
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => hooks.render());
+  });
   window.addEventListener('focus', () => { if (usesContours()) void refresh(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden && usesContours()) void refresh(); });
   setInterval(() => { if (!document.hidden && usesContours()) void refresh(); }, 15000);
