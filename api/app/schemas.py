@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_serializer
 
 
 TICKET_LIST_COLUMN_DEFAULTS = {
@@ -463,8 +463,19 @@ class BackgroundPatternParameters(BaseModel):
 class BackgroundPatternTheme(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    selected: Literal["none", "grid", "dots", "diagonals", "waves", "relief"] = "grid"
-    patterns: dict[BackgroundPatternKind, BackgroundPatternParameters] = Field(default_factory=dict)
+    selected: Literal["none", "grid", "dots", "diagonals", "waves", "relief"] | UUID = "grid"
+    patterns: dict[BackgroundPatternKind | UUID, BackgroundPatternParameters] = Field(default_factory=dict)
+
+
+class BackgroundPatternThemeOut(BackgroundPatternTheme):
+    fallback_grid: bool = False
+
+    @model_serializer(mode="wrap")
+    def serialize_theme(self, handler):
+        data = handler(self)
+        if not self.fallback_grid:
+            data.pop("fallback_grid", None)
+        return data
 
 
 class BackgroundContourComposition(BaseModel):
@@ -495,7 +506,7 @@ class BackgroundContourListOut(BaseModel):
 
 class UserPreferencesOut(BaseModel):
     appearance_revision: str = ""
-    background_patterns: dict[Literal["light", "dark"], BackgroundPatternTheme] | None = None
+    background_patterns: dict[Literal["light", "dark"], BackgroundPatternThemeOut] | None = None
     send_by_enter: bool = False
     color_enabled: bool = True
     task_panel_enabled: bool = False

@@ -1,3 +1,5 @@
+import { loadContours, notifyContourDeletion, contourImage } from "/static/background_contour_paint.js?v=20261029-contour-paint-v1";
+export { configureContourPaint, paintContour, notifyAppearance } from "/static/background_contour_paint.js?v=20261029-contour-paint-v1";
 const API = "/api/v1/background-contours";
 
 async function request(path, options = {}) {
@@ -12,10 +14,26 @@ async function request(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
-export function initContourLibrary(section, onChange) {
+export function initContourLibrary(section, onChange, selectContour) {
   const list = section.querySelector(".contour-list"), status = section.querySelector(".contour-status");
   const retry = section.querySelector(".contour-retry");
-  let loading = null, busy = false;
+  let loading = null, busy = false, renderedItems = '';
+  const previews = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      previews.unobserve(entry.target);
+      void contourImage(entry.target.dataset.contourId).then(asset => { entry.target.src = asset.data; })
+        .catch(() => entry.target.dispatchEvent(new Event('error')));
+    }
+  }, { root: section.querySelector('.pattern-library'), rootMargin: '80px' });
+  section.addEventListener('contour-destroy', () => previews.disconnect(), { once: true });
+  section.addEventListener('contour-catalogue', event => {
+    if (section.open && !busy && !loading) {
+      if (JSON.stringify(event.detail) !== renderedItems || list.querySelector('.contour-image-missing')) render(event.detail);
+      status.textContent = event.detail.length ? '' : 'Пользовательских контуров пока нет.';
+      retry.hidden = true;
+      onChange();
+    }
+  });
 
   function setBusy(value) {
     busy = value;
@@ -26,14 +44,15 @@ export function initContourLibrary(section, onChange) {
   }
 
   function render(items) {
+    renderedItems = JSON.stringify(items);
+    previews.disconnect();
     const cards = items.map(item => {
       const card = document.createElement("article");
       card.className = "contour-card";
       card.tabIndex = 0;
       card.dataset.contourId = item.id;
-      card.setAttribute("aria-label", `${item.name}. Выбор пользовательских контуров будет доступен позже.`);
-      card.title = "Выбор пользовательских контуров будет доступен позже";
-      card.innerHTML = `<div class="contour-name"></div><img class="contour-preview" alt="" loading="lazy" decoding="async">
+      card.setAttribute("aria-label", item.name);
+      card.innerHTML = `<button type="button" class="contour-select" aria-pressed="false"></button><div class="contour-name"></div><img class="contour-preview" alt="" loading="lazy" decoding="async">
         <div class="contour-footer"><span class="contour-author"></span><div class="contour-actions">
           <span class="contour-action-hint" tabindex="0"><button type="button" class="action contour-action" disabled aria-label="Редактировать контур">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12H4v-5L16 3Zm-3 3 5 5"/></svg>
@@ -42,14 +61,23 @@ export function initContourLibrary(section, onChange) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg>
           </button></span>
         </div></div>`;
+      const select = card.querySelector(".contour-select");
+      select.setAttribute("aria-label", `Выбрать контур «${item.name}»`);
+      select.addEventListener("click", () => selectContour(item.id));
+      card.addEventListener("keydown", event => {
+        if (event.target === card && ['Enter', ' '].includes(event.key) && !select.disabled) {
+          event.preventDefault(); selectContour(item.id);
+        }
+      });
       card.querySelector(".contour-name").textContent = item.name;
       card.querySelector(".contour-name").title = item.name;
       const image = card.querySelector("img");
-      image.src = `${API}/${encodeURIComponent(item.id)}/image`;
+      image.dataset.contourId = item.id;
       image.addEventListener("error", () => {
         image.hidden = true;
         card.classList.add("contour-image-missing");
         card.title = "Не удалось загрузить превью контура";
+        select.disabled = true;
       }, { once: true });
       const author = card.querySelector(".contour-author");
       author.textContent = `Made by ${item.author_name}`;
@@ -65,6 +93,7 @@ export function initContourLibrary(section, onChange) {
       return card;
     });
     list.replaceChildren(...cards);
+    list.querySelectorAll('img').forEach(image => previews.observe(image));
   }
 
   function load() {
@@ -74,12 +103,10 @@ export function initContourLibrary(section, onChange) {
     list.setAttribute("aria-busy", "true");
     loading = (async () => {
       try {
-        const payload = await request(API);
-        if (!Array.isArray(payload.items) || !payload.items.every(item => typeof item.id === "string" &&
-          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(item.id))) throw new Error("Некорректный ответ библиотеки контуров.");
+        const items = await loadContours(true);
         if (!section.isConnected) return;
-        render(payload.items);
-        status.textContent = payload.items.length ? "" : "Пользовательских контуров пока нет.";
+        render(items);
+        status.textContent = items.length ? "" : "Пользовательских контуров пока нет.";
       } catch (error) {
         if (!section.isConnected) return;
         status.textContent = `Не удалось загрузить контуры. ${error.message}`;
@@ -120,7 +147,7 @@ export function initContourLibrary(section, onChange) {
       await loading;
       try { await request(`${API}/${encodeURIComponent(item.id)}`, { method: "DELETE" }); }
       catch (error) { if (error.status !== 404) throw error; }
-      // The selected built-in pattern and personal preferences are deliberately untouched.
+      notifyContourDeletion(item.id);
       list.querySelectorAll(".contour-card").forEach(card => { if (card.dataset.contourId === item.id) card.remove(); });
       await load();
     } catch (error) {

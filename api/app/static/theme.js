@@ -19,6 +19,9 @@ let appearanceSessionPromise = null;
 let saveInFlight = false;
 let appearanceButton = null;
 let appearanceMenu = null;
+let contourPaint = null;
+let appearanceRefreshNeeded = false;
+let appearanceRefreshPromise = null;
 
 function mergeAppearance(base, patch) {
   const merged = { ...base, ...patch };
@@ -27,6 +30,7 @@ function mergeAppearance(base, patch) {
     for (const [theme, changes] of Object.entries(patch.background_patterns)) {
       const previous = base.background_patterns?.[theme];
       const next = { ...previous, ...changes };
+      if (Object.hasOwn(changes, "selected")) delete next.fallback_grid;
       if (changes.patterns) {
         next.patterns = { ...previous?.patterns };
         for (const [kind, parameters] of Object.entries(changes.patterns)) {
@@ -42,11 +46,19 @@ function mergeAppearance(base, patch) {
 function renderBackgroundPattern() {
   const mode = appearance.theme_preference, theme = appearance.background_patterns?.[mode];
   const type = theme?.selected ?? "grid";
-  const state = { scale: 100, intensity: 50, variable: false, ...theme?.patterns?.[type], type, changed: !!theme };
+  const state = { scale: 100, intensity: 50, variable: false, ...(!theme?.fallback_grid ? theme?.patterns?.[type] : {}), type, changed: !!theme && !theme.fallback_grid };
+  const custom = !["none", "grid", "dots", "diagonals", "waves", "relief"].includes(type);
   document.body.toggleAttribute("data-pattern-custom", state.changed);
-  document.body.dataset.patternKind = state.type;
+  document.body.dataset.patternKind = custom ? "contour" : state.type;
   document.body.dataset.patternVariable = String(state.variable);
-  if (state.changed) {
+  if (custom) {
+    const paint = contourPaint?.paintContour(state, mode === "dark");
+    document.body.toggleAttribute("data-pattern-custom", !!paint);
+    if (paint) {
+      document.body.style.setProperty("--desk-pattern-image", paint.image);
+      document.body.style.setProperty("--desk-pattern-size", `${paint.size}px`);
+    }
+  } else if (state.changed) {
     let image = "none";
     if (state.type !== "none") {
       const ink = mode === "dark" ? "white" : "black";
@@ -70,7 +82,12 @@ function renderBackgroundPattern() {
   }
   if (!appearanceMenu) return;
   const section = appearanceMenu.querySelector(".appearance-pattern");
-  section.querySelector(`input[value="${state.type}"]`).checked = true;
+  section.querySelectorAll('input[name="appearance-pattern"]').forEach(input => { input.checked = input.value === state.type; });
+  section.querySelectorAll('.contour-card').forEach(card => {
+    const selected = card.dataset.contourId === state.type;
+    card.classList.toggle('selected', selected);
+    card.querySelector('.contour-select')?.setAttribute('aria-pressed', String(selected));
+  });
   section.querySelector(".pattern-parameters").hidden = state.type === "none";
   section.querySelector("#patternIntensity").value = state.intensity;
   section.querySelector("#patternIntensity").disabled = state.variable;
@@ -208,6 +225,26 @@ async function fetchAppearance() {
   return normalizeAppearance(await response.json());
 }
 
+async function refreshAppearance() {
+  if (saveInFlight) { appearanceRefreshNeeded = true; return; }
+  if (appearanceRefreshPromise) return appearanceRefreshPromise;
+  const sequence = appearanceSequence;
+  appearanceRefreshPromise = (async () => {
+    try {
+      const preferences = await fetchAppearance();
+      if (saveInFlight || sequence !== appearanceSequence) { appearanceRefreshNeeded = true; return; }
+      confirmedAppearance = preferences;
+      appearance = mergeAppearance(confirmedAppearance, pendingAppearance);
+      applyTheme(appearance.theme_preference);
+    } catch { /* Keep the last acknowledgement; contour painting has its own safe grid fallback. */ }
+    finally {
+      appearanceRefreshPromise = null;
+      if (appearanceRefreshNeeded && !saveInFlight) { appearanceRefreshNeeded = false; void refreshAppearance(); }
+    }
+  })();
+  return appearanceRefreshPromise;
+}
+
 async function loadThemePreference() {
   if (!preferencesLoadPromise) {
     preferencesLoadPromise = (async () => {
@@ -281,6 +318,7 @@ async function flushAppearanceSaveQueue() {
           throw new Error(`HTTP ${response.status}`);
         }
         confirmedAppearance = normalizeAppearance(await response.json());
+        contourPaint?.notifyAppearance();
         setAppearanceStatus("");
       } catch {
         if (!reconciled) {
@@ -294,6 +332,7 @@ async function flushAppearanceSaveQueue() {
     }
   } finally {
     saveInFlight = false;
+    if (appearanceRefreshNeeded) { appearanceRefreshNeeded = false; void refreshAppearance(); }
   }
 }
 
@@ -321,9 +360,10 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261028-contour-library-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-paint-v1";
       document.head.appendChild(styles);
     }
+    appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
     appearanceMenu?.remove();
     appearanceButton = button;
     button.textContent = "Оформление";
@@ -386,8 +426,12 @@ function initThemeToggle() {
       </details>
       <div class="appearance-status" role="status" aria-live="polite"></div>`;
     const patternSection = appearanceMenu.querySelector(".appearance-pattern");
-    void import("/static/appearance_contours.js?v=20261028-contour-library-v1").then(({ initContourLibrary }) => {
-      if (patternSection.isConnected) initContourLibrary(patternSection, positionAppearanceMenu);
+    void import("/static/appearance_contours.js?v=20261029-contour-paint-v1").then(module => {
+      contourPaint = module;
+      module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
+        catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });
+      if (patternSection.isConnected) module.initContourLibrary(patternSection, () => { positionAppearanceMenu(); renderBackgroundPattern(); },
+        id => changeAppearance({ background_patterns: { [appearance.theme_preference]: { selected: id } } }));
     }).catch(() => {
       patternSection.querySelector(".contour-status").textContent = "Не удалось загрузить библиотеку. Обновите страницу.";
     });
@@ -401,6 +445,10 @@ function initThemeToggle() {
       else if (input.id === "patternIntensity") changes = { patterns: { [kind]: { intensity: Number(input.value) } } };
       else if (input.id === "patternScale") changes = { patterns: { [kind]: { scale: Number(input.value) } } };
       else return;
+      if (appearance.background_patterns?.[mode]?.fallback_grid && input.name !== "appearance-pattern") {
+        changes.selected = "grid";
+        changes.patterns.grid = { scale: 100, intensity: 50, variable: false, ...changes.patterns.grid };
+      }
       changeAppearance({ background_patterns: { [mode]: changes } });
       positionAppearanceMenu();
     });

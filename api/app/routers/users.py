@@ -38,6 +38,7 @@ from ..services.user_appearance import (
     appearance_revision,
     convert_legacy_appearance,
     merge_background_patterns,
+    repair_background_contours,
     COLOR_FIELDS,
     register_appearance_session,
 )
@@ -267,7 +268,10 @@ def get_my_preferences(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    return _preferences_out(_real_user_model(db, current_user))
+    user = _real_user_model(db, current_user)
+    if repair_background_contours(db, user):
+        db.commit()
+    return _preferences_out(user)
 
 
 @router.post("/me/preferences/appearance-session", response_model=AppearanceSessionOut)
@@ -276,7 +280,7 @@ def create_my_appearance_session(
     current_user: CurrentUser = Depends(get_current_user),
     payload: AppearanceSessionCreate | None = None,
 ):
-    initial = payload.preferences.model_dump(exclude_unset=True) if payload else {}
+    initial = payload.preferences.model_dump(mode="json", exclude_unset=True) if payload else {}
     if payload and (not initial or set(initial) - set(APPEARANCE_FIELDS)):
         _error(422, "invalid_initial_appearance", "Only appearance preferences may initialize a session")
     user = _real_user_model(db, current_user)
@@ -293,7 +297,7 @@ def update_my_preferences(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     user = _real_user_model(db, current_user)
-    updates = payload.model_dump(exclude_unset=True)
+    updates = payload.model_dump(mode="json", exclude_unset=True)
     updates.pop("appearance_write", None)
     has_appearance = any(field in updates for field in APPEARANCE_FIELDS)
     if has_appearance and payload.appearance_write is None:
@@ -311,6 +315,7 @@ def update_my_preferences(
             })
         if not accepted:
             updates = {field: value for field, value in updates.items() if field not in APPEARANCE_FIELDS}
+    repaired = repair_background_contours(db, user) if not has_appearance else False
     if "send_by_enter" in updates:
         user.send_by_enter = bool(updates["send_by_enter"])
     if "color_enabled" in updates:
@@ -320,7 +325,7 @@ def update_my_preferences(
     if "theme_preference" in updates:
         user.theme_preference = updates["theme_preference"]
     if "background_patterns" in updates:
-        merge_background_patterns(user, updates["background_patterns"])
+        merge_background_patterns(db, user, updates["background_patterns"])
     for field in ("accent_preference", "accent_intensity_light", "accent_intensity_dark"):
         if field in updates:
             setattr(user, field, updates[field])
@@ -338,7 +343,7 @@ def update_my_preferences(
         user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:
         user.updated_at = datetime.utcnow()
-    if updates or payload.appearance_write:
+    if updates or payload.appearance_write or repaired:
         db.commit()
         db.refresh(user)
     return _preferences_out(user)

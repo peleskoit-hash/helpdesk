@@ -3,12 +3,13 @@ import json
 from copy import deepcopy
 from datetime import datetime
 from secrets import randbelow
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import update
+from fastapi import HTTPException
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from ..models import User
+from ..models import BackgroundContour, User
 
 
 MAX_APPEARANCE_SESSIONS = 32
@@ -19,8 +20,42 @@ APPEARANCE_FIELDS = ("theme_preference", "accent_preference", "accent_intensity_
                      "background_patterns")
 
 
-def merge_background_patterns(user: User, patch: dict) -> None:
+def is_contour(value) -> bool:
+    try:
+        UUID(str(value))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def repair_background_contours(db: Session, user: User, *, locked=False) -> bool:
+    if not any(is_contour(theme.get("selected")) for theme in (user.background_patterns_json or {}).values()):
+        return False
+    if not locked:
+        _lock_appearance(db, user)
+    stored = deepcopy(user.background_patterns_json or {})
+    ids = {theme["selected"] for theme in stored.values() if is_contour(theme.get("selected"))}
+    existing = set(db.scalars(select(BackgroundContour.id).where(BackgroundContour.id.in_(ids))))
+    changed = False
+    for theme in stored.values():
+        if is_contour(theme.get("selected")) and theme["selected"] not in existing:
+            theme.update(selected="grid", fallback_grid=True)
+            changed = True
+    if changed:
+        user.background_patterns_json = stored
+    return changed
+
+
+def merge_background_patterns(db: Session, user: User, patch: dict) -> None:
     # Merge under the appearance row lock; never replace another theme/pattern.
+    ids = {key for changes in patch.values() for key in [changes.get("selected"), *changes.get("patterns", {})]
+           if is_contour(key)}
+    # Hold a shared contour lock until the preference commit; deletion cannot pass validation in between.
+    existing = set(db.scalars(select(BackgroundContour.id).where(BackgroundContour.id.in_(sorted(ids))).with_for_update(read=True))) if ids else set()
+    if ids - existing:
+        db.rollback()
+        raise HTTPException(status_code=422, detail={"error": {"code": "background_contour_not_found",
+                                                             "message": "Выбранный контур больше не существует"}})
     stored = deepcopy(user.background_patterns_json or {})
     for theme, changes in patch.items():
         if not changes:
@@ -28,7 +63,10 @@ def merge_background_patterns(user: User, patch: dict) -> None:
         target = stored.setdefault(theme, {"selected": "grid", "patterns": {}})
         if "selected" in changes:
             target["selected"] = changes["selected"]
+            target.pop("fallback_grid", None)
         parameters = changes.get("patterns", {})
+        if target.get("fallback_grid") and "grid" in parameters:
+            target.pop("fallback_grid", None)
         kinds = set(parameters)
         if target["selected"] != "none":
             kinds.add(target["selected"])
@@ -83,7 +121,7 @@ def _lock_appearance(db: Session, user: User) -> None:
 
 
 def appearance_revision(user: User) -> str:
-    state = json.dumps(user.appearance_write_state_json or {}, sort_keys=True, separators=(",", ":"))
+    state = json.dumps([user.appearance_write_state_json or {}, user.background_patterns_json], sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(state.encode()).hexdigest()
 
 
@@ -92,6 +130,7 @@ def register_appearance_session(
     expected_revision: str | None = None,
 ) -> str:
     _lock_appearance(db, user)
+    repair_background_contours(db, user, locked=True)
     # A delayed/retried registration cannot overwrite a write accepted since its GET.
     accept_initial = expected_revision == appearance_revision(user)
     state = dict(user.appearance_write_state_json or {})
@@ -107,7 +146,7 @@ def register_appearance_session(
     updates = dict(initial_preferences or {}) if accept_initial else {}
     for field, value in updates.items():
         if field == "background_patterns":
-            merge_background_patterns(user, value)
+            merge_background_patterns(db, user, value)
         else:
             setattr(user, field, value)
     convert_legacy_appearance(user, updates)
@@ -122,6 +161,7 @@ def register_appearance_session(
 
 def accept_appearance_write(db: Session, user: User, writer_id: str, sequence: int) -> bool:
     _lock_appearance(db, user)
+    repair_background_contours(db, user, locked=True)
     state = dict(user.appearance_write_state_json or {})
     entry = state.get(writer_id)
     if entry is None:
