@@ -360,7 +360,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-contour-paint-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-editor-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -409,9 +409,9 @@ function initThemeToggle() {
           <p class="contour-status" role="status" aria-live="polite"></p>
           <button type="button" class="action contour-retry" hidden>Повторить загрузку</button>
         </div>
-        <div class="contour-create" title="Редактор будет добавлен на следующем этапе">
-          <button type="button" class="action" disabled aria-describedby="contourCreateHint">Создать свой узор</button>
-          <small id="contourCreateHint">Редактор будет добавлен на следующем этапе.</small>
+        <div class="contour-create">
+          <button type="button" class="action" data-contour-create aria-describedby="contourCreateHint">Создать свой узор</button>
+          <small id="contourCreateHint">Загрузка и кадрирование фото. Обработка и сохранение пока недоступны.</small>
         </div>
         <div class="pattern-parameters">
           <label class="pattern-switch" for="patternVariable">
@@ -426,7 +426,16 @@ function initThemeToggle() {
       </details>
       <div class="appearance-status" role="status" aria-live="polite"></div>`;
     const patternSection = appearanceMenu.querySelector(".appearance-pattern");
-    void import("/static/appearance_contours.js?v=20261029-contour-paint-v1").then(module => {
+    const createContourButton = patternSection.querySelector('[data-contour-create]');
+    createContourButton.addEventListener('click', async () => {
+      try {
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-contour-editor-v1');
+        if (createContourButton.isConnected) await openContourEditor(createContourButton);
+      } catch {
+        patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';
+      }
+    });
+    void import("/static/appearance_contours.js?v=20261029-contour-editor-v1").then(module => {
       contourPaint = module;
       module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
         catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });

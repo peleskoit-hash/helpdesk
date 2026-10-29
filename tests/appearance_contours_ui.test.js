@@ -128,8 +128,8 @@ for (const theme of ['light', 'dark']) test(`server order, previews, safe text a
   assert.deepEqual(mutationCalls(calls), []);
   assert.equal(await page.locator('.pattern-card input').count(), 6);
   assert.deepEqual(await page.locator('.pattern-card input').evaluateAll(inputs => inputs.map(input => input.value)), ['none', 'grid', 'dots', 'diagonals', 'waves', 'relief']);
-  assert.equal(await page.getByRole('button', { name: 'Создать свой узор' }).isDisabled(), true);
-  assert.match(await page.locator('#contourCreateHint').textContent(), /следующем этапе/);
+  assert.equal(await page.getByRole('button', { name: 'Создать свой узор' }).isEnabled(), true);
+  assert.match(await page.locator('#contourCreateHint').textContent(), /Обработка и сохранение пока недоступны/);
   assert.equal(await page.locator('dialog').count(), 0);
   if (process.env.CONTOUR_SCREENSHOT_DIR) await page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `library-${theme}.png`) });
 });
@@ -251,15 +251,18 @@ for (const width of [1440, 390]) test(`large library scrolls inside its bounded 
   assert.equal(await remove(h.page, 1).isVisible(), true);
 });
 
-test('touch users can access both actions without hover and the disabled create button opens nothing', async t => {
+test('touch users can access both actions without hover and open the editor', async t => {
   const h = await setup(t, { touch: true, viewport: { width: 390, height: 844 }, items: [contour(1)] }); await h.open();
   assert.equal(await card(h.page, 1).locator('.contour-footer').evaluate(el => getComputedStyle(el).opacity), '1');
   await remove(h.page, 1).tap();
   await h.page.locator('.desk-dialog').waitFor();
   await h.page.locator('[data-dialog-cancel]').tap();
   if (process.env.CONTOUR_SCREENSHOT_DIR) await h.page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, 'library-touch.png') });
-  await h.page.getByRole('button', { name: 'Создать свой узор' }).evaluate(el => el.click());
-  assert.equal(await h.page.locator('dialog').count(), 0);
+  await h.page.getByRole('button', { name: 'Создать свой узор' }).tap();
+  await h.page.locator('#contourEditor').waitFor();
+  assert.equal(await h.page.locator('#contourEditor').getByRole('button', { name: 'Сохранить', exact: true }).isDisabled(), true);
+  await h.page.locator('#contourEditor [data-editor-close]').first().tap();
+  assert.equal(await h.page.locator('#contourEditor').count(), 0);
   assert.deepEqual(mutationCalls(h.calls), []);
 });
 
