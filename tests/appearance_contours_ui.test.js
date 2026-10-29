@@ -134,21 +134,19 @@ for (const theme of ['light', 'dark']) test(`server order, previews, safe text a
   if (process.env.CONTOUR_SCREENSHOT_DIR) await page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `library-${theme}.png`) });
 });
 
-test('all users see both actions, denied actions explain permissions and editing is always disabled', async t => {
+test('cards expose only deletion and denied deletion explains permissions', async t => {
   const h = await setup(t, { items: [contour(1), contour(2, { can_edit: false }), contour(3, { can_edit: false, can_delete: false })] });
   await h.open();
   for (const n of [1, 2, 3]) {
     await card(h.page, n).focus();
     assert.equal(await card(h.page, n).locator('.contour-footer').evaluate(el => getComputedStyle(el).opacity), '1');
-    assert.equal(await card(h.page, n).getByRole('button', { name: 'Редактировать контур' }).isDisabled(), true);
+    assert.equal(await card(h.page, n).getByRole('button', { name: 'Редактировать контур' }).count(), 0);
     assert.equal(await remove(h.page, n).isDisabled(), n === 3);
-    assert.equal(await card(h.page, n).locator('.contour-action svg').count(), 2);
+    assert.equal(await card(h.page, n).locator('.contour-action svg').count(), 1);
   }
-  assert.match(await card(h.page, 1).locator('.contour-action-hint').first().getAttribute('title'), /следующем этапе/);
-  assert.match(await card(h.page, 2).locator('.contour-action-hint').first().getAttribute('title'), /Нет права/);
-  assert.match(await card(h.page, 3).locator('.contour-action-hint').last().getAttribute('title'), /автор или администратор/);
-  const boxes = await card(h.page, 1).locator('.contour-action').evaluateAll(buttons => buttons.map(button => { const r = button.getBoundingClientRect(); return [r.y, r.bottom]; }));
-  assert.ok(Math.abs(boxes[0][1] - boxes[1][0]) <= 1);
+  assert.equal(await h.page.locator('.contour-action-hint').count(), 3);
+  assert.equal(await h.page.locator('[title*="Редактор будет"], [title*="редактировать"]').count(), 0);
+  assert.match(await card(h.page, 3).locator('.contour-action-hint').getAttribute('title'), /автор или администратор/);
   assert.deepEqual(mutationCalls(h.calls), []);
 });
 
@@ -251,7 +249,7 @@ for (const width of [1440, 390]) test(`large library scrolls inside its bounded 
   assert.equal(await remove(h.page, 1).isVisible(), true);
 });
 
-test('touch users can access both actions without hover and open the editor', async t => {
+test('touch users can delete without hover and open the creation editor', async t => {
   const h = await setup(t, { touch: true, viewport: { width: 390, height: 844 }, items: [contour(1)] }); await h.open();
   assert.equal(await card(h.page, 1).locator('.contour-footer').evaluate(el => getComputedStyle(el).opacity), '1');
   await remove(h.page, 1).tap();
@@ -559,7 +557,7 @@ for (const theme of ['light', 'dark']) test(`appearance inner scroll and add act
   await h.page.locator('#contourEditor .editor-close').click();
 });
 
-for (const theme of ['light', 'dark']) for (const [width, touch, expectedHeight] of [[1440, false, 157], [390, false, 179.5], [390, true, 187.5], [1440, true, 165]]) test(`creator card keeps its size, vertical actions and centred SVG ink: ${theme} ${width} touch ${touch}`, async t => {
+for (const theme of ['light', 'dark']) for (const [width, touch, expectedHeight] of [[1440, false, 157], [390, false, 179.5], [390, true, 187.5], [1440, true, 165]]) test(`creator card keeps its size, centred delete button and centred SVG ink: ${theme} ${width} touch ${touch}`, async t => {
   const h = await setup(t, { theme, touch, viewport: { width, height: 1100 }, items: [contour(1, { author_name: 'Китченко Денис Сергеевич' }), contour(2, { author_name: 'Китченко Д.', can_edit: false, can_delete: false })] });
   await h.open();
   for (const n of [1, 2]) {
@@ -567,7 +565,7 @@ for (const theme of ['light', 'dark']) for (const [width, touch, expectedHeight]
     assert.equal(await item.locator('.contour-author').textContent(), 'Created: Китченко Д.');
     const metrics = await item.evaluate(el => {
       const r = el.getBoundingClientRect(), image = el.querySelector('img').getBoundingClientRect(), author = el.querySelector('.contour-author').getBoundingClientRect();
-      return { width: r.width, height: r.height, imageRight: image.right, authorTop: author.top,
+      return { width: r.width, height: r.height, imageRight: image.right, imageCentreY: image.y + image.height / 2, authorTop: author.top,
         authorStyle: [getComputedStyle(el.querySelector('.contour-author')).textOverflow, getComputedStyle(el.querySelector('.contour-author')).whiteSpace],
         actions: [...el.querySelectorAll('.contour-action')].map(button => {
           const b = button.getBoundingClientRect(), svg = button.querySelector('svg').getBoundingClientRect(), path = button.querySelector('path'), bounds = path.getBBox();
@@ -578,13 +576,14 @@ for (const theme of ['light', 'dark']) for (const [width, touch, expectedHeight]
         }) };
     });
     assert.ok(Math.abs(metrics.height - expectedHeight) < .1, JSON.stringify(metrics));
-    const [edit, remove] = metrics.actions;
-    assert.equal(edit.x, remove.x); assert.equal(edit.width, touch ? 40 : 32); assert.equal(edit.height, touch ? 40 : 32);
-    assert.ok(remove.y >= edit.bottom && remove.y - edit.bottom <= 1);
-    assert.ok(metrics.imageRight + 6 <= edit.x); assert.ok(metrics.authorTop >= remove.bottom);
+    assert.equal(metrics.actions.length, 1);
+    const [remove] = metrics.actions;
+    assert.equal(remove.width, touch ? 40 : 32); assert.equal(remove.height, touch ? 40 : 32);
+    assert.ok(Math.abs(remove.y + remove.height / 2 - metrics.imageCentreY) < .1);
+    assert.ok(metrics.imageRight + 6 <= remove.x); assert.ok(metrics.authorTop >= remove.bottom);
     for (const action of metrics.actions) for (const key of ['svgX', 'svgY', 'inkX', 'inkY']) assert.ok(Math.abs(action[key]) < .1, JSON.stringify(action));
     assert.notEqual(metrics.authorStyle[0], 'ellipsis'); assert.notEqual(metrics.authorStyle[1], 'nowrap');
-    assert.equal(await item.getByRole('button', { name: 'Редактировать контур' }).isDisabled(), true);
+    assert.equal(await item.getByRole('button', { name: 'Редактировать контур' }).count(), 0);
     assert.equal(await item.getByRole('button', { name: 'Удалить контур' }).isDisabled(), n === 2);
     assert.equal(await item.locator('.contour-actions').evaluate(el => getComputedStyle(el).opacity), '1');
   }

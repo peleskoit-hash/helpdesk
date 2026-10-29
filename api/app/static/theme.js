@@ -364,7 +364,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-contour-cards-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-delete-only-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -439,7 +439,7 @@ function initThemeToggle() {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';
       }
     });
-    void import("/static/appearance_contours.js?v=20261029-contour-cards-v1").then(module => {
+    void import("/static/appearance_contours.js?v=20261029-contour-delete-only-v1").then(module => {
       contourPaint = module;
       module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
         catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });

@@ -60,9 +60,6 @@ export function initContourLibrary(section, onChange, selectContour) {
       card.setAttribute("aria-label", item.name);
       card.innerHTML = `<button type="button" class="contour-select" aria-pressed="false"></button><div class="contour-name"></div><div class="contour-body"><img class="contour-preview" alt="" loading="lazy" decoding="async">
         <div class="contour-actions">
-          <span class="contour-action-hint" tabindex="0"><button type="button" class="action contour-action" disabled aria-label="Редактировать контур">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-.5 .5)" d="m16 3 5 5-12 12H4v-5L16 3Zm-3 3 5 5"/></svg>
-          </button></span>
           <span class="contour-action-hint" tabindex="0"><button type="button" class="action contour-action" data-contour-delete aria-label="Удалить контур">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg>
           </button></span>
@@ -89,10 +86,9 @@ export function initContourLibrary(section, onChange, selectContour) {
       author.textContent = `Created: ${shortAuthor(item.author_name)}`;
       author.title = item.author_name ? `Created: ${String(item.author_name).trim()}` : author.textContent;
       author.setAttribute('aria-label', author.title);
-      const [editHint, deleteHint] = card.querySelectorAll(".contour-action-hint");
-      editHint.title = item.can_edit === true ? "Редактор будет добавлен на следующем этапе" : "Нет права редактировать этот контур. Редактор будет добавлен позже";
+      const deleteHint = card.querySelector(".contour-action-hint");
       deleteHint.title = item.can_delete === true ? "Удалить контур" : "Удалить контур может только автор или администратор";
-      for (const hint of [editHint, deleteHint]) hint.setAttribute("aria-label", hint.title);
+      deleteHint.setAttribute("aria-label", deleteHint.title);
       const remove = card.querySelector("[data-contour-delete]");
       remove.dataset.allowed = String(item.can_delete === true);
       remove.disabled = busy || item.can_delete !== true;
