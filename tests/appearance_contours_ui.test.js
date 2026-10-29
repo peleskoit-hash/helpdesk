@@ -129,7 +129,7 @@ for (const theme of ['light', 'dark']) test(`server order, previews, safe text a
   assert.equal(await page.locator('.pattern-card input').count(), 6);
   assert.deepEqual(await page.locator('.pattern-card input').evaluateAll(inputs => inputs.map(input => input.value)), ['none', 'grid', 'dots', 'diagonals', 'waves', 'relief']);
   assert.equal(await page.getByRole('button', { name: 'Создать свой узор' }).isEnabled(), true);
-  assert.match(await page.locator('#contourCreateHint').textContent(), /Обработка и сохранение пока недоступны/);
+  assert.match(await page.locator('#contourCreateHint').textContent(), /Сохранение пока недоступно/);
   assert.equal(await page.locator('dialog').count(), 0);
   if (process.env.CONTOUR_SCREENSHOT_DIR) await page.locator('#appearanceMenu').screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `library-${theme}.png`) });
 });

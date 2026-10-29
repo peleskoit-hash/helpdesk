@@ -35,7 +35,7 @@ body #contourEditor .editor-processing, body #contourEditor .editor-composition 
 body #contourEditor .editor-processing:disabled { opacity: .55; }
 body #contourEditor .editor-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 body #contourEditor .editor-switch input { flex-shrink: 0; }
-body #contourEditor .editor-photo-stage, body #contourEditor .editor-unavailable, body #contourEditor .editor-scheme {
+body #contourEditor .editor-photo-stage, body #contourEditor .editor-contour-stage, body #contourEditor .editor-scheme {
   position: relative; height: 260px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); overflow: hidden;
 }
 body #contourEditor .editor-photo-stage { display: grid; place-items: center; touch-action: none; cursor: crosshair; user-select: none; }
@@ -44,10 +44,11 @@ body #contourEditor .editor-photo-empty { padding: 16px; color: var(--desk-muted
 body #contourEditor .editor-photo-name { overflow-wrap: anywhere; }
 body #contourEditor .editor-crop { position: absolute; box-sizing: border-box; border: 2px solid var(--desk-focus); box-shadow: 0 0 0 1000px #00000066; pointer-events: none; }
 body #contourEditor [hidden] { display: none !important; }
-body #contourEditor .editor-unavailable { display: flex; flex-direction: column; justify-content: center; text-align: center; padding: 16px; gap: 12px; box-sizing: border-box; color: var(--desk-muted); }
-body #contourEditor .editor-unavailable small { font-size: 12px; }
+body #contourEditor .editor-contour-stage { display: grid; place-items: center; color: var(--desk-muted); text-align: center; }
+body #contourEditor .editor-result-empty { padding: 16px; }
+body #contourEditor .editor-contour-image { width: 100%; height: 100%; position: absolute; inset: 0; object-fit: contain; }
+body[data-theme='dark'] #contourEditor .editor-contour-image, body[data-theme='dark'] #contourEditor .editor-scheme svg { filter: invert(1); }
 body #contourEditor .editor-scheme svg { display: block; width: 100%; height: 100%; overflow: hidden; }
-body #contourEditor .editor-scheme rect { fill: none; stroke: var(--desk-muted); stroke-width: 1.2; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 body #contourEditor .editor-scheme-count { margin: 10px 0 0; font-size: 13px; }
 body #contourEditor .editor-crop-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0; border: 0; margin: 14px 0; min-width: 0; }
 body #contourEditor .editor-crop-fields legend { margin-bottom: 8px; color: var(--desk-muted); font-size: 13px; }

@@ -5,7 +5,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-contour-editor-v1';
+    link.href = '/static/contour-editor.css?v=20261029-contour-processing-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -38,7 +38,7 @@ function createEditor(invoker) {
     <header class="modal-head"><h2 id="contourEditorTitle">Создать свой узор</h2>
       <button type="button" class="action editor-close" aria-label="Закрыть редактор" data-editor-close>×</button></header>
     <div class="modal-body">
-      <p id="contourEditorAvailability" class="editor-notice">Обработка фотографий, предпросмотр контура и сохранение пока недоступны. Можно загрузить и кадрировать исходник, настроить схему размещения.</p>
+      <p id="contourEditorAvailability" class="editor-notice">Обработка выполняется локально, без отправки фото на сервер. Сохранение пока недоступно.</p>
       <div class="editor-fields">
         <label for="contourEditorName">Название контура<input id="contourEditorName" maxlength="120" autocomplete="off" autofocus placeholder="Название нового контура"></label>
         <label for="contourEditorFile">Исходная фотография<input id="contourEditorFile" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="contourEditorFileHint"></label>
@@ -61,17 +61,19 @@ function createEditor(invoker) {
           <button type="button" class="action" data-crop-reset disabled>Сбросить кадрирование</button>
         </section>
         <section class="editor-panel"><h3>Выделенный контур</h3>
-          <div class="editor-unavailable" role="img" aria-label="Предпросмотр контура недоступен"><span>Предпросмотр недоступен</span><small>Алгоритм выделения контура ещё не подключён.</small></div>
+          <div class="editor-contour-stage"><img class="editor-contour-image" alt="Выделенный контур" hidden><span class="editor-result-empty">Загрузите фотографию для обработки.</span></div>
+          <p class="editor-processing-status editor-help" role="status" aria-live="polite">Подготовка обработки…</p>
+          <button type="button" class="action" data-process-retry hidden>Повторить обработку</button>
         </section>
         <section class="editor-panel"><h3>Итоговая композиция</h3>
-          <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Схема расположения условных рамок"></svg></div>
+          <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Предпросмотр композиции"></svg></div>
           <p class="editor-scheme-count" aria-live="polite"></p>
-          <p class="editor-help">Только схема размещения, не результат обработки. Готовый предпросмотр пока недоступен.</p>
+          <p class="editor-help">Предпросмотр обновится после обработки фотографии.</p>
         </section>
       </div>
       <div class="editor-settings">
-        <section class="editor-panel"><h3>Обработка <span class="editor-tag">Недоступна</span></h3>
-          <p class="editor-help" id="contourProcessingHint">Настройки станут доступны после подключения алгоритма.</p>
+        <section class="editor-panel"><h3>Обработка</h3>
+          <p class="editor-help" id="contourProcessingHint">Инверсия меняет сторону границы. Очистка удаляет контуры, связанные с краями кадра.</p>
           <fieldset class="editor-processing" disabled aria-describedby="contourProcessingHint"><legend class="editor-sr-only">Настройки обработки</legend>
             <label for="contourSensitivity">Чувствительность<input id="contourSensitivity" type="range" min="0" max="100" value="50"></label>
             <label for="contourDetail">Детализация<input id="contourDetail" type="range" min="0" max="100" value="50"></label>
@@ -92,36 +94,49 @@ function createEditor(invoker) {
         </section>
       </div>
     </div>
-    <footer class="modal-foot"><span class="editor-help">Сохранение будет доступно после подключения обработки.</span>
+    <footer class="modal-foot"><span class="editor-help">Сохранение на сервер пока не подключено.</span>
       <button type="button" class="action" data-editor-close>Отмена</button>
-      <button type="button" class="action primary" disabled title="Сначала необходимо подключить алгоритм обработки" aria-describedby="contourEditorAvailability">Сохранить</button></footer>`;
+      <button type="button" class="action primary" disabled title="Сохранение на сервер будет подключено следующим этапом" aria-describedby="contourEditorAvailability">Сохранить</button></footer>`;
 
   const find = selector => dialog.querySelector(selector);
   const stage = find('.editor-photo-stage'), cropBox = find('.editor-crop');
   const fileInput = find('#contourEditorFile'), error = find('#contourEditorError');
   const rotation = find('#contourRotation'), repeat = find('#contourRepeat'), rings = find('#contourRings');
   const distance = find('#contourDistance'), scale = find('#contourScale'), scheme = find('.editor-scheme svg');
+  const processing = find('.editor-processing'), processingStatus = find('.editor-processing-status');
+  const resultImage = find('.editor-contour-stage img'), resultEmpty = find('.editor-result-empty');
+  const retryProcessing = find('[data-process-retry]');
   let dirty = false, closed = false, closing = false, loading = false, generation = 0;
   let photo = null, photoURL = null, crop = { x: 0, y: 0, width: 100, height: 100 }, drag = null;
   const urls = new Set(), pendingImages = new Set();
+  let sourceBlob = null, result = null, worker = null, workerReady = false, workerBusy = false, activeJob = null;
+  let processingRevision = 0, processingTimer = null, processingWatchdog = null, pendingProcessing = false;
 
   function release(url) { if (urls.delete(url)) URL.revokeObjectURL(url); }
   function renderScheme() {
     const count = repeat.checked ? Number(rings.value) : 0;
     const zoom = Number(scale.value) / 100, step = 60 * (1 + Number(distance.value) / 100) * zoom;
-    const frames = [];
+    const elements = [];
+    const aspect = result ? result.width / result.height : 1;
+    const width = aspect >= 1 ? 60 * zoom : 60 * zoom * aspect;
+    const height = aspect >= 1 ? 60 * zoom / aspect : 60 * zoom;
     for (let y = -count; y <= count; y++) for (let x = -count; x <= count; x++) {
-      frames.push(`<rect x="${-30 * zoom}" y="${-30 * zoom}" width="${60 * zoom}" height="${60 * zoom}" transform="translate(${x * step} ${y * step}) rotate(${rotation.value})"/>`);
+      if (result) elements.push(`<use href="#editorContour" x="${-width / 2}" y="${-height / 2}" transform="translate(${x * step} ${y * step}) rotate(${rotation.value})"/>`);
     }
-    scheme.innerHTML = frames.join('');
-    scheme.setAttribute('aria-label', `Схема расположения: ${frames.length} условных рамок. Предпросмотр результата недоступен.`);
-    find('.editor-scheme-count').textContent = `Схема размещения: ${frames.length} ${frames.length === 1 ? 'элемент' : 'элементов'}.`;
+    scheme.innerHTML = result ? `<defs><image id="editorContour" width="${width}" height="${height}" href="${result.url}"/></defs>${elements.join('')}` : '';
+    const total = (count * 2 + 1) ** 2;
+    scheme.setAttribute('aria-label', result ? `Композиция: ${total} элементов.` : 'Нет обработанного контура.');
+    const label = result ? `Композиция: ${total} ${total === 1 ? 'элемент' : 'элементов'}.` : 'Нет обработанного контура.';
+    if (find('.editor-scheme-count').textContent !== label) find('.editor-scheme-count').textContent = label;
     for (const input of [rotation, distance, scale]) find(`output[for="${input.id}"]`).textContent = input.value + (input === rotation ? '°' : '%');
   }
   function fit() {
     const count = repeat.checked ? Number(rings.value) : 0;
     const radians = Number(rotation.value) * Math.PI / 180;
-    const bounds = count * 2 * 60 * (1 + Number(distance.value) / 100) + 60 * (Math.abs(Math.cos(radians)) + Math.abs(Math.sin(radians)));
+    const aspect = result ? result.width / result.height : 1;
+    const width = aspect >= 1 ? 60 : 60 * aspect, height = aspect >= 1 ? 60 / aspect : 60;
+    const extent = Math.max(width * Math.abs(Math.cos(radians)) + height * Math.abs(Math.sin(radians)), width * Math.abs(Math.sin(radians)) + height * Math.abs(Math.cos(radians)));
+    const bounds = count * 2 * 60 * (1 + Number(distance.value) / 100) + extent;
     scale.value = String(Math.max(10, Math.min(400, Math.floor(260 / bounds * 100))));
     renderScheme();
   }
@@ -137,8 +152,108 @@ function createEditor(invoker) {
       width: `${bounds.width * crop.width / 100}px`, height: `${bounds.height * crop.height / 100}px` });
     for (const input of dialog.querySelectorAll('[data-crop]')) input.value = String(Math.round(crop[input.dataset.crop] * 10) / 10);
   }
-  const observer = new ResizeObserver(renderCrop);
-  observer.observe(stage);
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(renderCrop) : null;
+  observer?.observe(stage);
+
+  function clearResult(message = 'Обновление контура…') {
+    if (result) release(result.url);
+    result = null;
+    resultImage.removeAttribute('src'); resultImage.hidden = true;
+    resultEmpty.textContent = message; resultEmpty.hidden = false;
+    renderScheme();
+  }
+  function stopWorker() {
+    clearTimeout(processingWatchdog); processingWatchdog = null;
+    if (worker) { worker.onmessage = worker.onerror = null; worker.terminate(); }
+    worker = null; workerReady = false; workerBusy = false; activeJob = null;
+  }
+  function processingFailed(message) {
+    stopWorker();
+    clearTimeout(processingTimer); processingTimer = null; pendingProcessing = false;
+    processingRevision++;
+    clearResult('Обработка недоступна.');
+    processing.disabled = true;
+    processingStatus.textContent = message;
+    retryProcessing.hidden = false;
+  }
+  function runProcessing() {
+    processingTimer = null;
+    if (closed || loading || !sourceBlob || !workerReady || workerBusy || !pendingProcessing) return;
+    workerBusy = true; pendingProcessing = false;
+    activeJob = processingRevision;
+    const settings = {
+      sensitivity: Number(find('#contourSensitivity').value), detail: Number(find('#contourDetail').value),
+      thickness: Number(find('#contourThickness').value), invert: find('#contourInvert').checked, cleanup: find('#contourCleanup').checked,
+    };
+    processingStatus.textContent = 'Обработка фотографии…';
+    processingWatchdog = setTimeout(() => processingFailed('Обработка не завершилась. Попробуйте ещё раз.'), 30000);
+    try { worker.postMessage({ id: processingRevision, blob: sourceBlob, crop: { ...crop }, settings }); }
+    catch { processingFailed('Не удалось передать фотографию в Worker.'); }
+  }
+  function scheduleProcessing() {
+    processingRevision++;
+    clearTimeout(processingTimer); processingTimer = null;
+    clearResult(!workerReady ? 'Обработка ещё не готова.' : sourceBlob && !loading ? 'Обновление контура…' : 'Загрузите фотографию для обработки.');
+    pendingProcessing = !!sourceBlob;
+    if (!workerReady) return;
+    processingTimer = setTimeout(runProcessing, 180);
+  }
+  function startWorker() {
+    stopWorker();
+    if (typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function' || typeof ImageData !== 'function') {
+      processingFailed('Браузер не поддерживает необходимые Canvas и Web Worker API.'); return;
+    }
+    retryProcessing.hidden = true;
+    processingStatus.textContent = 'Подготовка обработки…';
+    processingWatchdog = setTimeout(() => processingFailed('Не удалось загрузить Worker. Попробуйте ещё раз.'), 10000);
+    try {
+      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-processing-v1', { type: 'module' });
+      worker = instance;
+      instance.onerror = event => { event.preventDefault(); if (!closed && worker === instance) processingFailed('Ошибка загрузки или выполнения Worker. Повторите обработку.'); };
+      instance.addEventListener('messageerror', () => { if (!closed && worker === instance) processingFailed('Не удалось прочитать ответ Worker.'); });
+      instance.onmessage = async event => {
+        if (closed || worker !== instance) return;
+        const message = event.data;
+        if (!message || typeof message !== 'object') { processingFailed('Worker вернул некорректный ответ.'); return; }
+        if (message.type === 'ready') {
+          clearTimeout(processingWatchdog);
+          if (!message.supported) { processingFailed('Worker не поддерживает необходимые Canvas API.'); return; }
+          workerReady = true; processing.disabled = false;
+          processingStatus.textContent = sourceBlob ? 'Обновление контура…' : 'Загрузите фотографию для обработки.';
+          if (sourceBlob) scheduleProcessing();
+          return;
+        }
+        if (message.id !== activeJob) return;
+        clearTimeout(processingWatchdog); workerBusy = false; activeJob = null;
+        if (message.id === processingRevision && !loading) {
+          if (message.error) { processingFailed(message.error); return; }
+          clearResult();
+          if (message.count === 0) {
+            resultEmpty.textContent = 'Контуры не найдены.';
+            processingStatus.textContent = 'Контуры не найдены. Измените кадрирование или настройки.';
+          } else if (message.blob instanceof Blob && message.blob.type === 'image/png' && Number.isInteger(message.count) && message.count > 0 &&
+              message.width > 0 && message.height > 0 && message.count <= message.width * message.height && Math.max(message.width, message.height) <= 2048) {
+            const url = URL.createObjectURL(message.blob); urls.add(url);
+            const candidate = new Image(); pendingImages.add(candidate);
+            let adopted = false;
+            try {
+              candidate.src = url; await candidate.decode();
+              if (!closed && worker === instance && message.id === processingRevision && !loading) {
+                if (candidate.naturalWidth !== message.width || candidate.naturalHeight !== message.height) throw new Error('Размер результата не совпадает.');
+                result = { url, width: message.width, height: message.height }; adopted = true;
+                resultImage.src = url; resultImage.hidden = false; resultEmpty.hidden = true;
+                processingStatus.textContent = `Готово: ${message.width}×${message.height} px. Прозрачный PNG, без сохранения на сервер.`;
+                renderScheme();
+              }
+            } catch {
+              if (!closed && worker === instance && message.id === processingRevision) processingFailed('Не удалось прочитать обработанный контур. Повторите обработку.');
+            } finally { pendingImages.delete(candidate); candidate.removeAttribute('src'); if (!adopted) release(url); }
+          } else { processingFailed('Worker вернул некорректный результат.'); return; }
+        }
+        if (pendingProcessing && !processingTimer) runProcessing();
+      };
+    } catch { processingFailed('Не удалось запустить Worker. Повторите обработку.'); }
+  }
 
   async function loadPhoto() {
     const file = fileInput.files[0];
@@ -146,6 +261,9 @@ function createEditor(invoker) {
     if (!file) return;
     const token = ++generation;
     loading = true;
+    processingRevision++; pendingProcessing = false;
+    clearTimeout(processingTimer); processingTimer = null;
+    clearResult('Загрузка новой фотографии…');
     error.textContent = 'Загрузка фотографии…';
     let candidate, url, adopted = false;
     try {
@@ -157,7 +275,8 @@ function createEditor(invoker) {
         signature.startsWith('RIFF') && signature.slice(8) === 'WEBP' ? 'image/webp' : null;
       if (!mime) throw new Error('Поддерживаются только корректные JPG, PNG и WebP.');
       if (closed || token !== generation) return;
-      url = URL.createObjectURL(new Blob([file], { type: mime }));
+      const blob = new Blob([file], { type: mime });
+      url = URL.createObjectURL(blob);
       urls.add(url);
       candidate = new Image();
       pendingImages.add(candidate);
@@ -167,6 +286,7 @@ function createEditor(invoker) {
       if (!candidate.naturalWidth || !candidate.naturalHeight) throw new Error('Не удалось прочитать фотографию.');
       if (photo) { photo.removeAttribute('src'); photo.remove(); release(photoURL); }
       photo = candidate; photoURL = url; adopted = true;
+      sourceBlob = blob;
       photo.alt = 'Исходная фотография'; photo.draggable = false;
       stage.prepend(photo);
       find('.editor-photo-name').textContent = `${file.name} · ${photo.naturalWidth}×${photo.naturalHeight} px`;
@@ -178,22 +298,31 @@ function createEditor(invoker) {
       dirty = true;
       error.textContent = '';
     } catch (failure) {
-      if (!closed && token === generation) error.textContent = failure.message || 'Не удалось прочитать фотографию.';
+      if (!closed && token === generation) {
+        error.textContent = failure.message || 'Не удалось прочитать фотографию.';
+        clearResult('Фото не обработано. Выберите корректный файл.');
+        processingStatus.textContent = sourceBlob ? 'Можно повторить обработку прежнего исходника.' : 'Загрузите фотографию для обработки.';
+        retryProcessing.hidden = !sourceBlob || !workerReady;
+      }
     } finally {
       pendingImages.delete(candidate);
       if (!adopted) { if (candidate) candidate.removeAttribute('src'); if (url) release(url); }
       if (token === generation) loading = false;
+      if (adopted && !closed && token === generation) scheduleProcessing();
     }
   }
 
   function cleanup() {
     closed = true; generation++;
-    observer.disconnect();
+    clearTimeout(processingTimer); processingTimer = null; pendingProcessing = false;
+    stopWorker();
+    observer?.disconnect();
     for (const image of pendingImages) image.removeAttribute('src');
     pendingImages.clear();
     if (photo) { photo.removeAttribute('src'); photo.remove(); }
     for (const url of [...urls]) release(url);
-    photo = null; photoURL = null; crop = null; drag = null; loading = false; dirty = false;
+    photo = null; photoURL = null; sourceBlob = null; result = null; crop = null; drag = null; loading = false; dirty = false;
+    resultImage.removeAttribute('src');
     fileInput.value = ''; dialog.querySelectorAll('input').forEach(input => { if (input.type !== 'file') input.value = ''; });
     scheme.replaceChildren();
     find('.editor-photo-name').textContent = '';
@@ -229,14 +358,14 @@ function createEditor(invoker) {
   });
   repeat.addEventListener('change', () => { previousRings = 1; });
   find('[data-editor-fit]').addEventListener('click', () => { dirty = true; fit(); });
-  find('[data-crop-reset]').addEventListener('click', () => { dirty = true; crop = { x: 0, y: 0, width: 100, height: 100 }; renderCrop(); });
+  find('[data-crop-reset]').addEventListener('click', () => { dirty = true; crop = { x: 0, y: 0, width: 100, height: 100 }; renderCrop(); scheduleProcessing(); });
   for (const input of dialog.querySelectorAll('[data-crop]')) input.addEventListener('input', () => {
     if (!photo) return;
     const key = input.dataset.crop, value = Number(input.value);
     if (!Number.isFinite(value)) return;
     crop[key] = Math.min(key === 'x' || key === 'y' ? 99 : 100, Math.max(key === 'x' || key === 'y' ? 0 : 1, value));
     crop.width = Math.min(crop.width, 100 - crop.x); crop.height = Math.min(crop.height, 100 - crop.y);
-    dirty = true; renderCrop();
+    dirty = true; renderCrop(); scheduleProcessing();
   });
   function point(event) {
     const rect = stage.getBoundingClientRect(), bounds = photoBounds();
@@ -254,14 +383,16 @@ function createEditor(invoker) {
     crop = { x: Math.min(99, drag.start.x, end.x), y: Math.min(99, drag.start.y, end.y),
       width: Math.max(1, Math.abs(end.x - drag.start.x)), height: Math.max(1, Math.abs(end.y - drag.start.y)) };
     crop.width = Math.min(crop.width, 100 - crop.x); crop.height = Math.min(crop.height, 100 - crop.y);
-    renderCrop();
+    renderCrop(); scheduleProcessing();
   });
   stage.addEventListener('pointerup', () => { if (drag) { dirty = true; drag = null; } });
-  stage.addEventListener('pointercancel', () => { if (drag) { crop = drag.crop; drag = null; renderCrop(); } });
+  stage.addEventListener('pointercancel', () => { if (drag) { crop = drag.crop; drag = null; renderCrop(); scheduleProcessing(); } });
+  processing.addEventListener('input', () => { dirty = true; scheduleProcessing(); });
+  retryProcessing.addEventListener('click', startWorker);
   dialog.addEventListener('cancel', event => { event.preventDefault(); void requestClose(); });
   dialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => void requestClose()));
   dialog.addEventListener('close', () => { if (!closed) { cleanup(); dialog.remove(); active = null; } });
   document.body.appendChild(dialog); active = dialog;
-  renderScheme(); dialog.showModal();
+  renderScheme(); dialog.showModal(); startWorker();
   return dialog;
 }
