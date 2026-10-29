@@ -7,7 +7,7 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 
-async function setup(t, { theme = 'light', viewport = { width: 1440, height: 1000 }, touch = false, workerMode = '', publishing = false } = {}) {
+async function setup(t, { theme = 'light', viewport = { width: 1440, height: 1000 }, touch = false, workerMode = '', publishing = false, expand = true } = {}) {
   const context = await browser.newContext({ viewport, hasTouch: touch });
   const page = await context.newPage(), errors = [], mutations = [];
   let before;
@@ -98,6 +98,7 @@ async function setup(t, { theme = 'light', viewport = { width: 1440, height: 100
     await page.locator('#contourEditor').waitFor();
     if (['unsupported', 'constructor-error', 'load-error'].includes(workerMode)) await page.waitForFunction(() => !document.querySelector('[data-process-retry]').hidden);
     else await page.waitForFunction(() => !document.querySelector('.editor-processing').disabled);
+    if (expand) for (const summary of await page.locator('#contourEditor details > summary').all()) await summary.click();
   };
   await open();
   return { page, editor: page.locator('#contourEditor'), open, flags };
@@ -122,8 +123,8 @@ async function load(h, file) {
   }, previous);
 }
 const processed = page => page.waitForFunction(() => {
-  const image = document.querySelector('.editor-contour-image');
-  return image && !image.hidden && image.complete && image.naturalWidth > 0 && document.querySelector('.editor-processing-status').textContent.startsWith('Готово:');
+  const image = document.querySelector('.editor-scheme image');
+  return image?.getAttribute('href') && document.querySelector('.editor-processing-status').textContent.startsWith('Готово:');
 });
 async function discard(page, source = 'cancel') {
   if (source === 'escape') await page.keyboard.press('Escape');
@@ -345,8 +346,15 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
   await discard(h.page);
 });
 
+async function imageSize(page) {
+  return page.locator('.editor-scheme image').evaluate(async node => {
+    const bitmap = await createImageBitmap(await (await fetch(node.getAttribute('href'))).blob());
+    const size = [bitmap.width, bitmap.height]; bitmap.close(); return size;
+  });
+}
 async function pixels(page) {
-  return page.locator('.editor-contour-image').evaluate(async image => {
+  return page.locator('.editor-scheme image').evaluate(async node => {
+    const image = new Image(); image.src = node.getAttribute('href'); await image.decode();
     const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
     const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -361,18 +369,17 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['dark', 390]]) t
   const result = await pixels(h.page);
   assert.deepEqual([result.width, result.height, result.colored, result.corner, result.center], [640, 480, 0, 0, 0]);
   assert.ok(result.count > 100 && result.count < 640 * 480 / 10);
-  assert.equal(await h.editor.locator('.editor-contour-image').evaluate(el => getComputedStyle(el).filter), theme === 'dark' ? 'invert(1)' : 'none');
-  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
-  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url);
+  assert.equal(await h.editor.locator('.editor-scheme svg').evaluate(el => getComputedStyle(el).filter), theme === 'dark' ? 'invert(1)' : 'none');
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href');
   assert.equal(await frames(h.page), 1);
   await h.editor.locator('#contourRepeat').check(); assert.equal(await frames(h.page), 9);
   await h.editor.locator('#contourRings').selectOption('2'); assert.equal(await frames(h.page), 25);
-  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), url, 'composition does not reprocess the photograph');
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), url, 'composition does not reprocess the photograph');
   if (process.env.EDITOR_SCREENSHOT_DIR) {
     await h.editor.locator('.modal-body').evaluate(el => { el.scrollTop = 0; });
     await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `processed-${theme}-${width}.png`) });
     if (width === 390) {
-      await h.editor.locator('.editor-contour-stage').scrollIntoViewIfNeeded();
+      await h.editor.locator('.editor-scheme').scrollIntoViewIfNeeded();
       await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, 'mobile-contour.png') });
       await h.editor.locator('.editor-scheme').scrollIntoViewIfNeeded();
       await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, 'mobile-composition.png') });
@@ -384,13 +391,13 @@ for (const [theme, width] of [['light', 1440], ['dark', 1440], ['dark', 390]]) t
 
 test('real Worker downsizes to 2048 and crops the source before resizing', async t => {
   const h = await setup(t); await load(h, await photo(h.page, 'image/png', '#7760a8', 3000, 1500)); await processed(h.page);
-  assert.deepEqual(await h.editor.locator('.editor-contour-image').evaluate(el => [el.naturalWidth, el.naturalHeight]), [2048, 1024]);
+  assert.deepEqual(await imageSize(h.page), [2048, 1024]);
   await h.editor.locator('[data-crop="width"]').fill('50'); await processed(h.page);
-  assert.deepEqual(await h.editor.locator('.editor-contour-image').evaluate(el => [el.naturalWidth, el.naturalHeight]), [1500, 1500]);
+  assert.deepEqual(await imageSize(h.page), [1500, 1500]);
   await h.editor.locator('[data-crop="x"]').fill('50');
   await h.page.waitForFunction(() => document.querySelector('.editor-processing-status').textContent.startsWith('Контуры не найдены'));
   assert.equal(await frames(h.page), 0, 'crop of a uniform area must not fabricate a contour');
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
 });
 
 test('processing controls change real pixels and send every setting to Worker', async t => {
@@ -417,9 +424,9 @@ test('fast sliders coalesce, only one job runs and stale replies cannot replace 
   assert.equal(await h.page.evaluate(() => workerState.jobs.length), 1);
   await h.page.evaluate(() => releaseWorkerResult()); await processed(h.page);
   assert.deepEqual(await h.page.evaluate(() => [workerState.jobs.length, workerState.jobs.at(-1).settings.sensitivity]), [2, 90]);
-  const latest = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  const latest = await h.editor.locator('.editor-scheme image').getAttribute('href');
   await h.page.evaluate(() => releaseWorkerResult());
-  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), latest);
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), latest);
   assert.equal(await h.page.evaluate(() => editorMemory.live.size), 2);
 });
 
@@ -427,10 +434,10 @@ test('replacement clears previous output immediately and discards old in-flight 
   const h = await setup(t, { workerMode: 'hold-first' }); await load(h, await photo(h.page));
   await h.page.waitForFunction(() => typeof releaseWorkerResult === 'function');
   await load(h, await photo(h.page, 'image/webp', '#227799', 800, 600));
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   await h.page.evaluate(() => releaseWorkerResult()); await processed(h.page);
-  assert.deepEqual(await h.editor.locator('.editor-contour-image').evaluate(el => [el.naturalWidth, el.naturalHeight]), [800, 600]);
-  const old = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  assert.deepEqual(await imageSize(h.page), [800, 600]);
+  const old = await h.editor.locator('.editor-scheme image').getAttribute('href');
   const file = await photo(h.page);
   await h.page.evaluate(() => {
     const decode = Image.prototype.decode;
@@ -438,7 +445,7 @@ test('replacement clears previous output immediately and discards old in-flight 
   });
   await h.editor.locator('#contourEditorFile').setInputFiles(file);
   await h.page.waitForFunction(() => typeof continueDecode === 'function');
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   assert.equal(await frames(h.page), 0);
   assert.equal(await h.page.evaluate(url => editorMemory.revoked.includes(url), old), true);
   await discard(h.page); await h.page.evaluate(() => continueDecode());
@@ -448,7 +455,7 @@ test('replacement clears previous output immediately and discards old in-flight 
 for (const workerMode of ['unsupported', 'constructor-error', 'load-error']) test(`Worker ${workerMode} is recoverable without fake results`, async t => {
   const h = await setup(t, { workerMode }); await load(h, await photo(h.page));
   assert.equal(await h.editor.locator('#contourSensitivity').isDisabled(), true);
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   assert.equal(await frames(h.page), 0);
   assert.match(await h.editor.locator('.editor-processing-status').textContent(), /Браузер|Worker/);
   if (workerMode === 'load-error') {
@@ -464,11 +471,11 @@ test('Worker processing error clears output, terminates Worker and retry process
   const h = await setup(t, { workerMode: 'message-error' }); await load(h, await photo(h.page));
   await h.page.waitForFunction(() => !document.querySelector('[data-process-retry]').hidden);
   assert.match(await h.editor.locator('.editor-processing-status').textContent(), /Ошибка обработки/);
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   assert.equal(await h.page.evaluate(() => workerState.terminated), 1);
   await h.editor.locator('[data-process-retry]').click(); await processed(h.page);
   await h.page.evaluate(() => document.querySelector('#contourThickness').dispatchEvent(new Event('input', { bubbles: true })));
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   await discard(h.page);
   assert.deepEqual(await h.page.evaluate(() => [workerState.created, workerState.terminated, editorMemory.live.size]), [2, 2, 0]);
   assert.deepEqual(await h.page.evaluate(() => [Object.keys(localStorage), Object.keys(sessionStorage)]), [[], []]);
@@ -484,9 +491,9 @@ test('closing during Worker processing terminates it and late responses cannot r
 
 for (const type of ['error', 'messageerror']) test(`Worker ${type} event clears an existing contour and supports retry`, async t => {
   const h = await setup(t); await load(h, await photo(h.page)); await processed(h.page);
-  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href');
   await h.page.evaluate(type => currentEditorWorker.dispatchEvent(type === 'error' ? new ErrorEvent('error', { message: 'Synthetic failure', cancelable: true }) : new MessageEvent('messageerror')), type);
-  assert.equal(await h.editor.locator('.editor-contour-image').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-scheme image').count(), 0);
   assert.equal(await frames(h.page), 0);
   assert.equal(await h.page.evaluate(url => editorMemory.revoked.includes(url), url), true);
   assert.equal(await h.page.evaluate(() => workerState.terminated), 1);
@@ -521,7 +528,7 @@ for (const [theme, width, rings] of [['light', 1440, 0], ['dark', 1440, 1], ['li
   await h.editor.locator('#contourRotation').fill('47');
   await h.editor.locator('#contourDistance').fill('73');
   await h.editor.locator('#contourScale').fill('135');
-  const expected = Buffer.from(await h.editor.locator('.editor-contour-image').evaluate(async image => [...new Uint8Array(await (await fetch(image.src)).arrayBuffer())]));
+  const expected = Buffer.from(await h.editor.locator('.editor-scheme image').evaluate(async image => [...new Uint8Array(await (await fetch(image.getAttribute('href'))).arrayBuffer())]));
   const gets = h.flags.getCount;
   if (process.env.EDITOR_SCREENSHOT_DIR) {
     await h.editor.locator('[data-editor-save]').scrollIntoViewIfNeeded();
@@ -575,7 +582,7 @@ for (const postError of [403, 413, 422, 503, 'network', 'malformed']) test(`POST
   const h = await setup(t, { publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
   await h.editor.locator('#contourEditorName').fill('Повторить');
   await h.editor.locator('#contourRotation').fill('91');
-  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href');
   h.flags.postError = postError;
   await h.editor.locator('[data-editor-save]').click();
   await h.page.waitForFunction(() => !document.querySelector('[data-editor-save]').disabled && document.querySelector('#contourEditorError').textContent.length > 0);
@@ -585,7 +592,6 @@ for (const postError of [403, 413, 422, 503, 'network', 'malformed']) test(`POST
   assert.equal(await h.page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }), false);
   assert.equal(await h.editor.locator('#contourEditorName').inputValue(), 'Повторить');
   assert.equal(await h.editor.locator('#contourRotation').inputValue(), '91');
-  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), url);
   assert.equal(await h.page.evaluate(() => editorMemory.live.size), 2);
   assert.equal(await h.page.locator('.contour-card').count(), 0);
   h.flags.postError = null;
@@ -600,12 +606,12 @@ test('pending POST blocks duplicate submission, edits, Escape/cancel/cross and w
   let release; h.flags.postHold = new Promise(resolve => { release = resolve; });
   await h.editor.locator('.editor-photo-stage').scrollIntoViewIfNeeded();
   const stage = await h.editor.locator('.editor-photo-stage').boundingBox();
-  const contourURL = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  const contourURL = await h.editor.locator('.editor-scheme image').getAttribute('href');
   await h.page.mouse.move(stage.x + stage.width * .2, stage.y + stage.height * .2); await h.page.mouse.down();
   await h.page.evaluate(() => { const button = document.querySelector('[data-editor-save]'); button.click(); button.click(); });
   await h.page.waitForFunction(() => document.querySelector('#contourEditor')?.getAttribute('aria-busy') === 'true');
   await h.page.mouse.move(stage.x + stage.width * .8, stage.y + stage.height * .8); await h.page.mouse.up();
-  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), contourURL);
+  assert.equal(await h.editor.locator('.editor-scheme image').getAttribute('href'), contourURL);
   assert.equal(await h.editor.locator('[data-crop="width"]').inputValue(), '100');
   assert.equal(await h.editor.locator('[data-editor-save]').isDisabled(), true);
   assert.equal(await h.editor.locator('#contourEditorName').isDisabled(), true);
@@ -625,7 +631,7 @@ test('pending POST blocks duplicate submission, edits, Escape/cancel/cross and w
 
 test('oversized processed PNG is reduced proportionally with transparency and lines before POST', async t => {
   const h = await setup(t, { workerMode: 'oversized-result', publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
-  const bytes = await h.editor.locator('.editor-contour-image').evaluate(async image => (await (await fetch(image.src)).blob()).size);
+  const bytes = await h.editor.locator('.editor-scheme image').evaluate(async image => (await (await fetch(image.getAttribute('href'))).blob()).size);
   assert.ok(bytes > 2 * 1024 * 1024);
   await h.editor.locator('#contourEditorName').fill('Уменьшенный');
   await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
@@ -644,7 +650,7 @@ test('oversized processed PNG is reduced proportionally with transparency and li
 test('failed PNG reduction sends nothing and preserves processed data for another attempt', async t => {
   const h = await setup(t, { workerMode: 'oversized-result', publishing: true }); await load(h, await photo(h.page)); await processed(h.page);
   await h.editor.locator('#contourEditorName').fill('Большой');
-  const url = await h.editor.locator('.editor-contour-image').getAttribute('src');
+  const url = await h.editor.locator('.editor-scheme image').getAttribute('href');
   await h.page.evaluate(() => {
     window.originalConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
     OffscreenCanvas.prototype.convertToBlob = async function () { const blob = await originalConvertToBlob.call(this, { type: 'image/png' }); return new Blob([blob, new Uint8Array(2 * 1024 * 1024)], { type: 'image/png' }); };
@@ -652,7 +658,6 @@ test('failed PNG reduction sends nothing and preserves processed data for anothe
   await h.editor.locator('[data-editor-save]').click();
   await h.page.waitForFunction(() => document.querySelector('#contourEditorError').textContent.includes('до 2 МБ'));
   assert.equal(h.flags.posts.length, 0);
-  assert.equal(await h.editor.locator('.editor-contour-image').getAttribute('src'), url);
   assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
   await h.page.evaluate(() => { OffscreenCanvas.prototype.convertToBlob = originalConvertToBlob; });
   await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
@@ -662,7 +667,7 @@ test('failed PNG reduction sends nothing and preserves processed data for anothe
 test('PNG preflight rejects wrong content, oversized dimensions, opacity and missing lines', async t => {
   const h = await setup(t);
   const messages = await h.page.evaluate(async () => {
-    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-save-v1');
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-layout-v1');
     const make = async (width, height, opaque, empty) => {
       const canvas = new OffscreenCanvas(width, height), ctx = canvas.getContext('2d');
       if (opaque) { ctx.fillStyle = 'white'; ctx.fillRect(0, 0, width, height); }
@@ -693,7 +698,7 @@ test('confirmed publish stays closed if library refresh fails; library Retry rev
 test('PNG accepts exactly 2048px and 2 MB without hidden resizing and releases native export resources', async t => {
   const h = await setup(t);
   const result = await h.page.evaluate(async () => {
-    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-save-v1');
+    const { prepareContourPNG } = await import('/static/contour_export.js?v=20261029-contour-layout-v1');
     const canvas = new OffscreenCanvas(2048, 1024), ctx = canvas.getContext('2d'); ctx.fillRect(500, 200, 20, 200);
     const png = await canvas.convertToBlob({ type: 'image/png' });
     const blob = new Blob([png, new Uint8Array(2 * 1024 * 1024 - png.size)], { type: 'image/png' });
@@ -709,4 +714,82 @@ test('PNG accepts exactly 2048px and 2 MB without hidden resizing and releases n
     return { same: prepared.blob === blob, size: prepared.blob.size, width: prepared.width, height: prepared.height, closed, message };
   });
   assert.deepEqual(result, { same: true, size: 2 * 1024 * 1024, width: 2048, height: 1024, closed: 2, message: 'Не удалось проверить PNG: Canvas 2D недоступен.' });
+});
+
+for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }]) test(`compact editor has two previews, header hint and collapsed independent sections: ${theme} ${viewport.width}`, async t => {
+  const h = await setup(t, { theme, viewport, touch: viewport.width === 390, expand: false, publishing: true });
+  assert.deepEqual(await h.editor.locator('.editor-previews > section > h3').allTextContents(), ['Оригинал', 'Фоновый узор']);
+  assert.equal(await h.editor.locator('.editor-previews > section').count(), 2);
+  assert.equal(await h.editor.locator('.editor-contour-stage, .editor-contour-image, .editor-notice').count(), 0);
+  assert.equal(await h.editor.locator('.modal-head #contourEditorAvailability').count(), 1);
+  assert.equal(await h.editor.locator('.modal-body #contourEditorAvailability').count(), 0);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, false, false]);
+  assert.deepEqual(await h.editor.locator('details > summary').allTextContents(), ['Кадрирование', 'Обработка', 'Композиция']);
+  const original = await h.editor.locator('.editor-photo-stage').boundingBox(), composition = await h.editor.locator('.editor-scheme').boundingBox();
+  const bounds = await h.editor.boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height);
+  assert.equal(await h.editor.locator('.modal-body').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  if (viewport.width === 1920) {
+    assert.ok(bounds.width >= 1450 && original.width > 650 && composition.width > 650);
+    assert.equal(original.y, composition.y); assert.equal(original.height, composition.height);
+    assert.ok(original.height >= 320);
+    assert.equal(await h.editor.locator('.modal-body').evaluate(el => el.scrollHeight <= el.clientHeight), true);
+  } else assert.ok(composition.y > original.y + original.height);
+  await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Компактный редактор');
+  assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, false, false]);
+  if (process.env.EDITOR_SCREENSHOT_DIR) {
+    await h.editor.locator('.modal-body').evaluate(el => { el.scrollTop = 0; });
+    await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `compact-${theme}-${viewport.width}.png`) });
+  }
+  await h.editor.locator('.editor-processing-section > summary').click();
+  assert.equal(await h.editor.locator('.editor-composition-section').evaluate(el => el.open), false);
+  await h.editor.locator('.editor-composition-section > summary').click();
+  assert.equal(await h.editor.locator('.editor-processing-section').evaluate(el => el.open), true);
+  await h.editor.locator('#contourScale').fill('137'); await h.editor.locator('#contourSensitivity').fill('73'); await processed(h.page);
+  const jobs = await h.page.evaluate(() => workerState.jobs.length), url = await h.editor.locator('.editor-scheme image').getAttribute('href');
+  await h.editor.locator('.editor-processing-section > summary').click();
+  assert.equal(await h.editor.locator('.editor-composition-section').evaluate(el => el.open), true);
+  await h.editor.locator('.editor-processing-section > summary').focus(); await h.page.keyboard.press('Enter');
+  assert.equal(await h.editor.locator('#contourSensitivity').inputValue(), '73');
+  assert.equal(await h.editor.locator('#contourScale').inputValue(), '137');
+  assert.equal(await h.page.evaluate(() => workerState.jobs.length), jobs);
+  if (process.env.EDITOR_SCREENSHOT_DIR) {
+    await h.editor.locator('.editor-settings').scrollIntoViewIfNeeded();
+    await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `expanded-${theme}-${viewport.width}.png`) });
+  }
+  await h.editor.locator('[data-editor-save]').click(); await h.page.waitForFunction(() => !document.querySelector('#contourEditor'));
+  assert.equal(h.flags.posts[0].fields.base_scale, '137'); assert.equal(h.flags.posts.length, 1);
+  assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
+});
+
+test('crop drag works while collapsed; numeric crop and reset stay functional after toggling', async t => {
+  const h = await setup(t, { expand: false }); await load(h, await photo(h.page)); await processed(h.page);
+  const rect = await h.editor.locator('.editor-photo-stage').boundingBox();
+  await h.page.mouse.move(rect.x + rect.width * .3, rect.y + rect.height * .2); await h.page.mouse.down();
+  await h.page.mouse.move(rect.x + rect.width * .7, rect.y + rect.height * .8); await h.page.mouse.up();
+  assert.equal(await h.editor.locator('.editor-crop-section').evaluate(el => el.open), false);
+  assert.ok(Number(await h.editor.locator('[data-crop="width"]').inputValue()) < 90);
+  await h.editor.locator('.editor-crop-section > summary').focus(); await h.page.keyboard.press('Enter');
+  await h.editor.locator('[data-crop-reset]').click(); await processed(h.page);
+  await h.editor.locator('[data-crop="width"]').fill('80'); await processed(h.page);
+  assert.deepEqual(await imageSize(h.page), [512, 480]);
+  const cropWidth = await h.editor.locator('.editor-crop').evaluate(el => el.style.width);
+  await h.editor.locator('.editor-crop-section > summary').click();
+  await h.editor.locator('.editor-crop-section > summary').click();
+  assert.equal(await h.editor.locator('[data-crop="width"]').inputValue(), '80');
+  assert.equal(await h.editor.locator('.editor-crop').evaluate(el => el.style.width), cropWidth);
+  await h.editor.locator('[data-crop-reset]').click(); await processed(h.page);
+  assert.deepEqual(await imageSize(h.page), [640, 480]);
+  await discard(h.page);
+});
+
+test('expansion alone does not mark the editor dirty and all sections reset on a new session', async t => {
+  const h = await setup(t, { expand: false });
+  for (const summary of await h.editor.locator('details > summary').all()) await summary.click();
+  await h.editor.locator('.editor-close').click();
+  assert.equal(await h.page.locator('.desk-dialog').count(), 0);
+  await h.open();
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, false, false]);
 });

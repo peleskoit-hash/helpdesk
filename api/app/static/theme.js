@@ -360,7 +360,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-contour-save-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-layout-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -429,13 +429,13 @@ function initThemeToggle() {
     const createContourButton = patternSection.querySelector('[data-contour-create]');
     createContourButton.addEventListener('click', async () => {
       try {
-        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-contour-save-v1');
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-contour-layout-v1');
         if (createContourButton.isConnected) await openContourEditor(createContourButton);
       } catch {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';
       }
     });
-    void import("/static/appearance_contours.js?v=20261029-contour-save-v1").then(module => {
+    void import("/static/appearance_contours.js?v=20261029-contour-layout-v1").then(module => {
       contourPaint = module;
       module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
         catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });

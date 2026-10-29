@@ -1,4 +1,4 @@
-import { prepareContourPNG } from '/static/contour_export.js?v=20261029-contour-save-v1';
+import { prepareContourPNG } from '/static/contour_export.js?v=20261029-contour-layout-v1';
 
 const MAX_BYTES = 20 * 1024 * 1024;
 let active = null, opening = null, styles = null;
@@ -7,7 +7,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-contour-save-v1';
+    link.href = '/static/contour-editor.css?v=20261029-contour-layout-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -37,10 +37,10 @@ function createEditor(invoker) {
   dialog.setAttribute('aria-labelledby', 'contourEditorTitle');
   dialog.setAttribute('aria-describedby', 'contourEditorAvailability');
   dialog.innerHTML = `
-    <header class="modal-head"><h2 id="contourEditorTitle">Создать свой узор</h2>
+    <header class="modal-head"><div class="editor-heading"><h2 id="contourEditorTitle">Создать свой узор</h2>
+      <p id="contourEditorAvailability" class="editor-help">Обработка выполняется локально. В общую библиотеку отправляется только готовый прозрачный контур.</p></div>
       <button type="button" class="action editor-close" aria-label="Закрыть редактор" data-editor-close>×</button></header>
     <div class="modal-body">
-      <p id="contourEditorAvailability" class="editor-notice">Обработка выполняется локально. В общую библиотеку отправляется только готовый прозрачный контур.</p>
       <div class="editor-fields">
         <label for="contourEditorName">Название контура<input id="contourEditorName" maxlength="120" autocomplete="off" autofocus placeholder="Название нового контура"></label>
         <label for="contourEditorFile">Исходная фотография<input id="contourEditorFile" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="contourEditorFileHint"></label>
@@ -48,11 +48,12 @@ function createEditor(invoker) {
       <p class="editor-help" id="contourEditorFileHint">JPG, PNG или WebP до 20 МБ. Фото остаётся только в памяти этой вкладки и не отправляется на сервер.</p>
       <p class="editor-error" id="contourEditorError" role="status" aria-live="polite"></p>
       <div class="editor-previews">
-        <section class="editor-panel"><h3>Исходная фотография</h3>
+        <section class="editor-panel"><h3>Оригинал</h3>
           <div class="editor-photo-stage" aria-label="Выделение области фотографии" tabindex="0">
             <span class="editor-photo-empty">Загрузите фотографию</span><div class="editor-crop" hidden></div>
           </div>
           <p class="editor-help editor-photo-name" hidden></p>
+          <details class="editor-crop-section"><summary>Кадрирование</summary>
           <p class="editor-help">Проведите мышью или пальцем по фото, чтобы выделить кадр. Координаты можно задать ниже в процентах.</p>
           <fieldset class="editor-crop-fields" disabled><legend>Кадрирование, %</legend>
             <label>X<input data-crop="x" type="number" min="0" max="99" step="1" value="0"></label>
@@ -61,20 +62,17 @@ function createEditor(invoker) {
             <label>Высота<input data-crop="height" type="number" min="1" max="100" step="1" value="100"></label>
           </fieldset>
           <button type="button" class="action" data-crop-reset disabled>Сбросить кадрирование</button>
+          </details>
         </section>
-        <section class="editor-panel"><h3>Выделенный контур</h3>
-          <div class="editor-contour-stage"><img class="editor-contour-image" alt="Выделенный контур" hidden><span class="editor-result-empty">Загрузите фотографию для обработки.</span></div>
+        <section class="editor-panel"><h3>Фоновый узор</h3>
+          <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Предпросмотр композиции"></svg><span class="editor-result-empty">Загрузите фотографию для обработки.</span></div>
+          <p class="editor-scheme-count" aria-live="polite"></p>
           <p class="editor-processing-status editor-help" role="status" aria-live="polite">Подготовка обработки…</p>
           <button type="button" class="action" data-process-retry hidden>Повторить обработку</button>
         </section>
-        <section class="editor-panel"><h3>Итоговая композиция</h3>
-          <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Предпросмотр композиции"></svg></div>
-          <p class="editor-scheme-count" aria-live="polite"></p>
-          <p class="editor-help">Предпросмотр обновится после обработки фотографии.</p>
-        </section>
       </div>
       <div class="editor-settings">
-        <section class="editor-panel"><h3>Обработка</h3>
+        <details class="editor-panel editor-processing-section"><summary>Обработка</summary>
           <p class="editor-help" id="contourProcessingHint">Инверсия меняет сторону границы. Очистка удаляет контуры, связанные с краями кадра.</p>
           <fieldset class="editor-processing" disabled aria-describedby="contourProcessingHint"><legend class="editor-sr-only">Настройки обработки</legend>
             <label for="contourSensitivity">Чувствительность<input id="contourSensitivity" type="range" min="0" max="100" value="50"></label>
@@ -83,17 +81,17 @@ function createEditor(invoker) {
             <label class="editor-switch">Инверсия<input id="contourInvert" class="desk-toggle" type="checkbox" role="switch"></label>
             <label class="editor-switch">Очистка фона<input id="contourCleanup" class="desk-toggle" type="checkbox" role="switch" checked></label>
           </fieldset>
-        </section>
-        <section class="editor-panel"><h3>Композиция</h3>
+        </details>
+        <details class="editor-panel editor-composition-section"><summary>Композиция</summary>
           <div class="editor-composition">
+            <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="50" max="200" value="100"></label>
             <label for="contourRotation">Поворот <output for="contourRotation">0°</output><input id="contourRotation" type="range" min="0" max="360" value="0"></label>
             <label class="editor-switch">Повторения<input id="contourRepeat" class="desk-toggle" type="checkbox" role="switch"></label>
             <label for="contourRings">Количество колец<select id="contourRings" disabled><option value="1">1 кольцо — 9 элементов</option><option value="2">2 кольца — 25 элементов</option></select></label>
             <label for="contourDistance">Расстояние между повторами <output for="contourDistance">20%</output><input id="contourDistance" type="range" min="0" max="200" value="20"></label>
-            <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="50" max="200" value="100"></label>
             <button type="button" class="action" data-editor-fit>Вписать в область</button>
           </div>
-        </section>
+        </details>
       </div>
     </div>
     <footer class="modal-foot"><span class="editor-help">В библиотеке появится контур без исходной фотографии.</span>
@@ -106,7 +104,7 @@ function createEditor(invoker) {
   const rotation = find('#contourRotation'), repeat = find('#contourRepeat'), rings = find('#contourRings');
   const distance = find('#contourDistance'), scale = find('#contourScale'), scheme = find('.editor-scheme svg');
   const processing = find('.editor-processing'), processingStatus = find('.editor-processing-status');
-  const resultImage = find('.editor-contour-stage img'), resultEmpty = find('.editor-result-empty');
+  const resultEmpty = find('.editor-result-empty');
   const retryProcessing = find('[data-process-retry]');
   const nameInput = find('#contourEditorName'), saveButton = find('[data-editor-save]');
   let saving = false;
@@ -165,7 +163,6 @@ function createEditor(invoker) {
   function clearResult(message = 'Обновление контура…') {
     if (result) release(result.url);
     result = null;
-    resultImage.removeAttribute('src'); resultImage.hidden = true;
     resultEmpty.textContent = message; resultEmpty.hidden = false;
     renderScheme(); updateSave();
   }
@@ -214,7 +211,7 @@ function createEditor(invoker) {
     processingStatus.textContent = 'Подготовка обработки…';
     processingWatchdog = setTimeout(() => processingFailed('Не удалось загрузить Worker. Попробуйте ещё раз.'), 10000);
     try {
-      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-save-v1', { type: 'module' });
+      const instance = new Worker('/static/contour_worker.js?v=20261029-contour-layout-v1', { type: 'module' });
       worker = instance;
       instance.onerror = event => { event.preventDefault(); if (!closed && worker === instance) processingFailed('Ошибка загрузки или выполнения Worker. Повторите обработку.'); };
       instance.addEventListener('messageerror', () => { if (!closed && worker === instance) processingFailed('Не удалось прочитать ответ Worker.'); });
@@ -248,7 +245,7 @@ function createEditor(invoker) {
               if (!closed && worker === instance && message.id === processingRevision && !loading) {
                 if (candidate.naturalWidth !== message.width || candidate.naturalHeight !== message.height) throw new Error('Размер результата не совпадает.');
                 result = { blob: message.blob, url, width: message.width, height: message.height }; adopted = true;
-                resultImage.src = url; resultImage.hidden = false; resultEmpty.hidden = true;
+                resultEmpty.hidden = true;
                 processingStatus.textContent = `Готово: ${message.width}×${message.height} px. Прозрачный PNG, готов к сохранению.`;
                 renderScheme(); updateSave();
               }
@@ -330,7 +327,6 @@ function createEditor(invoker) {
     if (photo) { photo.removeAttribute('src'); photo.remove(); }
     for (const url of [...urls]) release(url);
     photo = null; photoURL = null; sourceBlob = null; result = null; crop = null; drag = null; loading = false; dirty = false;
-    resultImage.removeAttribute('src');
     fileInput.value = ''; dialog.querySelectorAll('input').forEach(input => { if (input.type !== 'file') input.value = ''; });
     scheme.replaceChildren();
     find('.editor-photo-name').textContent = '';
