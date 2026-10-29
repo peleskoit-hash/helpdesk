@@ -73,12 +73,12 @@ function renderBackgroundPattern() {
       const seed = state.seed ?? 1;
       // A stitched, low-frequency mask changes only pattern visibility, never the surface.
       const mask = state.variable ? `<filter id="noise" x="0" y="0" width="840" height="840" filterUnits="userSpaceOnUse"><feTurbulence type="fractalNoise" baseFrequency=".004" numOctaves="2" seed="${seed}" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 2 0 0 0 -.35"/></filter><mask id="visibility"><rect width="840" height="840" filter="url(#noise)"/></mask>` : "";
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="840" viewBox="0 0 840 840"><defs><pattern id="p" width="42" height="42" patternUnits="userSpaceOnUse"><g color="${ink}" stroke="currentColor" fill="none" stroke-width="1">${shapes[state.type]}</g></pattern>${mask}</defs><rect width="840" height="840" fill="url(#p)" opacity="${state.variable ? .1 : state.intensity * .0008}" ${state.variable ? 'mask="url(#visibility)"' : ""}/></svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="840" height="840" viewBox="0 0 840 840"><defs><pattern id="p" width="42" height="42" patternUnits="userSpaceOnUse"><g color="${ink}" stroke="currentColor" fill="none" stroke-width="1">${shapes[state.type]}</g></pattern>${mask}</defs><rect width="840" height="840" fill="url(#p)" opacity="${state.intensity * .0095}" ${state.variable ? 'mask="url(#visibility)"' : ""}/></svg>`;
       image = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
     }
     document.body.style.setProperty("--desk-pattern-image", image);
     document.body.style.setProperty("--desk-pattern-size", `${(state.type === "grid" && !state.variable ? 42 : 840) * state.scale / 100}px`);
-    document.body.style.setProperty("--desk-pattern-strength", `${state.intensity * .08}%`);
+    document.body.style.setProperty("--desk-pattern-strength", `${state.intensity * .95}%`);
   }
   if (!appearanceMenu) return;
   const section = appearanceMenu.querySelector(".appearance-pattern");
@@ -90,7 +90,6 @@ function renderBackgroundPattern() {
   });
   section.querySelector(".pattern-parameters").hidden = state.type === "none";
   section.querySelector("#patternIntensity").value = state.intensity;
-  section.querySelector("#patternIntensity").disabled = state.variable;
   section.querySelector("#patternScale").value = state.scale;
   section.querySelector("#patternVariable").checked = state.variable;
   section.querySelector(".pattern-code span").textContent = state.variable && state.type !== "none" && state.seed ? String(state.seed) : "—";
@@ -365,7 +364,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-appearance-compact-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-cards-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -434,13 +433,13 @@ function initThemeToggle() {
     const createContourButton = patternSection.querySelector('[data-contour-create]');
     createContourButton.addEventListener('click', async () => {
       try {
-        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-appearance-compact-v1');
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-composition-intensity-v1');
         if (createContourButton.isConnected) await openContourEditor(createContourButton);
       } catch {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';
       }
     });
-    void import("/static/appearance_contours.js?v=20261029-appearance-compact-v1").then(module => {
+    void import("/static/appearance_contours.js?v=20261029-contour-cards-v1").then(module => {
       contourPaint = module;
       module.configureContourPaint({ current: () => appearance, refresh: refreshAppearance, render: renderBackgroundPattern,
         catalogue: items => appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new CustomEvent('contour-catalogue', { detail: items })) });

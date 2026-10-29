@@ -8,7 +8,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-appearance-compact-v1';
+    link.href = '/static/contour-editor.css?v=20261029-composition-intensity-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);
@@ -52,7 +52,7 @@ function createEditor(invoker) {
           <div class="editor-photo-stage" aria-label="Выделение области фотографии" tabindex="0">
             <span class="editor-photo-empty">Загрузите фотографию</span><div class="editor-crop" hidden></div>
           </div>
-          <p class="editor-help editor-photo-name" hidden></p>
+          <div class="editor-preview-info"><p class="editor-help editor-photo-name" hidden></p>
           <details class="editor-crop-section"><summary>Кадрирование</summary>
           <div class="editor-crop-popup">
           <p class="editor-help">Проведите мышью или пальцем по фото, чтобы выделить кадр. Координаты можно задать ниже в процентах.</p>
@@ -63,17 +63,17 @@ function createEditor(invoker) {
             <label>Высота<input data-crop="height" type="number" min="1" max="100" step="1" value="100"></label>
           </fieldset>
           <button type="button" class="action" data-crop-reset disabled>Сбросить кадрирование</button>
-          </div></details>
+          </div></details></div>
         </section>
         <section class="editor-panel"><h3>Фоновый узор</h3>
           <div class="editor-scheme"><svg viewBox="-150 -150 300 300" role="img" aria-label="Предпросмотр композиции"></svg><span class="editor-result-empty">Загрузите фотографию для обработки.</span></div>
-          <p class="editor-scheme-count" aria-live="polite"></p>
-          <p class="editor-processing-status editor-help" role="status" aria-live="polite">Подготовка обработки…</p>
+          <div class="editor-preview-info"><p class="editor-scheme-count" aria-live="polite"></p>
+          <p class="editor-processing-status editor-help" role="status" aria-live="polite">Подготовка обработки…</p></div>
           <button type="button" class="action" data-process-retry hidden>Повторить обработку</button>
         </section>
       </div>
       <div class="editor-settings">
-        <details class="editor-panel editor-processing-section" open><summary>Обработка</summary>
+        <section class="editor-panel editor-processing-section" aria-labelledby="contourProcessingTitle"><h3 id="contourProcessingTitle">Обработка</h3>
           <p class="editor-help" id="contourProcessingHint">Инверсия меняет сторону границы. Очистка удаляет контуры, связанные с краями кадра.</p>
           <fieldset class="editor-processing" disabled aria-describedby="contourProcessingHint"><legend class="editor-sr-only">Настройки обработки</legend>
             <label for="contourSensitivity">Чувствительность<input id="contourSensitivity" type="range" min="0" max="100" value="50"></label>
@@ -82,17 +82,17 @@ function createEditor(invoker) {
             <label class="editor-switch">Инверсия<input id="contourInvert" class="desk-toggle" type="checkbox" role="switch"></label>
             <label class="editor-switch">Очистка фона<input id="contourCleanup" class="desk-toggle" type="checkbox" role="switch" checked></label>
           </fieldset>
-        </details>
-        <details class="editor-panel editor-composition-section" open><summary>Композиция</summary>
+        </section>
+        <section class="editor-panel editor-composition-section" aria-labelledby="contourCompositionTitle"><h3 id="contourCompositionTitle">Композиция</h3>
           <div class="editor-composition">
             <label for="contourScale">Масштаб <output for="contourScale">100%</output><input id="contourScale" type="range" min="50" max="200" value="100"></label>
             <label for="contourRotation">Поворот <output for="contourRotation">0°</output><input id="contourRotation" type="range" min="0" max="360" value="0"></label>
+            <button type="button" class="action" data-editor-fit>Вписать в область</button>
             <label class="editor-switch">Повторения<input id="contourRepeat" class="desk-toggle" type="checkbox" role="switch"></label>
             <label for="contourRings">Количество колец<select id="contourRings" disabled><option value="1">1 кольцо — 9 элементов</option><option value="2">2 кольца — 25 элементов</option></select></label>
-            <label for="contourDistance">Расстояние между повторами <output for="contourDistance">20%</output><input id="contourDistance" type="range" min="0" max="200" value="20"></label>
-            <button type="button" class="action" data-editor-fit>Вписать в область</button>
+            <label for="contourDistance">Расстояние между повторами <output for="contourDistance">20%</output><input id="contourDistance" disabled type="range" min="0" max="200" value="20"></label>
           </div>
-        </details>
+        </section>
       </div>
     </div>
     <footer class="modal-foot">
@@ -124,6 +124,7 @@ function createEditor(invoker) {
     scheme.setAttribute('viewBox', `${-area.width / 2} ${-area.height / 2} ${area.width} ${area.height}`);
     const clip = `<defs><clipPath id="editorArea"><rect x="${-area.width / 2}" y="${-area.height / 2}" width="${area.width}" height="${area.height}"/></clipPath></defs>`;
     scheme.innerHTML = result ? `${clip}<g clip-path="url(#editorArea)">${contourMarkup(result, composition, contourLayout(result, composition, area), 'editorContour', result.url)}</g>` : '';
+    find('.editor-scheme-count').hidden = !result;
     const total = (count * 2 + 1) ** 2;
     scheme.setAttribute('aria-label', result ? `Композиция: ${total} элементов.` : 'Нет обработанного контура.');
     const label = result ? `Композиция: ${total} ${total === 1 ? 'элемент' : 'элементов'}.` : 'Нет обработанного контура.';
@@ -143,14 +144,14 @@ function createEditor(invoker) {
     return { width, height, left: (stage.clientWidth - width) / 2, top: (stage.clientHeight - height) / 2 };
   }
   function positionCropPopup() {
-    if (!cropDetails.open) return;
+    if (closed || !cropDetails.open) return;
     const body = find('.modal-body').getBoundingClientRect(), anchor = cropDetails.querySelector('summary').getBoundingClientRect();
     cropPopup.style.maxHeight = `${Math.max(0, Math.min(320, body.height - 8))}px`;
     const height = cropPopup.getBoundingClientRect().height;
     let top = anchor.bottom + 4;
     if (top + height > body.bottom - 4) top = anchor.top - height - 4;
     top = Math.max(body.top + 4, Math.min(top, body.bottom - height - 4));
-    cropPopup.style.top = `${top - cropDetails.getBoundingClientRect().top}px`;
+    cropPopup.style.top = `${top - cropPopup.offsetParent.getBoundingClientRect().top}px`;
 
   }
   cropDetails.addEventListener('toggle', positionCropPopup);
@@ -409,7 +410,7 @@ function createEditor(invoker) {
   saveButton.addEventListener('click', () => void saveContour());
   for (const input of [rotation, distance, scale]) input.addEventListener('input', () => { dirty = true; pendingFit = false; renderScheme(); });
   repeat.addEventListener('change', () => {
-    dirty = true; rings.disabled = !repeat.checked;
+    dirty = true; rings.disabled = distance.disabled = !repeat.checked;
     if (repeat.checked) { rings.value = '1'; fit(); } else { pendingFit = false; renderScheme(); }
   });
   let previousRings = 1;

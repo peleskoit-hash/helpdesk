@@ -536,7 +536,7 @@ for (const [theme, width, rings] of [['light', 1440, 0], ['dark', 1440, 1], ['li
   assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
   if (rings) { await h.editor.locator('#contourRepeat').check(); await h.editor.locator('#contourRings').selectOption(String(rings)); }
   await h.editor.locator('#contourRotation').fill('47');
-  await h.editor.locator('#contourDistance').fill('73');
+  if (rings) await h.editor.locator('#contourDistance').fill('73');
   await h.editor.locator('#contourScale').fill('135');
   const expected = Buffer.from(await h.editor.locator('.editor-scheme image').evaluate(async image => [...new Uint8Array(await (await fetch(image.getAttribute('href'))).arrayBuffer())]));
   const gets = h.flags.getCount;
@@ -550,7 +550,7 @@ for (const [theme, width, rings] of [['light', 1440, 0], ['dark', 1440, 1], ['li
   assert.equal(h.flags.posts.length, 1);
   const post = h.flags.posts[0];
   assert.deepEqual(post.keys.sort(), ['base_scale', 'distance', 'file', 'name', 'rings', 'rotation']);
-  assert.deepEqual(post.fields, { name: 'Мой контур', rotation: '47', rings: String(rings), distance: '73', base_scale: '135' });
+  assert.deepEqual(post.fields, { name: 'Мой контур', rotation: '47', rings: String(rings), distance: rings ? '73' : '20', base_scale: '135' });
   assert.equal(post.type, 'image/png'); assert.equal(post.filename, 'contour.png');
   assert.deepEqual(post.buffer, expected); assert.notDeepEqual(post.buffer, original.buffer);
   assert.ok(post.buffer.length <= 2 * 1024 * 1024); assert.ok(h.flags.getCount > gets);
@@ -738,8 +738,8 @@ for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, he
   assert.equal(await h.editor.locator('.editor-contour-stage, .editor-contour-image, .editor-notice').count(), 0);
   assert.equal(await h.editor.locator('.modal-head #contourEditorAvailability').count(), 1);
   assert.equal(await h.editor.locator('.modal-body #contourEditorAvailability').count(), 0);
-  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, true, true]);
-  assert.deepEqual(await h.editor.locator('details > summary').allTextContents(), ['Кадрирование', 'Обработка', 'Композиция']);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false]);
+  assert.deepEqual(await h.editor.locator('details > summary').allTextContents(), ['Кадрирование']);
   const original = await h.editor.locator('.editor-photo-stage').boundingBox(), composition = await h.editor.locator('.editor-scheme').boundingBox();
   const bounds = await h.editor.boundingBox();
   assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height);
@@ -753,20 +753,17 @@ for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, he
   await load(h, await photo(h.page)); await processed(h.page);
   await h.editor.locator('#contourEditorName').fill('Компактный редактор');
   assert.equal(await h.editor.locator('[data-editor-save]').isEnabled(), true);
-  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, true, true]);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false]);
   if (process.env.EDITOR_SCREENSHOT_DIR) {
     await h.editor.locator('.modal-body').evaluate(el => { el.scrollTop = 0; });
     await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `compact-${theme}-${viewport.width}.png`) });
   }
-  await h.editor.locator('.editor-processing-section > summary').click();
-  assert.equal(await h.editor.locator('.editor-composition-section').evaluate(el => el.open), true);
-  await h.editor.locator('.editor-processing-section > summary').click();
-  assert.equal(await h.editor.locator('.editor-processing-section').evaluate(el => el.open), true);
+  assert.equal(await h.editor.locator('.editor-settings details, .editor-settings summary').count(), 0);
+  assert.deepEqual(await h.editor.locator('.editor-settings > section > h3').allTextContents(), ['Обработка', 'Композиция']);
   await h.editor.locator('#contourScale').fill('137'); await h.editor.locator('#contourSensitivity').fill('73'); await processed(h.page);
   const jobs = await h.page.evaluate(() => workerState.jobs.length), url = await h.editor.locator('.editor-scheme image').getAttribute('href');
-  await h.editor.locator('.editor-processing-section > summary').click();
-  assert.equal(await h.editor.locator('.editor-composition-section').evaluate(el => el.open), true);
-  await h.editor.locator('.editor-processing-section > summary').focus(); await h.page.keyboard.press('Enter');
+  await h.editor.locator('.editor-processing-section > h3').click();
+  assert.equal(await h.editor.locator('#contourSensitivity').isVisible(), true);
   assert.equal(await h.editor.locator('#contourSensitivity').inputValue(), '73');
   assert.equal(await h.editor.locator('#contourScale').inputValue(), '137');
   assert.equal(await h.page.evaluate(() => workerState.jobs.length), jobs);
@@ -803,11 +800,11 @@ test('crop drag works while collapsed; numeric crop and reset stay functional af
 
 test('expansion alone does not mark the editor dirty and all sections reset on a new session', async t => {
   const h = await setup(t, { expand: false });
-  for (const selector of ['.editor-processing-section > summary', '.editor-composition-section > summary', '.editor-crop-section > summary']) await h.editor.locator(selector).click();
+  await h.editor.locator('.editor-crop-section > summary').click();
   await h.editor.locator('.editor-close').click();
   assert.equal(await h.page.locator('.desk-dialog').count(), 0);
   await h.open();
-  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, true, true]);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false]);
 });
 
 for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }]) test(`editor and published background share viewport geometry and keep the same PNG: ${theme} ${viewport.width}`, async t => {
@@ -1001,7 +998,7 @@ for (const theme of ['light', 'dark']) test(`editor distance grows gaps without 
 
 for (const theme of ['light', 'dark']) for (const [viewport, zoom] of [[{ width: 1920, height: 1080 }, 1], [{ width: 390, height: 844 }, 1], [{ width: 960, height: 600 }, 1.5], [{ width: 720, height: 450 }, 2]]) test(`dense editor inline hints and overlay crop stay usable without layout shifts: ${theme} ${viewport.width} zoom ${zoom}`, async t => {
   const h = await setup(t, { theme, viewport, expand: false, deviceScaleFactor: zoom });
-  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false, true, true]);
+  assert.deepEqual(await h.editor.locator('details').evaluateAll(nodes => nodes.map(node => node.open)), [false]);
   assert.equal(await h.page.evaluate(() => devicePixelRatio), zoom);
   const title = await h.editor.locator('h2').boundingBox(), hint = await h.editor.locator('#contourEditorAvailability').boundingBox();
   assert.ok(hint.x >= title.x + title.width + 4);
@@ -1033,4 +1030,83 @@ for (const theme of ['light', 'dark']) for (const [viewport, zoom] of [[{ width:
   await h.editor.locator('#contourScale').fill('137');
   await discard(h.page);
   assert.equal(await h.page.evaluate(() => editorMemory.live.size), 0);
+});
+
+for (const theme of ['light', 'dark']) for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }, { width: 720, height: 450 }]) test(`preview information rows stay symmetric with empty, loaded and long captions: ${theme} ${viewport.width}`, async t => {
+  const h = await setup(t, { theme, viewport, expand: false });
+  const symmetry = async () => {
+    const cards = await h.editor.locator('.editor-previews > section').evaluateAll(nodes => nodes.map(node => {
+      const r = node.getBoundingClientRect(); return { height: r.height, width: r.width };
+    }));
+    assert.ok(Math.abs(cards[0].height - cards[1].height) < .1, JSON.stringify(cards));
+    assert.ok(Math.abs(cards[0].width - cards[1].width) < .1);
+    assertPreviewRatio(await previewSizes(h.page), viewport);
+    assert.equal(await h.editor.locator('.modal-body').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    return cards[0].height;
+  };
+  const emptyHeight = await symmetry();
+  if (process.env.EDITOR_SCREENSHOT_DIR) await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `empty-${theme}-${viewport.width}.png`) });
+  assert.equal(await h.editor.locator('.editor-scheme-count').isHidden(), true);
+  assert.equal(await h.editor.locator('.editor-preview-info').last().locator('p:visible').count(), 1);
+  assert.equal(await h.editor.locator('.editor-settings details, .editor-settings summary, .editor-settings [aria-expanded]').count(), 0);
+  assert.deepEqual(await h.editor.locator('.editor-settings > section > h3').allTextContents(), ['Обработка', 'Композиция']);
+  for (const selector of ['#contourSensitivity', '#contourDetail', '#contourThickness', '#contourInvert', '#contourCleanup', '#contourScale', '#contourRotation', '#contourRepeat', '#contourRings', '#contourDistance']) assert.equal(await h.editor.locator(selector).isVisible(), true);
+  const file = await photo(h.page); await load(h, file); await processed(h.page);
+  await symmetry(); assert.equal(await h.editor.locator('.editor-scheme-count').isVisible(), true);
+  const rows = await h.editor.locator('.editor-preview-info').evaluateAll(nodes => nodes.map(node => {
+    const first = node.querySelector('p'), last = node.lastElementChild, a = first.getBoundingClientRect(), b = last.getBoundingClientRect(), r = node.getBoundingClientRect();
+    return { left: a.left - r.left, right: r.right - b.right, gap: b.left - a.right };
+  }));
+  for (const row of rows) { assert.ok(Math.abs(row.left) < 1); assert.ok(Math.abs(row.right) < 1); assert.ok(row.gap >= 7); }
+  await load(h, { ...file, name: 'Очень_длинное_название_исходной_фотографии_'.repeat(5) + '.png' }); await processed(h.page);
+  const longFileHeight = await symmetry(); assert.ok(longFileHeight >= emptyHeight);
+  await h.editor.locator('.editor-processing-status').evaluate(el => { el.textContent += ' Дополнительная длинная информационная подпись для проверки переноса текста.'.repeat(8); });
+  const longStatusHeight = await symmetry(); assert.ok(longStatusHeight > longFileHeight);
+  await openCrop(h); await h.editor.locator('[data-crop="width"]').fill('80'); await processed(h.page);
+  assert.deepEqual(await imageSize(h.page), [512, 480]); await symmetry();
+  await h.editor.locator('.editor-crop-section > summary').click();
+  await h.editor.locator('.editor-processing-section > h3').click();
+  await h.editor.locator('.editor-composition-section > h3').click();
+  assert.equal(await h.editor.locator('#contourSensitivity').isVisible(), true); assert.equal(await h.editor.locator('#contourScale').isVisible(), true);
+  if (process.env.EDITOR_SCREENSHOT_DIR) {
+    await h.editor.locator('.modal-body').evaluate(el => { el.scrollTop = 0; });
+    await h.editor.screenshot({ path: path.join(process.env.EDITOR_SCREENSHOT_DIR, `symmetry-${theme}-${viewport.width}.png`) });
+  }
+  await discard(h.page);
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1440, 390]) test(`composition rows and disabled repetition controls: ${theme} ${width}`, async t => {
+  const h = await setup(t, { theme, viewport: { width, height: 1000 }, touch: width === 390 });
+  const order = ['contourScale', 'contourRotation', 'fit', 'contourRepeat', 'contourRings', 'contourDistance'];
+  const read = () => h.editor.locator('.editor-composition').evaluate(el => [...el.children].map(node => {
+    const r = node.getBoundingClientRect();
+    return { id: node.querySelector('input,select')?.id || 'fit', x: r.x, y: r.y, bottom: r.bottom };
+  }));
+  let boxes = await read(); assert.deepEqual(boxes.map(b => b.id), order);
+  if (width > 600) {
+    assert.ok(boxes[0].x < boxes[1].x && boxes[1].x < boxes[2].x);
+    assert.ok(boxes[3].x < boxes[4].x && boxes[4].x < boxes[5].x);
+    assert.ok(Math.min(...boxes.slice(3).map(b => b.y)) >= Math.max(...boxes.slice(0, 3).map(b => b.bottom)));
+  } else for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i].y >= boxes[i - 1].bottom);
+  for (const id of ['contourRings', 'contourDistance']) {
+    assert.equal(await h.editor.locator(`#${id}`).isDisabled(), true);
+    assert.ok(Number(await h.editor.locator(`#${id}`).evaluate(el => getComputedStyle(el.closest('label')).opacity)) < .6);
+  }
+  await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourRepeat').check();
+  for (const id of ['contourRings', 'contourDistance']) {
+    assert.equal(await h.editor.locator(`#${id}`).isEnabled(), true);
+    assert.equal(await h.editor.locator(`#${id}`).evaluate(el => getComputedStyle(el.closest('label')).opacity), '1');
+  }
+  assert.equal(await frames(h.page), 9);
+  await h.editor.locator('#contourDistance').fill('123'); await h.editor.locator('#contourScale').fill('175');
+  await h.editor.locator('#contourRepeat').uncheck();
+  assert.equal(await frames(h.page), 1);
+  assert.equal(await h.editor.locator('#contourDistance').isDisabled(), true);
+  assert.equal(await h.editor.locator('#contourDistance').inputValue(), '123');
+  assert.equal(await h.editor.locator('#contourScale').inputValue(), '175');
+  await h.editor.locator('#contourRepeat').check();
+  assert.equal(await frames(h.page), 9);
+  assert.equal(await h.editor.locator('#contourDistance').inputValue(), '123');
+  assert.notEqual(await h.editor.locator('#contourScale').inputValue(), '175');
 });

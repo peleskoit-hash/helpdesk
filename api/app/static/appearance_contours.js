@@ -14,6 +14,12 @@ async function request(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+function shortAuthor(name) {
+  const full = String(name || '').trim(), parts = full.split(/\s+/);
+  if (parts.length > 1 && /^\p{L}/u.test(parts[1])) return `${parts[0]} ${Array.from(parts[1])[0].toLocaleUpperCase('ru-RU')}.`;
+  return full || 'Автор не указан';
+}
+
 export function initContourLibrary(section, onChange, selectContour) {
   const list = section.querySelector(".contour-list"), status = section.querySelector(".contour-status");
   const retry = section.querySelector(".contour-retry");
@@ -52,15 +58,15 @@ export function initContourLibrary(section, onChange, selectContour) {
       card.tabIndex = 0;
       card.dataset.contourId = item.id;
       card.setAttribute("aria-label", item.name);
-      card.innerHTML = `<button type="button" class="contour-select" aria-pressed="false"></button><div class="contour-name"></div><img class="contour-preview" alt="" loading="lazy" decoding="async">
-        <div class="contour-footer"><span class="contour-author"></span><div class="contour-actions">
+      card.innerHTML = `<button type="button" class="contour-select" aria-pressed="false"></button><div class="contour-name"></div><div class="contour-body"><img class="contour-preview" alt="" loading="lazy" decoding="async">
+        <div class="contour-actions">
           <span class="contour-action-hint" tabindex="0"><button type="button" class="action contour-action" disabled aria-label="Редактировать контур">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5-12 12H4v-5L16 3Zm-3 3 5 5"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-.5 .5)" d="m16 3 5 5-12 12H4v-5L16 3Zm-3 3 5 5"/></svg>
           </button></span>
           <span class="contour-action-hint" tabindex="0"><button type="button" class="action contour-action" data-contour-delete aria-label="Удалить контур">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg>
           </button></span>
-        </div></div>`;
+        </div></div><div class="contour-footer"><span class="contour-author"></span></div>`;
       const select = card.querySelector(".contour-select");
       select.setAttribute("aria-label", `Выбрать контур «${item.name}»`);
       select.addEventListener("click", () => selectContour(item.id));
@@ -80,8 +86,9 @@ export function initContourLibrary(section, onChange, selectContour) {
         select.disabled = true;
       }, { once: true });
       const author = card.querySelector(".contour-author");
-      author.textContent = `Made by ${item.author_name}`;
-      author.title = author.textContent;
+      author.textContent = `Created: ${shortAuthor(item.author_name)}`;
+      author.title = item.author_name ? `Created: ${String(item.author_name).trim()}` : author.textContent;
+      author.setAttribute('aria-label', author.title);
       const [editHint, deleteHint] = card.querySelectorAll(".contour-action-hint");
       editHint.title = item.can_edit === true ? "Редактор будет добавлен на следующем этапе" : "Нет права редактировать этот контур. Редактор будет добавлен позже";
       deleteHint.title = item.can_delete === true ? "Удалить контур" : "Удалить контур может только автор или администратор";

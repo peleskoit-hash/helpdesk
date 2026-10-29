@@ -375,7 +375,7 @@ for (const theme of ['light', 'dark']) test(`accordion and independent controls 
   await page.locator('#patternScale').fill('160');
   await page.locator('#patternVariable').check();
   await idle(page);
-  assert.equal(await page.locator('#patternIntensity').isDisabled(), true);
+  assert.equal(await page.locator('#patternIntensity').isDisabled(), false);
   assert.equal(await page.locator('#patternScale').isEnabled(), true);
   await page.locator('#patternVariable').uncheck();
   assert.equal(await page.locator('#patternIntensity').inputValue(), '73');
@@ -386,7 +386,7 @@ for (const theme of ['light', 'dark']) test(`accordion and independent controls 
   assert.equal(await page.locator('#patternIntensity').isDisabled(), false);
   assert.equal(await page.locator('#patternScale').inputValue(), '100');
   await select(page, 'Рельеф');
-  assert.equal(await page.locator('#patternIntensity').isDisabled(), true);
+  assert.equal(await page.locator('#patternIntensity').isDisabled(), false);
   assert.equal(await page.locator('#patternScale').inputValue(), '160');
   assert.match(await page.locator('.pattern-code').textContent(), /Код рисунка \d+/);
   await section(page).locator('summary').click();
@@ -416,7 +416,7 @@ test('theme/color saves remain unchanged; pattern selections survive themes and 
   await page.waitForFunction(() => !saveInFlight);
   assert.equal(await selected.inputValue(), 'waves');
   assert.equal(await page.locator('#patternScale').inputValue(), '140');
-  assert.equal(await page.locator('#patternIntensity').isDisabled(), true);
+  assert.equal(await page.locator('#patternIntensity').isDisabled(), false);
   const seed = await page.locator('.pattern-code span').textContent();
   await page.locator('[data-appearance-theme="dark"]').click();
   await page.waitForFunction(() => !saveInFlight);
@@ -467,8 +467,8 @@ test('theme and pattern CSS entry points are versioned consistently', () => {
   const pages = fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'));
   const references = pages.flatMap(file => [...fs.readFileSync(`api/app/templates/${file}`, 'utf8').matchAll(/\/static\/theme\.js\?v=([^"']+)/g)].map(match => match[1]));
   assert.ok(references.length > 0);
-  assert.deepEqual([...new Set(references)], ['20261029-appearance-compact-v1']);
-  assert.match(fs.readFileSync('api/app/static/theme.js', 'utf8'), /appearance-pattern\.css\?v=20261029-appearance-compact-v1/);
+  assert.deepEqual([...new Set(references)], ['20261029-pattern-opacity-v1']);
+  assert.match(fs.readFileSync('api/app/static/theme.js', 'utf8'), /appearance-pattern\.css\?v=20261029-contour-cards-v1/);
 });
 
 for (const [width, height] of [[1440,1000], [390,600], [640,360]]) for (const theme of ['light', 'dark']) test(`real pattern paint, scale, intensity and stable per-pattern seeds: ${theme} ${width}`, async t => {
@@ -540,5 +540,98 @@ for (const [width, height] of [[1440,1000], [390,600], [640,360]]) for (const th
     await page.locator('#patternProbe').evaluate(el => el.remove());
     await page.locator('#themeToggleBtn').click();
     await page.screenshot({ path: path.join(process.env.PATTERN_SCREENSHOT_DIR, `pattern-workspace-${theme}.png`) });
+  }
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1440, 390]) test(`built-in pattern intensity reaches near-white or near-black without tinting UI: ${theme} ${width}`, async t => {
+  const { page } = await setup(t, theme, { width, height: 1000 });
+  await section(page).locator('summary').click();
+  const ui = () => page.locator('#appContent').evaluate(el => {
+    const s = getComputedStyle(el); return [s.color, s.backgroundColor, s.getPropertyValue('--desk-accent'), s.getPropertyValue('--desk-surface')];
+  });
+  const before = await ui();
+  for (const name of ['Сетка', 'Точки', 'Диагонали', 'Волны', 'Рельеф']) {
+    await select(page, name);
+    let previous = -1;
+    for (const intensity of [0, 25, 50, 100]) {
+      await page.locator('#patternIntensity').fill(String(intensity));
+      const opacity = await page.locator('#appContent').evaluate(el => {
+        const s = getComputedStyle(el);
+        if (document.body.dataset.patternKind === 'grid') return parseFloat(s.getPropertyValue('--desk-pattern-strength')) / 100;
+        const svg = new DOMParser().parseFromString(decodeURIComponent(s.backgroundImage).match(/<svg[\s\S]*<\/svg>/)[0], 'image/svg+xml');
+        return Number(svg.querySelector('svg > rect').getAttribute('opacity'));
+      });
+      assert.ok(Math.abs(opacity - intensity * .0095) < 1e-8);
+      assert.ok(opacity > previous); previous = opacity;
+      assert.deepEqual(await ui(), before);
+    }
+    const ink = await page.locator('#appContent').evaluate(async el => {
+      const style = getComputedStyle(el), canvas = document.createElement('canvas'); canvas.width = canvas.height = 42;
+      const ctx = canvas.getContext('2d');
+      if (document.body.dataset.patternKind === 'grid') {
+        const probe = document.createElement('span'); probe.style.color = 'var(--desk-grid-line)'; el.append(probe);
+        ctx.fillStyle = getComputedStyle(probe).color; ctx.fillRect(0, 0, 42, 42); probe.remove();
+      } else {
+        const image = new Image(); image.src = style.backgroundImage.slice(5, -2); await image.decode(); ctx.drawImage(image, 0, 0);
+      }
+      const pixels = ctx.getImageData(0, 0, 42, 42).data;
+      let strongest = [0, 0, 0, 0];
+      for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 3] > strongest[3]) strongest = [...pixels.slice(i, i + 4)];
+      return strongest;
+    });
+    assert.ok(ink[3] >= 240, `${name}: ${ink}`);
+    for (const channel of ink.slice(0, 3)) assert.ok(theme === 'dark' ? channel >= 240 : channel <= 15, `${name}: ${ink}`);
+    await page.locator('#patternVariable').check(); await idle(page);
+    assert.match(decodeURIComponent(await page.locator('#appContent').evaluate(el => getComputedStyle(el).backgroundImage)), /opacity="0.95"/);
+    await page.locator('#patternVariable').uncheck();
+  }
+  await select(page, 'Без узора');
+  assert.equal(await page.locator('#appContent').evaluate(el => getComputedStyle(el).backgroundImage), 'none');
+  assert.deepEqual(await ui(), before);
+});
+
+for (const theme of ['light', 'dark']) test(`built-in uniform and noise opacity follows 0/30/100 without resetting intensity: ${theme}`, async t => {
+  const { page, server } = await setup(t, theme);
+  await section(page).locator('summary').click();
+  for (const name of ['Сетка', 'Точки', 'Диагонали', 'Волны', 'Рельеф']) {
+    await select(page, name);
+    let seed;
+    for (const intensity of [0, 30, 100]) {
+      await page.locator('#patternIntensity').fill(String(intensity)); await idle(page);
+      for (const variable of [true, false]) {
+        await page.locator('#patternVariable').setChecked(variable); await idle(page);
+        assert.equal(await page.locator('#patternIntensity').isEnabled(), true);
+        assert.equal(await page.locator('#patternIntensity').inputValue(), String(intensity));
+        const stats = await page.locator('#appContent').evaluate(async el => {
+          const style = getComputedStyle(el), source = document.body.style.getPropertyValue('--desk-pattern-image');
+          let svg = decodeURIComponent(source.slice(source.indexOf(',') + 1, source.lastIndexOf('"')));
+          const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+          const opacity = Number(parsed.querySelector('svg > rect').getAttribute('opacity'));
+          const mask = parsed.querySelector('mask')?.outerHTML || null;
+          if (document.body.dataset.patternKind === 'grid' && document.body.dataset.patternVariable === 'false') {
+            if (Math.abs(parseFloat(style.getPropertyValue('--desk-pattern-strength')) / 100 - opacity) > 1e-8) throw Error('CSS grid opacity differs');
+          }
+          const image = new Image(); image.src = 'data:image/svg+xml,' + encodeURIComponent(svg); await image.decode();
+          const canvas = new OffscreenCanvas(840, 840), ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+          const pixels = ctx.getImageData(0, 0, 840, 840).data, alphas = new Set(); let max = 0;
+          for (let i = 0; i < pixels.length; i += 4) { max = Math.max(max, pixels[i + 3]); if (pixels[i + 3] > 0) alphas.add(pixels[i + 3]); }
+          return { opacity, mask, max, levels: alphas.size };
+        });
+        assert.ok(Math.abs(stats.opacity - intensity * .0095) < 1e-8);
+        assert.ok(stats.max <= Math.ceil(intensity * 2.55));
+        if (!intensity) assert.equal(stats.max, 0);
+        else { assert.ok(stats.max > 0); if (variable) assert.ok(stats.levels > 3); }
+        assert.equal(!!stats.mask, variable);
+        const kind = await page.locator('input[name="appearance-pattern"]:checked').inputValue();
+        const saved = server.preferences.background_patterns[theme].patterns[kind];
+        seed ??= saved.seed;
+        assert.equal(saved.seed, seed); assert.equal(saved.intensity, intensity); assert.equal(saved.variable, variable);
+      }
+    }
+    await page.locator('#patternVariable').check();
+    await page.locator('#patternIntensity').fill('30'); await idle(page);
+    assert.match(decodeURIComponent(await page.locator('#appContent').evaluate(el => getComputedStyle(el).backgroundImage)), /opacity="0.285"/);
+    await page.locator('#patternVariable').uncheck();
+    assert.equal(await page.locator('#patternIntensity').inputValue(), '30');
   }
 });

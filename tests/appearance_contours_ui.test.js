@@ -117,7 +117,7 @@ for (const theme of ['light', 'dark']) test(`server order, previews, safe text a
   await h.open();
   assert.deepEqual(await page.locator('.contour-name').allTextContents(), items.map(item => item.name));
   assert.equal(await page.locator('.contour-name img, .contour-author b').count(), 0);
-  assert.equal(await card(page, 9).locator('.contour-author').textContent(), 'Made by <b>Автор</b>');
+  assert.equal(await card(page, 9).locator('.contour-author').textContent(), 'Created: <b>Автор</b>');
   await page.waitForFunction(() => [...document.querySelectorAll('.contour-preview')].every(image => image.complete && image.naturalWidth > 0));
   assert.equal(await card(page, 9).evaluate(el => getComputedStyle(el).borderStyle), 'dashed');
   assert.equal(await card(page, 9).locator('.contour-footer').evaluate(el => getComputedStyle(el).opacity), '0');
@@ -147,7 +147,7 @@ test('all users see both actions, denied actions explain permissions and editing
   assert.match(await card(h.page, 1).locator('.contour-action-hint').first().getAttribute('title'), /следующем этапе/);
   assert.match(await card(h.page, 2).locator('.contour-action-hint').first().getAttribute('title'), /Нет права/);
   assert.match(await card(h.page, 3).locator('.contour-action-hint').last().getAttribute('title'), /автор или администратор/);
-  const boxes = await card(h.page, 1).locator('.contour-action').evaluateAll(buttons => buttons.map(button => { const r = button.getBoundingClientRect(); return [r.x, r.right]; }));
+  const boxes = await card(h.page, 1).locator('.contour-action').evaluateAll(buttons => buttons.map(button => { const r = button.getBoundingClientRect(); return [r.y, r.bottom]; }));
   assert.ok(Math.abs(boxes[0][1] - boxes[1][0]) <= 1);
   assert.deepEqual(mutationCalls(h.calls), []);
 });
@@ -555,6 +555,87 @@ for (const theme of ['light', 'dark']) test(`appearance inner scroll and add act
   assert.equal(await h.page.locator('.pattern-library').evaluate(el => el.clientHeight), before.height);
   const button = h.page.getByRole('button', { name: 'Добавить свой узор +', exact: true });
   await button.click(); await h.page.locator('#contourEditor').waitFor();
-  assert.equal(await h.page.locator('#contourEditor .editor-processing-section').evaluate(el => el.open), true);
+  assert.equal(await h.page.locator('#contourEditor .editor-processing-section').evaluate(el => el.tagName), 'SECTION');
   await h.page.locator('#contourEditor .editor-close').click();
+});
+
+for (const theme of ['light', 'dark']) for (const [width, touch, expectedHeight] of [[1440, false, 157], [390, false, 179.5], [390, true, 187.5], [1440, true, 165]]) test(`creator card keeps its size, vertical actions and centred SVG ink: ${theme} ${width} touch ${touch}`, async t => {
+  const h = await setup(t, { theme, touch, viewport: { width, height: 1100 }, items: [contour(1, { author_name: 'Китченко Денис Сергеевич' }), contour(2, { author_name: 'Китченко Д.', can_edit: false, can_delete: false })] });
+  await h.open();
+  for (const n of [1, 2]) {
+    const item = card(h.page, n); await item.focus();
+    assert.equal(await item.locator('.contour-author').textContent(), 'Created: Китченко Д.');
+    const metrics = await item.evaluate(el => {
+      const r = el.getBoundingClientRect(), image = el.querySelector('img').getBoundingClientRect(), author = el.querySelector('.contour-author').getBoundingClientRect();
+      return { width: r.width, height: r.height, imageRight: image.right, authorTop: author.top,
+        authorStyle: [getComputedStyle(el.querySelector('.contour-author')).textOverflow, getComputedStyle(el.querySelector('.contour-author')).whiteSpace],
+        actions: [...el.querySelectorAll('.contour-action')].map(button => {
+          const b = button.getBoundingClientRect(), svg = button.querySelector('svg').getBoundingClientRect(), path = button.querySelector('path'), bounds = path.getBBox();
+          const centre = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2).matrixTransform(path.getScreenCTM());
+          return { x: b.x, y: b.y, right: b.right, bottom: b.bottom, width: b.width, height: b.height,
+            svgX: svg.x + svg.width / 2 - b.x - b.width / 2, svgY: svg.y + svg.height / 2 - b.y - b.height / 2,
+            inkX: centre.x - b.x - b.width / 2, inkY: centre.y - b.y - b.height / 2 };
+        }) };
+    });
+    assert.ok(Math.abs(metrics.height - expectedHeight) < .1, JSON.stringify(metrics));
+    const [edit, remove] = metrics.actions;
+    assert.equal(edit.x, remove.x); assert.equal(edit.width, touch ? 40 : 32); assert.equal(edit.height, touch ? 40 : 32);
+    assert.ok(remove.y >= edit.bottom && remove.y - edit.bottom <= 1);
+    assert.ok(metrics.imageRight + 6 <= edit.x); assert.ok(metrics.authorTop >= remove.bottom);
+    for (const action of metrics.actions) for (const key of ['svgX', 'svgY', 'inkX', 'inkY']) assert.ok(Math.abs(action[key]) < .1, JSON.stringify(action));
+    assert.notEqual(metrics.authorStyle[0], 'ellipsis'); assert.notEqual(metrics.authorStyle[1], 'nowrap');
+    assert.equal(await item.getByRole('button', { name: 'Редактировать контур' }).isDisabled(), true);
+    assert.equal(await item.getByRole('button', { name: 'Удалить контур' }).isDisabled(), n === 2);
+    assert.equal(await item.locator('.contour-actions').evaluate(el => getComputedStyle(el).opacity), '1');
+  }
+  assert.equal(await card(h.page, 1).locator('.contour-author').getAttribute('title'), 'Created: Китченко Денис Сергеевич');
+  if (process.env.CONTOUR_SCREENSHOT_DIR) { await card(h.page, 1).focus(); await card(h.page, 1).screenshot({ path: path.join(process.env.CONTOUR_SCREENSHOT_DIR, `creator-${theme}-${width}-${touch}.png`) }); }
+});
+test('creator names retain surnames and initials without ellipses or invented initials', async t => {
+  const inputs = ['  Китченко   Денис  ', 'Иванова-Петрова Анна', 'Сидорова', 'Автор 7', '', 'ОченьДлиннаяСохранённаяФамилия Андрей'];
+  const expected = ['Created: Китченко Д.', 'Created: Иванова-Петрова А.', 'Created: Сидорова', 'Created: Автор 7', 'Created: Автор не указан', 'Created: ОченьДлиннаяСохранённаяФамилия А.'];
+  const h = await setup(t, { items: inputs.map((author_name, i) => contour(i + 1, { author_name })) }); await h.open();
+  assert.deepEqual(await h.page.locator('.contour-author').allTextContents(), expected);
+  for (const label of expected) assert.doesNotMatch(label, /…|\.{3}/);
+  assert.deepEqual(mutationCalls(h.calls), []);
+});
+
+for (const theme of ['light', 'dark']) test(`custom uniform and noise opacity follows 0/30/100 without resetting intensity: ${theme}`, async t => {
+  const id = contour(1).id, patterns = { [theme]: { selected: id, patterns: { [id]: { scale: 100, intensity: 50, variable: false, seed: 71 } } } };
+  const h = await setup(t, { theme, items: [contour(1)], patterns }); await h.open(); await choose(h, 1);
+  let mask;
+  for (const intensity of [0, 30, 100]) {
+    await h.page.locator('#patternIntensity').fill(String(intensity)); await idle(h.page);
+    for (const variable of [true, false]) {
+      await h.page.locator('#patternVariable').setChecked(variable); await idle(h.page);
+      assert.equal(await h.page.locator('#patternIntensity').isEnabled(), true);
+      assert.equal(await h.page.locator('#patternIntensity').inputValue(), String(intensity));
+      const paint = await composition(h.page);
+      assert.equal(Number(paint.opacity), intensity / 100);
+      const stats = await h.page.evaluate(async svg => {
+        const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+        const mask = parsed.querySelector('mask')?.outerHTML || null;
+        const image = new Image(); image.src = 'data:image/svg+xml,' + encodeURIComponent(svg); await image.decode();
+        const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight), ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data, alphas = new Set(); let max = 0;
+        for (let i = 0; i < pixels.length; i += 4) { max = Math.max(max, pixels[i + 3]); if (pixels[i + 3] > 0) alphas.add(pixels[i + 3]); }
+        return { mask, max, levels: alphas.size };
+      }, paint.svg);
+      assert.ok(stats.max <= Math.ceil(intensity * 2.55));
+      if (!intensity) assert.equal(stats.max, 0);
+      else { assert.ok(stats.max > 0); if (variable) assert.ok(stats.levels > 3); }
+      assert.equal(!!stats.mask, variable);
+      if (variable) { mask ??= stats.mask; assert.equal(stats.mask, mask); }
+      assert.equal(h.preferences.background_patterns[theme].patterns[id].seed, 71);
+      assert.equal(h.preferences.background_patterns[theme].patterns[id].intensity, intensity);
+    }
+  }
+  await h.page.locator('#patternVariable').check();
+  await h.page.locator('#patternIntensity').fill('30'); await idle(h.page);
+  assert.equal(Number((await composition(h.page)).opacity), .3);
+  assert.equal(h.preferences.background_patterns[theme].patterns[id].intensity, 30);
+  await h.page.locator('#patternVariable').uncheck();
+  assert.equal(await h.page.locator('#patternIntensity').inputValue(), '30');
+  const edits = h.calls.filter(call => call.method === 'PATCH' && call.body.background_patterns);
+  assert.ok(edits.some(call => call.body.background_patterns[theme]?.patterns?.[id]?.intensity === 30));
 });
