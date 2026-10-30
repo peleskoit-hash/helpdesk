@@ -289,6 +289,7 @@ def _collecting_ticket_for_client(db: Session, company_id: str, client_id: str) 
             and_(
                 Ticket.company_id == company_id,
                 Ticket.client_id == client_id,
+                Ticket.channel == "telegram",
                 Ticket.status == TicketStatus.UNASSIGNED.value,
                 Ticket.assignee_id.is_(None),
                 Ticket.intake_state == TicketIntakeState.COLLECTING.value,
@@ -309,6 +310,7 @@ def _task_for_client_album(db: Session, contact: TelegramContact, attachment_dat
             Ticket.company_id == contact.company_id,
             Ticket.client_id == contact.client_id,
             Ticket.workflow_type == TicketWorkflowType.TASK.value,
+            or_(Ticket.intake_state.is_(None), Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"),
             select(TicketAttachment.id).where(
                 TicketAttachment.ticket_id == Ticket.id,
                 TicketAttachment.telegram_media_group_id == media_group_id,
@@ -602,6 +604,7 @@ def _clear_client_menu_keyboards(
                 and_(
                     Ticket.client_id == contact.client_id,
                     Ticket.menu_message_id.in_(cleared_id_strings),
+                    or_(Ticket.intake_state.is_(None), Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"),
                 )
             )
         ).scalars().all()
@@ -2416,6 +2419,7 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         candidates = db.scalars(select(Ticket).join(
             TelegramContact, and_(TelegramContact.client_id == Ticket.client_id, TelegramContact.company_id == Ticket.company_id),
         ).where(TelegramContact.external_chat_id == chat_id, Ticket.status != TicketStatus.CLOSED.value,
+                or_(Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"),
                 Ticket.intake_state.in_([TicketIntakeState.COLLECTING.value, TicketIntakeState.TELEGRAM_GROUP_COPYING.value]))).all()
         if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket) or telegram_bitrix_phone.waiting(ticket)
             or (getattr(_button_setting_for_ticket(db, ticket), "automation_key", None) in telegram_bitrix_phone.KEYS) for ticket in candidates):
@@ -3276,6 +3280,7 @@ def cleanup_expired_task_intents(db: Session) -> int:
                 Ticket.assignee_id.is_(None),
                 Ticket.intake_state == TicketIntakeState.COLLECTING.value,
                 Ticket.workflow_type.in_([TicketWorkflowType.TASK.value, TicketWorkflowType.TICKET.value]),
+                Ticket.channel == "telegram",
             )
         )
     ).scalars().all()

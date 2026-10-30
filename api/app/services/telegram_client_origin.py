@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from html import escape, unescape
 from urllib.error import HTTPError
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..config import settings
 from ..models import TelegramContact, Ticket, TicketIntakeState, TicketStatus
@@ -23,6 +23,7 @@ def now():
 
 def waiting(ticket):
     return (ticket is not None and ticket.status != TicketStatus.CLOSED.value
+            and ticket.channel == "telegram"
             and ticket.intake_state == TicketIntakeState.COLLECTING.value
             and isinstance((ticket.quick_action_state_json or {}).get(KEY), dict))
 
@@ -66,6 +67,7 @@ def owns_close_button(db, contact, message_id):
     states = db.scalars(select(Ticket.quick_action_state_json).where(
         Ticket.client_id == contact.client_id, Ticket.company_id == contact.company_id,
         Ticket.quick_action_state_json.is_not(None),
+        or_(Ticket.intake_state.is_(None), Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"),
     ))
     return any(str(message_id) in (state or {}).get(KEY, {}).get("close_message_ids", []) for state in states)
 
@@ -244,7 +246,8 @@ def incoming(db, ticket, body, message_id, attachment, chat, notify, callbacks):
 def cleanup(db, callbacks):
     rows = db.execute(select(Ticket, TelegramContact.external_chat_id).join(
         TelegramContact, (TelegramContact.client_id == Ticket.client_id) & (TelegramContact.company_id == Ticket.company_id),
-    ).where(Ticket.status != TicketStatus.CLOSED.value, Ticket.intake_state == TicketIntakeState.COLLECTING.value)).all()
+    ).where(Ticket.status != TicketStatus.CLOSED.value, Ticket.intake_state == TicketIntakeState.COLLECTING.value,
+            Ticket.channel == "telegram")).all()
     closed = 0
     for ticket, chat in rows:
         if not waiting(ticket):

@@ -4,7 +4,7 @@ from html import escape
 import re
 from urllib.error import HTTPError
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..models import TelegramContact, Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram, render_automatic_message_text
@@ -44,6 +44,7 @@ def now():
 
 def waiting(ticket):
     return (ticket is not None and ticket.status != TicketStatus.CLOSED.value
+            and ticket.channel == "telegram"
             and ticket.intake_state == TicketIntakeState.COLLECTING.value
             and bool(KEYS.intersection(ticket.quick_action_state_json or {})))
 
@@ -471,7 +472,8 @@ def callback(db, ticket, chat, data, message_id, notify, callbacks):
 def cleanup(db, callbacks):
     rows = db.execute(select(Ticket, TelegramContact.external_chat_id).join(
         TelegramContact, (TelegramContact.client_id == Ticket.client_id) & (TelegramContact.company_id == Ticket.company_id),
-    ).where(Ticket.status != TicketStatus.CLOSED.value, Ticket.quick_action_state_json.is_not(None))).all()
+    ).where(Ticket.status != TicketStatus.CLOSED.value, Ticket.quick_action_state_json.is_not(None),
+            or_(Ticket.intake_state.is_(None), Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"))).all()
     closed = 0
     for ticket, chat in rows:
         if not KEYS.intersection(ticket.quick_action_state_json or {}):
