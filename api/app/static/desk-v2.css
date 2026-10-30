@@ -432,13 +432,15 @@ body #appContent.main[data-shell-page="tickets-list"] {
   }
   & .toolbar > .search-input-wrap { flex: 1 1 300px; max-width: 560px; }
   & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 8px 36px 8px 16px; font-size: 14px; }
-  & :is(.bulk-assign-btn, .bulk-freeze-btn) { width: auto; }
-  & button.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
-  & .table-scroll { padding: 8px 12px 0; }
+  & .bulk-freeze-btn { width: auto; }
+  & select.bulk-assign-btn { width: 300px; appearance: auto; cursor: pointer; }
+  & .bulk-admin-actions { padding: 5px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); }
+  & select.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
+  & .table-scroll { padding: 8px 12px 0; container-type: inline-size; }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
-  & th { padding: 14px 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
-  & #ticketsTable thead { position: relative; }
-  & #ticketsTable thead::after { content: ""; position: absolute; left: -12px; right: -12px; bottom: 0; height: 1px; background: var(--desk-border); pointer-events: none; }
+  & th { padding: 0 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
+  & #ticketsTable thead { position: relative; isolation: isolate; background: var(--desk-surface); }
+  & #ticketsTable thead::after { content: ""; position: absolute; inset: -14px auto 0 -12px; width: max(calc(100% + 24px), calc(100cqw + 24px)); background: var(--desk-surface); border-bottom: 1px solid var(--desk-border); border-radius: 23px 23px 0 0; z-index: -1; pointer-events: none; }
   & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); }
   & button.mini-check-btn { display: inline-grid; place-items: center; padding: 0; line-height: 1; vertical-align: middle; }
   & td { font-size: 16px; padding: 8px 12px; line-height: 1.5; color: var(--desk-text); }
@@ -452,12 +454,12 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & tr.ticket-row:hover td:first-child { border-left-color: var(--desk-accent); }
   & tr.ticket-row:hover td:last-child { border-right-color: var(--desk-accent); }
   & :is(td.ticket-channel-col, td.ticket-check-cell) { text-overflow: clip; }
-  & tr.ticket-color-request { background: linear-gradient(90deg, color-mix(in srgb, var(--desk-warning-bg) 80%, var(--desk-surface)), var(--desk-surface) 70%); }
-  & tr.ticket-color-task { background: linear-gradient(90deg, var(--desk-success-bg), var(--desk-surface) 70%); }
-  & tr.ticket-color-group-task { background: linear-gradient(90deg, var(--desk-tint), var(--desk-surface) 70%); }
-  & tr.ticket-color-internal-task { background: linear-gradient(90deg, var(--desk-warning-bg), var(--desk-surface) 70%); }
-  & tr.ticket-color-frozen { background: linear-gradient(90deg, var(--desk-blue-bg), var(--desk-surface) 70%); }
-  & tr.ticket-color-closed { background: linear-gradient(90deg, var(--desk-danger-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-request { background: linear-gradient(90deg, var(--ticket-type-request-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-task { background: linear-gradient(90deg, var(--ticket-type-task-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-group-task { background: linear-gradient(90deg, var(--ticket-type-group-task-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-internal-task { background: linear-gradient(90deg, var(--ticket-type-internal-task-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-frozen { background: linear-gradient(90deg, var(--ticket-type-frozen-bg), var(--desk-surface) 70%); }
+  & tr.ticket-color-closed { background: linear-gradient(90deg, var(--ticket-type-closed-bg), var(--desk-surface) 70%); }
   & tr.ticket-row-seen { background-color: var(--desk-soft); }
   & .ticket-row-link { color: var(--desk-text); min-height: 58px; padding: 16px 12px; }
   & .table-pagination-footer { padding: 12px 14px; background: var(--desk-surface); border-color: var(--desk-border); }

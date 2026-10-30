@@ -75,7 +75,9 @@
           <input id="searchInput" placeholder="Поиск по теме/клиенту/сообщениям" />
           <button id="searchClearBtn" class="search-clear-btn hidden" type="button" aria-label="Очистить поиск">&times;</button>
         </div>
-        <button id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" type="button" disabled>Назначить ответственного (0)</button>
+        <select id="bulkAssignBtn" class="action bulk-assign-btn admin-only hidden" aria-label="Назначить ответственного (0)" disabled>
+          <option value="__placeholder__" disabled selected>Назначить ответственного (0)</option>
+        </select>
         <button id="bulkFreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Заморозить</button>
         <button id="bulkUnfreezeBtn" class="action bulk-freeze-btn admin-only hidden" type="button" disabled>Разморозить</button>
         <div id="bulkAdminActions" class="bulk-admin-actions admin-only hidden">
@@ -131,23 +133,6 @@
           </div>
         </div>
       </section>
-  <div id="assignModal" class="modal hidden">
-    <div class="modal-dialog assign-dialog">
-      <div class="modal-head">
-        <div style="font-weight:700;">Назначить ответственного</div>
-        <button id="closeAssignModalBtn" type="button" class="action">Закрыть</button>
-      </div>
-      <div class="modal-body">
-        <label>Исполнитель
-          <select id="bulkAssigneeSelect"></select>
-        </label>
-      </div>
-      <div class="modal-foot">
-        <button id="confirmBulkAssignBtn" type="button" class="action primary">Назначить</button>
-      </div>
-    </div>
-  </div>
-
   <div id="bulkActionModal" class="modal hidden">
     <div class="modal-dialog assign-dialog">
       <div class="modal-head">

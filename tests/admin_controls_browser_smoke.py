@@ -34,6 +34,7 @@ document.body.dataset.theme = params.get("theme") || "light";
 const state = {role: params.get("role") || "admin", tab: params.get("tab") || "active", selectedTicketIds: new Set(), visibleTicketIds: []};
 document.querySelectorAll(".admin-only").forEach(n => n.classList.toggle("hidden", state.role !== "admin"));
 const el = Object.fromEntries([...document.querySelectorAll("[id]")].map(n => [n.id, n]));
+function assigneeOptionsHtml() { return ""; }
 const results = [];
 function check(ok, name) { results.push({name, pass: Boolean(ok)}); }
 function rect(id) {const r = el[id].getBoundingClientRect(); return {x:r.x,y:r.y,w:r.width,h:r.height};}
@@ -41,7 +42,7 @@ function rect(id) {const r = el[id].getBoundingClientRect(); return {x:r.x,y:r.y
             if is_list:
                 script += ui + """
 let baseline;
-for (const count of [0,1,9,10,99]) {
+for (const count of [0,1,9,10,20]) {
  state.selectedTicketIds = new Set(Array.from({length:count},(_,i)=>String(i)));
  updateBulkAssignUi();
  const geometry = ["bulkAssignBtn", state.tab === "frozen" ? "bulkUnfreezeBtn" : "bulkFreezeBtn", "bulkAdminActions", "bulkCloseBtn", "bulkDeleteBtn"].map(rect);

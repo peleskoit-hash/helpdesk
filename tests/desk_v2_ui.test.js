@@ -978,9 +978,9 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           assert.equal(await page.locator('.columns-draft-row').count(), 9);
           await page.locator('#closeColumnsModalBtn').click();
           await page.locator('.ticket-check').first().check();
-          await page.locator('#bulkAssignBtn').click();
-          await modalVisible(page, '#assignModal');
-          await page.locator('#closeAssignModalBtn').click();
+          assert.equal(await page.locator('#bulkAssignBtn').evaluate(el => el.tagName), 'SELECT');
+          await page.locator('#bulkAssignBtn').focus();
+          await page.keyboard.press('Escape');
           await page.locator('.ticket-check').first().uncheck();
           await page.locator('.table-sort-btn[data-sort-key="subject"]').click();
           assert.equal(await page.evaluate(() => localStorage.getItem('hd_table_sort_key')), 'subject');

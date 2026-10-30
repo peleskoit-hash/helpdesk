@@ -224,8 +224,8 @@ test("ticket list shell remount refreshes dom refs before binding listeners", ()
   assert.equal(first.bulkAssignBtn.owner, "first");
   assert.equal(second.bulkAssignBtn.owner, "second");
   assert.notEqual(first.bulkAssignBtn, second.bulkAssignBtn);
-  assert.equal(second.closeAssignModalBtn.owner, "second");
-  assert.equal(second.confirmBulkAssignBtn.owner, "second");
+  assert.equal(second.bulkCloseBtn.owner, "second");
+  assert.equal(second.bulkDeleteBtn.owner, "second");
 
   const initSource = sourceBetween(listSource, "function init()", "async function runTicketsListPage");
   assert.ok(initSource.indexOf("el = collectElements();") < initSource.indexOf("el.bulkAssignBtn.addEventListener"));

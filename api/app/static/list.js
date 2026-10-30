@@ -205,10 +205,6 @@ function collectElements() {
     bulkUnfreezeBtn: byId("bulkUnfreezeBtn"),
     bulkDeleteBtn: byId("bulkDeleteBtn"),
     selectAllTicketsBtn: byId("selectAllTicketsBtn"),
-    assignModal: byId("assignModal"),
-    closeAssignModalBtn: byId("closeAssignModalBtn"),
-    confirmBulkAssignBtn: byId("confirmBulkAssignBtn"),
-    bulkAssigneeSelect: byId("bulkAssigneeSelect"),
     bulkActionModal: byId("bulkActionModal"),
     bulkActionModalTitle: byId("bulkActionModalTitle"),
     bulkActionModalText: byId("bulkActionModalText"),
@@ -248,10 +244,6 @@ const REQUIRED_LIST_ELEMENT_KEYS = [
   "agentSelect",
   "searchInput",
   "bulkAssignBtn",
-  "assignModal",
-  "closeAssignModalBtn",
-  "confirmBulkAssignBtn",
-  "bulkAssigneeSelect",
   "errorModal",
   "errorText",
   "closeErrorModalBtn",
@@ -806,10 +798,6 @@ function assigneeOptionsHtml(selectedId, selectedName = "") {
   return options.join("");
 }
 
-function renderBulkAssigneeOptions() {
-  el.bulkAssigneeSelect.innerHTML = assigneeOptionsHtml("");
-}
-
 function updateBulkAssignUi() {
   const isAdmin = state.role === "admin";
   const selectedCount = state.selectedTicketIds.size;
@@ -832,7 +820,10 @@ function updateBulkAssignUi() {
     el.bulkDeleteBtn.classList.toggle("hidden", !isAdmin);
     el.bulkDeleteBtn.disabled = selectedCount === 0;
   }
-  el.bulkAssignBtn.textContent = `Назначить ответственного (${selectedCount})`;
+  const assignLabel = `Назначить ответственного (${selectedCount})`;
+  el.bulkAssignBtn.innerHTML = `<option value="__placeholder__" disabled selected>${assignLabel}</option>${assigneeOptionsHtml("")}`;
+  el.bulkAssignBtn.value = "__placeholder__";
+  el.bulkAssignBtn.setAttribute("aria-label", assignLabel);
 
   if (el.selectAllTicketsBtn) {
     const allVisibleSelected = state.visibleTicketIds.length > 0
@@ -853,15 +844,6 @@ async function assignTickets(ticketIds, assigneeId) {
   }
   await Promise.all([loadTickets(), loadCounts({ silent: true })]);
   setStatus("Ответственный назначен");
-}
-
-function openAssignModal() {
-  renderBulkAssigneeOptions();
-  el.assignModal.classList.remove("hidden");
-}
-
-function closeAssignModal() {
-  el.assignModal.classList.add("hidden");
 }
 
 function openBulkActionModal(kind) {
@@ -1819,7 +1801,18 @@ function init() {
 
   // Admin agent filter toggle is handled by shared sidebar.js
 
-  el.bulkAssignBtn.addEventListener("click", openAssignModal, { signal: pageSignal });
+  el.bulkAssignBtn.addEventListener("change", async () => {
+    if (state.role !== "admin" || !state.selectedTicketIds.size) return;
+    const assigneeId = el.bulkAssignBtn.value;
+    el.bulkAssignBtn.disabled = true;
+    try {
+      await assignTickets([...state.selectedTicketIds], assigneeId || null);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      updateBulkAssignUi();
+    }
+  }, { signal: pageSignal });
   if (el.bulkCloseBtn) {
     el.bulkCloseBtn.addEventListener("click", () => openBulkActionModal("close"), { signal: pageSignal });
   }
@@ -1832,17 +1825,6 @@ function init() {
   if (el.bulkDeleteBtn) {
     el.bulkDeleteBtn.addEventListener("click", () => openBulkActionModal("delete"), { signal: pageSignal });
   }
-  el.closeAssignModalBtn.addEventListener("click", closeAssignModal, { signal: pageSignal });
-  closeOnBackdropClick(el.assignModal, closeAssignModal);
-  el.confirmBulkAssignBtn.addEventListener("click", async () => {
-    try {
-      const ticketIds = [...state.selectedTicketIds];
-      await assignTickets(ticketIds, el.bulkAssigneeSelect.value || null);
-      closeAssignModal();
-    } catch (e) {
-      showError(e.message);
-    }
-  }, { signal: pageSignal });
   if (el.closeBulkActionModalBtn) el.closeBulkActionModalBtn.addEventListener("click", closeBulkActionModal, { signal: pageSignal });
   if (el.cancelBulkActionBtn) el.cancelBulkActionBtn.addEventListener("click", closeBulkActionModal, { signal: pageSignal });
   if (el.confirmBulkActionBtn) {
