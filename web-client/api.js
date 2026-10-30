@@ -1,4 +1,4 @@
-// Only the WEB API participates in client authentication.
+// Client-only WEB endpoints; no administrative or Telegram API calls.
 const base = '/api/v1/web/auth';
 
 export class AuthError extends Error {
@@ -38,3 +38,13 @@ export const webAuth = {
   login: (login, password) => request('/login', 'POST', JSON.stringify({ login, password })),
   logout: () => request('/logout', 'POST'),
 };
+
+export async function getWebMenu(signal) {
+  const response = await fetch('/api/v1/web/menu', {
+    signal, credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error',
+  });
+  if (!response.ok) throw new Error('WEB menu unavailable');
+  const menu = await response.json();
+  if (!Array.isArray(menu?.rows)) throw new Error('Invalid WEB menu');
+  return menu;
+}

@@ -121,6 +121,27 @@ test('Docker proxy keeps allowlist, cookie isolation, Origin and security header
   assert.equal(seen.length, 3);
 });
 
+test('menu proxy allows only exact GET with isolated WEB cookies', async t => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push({ method: req.method, url: req.url, cookie: req.headers.cookie, authorization: req.headers.authorization });
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ menu_type: 'Базовое', rows: [] }));
+  });
+  const upstreamPort = await listen(t, upstream);
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
+  const headers = { Cookie: 'esdesk_session=staff; esdesk_web_session=web', Authorization: 'Bearer staff', Origin: `http://127.0.0.1:${port}` };
+  const result = await request(port, '/api/v1/web/menu', headers);
+  assert.equal(result.status, 200);
+  assert.deepEqual(JSON.parse(result.body), { menu_type: 'Базовое', rows: [] });
+  assert.equal(result.headers['cache-control'], 'no-store');
+  assert.equal((await request(port, '/api/v1/web/menu', headers, 'POST')).status, 405);
+  assert.equal((await request(port, '/api/v1/web/menu', { ...headers, Origin: 'http://foreign.example' })).status, 403);
+  assert.equal((await request(port, '/api/v1/web/menu/extra', headers)).status, 404);
+  assert.equal((await request(port, '/api/v1/settings/bot-buttons', headers)).status, 404);
+  assert.deepEqual(seen, [{ method: 'GET', url: '/api/v1/web/menu', cookie: 'esdesk_web_session=web', authorization: undefined }]);
+});
+
 test('CLI selects loopback by default and wildcard only in explicit Docker mode', async () => {
   // Capture the real CLI listen call without opening a port or contacting any API.
   const script = `import http from 'node:http';

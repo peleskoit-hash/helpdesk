@@ -1,0 +1,258 @@
+/* Palette, controls and chat styling ported from agent desk-v2.css. Scoped to the client workspace. */
+body:has(#session-panel:not([hidden])) { background: var(--bg); }
+.shell:has(#session-panel:not([hidden])) { width: 100%; padding: 0; height: 100svh; min-height: 0; }
+.shell:has(#session-panel:not([hidden])) > :is(.brand, footer) { display: none; }
+#session-panel.client-workspace { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr); height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: var(--desk-bg); color: var(--desk-text); font: 14px/1.5 var(--desk-font); --focus: var(--desk-focus); }
+#session-panel * { min-width: 0; }
+#session-panel :is(h1, h2, h3, p) { margin: 0; }
+#session-panel h1 { font-size: 17px; line-height: 1.4; font-weight: 800; letter-spacing: -.3px; }
+#session-panel h2 { font-size: 14px; font-weight: 800; }
+#session-panel h3 { font-size: 15px; }
+#session-panel button { width: auto; margin: 0; min-height: 42px; padding: 9px 12px; background: var(--desk-surface); color: var(--desk-text); border: 1px solid var(--desk-border); border-radius: 12px; font: 700 13px/1.4 var(--desk-font); }
+#session-panel button:hover:not(:disabled) { background: var(--desk-hover); }
+#session-panel button span { margin: 0; }
+#session-panel :is(button, textarea, input):focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 3px; }
+#session-panel button.primary { background: var(--desk-primary); color: var(--desk-on-accent); border-color: var(--desk-focus); }
+#session-panel button.primary:hover:not(:disabled) { filter: brightness(.94); }
+#session-panel button.danger { color: var(--desk-danger); background: var(--desk-danger-bg); border-color: color-mix(in srgb, var(--desk-danger) 35%, var(--desk-border)); }
+#session-panel .client-sidebar { padding: 24px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid var(--desk-border); background-color: var(--desk-surface); overflow-y: auto; scrollbar-width: thin; }
+#session-panel .client-brand { padding: 0 6px 8px; font: 800 30px/1.2 var(--desk-font); letter-spacing: -1px; }
+#session-panel .client-brand > span { color: var(--desk-accent); }
+#session-panel .client-brand small { display: block; font: 500 12px/1.5 var(--desk-font); color: var(--desk-muted); letter-spacing: 0; margin-top: 6px; }
+#session-panel .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#session-panel .section-heading > button { min-width: 42px; font-size: 22px; padding: 2px 9px; }
+#session-panel .demo-caption { color: var(--desk-muted); font-size: 12px; margin: 6px 0 12px; }
+#session-panel .counter { padding: 3px 8px; border-radius: 999px; background: var(--desk-tint); color: var(--desk-on-tint); }
+#session-panel #notifications-toggle, #session-panel #history-open { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 14px; border-radius: 16px; }
+#session-panel #notifications-toggle > span, #session-panel #history-open > span { margin-left: auto; }
+#session-panel .notification-panel { position: fixed; z-index: 5; left: calc((100vw - 1px) / 3); top: 110px; width: min(400px, calc(100vw - 24px)); max-height: 70svh; overflow-y: auto; background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 18px; padding: 18px; box-shadow: 0 12px 36px #0003; }
+#session-panel .notification-item { width: 100%; margin-top: 8px; text-align: left; display: grid; gap: 8px; }
+#session-panel .notification-item small { color: var(--desk-muted); font-weight: 500; }
+#session-panel :is(.bot-panel, .client-info) { border: 1px solid var(--desk-border); border-radius: 16px; padding: 16px; background: var(--desk-soft); }
+#session-panel .bot-panel.waiting { border-color: var(--desk-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--desk-accent) 20%, transparent); }
+#session-panel #bot-hint { color: var(--desk-muted); font-size: 12px; margin: 8px 0 14px; }
+#session-panel .online-dot { width: 7px; height: 7px; flex-shrink: 0; background: var(--desk-success); border-radius: 50%; }
+#session-panel .bot-buttons { display: grid; gap: 8px; }
+#session-panel .bot-button { width: 100%; text-align: left; padding: 13px 12px; border-radius: 10px; animation: menu-appear .18s ease-out; }
+#session-panel .bot-button.blue { color: var(--desk-blue-text); background: var(--desk-blue-bg); }
+#session-panel .bot-button.purple { color: var(--desk-on-tint); background: var(--desk-tint); }
+#session-panel .bot-button.green { color: var(--desk-success); background: var(--desk-success-bg); }
+#session-panel .bot-button.orange { color: var(--desk-task-text); background: var(--desk-task-bg); }
+#session-panel .bot-button.red { color: var(--desk-danger); background: var(--desk-danger-bg); }
+#session-panel .bot-button[aria-pressed="true"] { outline: 2px solid var(--desk-focus); outline-offset: -2px; }
+#session-panel .menu-row { display: grid; gap: 8px; }
+#session-panel .menu-row.columns-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#session-panel .menu-row.columns-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#session-panel .bot-button { overflow-wrap: anywhere; }
+#session-panel .bot-button:hover { border-color: var(--desk-focus); }
+#session-panel dl { margin: 8px 0 0; }
+#session-panel dl > div { padding: 9px 0; border-bottom: 1px solid var(--desk-border); }
+#session-panel dl > div:last-child { border-bottom: 0; }
+#session-panel dt { font-size: 12px; color: var(--desk-muted); }
+#session-panel dd { margin: 3px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+#session-panel .client-bottom { margin-top: auto; }
+#session-panel .client-bottom > button { width: 100%; }
+#session-panel #logout-error { margin-bottom: 8px; }
+#session-panel .client-chat { display: flex; flex-direction: column; min-height: 0; }
+#session-panel .chat-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 20px; background-color: var(--desk-surface); border-bottom: 1px solid var(--desk-border); }
+#session-panel #conversation-label { color: var(--desk-muted); font-size: 12px; margin-top: 4px; }
+#session-panel .chat-actions { display: flex; gap: 8px; }
+#session-panel #appearance-open { justify-self: end; }
+#session-panel .chat-messages { display: flex; flex: 1; flex-direction: column; gap: 22px; overflow-y: auto; min-height: 160px; padding: 28px clamp(20px, 2.2vw, 44px); background-color: var(--desk-soft); scrollbar-width: thin; }
+#session-panel :is(.client-sidebar, .chat-toolbar, .chat-messages) { --grid-base: var(--desk-surface); --grid-line: color-mix(in srgb, var(--desk-grid-ink) 4%, var(--grid-base)); background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px); background-size: 42px 42px; background-attachment: fixed; }
+#session-panel .chat-messages { --grid-base: var(--desk-soft); }
+#session-panel .chat-message { flex-shrink: 0; max-width: 66.67%; width: fit-content; border: 1px solid var(--desk-border); border-radius: 18px; padding: 14px 16px; font-size: 18px; line-height: 1.55; background: var(--desk-surface); color: var(--desk-text); box-shadow: none; }
+/* Client-facing alignment: own messages on the right, support on the left. */
+#session-panel .chat-message.client { align-self: flex-end; border-bottom-right-radius: 6px; }
+#session-panel .chat-message.bot { align-self: flex-start; background: var(--desk-agent-bg); color: #302c40; border-color: transparent; border-bottom-left-radius: 6px; }
+#session-panel .chat-message.system { align-self: center; max-width: 90%; background: var(--desk-tint); color: var(--desk-text); border-color: var(--desk-accent); font-size: 15px; padding: 12px 16px; }
+#session-panel .message-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 14px; margin-bottom: 6px; }
+#session-panel .message-header span { opacity: .8; }
+#session-panel .chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#session-panel .demo-composer { margin: 0; padding: 16px 20px; border-top: 1px solid var(--desk-border); background: var(--desk-surface); }
+#session-panel .demo-composer label { font-size: 12px; color: var(--desk-muted); }
+#session-panel .composer-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; }
+#session-panel .demo-composer .composer-enter-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--desk-muted); white-space: nowrap; cursor: pointer; }
+#session-panel .composer-enter-toggle input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--desk-accent); }
+#session-panel .composer-hotkey-hint { font-size: 12px; color: var(--desk-muted); white-space: nowrap; }
+#session-panel textarea { resize: vertical; display: block; width: 100%; min-height: 96px; max-height: 28svh; padding: 14px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-surface); color: var(--desk-text); font: 15px/1.5 var(--desk-font); }
+#session-panel textarea::placeholder { color: var(--desk-muted); }
+#session-panel textarea:disabled { background: var(--desk-soft); opacity: .65; }
+#session-panel .composer-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+#session-panel #composer-hint { color: var(--desk-muted); font-size: 11px; flex: 1; }
+#session-panel dialog { width: min(900px, calc(100vw - 24px)); max-height: calc(100svh - 32px); overflow-y: auto; padding: 24px; border: 1px solid var(--desk-border); border-radius: 18px; background: var(--desk-surface); color: var(--desk-text); font: 14px/1.5 var(--desk-font); box-shadow: 0 12px 36px #0003; }
+#session-panel dialog::backdrop { background: #171b2880; }
+#session-panel .history-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
+#session-panel #history-list { display: grid; align-content: start; gap: 8px; }
+#session-panel #history-list button { white-space: pre-line; text-align: left; line-height: 1.8; }
+#session-panel #history-list button[aria-pressed="true"] { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-focus); }
+#session-panel #history-detail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--desk-soft); }
+#session-panel #history-detail .chat-message { max-width: 95%; font-size: 13px; }
+#session-panel #appearanceMenu { inset: 0; margin: auto; }
+#session-panel #appearance-reset { margin-top: 20px; }
+@keyframes menu-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 1150px) { #session-panel .chat-toolbar { grid-template-columns: 1fr auto; } #session-panel .chat-actions { grid-row: 2; grid-column: 1 / -1; justify-content: center; } }
+@media (max-width: 700px) {
+  .shell:has(#session-panel:not([hidden])) { height: auto; min-height: 100svh; }
+  #session-panel.client-workspace { display: flex; flex-direction: column; height: auto; }
+  #session-panel .client-sidebar { padding: 16px; gap: 12px; overflow: visible; border-right: 0; }
+  #session-panel .client-brand { font-size: 24px; }
+  #session-panel .client-info { padding: 12px 16px; }
+  #session-panel dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  #session-panel .client-bottom { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #session-panel .client-bottom > button { width: auto; margin-left: auto; }
+  #session-panel .client-bottom .demo-caption { flex: 1; margin: 0; }
+  #session-panel .client-chat { min-height: 76svh; }
+  #session-panel .chat-toolbar { padding: 16px; gap: 14px 8px; }
+  #session-panel .chat-actions { width: 100%; }
+  #session-panel .chat-actions > button { flex: 1; }
+  #session-panel .chat-messages { min-height: 320px; max-height: 65svh; padding: 20px 16px; }
+  #session-panel .chat-message { max-width: 94%; padding: 12px 14px; font-size: 14px; }
+  #session-panel .demo-composer { padding: 16px; }
+  #session-panel .composer-actions { flex-wrap: wrap; gap: 10px; }
+  #session-panel #composer-hint { order: 3; flex-basis: 100%; }
+  #session-panel #demo-send { margin-left: auto; }
+  #session-panel .notification-panel { top: 120px; left: 12px; }
+  #session-panel .history-layout { grid-template-columns: minmax(0, 1fr); }
+  #session-panel dialog { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { #session-panel .bot-button { animation: none; } }
+@font-face { font-family: Manrope; src: url("/Manrope-Variable.ttf") format("truetype"); font-weight: 200 800; font-display: swap; }
+#session-panel {
+  color-scheme: light;
+  --desk-grid-ink: #000;
+  --desk-bg: #f3f1f7;
+  --desk-surface: #fffefd;
+  --desk-soft: #f6f4f9;
+  --desk-hover: #eeebf5;
+  --desk-border: #e4e0ec;
+  --desk-text: #302c40;
+  --desk-muted: #746e84;
+  --desk-accent: #7760a8;
+  --desk-tint: #ece5f6;
+  --desk-on-tint: #624a91;
+  --desk-status-bg: #ece5f6;
+  --desk-status-text: #624a91;
+  --desk-status-border: #7760a8;
+  --desk-danger: #b13f59;
+  --desk-success: #35765d;
+  --desk-success-bg: #eaf4ef;
+  --desk-danger-bg: #faeaf0;
+  --desk-warning-bg: #f9f1e3;
+  --desk-warning-text: #87652b;
+  --desk-blue-bg: #eaf0fa;
+  --desk-agent-bg: #c9b1f4;
+  --desk-blue-text: #486b9a;
+  --desk-counter-blue: #1667c8;
+  --desk-task-bg: #ffedd5;
+  --desk-task-text: #895221;
+  --desk-special-bg: #ccfbf1;
+  --desk-special-text: #21685f;
+  --desk-shadow: 0 3px 16px #33204d05;
+  --desk-font: Manrope, "Segoe UI", Tahoma, sans-serif;
+}
+
+#session-panel[data-theme="dark"] {
+  color-scheme: dark;
+  --desk-grid-ink: #fff;
+  --desk-bg: #171b28;
+  --desk-surface: #202535;
+  --desk-soft: #262b3d;
+  --desk-hover: #30354b;
+  --desk-border: #363b50;
+  --desk-text: #edeaf5;
+  --desk-muted: #ada9bf;
+  --desk-accent: #b6a0e2;
+  --desk-tint: #3c3354;
+  --desk-on-tint: #dac7fa;
+  --desk-status-bg: #3c3354;
+  --desk-status-text: #dac7fa;
+  --desk-status-border: #b6a0e2;
+  --desk-danger: #f39bb1;
+  --desk-success: #9dd3ba;
+  --desk-success-bg: #253c38;
+  --desk-danger-bg: #462e40;
+  --desk-warning-bg: #40382e;
+  --desk-warning-text: #e7c694;
+  --desk-blue-bg: #2a354e;
+  --desk-agent-bg: #c8aff6; /* +7% saturation, preserving the light variant's HSL lightness. */
+  --desk-blue-text: #b0c9ef;
+  --desk-counter-blue: #8ecbff;
+  --desk-task-bg: #49392e;
+  --desk-task-text: #f2c08f;
+  --desk-special-bg: #243f3e;
+  --desk-special-text: #a0e5da;
+  --desk-shadow: none;
+}
+
+#session-panel #appearanceMenu.appearance-menu button {
+  transition-property: transform, box-shadow;
+}
+#session-panel #appearanceMenu.appearance-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 720px;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--desk-border) 75%, var(--desk-muted));
+  border-radius: 18px;
+  background: var(--desk-soft);
+  color: var(--desk-text);
+  font: 600 14px/1.5 var(--desk-font);
+  box-shadow: 0 12px 36px #00000033, 0 2px 8px #00000014;
+}
+#session-panel #appearanceMenu.appearance-menu .appearance-themes { display: flex; gap: 12px; margin-bottom: 20px; }
+#session-panel #appearanceMenu.appearance-menu .appearance-themes button {
+  flex: 1;
+  height: 52px;
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  background: var(--desk-soft);
+  color: var(--desk-text);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--desk-border), 0 5px 8px #00000012;
+}
+#session-panel #appearanceMenu.appearance-menu .appearance-themes button[aria-pressed="true"] {
+  background: var(--desk-tint);
+  color: var(--desk-on-tint);
+  border-color: var(--desk-focus);
+  box-shadow: inset 0 2px 5px #00000035;
+}
+#session-panel #appearanceMenu.appearance-menu .appearance-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+#session-panel #appearanceMenu.appearance-menu fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+#session-panel #appearanceMenu.appearance-menu legend { margin-bottom: 14px; padding: 0; font-weight: 800; }
+@media (max-width: 600px) {
+  #session-panel #appearanceMenu.appearance-menu .appearance-controls { grid-template-columns: minmax(0, 1fr); }
+}
+#session-panel #appearanceMenu.appearance-menu label { display: block; margin-bottom: 6px; font: inherit; }
+#session-panel #appearanceMenu.appearance-menu input[type="range"] {
+  --appearance-track: linear-gradient(to right, hsl(var(--appearance-hue, 259) 0% 55%), hsl(var(--appearance-hue, 259) 85% 55%));
+  display: block; appearance: none; -webkit-appearance: none;
+  width: 100%; height: 28px; min-height: 28px; margin: 0; padding: 0;
+  background: transparent; cursor: pointer;
+}
+#session-panel #appearanceMenu.appearance-menu input.appearance-hue {
+  --appearance-track: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+#session-panel #appearanceMenu.appearance-menu input[type="range"]::-webkit-slider-runnable-track {
+  height: 10px; border: 0; border-radius: 5px; background: var(--appearance-track);
+}
+#session-panel #appearanceMenu.appearance-menu input[type="range"]::-moz-range-track {
+  height: 10px; border: 0; border-radius: 5px; background: var(--appearance-track);
+}
+#session-panel #appearanceMenu.appearance-menu input[type="range"]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none; box-sizing: border-box; margin-top: -6px;
+  width: 22px; height: 22px; border: 2px solid var(--desk-text); border-radius: 50%; background: var(--desk-surface);
+}
+#session-panel #appearanceMenu.appearance-menu input[type="range"]::-moz-range-thumb {
+  box-sizing: border-box; width: 22px; height: 22px; border: 2px solid var(--desk-text); border-radius: 50%; background: var(--desk-surface);
+}
+#session-panel #appearanceMenu.appearance-menu input[type="range"] + label { margin-top: 12px; }
+#session-panel #appearanceMenu.appearance-menu :is(button, input):focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 4px; }
+#session-panel #appearanceMenu.appearance-menu .appearance-status { font-size: 12px; color: var(--desk-danger); }
+#session-panel #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
+
+#session-panel #appearanceMenu.appearance-menu { inset: 0; margin: auto; }

@@ -7,9 +7,14 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
+  ['/appearance.js', ['appearance.js', 'text/javascript; charset=utf-8']],
+  ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
+  ['/Manrope-Variable.ttf', ['Manrope-Variable.ttf', 'font/ttf']],
   ['/api.js', ['api.js', 'text/javascript; charset=utf-8']],
 ]);
 const routes = new Map([
+  ['/api/v1/web/menu', 'GET'],
   ['/api/v1/web/auth/login', 'POST'],
   ['/api/v1/web/auth/logout', 'POST'],
   ['/api/v1/web/auth/me', 'GET'],

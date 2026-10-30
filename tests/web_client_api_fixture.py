@@ -13,8 +13,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
-from api.app.models import Client, ClientProfile, Company, TelegramContact, WebClientSession, WebLoginLimit
+from api.app.models import BotButtonSetting, Client, ClientProfile, Company, TelegramContact, WebClientSession, WebLoginLimit
 from api.app.routers.web_auth import router
+from api.app.routers.web_menu import router as menu_router
 from api.app.services import web_auth
 
 
@@ -38,10 +39,13 @@ def run():
                              web_password_hash=hash_password("Synthetic-Web-A1!"), web_credentials_version=1))
         db.add(TelegramContact(id="synthetic-contact", company_id="synthetic-company", client_id="synthetic-client",
                                external_user_id="123", external_chat_id="123"))
+        db.add(BotButtonSetting(id='synthetic-button', button_key='synthetic-button', menu_type='Базовое',
+                                workflow_type='ticket', button_path='Synthetic', button_label='Synthetic menu'))
         db.commit()
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="synthetic-test-only", session_cookie="esdesk_session")
     app.include_router(router)
+    app.include_router(menu_router)
     requests = []
 
     def get_test_db():

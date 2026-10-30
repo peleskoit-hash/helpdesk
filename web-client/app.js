@@ -1,4 +1,9 @@
 import { AuthError, webAuth } from './api.js';
+import { mountWorkspace } from './workspace.js';
+import { setupAppearance } from './appearance.js';
+
+const workspace = mountWorkspace(document.getElementById('session-panel'));
+setupAppearance(document.getElementById('session-panel'));
 
 const byId = id => document.getElementById(id);
 const form = byId('login-form');
@@ -11,7 +16,12 @@ let retryUntil = 0;
 let retryTimer;
 
 function showPanel(name, focus = true) {
+  if (name !== 'session') {
+    if (!document.getElementById('session-panel').hidden) workspace.reset();
+    for (const dialog of document.querySelectorAll('#session-panel dialog[open]')) dialog.close();
+  }
   for (const panel of document.querySelectorAll('.card')) panel.hidden = panel.id !== `${name}-panel`;
+  if (name === 'session') workspace.loadMenu();
   if (focus) byId(`${name}-panel`).querySelector('h1')?.focus();
 }
 

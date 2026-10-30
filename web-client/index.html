@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>ES DESK — WEB-поддержка</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/workspace.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -43,14 +44,7 @@
       </form>
     </section>
 
-    <section class="card success" id="session-panel" aria-labelledby="session-title" hidden>
-      <span class="status-mark success-mark" aria-hidden="true">✓</span>
-      <p class="eyebrow">WEB-поддержка ES DESK</p>
-      <h1 id="session-title" tabindex="-1">Вход выполнен</h1>
-      <p class="description">Интерфейс обращений находится в разработке</p>
-      <p class="message" id="logout-error" role="alert" hidden></p>
-      <button type="button" class="secondary" id="logout-button">Выйти</button>
-    </section>
+    <section class="card client-workspace" id="session-panel" aria-labelledby="session-title" hidden></section>
 
     <section class="card" id="unavailable-panel" aria-labelledby="unavailable-title" hidden>
       <span class="status-mark" aria-hidden="true">···</span>
