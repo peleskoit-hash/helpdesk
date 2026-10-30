@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_env: Literal["dev", "prod"] = "dev"
     database_url: str = "postgresql+psycopg2://helpdesk:helpdesk@localhost:5432/helpdesk"
     app_public_base_url: str | None = None
+    web_public_base_url: str | None = None
     app_timezone: str = "Europe/Moscow"
     telegram_bot_token: str | None = None
     employee_telegram_bot_token: str | None = None

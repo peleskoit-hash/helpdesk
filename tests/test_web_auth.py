@@ -170,7 +170,7 @@ def test_invalid_credentials_are_indistinguishable(case, reason):
     response = login(case, **values)
     assert response.status_code == 401
     assert response.json()["detail"]["error"]["code"] == "web_invalid_credentials"
-    assert response.headers["retry-after"] == "30"
+    assert "retry-after" not in response.headers
     assert auth.COOKIE_NAME not in case.http.cookies
     with Session(case.engine) as db:
         assert db.scalar(select(WebClientSession)) is None
@@ -211,7 +211,8 @@ def test_staff_and_web_sessions_are_independent(case):
 def test_session_and_limit_survive_engine_and_app_restart(case):
     login(case)
     token = case.http.cookies[auth.COOKIE_NAME]
-    login(case, login="unknown")
+    for _ in range(4):
+        assert login(case, login="unknown").status_code == 401
     case.engine.dispose()
     with TestClient(make_app(case.engine)) as fresh:
         fresh.cookies.set(auth.COOKIE_NAME, token, path=auth.COOKIE_PATH)
@@ -315,31 +316,46 @@ def test_every_throttle_step_and_no_password_check_while_blocked(case, monkeypat
         return real_verify(*args)
 
     monkeypatch.setattr(auth, "verify_password", verify)
-    for attempt in range(1, 12):
-        delay = 30 * 2 ** min(attempt - 1, 8)
+    delays = [0, 0, 0, 30, 60, 120, 240, 480, 960, 1920, 3840, 7680, 7680, 7680]
+    for attempt, delay in enumerate(delays, start=1):
         response = login(case, password="wrong")
-        assert response.status_code == 401 and response.headers["retry-after"] == str(delay)
+        assert response.status_code == 401
+        assert response.headers.get("retry-after") == (str(delay) if delay else None)
         assert len(calls) == attempt
-        blocked = login(case)
-        assert blocked.status_code == 429 and blocked.headers["retry-after"] == str(delay)
-        assert len(calls) == attempt
-        case.clock[0] += timedelta(seconds=delay)
+        with Session(case.engine) as db:
+            limit = db.scalar(select(WebLoginLimit))
+            assert limit.failure_count == min(attempt, 12)
+            assert (limit.blocked_until is None) == (delay == 0)
+        if delay:
+            blocked = login(case)
+            assert blocked.status_code == 429 and blocked.headers["retry-after"] == str(delay)
+            assert len(calls) == attempt
+            case.clock[0] += timedelta(seconds=delay)
     assert login(case).status_code == 200
     with Session(case.engine) as db:
         limit = db.scalar(select(WebLoginLimit))
         assert limit.failure_count == 0 and limit.blocked_until is None and limit.last_failure_at is None
-    assert login(case, password="wrong").headers["retry-after"] == "30"
+    assert "retry-after" not in login(case, password="wrong").headers
 
 
-@pytest.mark.parametrize("elapsed,expected", [(89, "60"), (90, "30"), (91, "30")])
-def test_failure_counter_resets_after_three_periods(case, elapsed, expected):
-    assert login(case, password="wrong").status_code == 401
+@pytest.mark.parametrize("failures", [1, 2, 3, 4])
+@pytest.mark.parametrize("elapsed", [89, 90, 91])
+def test_failure_counter_resets_after_three_periods(case, failures, elapsed):
+    for _ in range(failures):
+        assert login(case, password="wrong").status_code == 401
     case.clock[0] += timedelta(seconds=elapsed)
-    assert login(case, password="wrong").headers["retry-after"] == expected
+    response = login(case, password="wrong")
+    assert response.status_code == 401
+    count = failures + 1 if elapsed < 90 else 1
+    expected = {4: "30", 5: "60"}.get(count)
+    assert response.headers.get("retry-after") == expected
+    with Session(case.engine) as db:
+        assert db.scalar(select(WebLoginLimit)).failure_count == count
 
 
 def test_limit_key_casefold_and_untrusted_forwarded_for(case):
-    login(case, password="wrong")
+    for _ in range(4):
+        assert login(case, password="wrong").status_code == 401
     response = case.http.post(LOGIN, json={"login": "CLIENT.LOGIN", "password": PASSWORD},
                               headers={**ORIGIN, "X-Forwarded-For": "203.0.113.7"})
     assert response.status_code == 429
@@ -355,10 +371,12 @@ def test_concurrent_first_failures_are_serialized(case):
             return http.post(LOGIN, json={"login": "client.login", "password": "wrong"}, headers=ORIGIN).status_code
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(attempt, range(4)))
-    assert sorted(results) == [401, 429, 429, 429]
+        results = list(pool.map(attempt, range(7)))
+    assert sorted(results) == [401, 401, 401, 401, 429, 429, 429]
     with Session(case.engine) as db:
-        assert db.scalar(select(WebLoginLimit)).failure_count == 1
+        limit = db.scalar(select(WebLoginLimit))
+        assert limit.failure_count == 4
+        assert auth.as_utc(limit.blocked_until) == case.clock[0] + timedelta(seconds=30)
 
 
 def test_concurrent_successes_issue_independent_sessions(case):
@@ -376,13 +394,17 @@ def test_concurrent_successes_issue_independent_sessions(case):
         assert db.scalar(select(WebLoginLimit)).failure_count == 0
 
 
-@pytest.mark.parametrize("elapsed,expected", [(179, "120"), (180, "30")])
+@pytest.mark.parametrize("elapsed,expected", [(179, "120"), (180, None)])
 def test_reset_uses_last_assigned_delay(case, elapsed, expected):
+    for _ in range(3):
+        assert "retry-after" not in login(case, password="wrong").headers
     assert login(case, password="wrong").headers["retry-after"] == "30"
     case.clock[0] += timedelta(seconds=30)
     assert login(case, password="wrong").headers["retry-after"] == "60"
     case.clock[0] += timedelta(seconds=elapsed)
-    assert login(case, password="wrong").headers["retry-after"] == expected
+    response = login(case, password="wrong")
+    assert response.status_code == 401
+    assert response.headers.get("retry-after") == expected
 
 
 def test_invalid_cookie_and_cookie_swapping(case):

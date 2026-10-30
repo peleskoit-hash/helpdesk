@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ES DESK — WEB-поддержка</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <p class="brand-name">ES DESK<span class="brand-dot" aria-hidden="true"></span></p>
+      <p class="brand-caption">WEB-поддержка</p>
+    </header>
+
+    <section class="card" id="loading-panel" aria-live="polite" aria-busy="true">
+      <span class="status-mark" aria-hidden="true">···</span>
+      <h1>Проверяем сессию</h1>
+      <p class="description">Это займёт всего несколько секунд.</p>
+    </section>
+
+    <section class="card" id="login-panel" aria-labelledby="login-title" hidden>
+      <p class="eyebrow">Личный доступ</p>
+      <h1 id="login-title" tabindex="-1">Вход в поддержку</h1>
+      <p class="description">Рады помочь. Войдите, чтобы продолжить.</p>
+      <form id="login-form" novalidate>
+        <fieldset id="login-fields">
+          <div class="field">
+            <label for="login">Логин</label>
+            <input id="login" name="login" type="text" autocomplete="username" autocapitalize="none"
+                   spellcheck="false" maxlength="255" required aria-describedby="login-error">
+          </div>
+          <div class="field">
+            <label for="password">Пароль</label>
+            <input id="password" name="password" type="password" autocomplete="current-password"
+                   maxlength="1024" required aria-describedby="login-error">
+          </div>
+        </fieldset>
+        <p class="message" id="login-error" role="alert" hidden></p>
+        <button type="submit" id="login-button">Войти <span aria-hidden="true">→</span></button>
+      </form>
+    </section>
+
+    <section class="card success" id="session-panel" aria-labelledby="session-title" hidden>
+      <span class="status-mark success-mark" aria-hidden="true">✓</span>
+      <p class="eyebrow">WEB-поддержка ES DESK</p>
+      <h1 id="session-title" tabindex="-1">Вход выполнен</h1>
+      <p class="description">Интерфейс обращений находится в разработке</p>
+      <p class="message" id="logout-error" role="alert" hidden></p>
+      <button type="button" class="secondary" id="logout-button">Выйти</button>
+    </section>
+
+    <section class="card" id="unavailable-panel" aria-labelledby="unavailable-title" hidden>
+      <span class="status-mark" aria-hidden="true">···</span>
+      <h1 id="unavailable-title" tabindex="-1">Не удалось подключиться</h1>
+      <p class="description">Сервис временно недоступен. Попробуйте ещё раз чуть позже.</p>
+      <button type="button" class="secondary" id="retry-button">Повторить</button>
+    </section>
+
+    <footer>Поддержка рядом, когда нужна.</footer>
+    <noscript>Для входа включите JavaScript в браузере.</noscript>
+  </main>
+</body>
+</html>

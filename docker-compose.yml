@@ -45,6 +45,22 @@ services:
       timeout: 5s
       retries: 5
 
+  web_client:
+    build:
+      context: ./web-client
+    container_name: helpdesk_web_client
+    restart: unless-stopped
+    environment:
+      WEB_DOCKER_MODE: "true"
+      WEB_CLIENT_PORT: "5173"
+      WEB_CLIENT_ORIGIN: http://127.0.0.1:5173
+      WEB_API_ORIGIN: http://api:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   pg_data:
     name: 2026-04-23-https-helpdeskeddy-ru_pg_data

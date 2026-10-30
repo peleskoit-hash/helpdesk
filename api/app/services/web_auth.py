@@ -70,7 +70,7 @@ def require_web_csrf(request: Request):
     """
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
-    expected = _origin(settings.app_public_base_url or str(request.base_url))
+    expected = _origin(settings.web_public_base_url or settings.app_public_base_url or str(request.base_url))
     if (request.headers.get("sec-fetch-site") == "cross-site" or expected is None
             or _origin(request.headers.get("origin", "")) != expected):
         fail(403, "web_csrf_failed")
@@ -107,7 +107,7 @@ def login(db: Session, login_value: str, password: str, source_ip: str):
         db.rollback()
         fail(429, "web_login_limited", {"Retry-After": str(retry)})
     if limit.last_failure_at:
-        delay = timedelta(seconds=30 * 2 ** min(limit.failure_count - 1, 8))
+        delay = timedelta(seconds=30 * 2 ** max(limit.failure_count - 4, 0))
         if now >= as_utc(limit.last_failure_at) + 3 * delay:
             limit.failure_count = 0
     profile = db.scalar(select(ClientProfile).where(ClientProfile.web_login_normalized == normalized))
@@ -115,12 +115,12 @@ def login(db: Session, login_value: str, password: str, source_ip: str):
     eligible = eligible_profile(db, profile)
     valid_password = verify_password(password, profile.web_password_hash if eligible else _DUMMY_HASH)
     if not eligible or not valid_password:
-        limit.failure_count = min(limit.failure_count + 1, 9)
-        delay_seconds = 30 * 2 ** (limit.failure_count - 1)
+        limit.failure_count = min(limit.failure_count + 1, 12)
+        delay_seconds = 30 * 2 ** (limit.failure_count - 4) if limit.failure_count >= 4 else 0
         limit.last_failure_at = now
-        limit.blocked_until = now + timedelta(seconds=delay_seconds)
+        limit.blocked_until = now + timedelta(seconds=delay_seconds) if delay_seconds else None
         db.commit()
-        fail(401, "web_invalid_credentials", {"Retry-After": str(delay_seconds)})
+        fail(401, "web_invalid_credentials", {"Retry-After": str(delay_seconds)} if delay_seconds else None)
     limit.failure_count = 0
     limit.last_failure_at = limit.blocked_until = None
     token = secrets.token_urlsafe(32)

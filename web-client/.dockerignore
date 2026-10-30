@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!.dockerignore
+!dev-server.mjs
+!index.html
+!styles.css
+!app.js
+!api.js
