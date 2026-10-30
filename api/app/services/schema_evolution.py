@@ -1847,6 +1847,8 @@ def ensure_ticket_attachment_table() -> None:
                 conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_archive_info_message_id VARCHAR(100)"))
             if "telegram_media_group_id" not in existing:
                 conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_media_group_id VARCHAR(255)"))
+            if "telegram_upload_state_json" not in {row["name"] for row in conn.execute(text("PRAGMA table_info(ticket_attachments)")).mappings()}:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_upload_state_json JSON"))
             return
 
         conn.execute(
@@ -1895,6 +1897,7 @@ def ensure_ticket_attachment_table() -> None:
         if "telegram_media_group_id" not in existing:
             conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN telegram_media_group_id VARCHAR(255)"))
 
+        conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN IF NOT EXISTS telegram_upload_state_json JSON"))
 
 def ensure_ticket_attachment_preload_table() -> None:
     with engine.begin() as conn:
@@ -1926,6 +1929,8 @@ def ensure_ticket_attachment_preload_table() -> None:
                 )
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON ticket_attachment_preloads(ticket_id, user_id)"))
+            if "telegram_upload_state_json" not in {row["name"] for row in conn.execute(text("PRAGMA table_info(ticket_attachment_preloads)")).mappings()}:
+                conn.execute(text("ALTER TABLE ticket_attachment_preloads ADD COLUMN telegram_upload_state_json JSON"))
             return
 
         conn.execute(
@@ -1954,6 +1959,9 @@ def ensure_ticket_attachment_preload_table() -> None:
             )
         )
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON ticket_attachment_preloads(ticket_id, user_id)"))
+
+
+        conn.execute(text("ALTER TABLE ticket_attachment_preloads ADD COLUMN IF NOT EXISTS telegram_upload_state_json JSON"))
 
 
 def ensure_quick_reply_tables() -> None:

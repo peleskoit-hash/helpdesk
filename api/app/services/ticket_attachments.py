@@ -4,6 +4,8 @@ from datetime import datetime
 from mimetypes import guess_extension
 from pathlib import Path
 import uuid
+import time
+import hashlib
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import asc, select
@@ -97,17 +99,30 @@ def _store_upload_file(upload: UploadFile) -> tuple[Path, int, str, str]:
     return file_path, len(content) if content is not None else 0, safe_filename, mime_type
 
 
+def _stream_sha256(stream):
+    position = stream.tell()
+    digest = hashlib.sha256()
+    try:
+        stream.seek(0)
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        stream.seek(position)
+
+
 def _save_attachment_preload(
     db: Session,
     ticket: Ticket,
     user_id: str,
     upload: UploadFile,
     archive_group_id: str | None = None,
+    preload_id: str | None = None,
 ) -> TicketAttachmentPreload:
     file_path, content_size, safe_filename, mime_type = _store_upload_file(upload)
     normalized_archive_group_id = archive_group_id.strip() if isinstance(archive_group_id, str) else None
     preload = TicketAttachmentPreload(
-        id=str(uuid.uuid4()),
+        id=preload_id or str(uuid.uuid4()),
         ticket_id=ticket.id,
         user_id=user_id,
         original_filename=safe_filename,
@@ -118,6 +133,7 @@ def _save_attachment_preload(
         telegram_file_unique_id=None,
         archive_group_id=normalized_archive_group_id or None,
         status="uploading",
+        telegram_upload_state_json={"queued_at": time.time(), "content_sha256": _stream_sha256(upload.file)},
         final_attachment_id=None,
         reply_to_message_id=None,
         prefer_caption=False,

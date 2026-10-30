@@ -288,7 +288,9 @@ def _agent_answer_with_attachment_list(db: Session, agent_message: TicketMessage
     ).scalars().all()
     if not attachments:
         return agent_text
-    file_lines = [telegram_html_code(_attachment_completion_label(attachment)) for attachment in attachments]
+    file_lines = [telegram_html_code(_attachment_completion_label(attachment)) for attachment in attachments if attachment.source != "sticker"]
+    if not file_lines:
+        return agent_text
     return f"{telegram_html_text(agent_text)}\n\nФайлы:\n" + "\n".join(file_lines)
 
 
@@ -718,6 +720,9 @@ def _close_group_child_if_ready(
                     telegram_file_id=attachment.telegram_file_id,
                     telegram_file_unique_id=attachment.telegram_file_unique_id,
                     telegram_file_path=attachment.telegram_file_path,
+                    telegram_archive_message_id=attachment.telegram_archive_message_id,
+                    telegram_delivery_status=attachment.telegram_delivery_status,
+                    telegram_upload_state_json={"receipt": (attachment.telegram_upload_state_json or {}).get("receipt")},
                     telegram_message_id=attachment.telegram_message_id,
                     original_filename=attachment.original_filename,
                     mime_type=attachment.mime_type,

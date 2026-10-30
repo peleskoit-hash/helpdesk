@@ -321,7 +321,8 @@ def test_text_channel_edit_requires_telegram_id_only_for_telegram(text_channel_c
     ("ticket", "raw"), ("ticket", "ready"), ("ticket", "uploading"),
     ("task", "ready"), ("task", "raw"), ("group_child", "raw"),
 ])
-def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path, channel, workflow, transport):
+@pytest.mark.parametrize("filename,mime", [("result.pdf","application/pdf"), ("photo.jpg","image/jpeg"), ("photo.png","image/png"), ("image.webp","image/webp")])
+def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path, channel, workflow, transport, filename, mime):
     from api.app.services import ticket_attachments
 
     engine, SessionFactory, db = _session_bundle()
@@ -376,7 +377,7 @@ def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path,
         monkeypatch.setattr(tickets_router, "_telegram_contact_for_client", lambda *args:
                             pytest.fail("WEB must not look up the client's Telegram contact"))
 
-    upload = SimpleNamespace(filename="result.pdf", file=io.BytesIO(b"pdf"), content_type="application/pdf")
+    upload = SimpleNamespace(filename=filename, file=io.BytesIO(b"original bytes"), content_type=mime)
     preload_id = None
     if transport == "raw":
         request = _MultipartRequest(_FormData(text="Final answer", files=[upload], single_attachment=True))
@@ -1359,10 +1360,10 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261029-ticket-history-v1"
+    app_shell_version = "20261029-staging-recovery-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
     ticket_message_view_version = "20261027-dialogs-complete-v3"
-    ticket_static_version = "20261021-chat-file-input"
+    ticket_static_version = "20261029-staging-recovery-v1"
     ticket_attachments_template_version = "20261029-image-actions-v1"
     ticket_attachments_shell_version = "20261029-image-actions-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
@@ -2096,7 +2097,7 @@ console.log(JSON.stringify({{
     assert ["preloaded_attachment_id", "preload-1"] in payload["replyCalls"][0]
 
 
-def test_transport_selector_uses_preload_for_ready_and_uploading_and_raw_for_failures():
+def test_transport_selector_blocks_failed_instead_of_implicitly_resending_raw():
     repo_root = Path(__file__).resolve().parents[1]
     composer_path = repo_root / "api" / "app" / "static" / "ticket_composer.js"
     script = f"""
@@ -2152,8 +2153,8 @@ const failed = global.TicketComposer.resolveAttachmentTransport(failedCtx, file)
 const staleFailed = global.TicketComposer.resolveAttachmentTransport(staleFailedCtx, file);
 const readyForm = global.TicketComposer.buildReplyFormData(readyCtx, file, 0, 1, "Hello", null, ready);
 const uploadingForm = global.TicketComposer.buildReplyFormData(uploadingCtx, file, 0, 1, "Hello", null, uploading);
-const failedForm = global.TicketComposer.buildReplyFormData(failedCtx, file, 0, 1, "Hello", null, failed);
-const staleFailedForm = global.TicketComposer.buildReplyFormData(staleFailedCtx, file, 0, 1, "Hello", null, staleFailed);
+let failedError; try {{ global.TicketComposer.buildReplyFormData(failedCtx, file, 0, 1, "Hello", null, failed); }} catch (error) {{ failedError = error.message; }}
+let staleFailedError; try {{ global.TicketComposer.buildReplyFormData(staleFailedCtx, file, 0, 1, "Hello", null, staleFailed); }} catch (error) {{ staleFailedError = error.message; }}
 const formEntries = (formData) => Array.from(formData.entries()).map(([key, value]) => [key, typeof value === "string" ? value : value.name || "<binary>"]);
 console.log(JSON.stringify({{
   ready,
@@ -2162,8 +2163,7 @@ console.log(JSON.stringify({{
   staleFailed,
   readyEntries: formEntries(readyForm),
   uploadingEntries: formEntries(uploadingForm),
-  failedEntries: formEntries(failedForm),
-  staleFailedEntries: formEntries(staleFailedForm),
+  failedError, staleFailedError,
 }}));
 """
     result = subprocess.run(
@@ -2185,22 +2185,13 @@ console.log(JSON.stringify({{
         "preloadId": "preload-uploading",
         "preloadStatus": "uploading",
     }
-    assert payload["failed"] == {
-        "mode": "raw",
-        "reason": "preload_failed",
-    }
-    assert payload["staleFailed"] == {
-        "mode": "raw",
-        "reason": "preload_failed",
-    }
+    assert payload["failed"]["mode"] == "error"
+    assert payload["staleFailed"]["mode"] == "error"
+    assert payload["failedError"] and payload["staleFailedError"]
     assert ["preloaded_attachment_id", "preload-ready"] in payload["readyEntries"]
     assert not any(entry[0] == "files" for entry in payload["readyEntries"])
     assert ["preloaded_attachment_id", "preload-uploading"] in payload["uploadingEntries"]
     assert not any(entry[0] == "files" for entry in payload["uploadingEntries"])
-    assert any(entry[0] == "files" and entry[1] == "report.pdf" for entry in payload["failedEntries"])
-    assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["failedEntries"])
-    assert any(entry[0] == "files" and entry[1] == "report.pdf" for entry in payload["staleFailedEntries"])
-    assert not any(entry[0] == "preloaded_attachment_id" for entry in payload["staleFailedEntries"])
 
 
 def test_task_transport_selector_accepts_uploading_preload_without_waiting_for_telegram():
@@ -2529,7 +2520,7 @@ console.log(JSON.stringify({{ transport, buildError }}));
     payload = json.loads(result.stdout)
 
     assert payload["transport"]["mode"] == "error"
-    assert payload["transport"]["reason"] == "virtual_preload_failed"
+    assert payload["transport"]["reason"] == "preload_failed"
     assert payload["transport"]["message"]
     assert payload["buildError"] == payload["transport"]["message"]
 
@@ -2943,8 +2934,8 @@ console.log(JSON.stringify({{
     )
     payload = json.loads(result.stdout)
 
-    assert payload["selectedCount"] == 3
-    assert payload["renderedCount"] == 3
+    assert payload["selectedCount"] == 4
+    assert payload["renderedCount"] == 4
     assert payload["summary"] == [
         {
             "name": "local.bin",
@@ -2970,6 +2961,7 @@ console.log(JSON.stringify({{
             "status": "ready",
             "pollTimer": None,
         },
+        {"name": "failed.pdf", "virtual": True, "preloadId": "preload-failed", "stage": "failed", "status": "failed", "pollTimer": None},
     ]
 
 
@@ -3174,7 +3166,7 @@ def test_staging_binary_upload_limit_releases_after_exception(monkeypatch, tmp_p
 
     assert counters["max_active"] == 1
     assert counters["active"] == 0
-    assert remaining_statuses == ["ready", "ready"]
+    assert remaining_statuses == ["failed", "ready", "ready"]
 
 
 def test_terminal_staging_failure_clears_pending_reservation(monkeypatch, tmp_path):
@@ -4219,7 +4211,7 @@ def test_preload_get_returns_current_status(tmp_path):
         user=SimpleNamespace(id="admin-1", role="admin"),
     )
 
-    assert result == {"id": preload.id, "status": "ready"}
+    assert result == {"id": preload.id, "status": "ready", "error": None, "error_code": None, "uncertain": False, "claimed": False}
 
 
 def test_ticket_card_returns_only_active_attachment_preloads(tmp_path):
@@ -4330,6 +4322,9 @@ def test_ticket_card_returns_only_active_attachment_preloads(tmp_path):
             "created_at": active_ready.created_at,
         },
     ]
+    expected_active.append({"id": failed.id, "original_filename": failed.original_filename, "file_size": failed.file_size, "status": "failed", "created_at": failed.created_at})
+    for item in expected_active:
+        item.update(error=None, uncertain=False, claimed=False)
     expected_active.sort(key=lambda row: (row["created_at"], row["id"]))
 
     assert result.active_attachment_preloads == expected_active
@@ -5355,7 +5350,7 @@ def test_group_final_failure_marks_common_archive_error(monkeypatch, tmp_path):
     check = SessionFactory()
     try:
         assert check.get(outbound_service.TicketAttachmentPreload, preload_one.id) is None
-        assert check.get(outbound_service.TicketAttachmentPreload, preload_two.id) is None
+        assert check.get(outbound_service.TicketAttachmentPreload, preload_two.id).status == "failed"
         assert check.get(TicketAttachment, attachment_one.id).telegram_delivery_status == "sent"
         assert check.get(TicketAttachment, attachment_two.id).telegram_delivery_status == "failed"
     finally:
@@ -5504,7 +5499,7 @@ def test_claimed_preload_archive_is_kept_and_marked_sent(monkeypatch, tmp_path):
     assert any("Статус: отправлено" in text for _, _, text, _ in edits)
 
 
-def test_preparation_failure_before_claim_deletes_temporary_archive_messages(monkeypatch, tmp_path):
+def test_preparation_failure_before_claim_retains_file_and_archive_for_retry(monkeypatch, tmp_path):
     _engine, SessionFactory, session = _session_bundle()
     ticket = _seed_ticket(session)
     user = ticket_messages_service.User(
@@ -5540,11 +5535,12 @@ def test_preparation_failure_before_claim_deletes_temporary_archive_messages(mon
 
     check = SessionFactory()
     try:
-        assert check.get(outbound_service.TicketAttachmentPreload, preload.id) is None
+        assert check.get(outbound_service.TicketAttachmentPreload, preload.id).status == "failed"
+        assert path.exists()
     finally:
         check.close()
 
-    assert deleted == [("staging-chat", "601")]
+    assert deleted == []
 
 
 def test_stale_preload_cleanup_removes_old_unclaimed_and_keeps_claimed(tmp_path):

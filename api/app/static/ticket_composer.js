@@ -139,7 +139,7 @@
   }
 
   function isRestorablePreloadStatus(status) {
-    return status === "uploading" || status === "ready";
+    return status === "uploading" || status === "ready" || status === "failed";
   }
 
   function createRestoredPreloadFile(preload) {
@@ -156,7 +156,7 @@
   }
 
   function findSelectedFileByPreloadId(state, preloadId) {
-    return state.selectedFiles.find((file) => getPreloadState(state, file)?.preloadId === preloadId) || null;
+    return state.selectedFiles.find((file) => (getPreloadState(state, file)?.preloadId || getPreloadState(state, file)?.uploadId) === preloadId) || null;
   }
 
   function createSelectedFileRow(ctx, file) {
@@ -180,7 +180,18 @@
       void removeSelectedFile(ctx, file);
     });
 
-    header.append(name, remove);
+    remove.disabled = !!(preload?.retrying || preload?.removing);
+    header.append(name);
+    if (preload?.stage === "failed") {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "selected-file-remove";
+      retry.textContent = preload.retrying ? "Повтор…" : "Повторить";
+      retry.disabled = !!(preload.retrying || preload.removing);
+      retry.addEventListener("click", () => void retrySelectedFile(ctx, file));
+      header.append(retry);
+    }
+    header.append(remove);
 
     const footer = document.createElement("div");
     footer.className = "selected-file-foot";
@@ -190,6 +201,12 @@
     const stageText = preload ? stageLabel(preload) : "Ожидает отправки";
     meta.textContent = `${formatFileSize(file.size)} · ${stageText}`;
     footer.append(meta);
+    if (preload?.stage === "failed" && preload.error) {
+      const error = document.createElement("div");
+      error.className = "selected-file-size";
+      error.textContent = preload.error;
+      footer.append(error);
+    }
 
     if (preload?.stage === "ready") {
       item.classList.add("selected-file-item-ready");
@@ -299,7 +316,12 @@
         preloadId: serverPreload.id,
         controller: null,
         pollTimer: previousState?.pollTimer || null,
-        error: null,
+        error: serverPreload.error || null,
+        uncertain: !!serverPreload.uncertain,
+        claimed: !!serverPreload.claimed,
+        retrying: !!previousState?.retrying,
+        removing: !!previousState?.removing,
+        uploadId: previousState?.uploadId || serverPreload.id,
         removed: false,
         restored: true,
       });
@@ -330,7 +352,8 @@
       if (!next || next.preloadId !== preloadId) return;
       next.status = payload?.status || next.status;
       next.stage = payload?.status || next.stage;
-      next.error = next.stage === "failed" ? "Не удалось подготовить" : null;
+      next.error = next.stage === "failed" ? (payload?.error || "Не удалось подготовить") : null;
+      next.uncertain = !!payload?.uncertain;
       if (["ready", "failed", "cancelled"].includes(next.stage)) {
         clearPreloadPoll(state, file);
       }
@@ -359,10 +382,13 @@
     const { state, api } = ctx;
     if (!canUseAttachmentPreload(ctx)) return;
     const archiveGroupId = archiveGroupIdOverride || ensureArchiveGroupId(state);
+    const uploadId = getPreloadState(state, file)?.uploadId || global.crypto?.randomUUID?.() ||
+      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const n = Math.floor(Math.random() * 16); return (c === "x" ? n : (n & 3) | 8).toString(16); });
     const controller = new AbortController();
     let finishBrowserUpload;
     const browserUploadDone = new Promise((resolve) => { finishBrowserUpload = resolve; });
     setPreloadState(state, file, {
+      uploadId,
       stage: "browser_uploading",
       status: null,
       preloadId: null,
@@ -378,6 +404,7 @@
     const formData = new FormData();
     formData.append("file", file, file.name);
     formData.append("archive_group_id", archiveGroupId);
+    if (uploadId) formData.append("upload_id", uploadId);
     try {
       const payload = await api(`/api/v1/tickets/${state.ticketId}/attachment-preloads`, {
         method: "POST",
@@ -394,11 +421,18 @@
         forgetPreloadState(state, file);
         return;
       }
+      if (payload?.claimed) {
+        state.selectedFiles = state.selectedFiles.filter(item => item !== file);
+        forgetPreloadState(state, file);
+        renderSelectedFiles(ctx);
+        return;
+      }
       preload.preloadId = payload?.id || null;
       preload.status = payload?.status || "uploading";
       preload.stage = preload.status;
       preload.controller = null;
-      preload.error = null;
+      preload.error = payload?.error || null;
+      preload.uncertain = !!payload?.uncertain;
       renderSelectedFiles(ctx);
       if (preload.preloadId && preload.stage === "uploading") {
         startPreloadPolling(ctx, file, preload.preloadId);
@@ -421,9 +455,56 @@
     }
   }
 
+  async function retrySelectedFile(ctx, file) {
+    const { state, api } = ctx;
+    const preload = getPreloadState(state, file);
+    if (!preload || preload.stage !== "failed" || preload.retrying || preload.removing) return;
+    preload.retrying = true;
+    renderSelectedFiles(ctx);
+    try {
+      if (preload.uncertain && !await global.HelpdeskDialogs?.confirm({ title: "Повтор загрузки", message: "Telegram мог принять файл. Повторить? В технической группе возможна лишняя копия." })) return;
+      if (!preload.preloadId) { await startAttachmentPreload(ctx, file); return; }
+      const form = new FormData();
+      if (preload.uncertain) form.append("confirm_uncertain", "true");
+      const payload = await api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preload.preloadId}/retry`, { method: "POST", body: form });
+      const current = getPreloadState(state, file);
+      if (!current || current.removed) return;
+      Object.assign(current, { stage: payload.status, status: payload.status, error: payload.error || null, uncertain: !!payload.uncertain });
+      if (payload.claimed && payload.status !== "failed") {
+        state.selectedFiles = state.selectedFiles.filter(item => item !== file);
+        forgetPreloadState(state, file);
+        await ctx.loadCard?.({ silent: true });
+      } else if (current.stage === "uploading") startPreloadPolling(ctx, file, current.preloadId);
+    } catch (error) {
+      const current = getPreloadState(state, file);
+      if (current) current.error = error.message || "Не удалось повторить загрузку";
+    } finally {
+      const current = getPreloadState(state, file);
+      if (current) current.retrying = false;
+      renderSelectedFiles(ctx);
+    }
+  }
+
   async function removeSelectedFile(ctx, file) {
     const { state, el } = ctx;
     const preload = getPreloadState(state, file);
+    if (preload?.retrying || preload?.removing) return;
+    if (preload?.stage === "failed" && preload.preloadId) {
+      preload.removing = true;
+      renderSelectedFiles(ctx);
+      try {
+        await ctx.api(`/api/v1/tickets/${state.ticketId}/attachment-preloads/${preload.preloadId}`, { method: "DELETE" });
+        markDiscardedPreloadId(state, preload.preloadId);
+        state.selectedFiles = state.selectedFiles.filter(item => item !== file);
+        forgetPreloadState(state, file);
+      } catch (error) {
+        reportPreloadDeleteError(ctx, error);
+      } finally {
+        preload.removing = false;
+        renderSelectedFiles(ctx);
+      }
+      return;
+    }
     if (preload) {
       preload.removed = true;
       preload.finishBrowserUpload?.();
@@ -514,15 +595,8 @@
     const { state } = ctx;
     const preload = getPreloadState(state, file);
     const canUsePreload = canUseAttachmentPreload(ctx);
-    if (preload?.stage === "failed") {
-      if (isVirtualPreloadFile(file) || state.composeMode === "comment" || isTaskReply(ctx)) {
-        return {
-          mode: "error",
-          reason: "virtual_preload_failed",
-          message: (isTaskReply(ctx) && preload.error) || "Подготовленный файл больше недоступен. Удалите его и выберите заново.",
-        };
-      }
-      return { mode: "raw", reason: "preload_failed" };
+    if (preload?.stage === "failed" || preload?.status === "failed") {
+      return { mode: "error", reason: "preload_failed", message: preload.error || "Не удалось подготовить файл. Нажмите «Повторить» или удалите вложение." };
     }
     if (preload?.stage === "cancelled") {
       if (isVirtualPreloadFile(file) || state.composeMode === "comment" || isTaskReply(ctx)) {
@@ -650,6 +724,7 @@
       ctx.setStatus("Отправка...");
       await ctx.flushDraftBeforeSend?.();
       const quoteMessageId = state.quoteMessageId;
+      if (hasFiles && !taskReply) await Promise.all([...state.selectedFiles].map(file => getPreloadState(state, file)?.browserUploadDone));
       if (hasFiles && (isTaskReply(ctx) || state.composeMode === "comment")) {
         if (taskReply) {
           await Promise.all(taskFiles.map(async (file) => {

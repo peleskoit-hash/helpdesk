@@ -38,6 +38,7 @@ from ..services.telegram_outbound_delivery import (
     _best_effort_delete_preload_archive,
     claim_attachment_preload,
     cleanup_stale_attachment_preloads,
+    recover_ticket_uploads,
     deliver_attachment_preload,
     deliver_ticket_attachment,
 )
@@ -47,6 +48,8 @@ from ..services.ticket_attachments import (
     _ensure_local_attachment_file,
     _message_attachments,
     _save_attachment_preload,
+    _safe_filename,
+    _stream_sha256,
     _save_upload_attachment,
     _send_attachment_to_telegram_client,
 )
@@ -54,6 +57,7 @@ from ..services.ticket_admin_actions import _delete_ticket_hard
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run, validate_client_card_direct_user_changes
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
+from ..services import telegram_upload_state
 from ..services import web_credentials
 from ..schemas import WebCredentialsGeneratePayload
 from fastapi.responses import JSONResponse
@@ -1096,6 +1100,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
     description_ids = initial_task_description_ids(t, messages, attachments_by_message)
     initial_message_ids = initial_task_message_ids(t, messages, attachments_by_message)
     initial_assignment_id = first_task_assignment_id(messages) if initial_message_ids else None
+    recover_ticket_uploads(db, t.id)
     active_preload_threshold = datetime.utcnow() - timedelta(hours=24)
     active_attachment_preloads = [
         {
@@ -1103,6 +1108,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             "original_filename": preload.original_filename,
             "file_size": preload.file_size,
             "status": preload.status,
+            "claimed": bool(preload.final_attachment_id),
+            "error": (preload.telegram_upload_state_json or {}).get("error"),
+            "uncertain": bool((preload.telegram_upload_state_json or {}).get("uncertain")),
             "created_at": preload.created_at,
         }
         for preload in db.execute(
@@ -1110,12 +1118,14 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
             .where(
                 TicketAttachmentPreload.ticket_id == t.id,
                 TicketAttachmentPreload.user_id == user.id,
-                TicketAttachmentPreload.final_attachment_id.is_(None),
-                TicketAttachmentPreload.status.in_(["uploading", "ready"]),
-                TicketAttachmentPreload.created_at >= active_preload_threshold,
+                or_(TicketAttachmentPreload.final_attachment_id.is_(None),
+                    and_(t.workflow_type == TicketWorkflowType.TASK.value, TicketAttachmentPreload.status == "failed")),
+                TicketAttachmentPreload.status.in_(["uploading", "ready", "failed"]),
+                or_(TicketAttachmentPreload.status == "failed", TicketAttachmentPreload.created_at >= active_preload_threshold),
             )
             .order_by(asc(TicketAttachmentPreload.created_at), asc(TicketAttachmentPreload.id))
         ).scalars().all()
+        if preload.final_attachment_id is None or telegram_upload_state.recoverable_task_attachment(db, preload) is not None
     ]
     instruction_title, instruction_text = _instruction_for_ticket(db, t)
 
@@ -1517,6 +1527,7 @@ async def create_attachment_preload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     archive_group_id: str | None = Form(default=None),
+    upload_id: str | None = Form(default=None),
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -1531,12 +1542,47 @@ async def create_attachment_preload(
     if not user.id:
         _error(409, "user_id_required", "Для предзагрузки файла нужен корректный пользователь")
 
+    if isinstance(upload_id, str):
+        try:
+            upload_id = str(uuid.UUID(upload_id))
+        except ValueError:
+            _error(422, "attachment_upload_id_invalid", "Некорректный идентификатор загрузки")
+        telegram_upload_state.lock_row(db, Ticket, ticket.id)
+        existing = telegram_upload_state.lock_row(db, TicketAttachmentPreload, upload_id)
+        claimed = False
+        if existing is None:
+            archived = db.execute(select(TicketAttachment, TicketMessage.author_user_id).join(
+                TicketMessage, TicketAttachment.message_id == TicketMessage.id).where(
+                TicketAttachment.telegram_upload_state_json["upload_id"].as_string() == upload_id)).first()
+            if archived is not None:
+                if archived[0].ticket_id != ticket.id or archived[1] != user.id:
+                    _error(409, "attachment_upload_id_conflict", "Идентификатор загрузки уже используется")
+                existing = telegram_upload_state.lock_row(db, TicketAttachment, archived[0].id)
+                claimed = existing is not None
+        if existing is not None:
+            if existing.ticket_id != ticket.id or (not claimed and existing.user_id != user.id) or existing.original_filename != _safe_filename(file.filename):
+                _error(409, "attachment_upload_id_conflict", "Идентификатор загрузки уже используется")
+            digest = telegram_upload_state.state(existing).get("content_sha256")
+            if not digest and Path(existing.local_path).is_file():
+                with Path(existing.local_path).open("rb") as source:
+                    digest = _stream_sha256(source)
+            if not digest or digest != _stream_sha256(file.file) or existing.mime_type != (file.content_type or "application/octet-stream"):
+                _error(409, "attachment_upload_id_conflict", "Идентификатор загрузки связан с другим содержимым файла")
+            telegram_upload_state.patch(existing, content_sha256=digest)
+            db.commit()
+            if claimed:
+                return {"id": upload_id, "status": existing.telegram_delivery_status or "ready", "claimed": True}
+            if existing.status == "uploading":
+                background_tasks.add_task(deliver_attachment_preload, preload_id=existing.id)
+            return telegram_upload_state.preload_payload(existing)
+    else:
+        upload_id = None
     cleanup_stale_attachment_preloads(db)
     ensure_ticket_number(db, ticket)
-    preload = _save_attachment_preload(db, ticket, user.id, file, archive_group_id)
+    preload = _save_attachment_preload(db, ticket, user.id, file, archive_group_id, preload_id=upload_id)
     db.commit()
     background_tasks.add_task(deliver_attachment_preload, preload_id=preload.id)
-    return {"id": preload.id, "status": preload.status}
+    return telegram_upload_state.preload_payload(preload)
 
 
 @router.get("/{ticket_id}/attachment-preloads/{preload_id}")
@@ -1550,7 +1596,28 @@ def get_attachment_preload_status(
     preload = db.get(TicketAttachmentPreload, preload_id)
     if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
         _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
-    return {"id": preload.id, "status": preload.status}
+    preload = telegram_upload_state.expire_attempt(db, preload)
+    if preload is None:
+        _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+    return telegram_upload_state.preload_payload(preload)
+
+
+@router.post("/{ticket_id}/attachment-preloads/{preload_id}/retry")
+def retry_attachment_preload(ticket_id: str, preload_id: str, background_tasks: BackgroundTasks,
+                             confirm_uncertain: bool = Form(False), db: Session = Depends(get_db),
+                             user: CurrentUser = Depends(get_current_user)):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    if not can_manage_ticket(user):
+        _error(403, "readonly_role", "Нет прав на отправку ответа")
+    if ticket.status == TicketStatus.CLOSED.value:
+        _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
+    preload = db.get(TicketAttachmentPreload, preload_id)
+    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+        _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
+    preload, schedule = telegram_upload_state.retry_preload(db, preload, confirm_uncertain is True)
+    if schedule:
+        background_tasks.add_task(deliver_attachment_preload, preload_id=preload.id)
+    return telegram_upload_state.preload_payload(preload)
 
 
 @router.delete("/{ticket_id}/attachment-preloads/{preload_id}")
@@ -1562,13 +1629,25 @@ def delete_attachment_preload(
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
     cleanup_stale_attachment_preloads(db)
-    preload = db.get(TicketAttachmentPreload, preload_id)
-    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+    preload = telegram_upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+    if preload is None:
+        db.commit()
+        return {"ok": True}
+    if preload.ticket_id != ticket.id or preload.user_id != user.id:
         _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
     if preload.final_attachment_id:
-        _error(409, "attachment_preload_already_claimed", "Предзагруженный файл уже отправляется")
+        attachment = telegram_upload_state.recoverable_task_attachment(db, preload)
+        if attachment is None:
+            _error(409, "attachment_preload_already_claimed", "Предзагруженный файл уже отправляется")
+        message = db.get(TicketMessage, attachment.message_id)
+        db.delete(attachment)
+        db.flush()
+        if message is not None and not (message.body or "").strip() and not db.scalar(select(TicketAttachment.id).where(TicketAttachment.message_id == message.id)):
+            message.message_status = "deleted"
+        preload.final_attachment_id = None
     if preload.status in {"ready", "failed"}:
-        _discard_preload(db, preload, delete_row=True, unlink_local=True)
+        active = (telegram_upload_state.state(preload).get("staging_attempt") or {}).get("active")
+        _discard_preload(db, preload, delete_row=not active, unlink_local=not active)
     elif preload.status == "uploading":
         _discard_preload(db, preload, delete_row=False, unlink_local=False)
     else:

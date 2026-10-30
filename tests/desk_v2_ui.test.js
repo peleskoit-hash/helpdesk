@@ -1982,3 +1982,87 @@ test('ticket Back can return to an external previous page without a separate gua
   await page.locator('#backToListBtn').click(); await page.waitForURL('http://outside.test/start');
   assert.equal(await page.locator('p').textContent(), 'Previous external page');
 });
+
+async function attachmentFailureUi(t, workflowType, theme, uncertain = false, claimed = false) {
+  const cardPatch = { active_attachment_preloads: [] }, replies = [];
+  const h = await setup(t, { width: 1366, height: 900, theme, pageName: 'ticket', role: 'agent', workflowType, cardPatch });
+  const status = { id: null, status: 'failed', error: 'Ошибка подготовки WEBP (тест)', uncertain, claimed, retries: 0, uploads: 0, deletes: 0, deleteError: false };
+  const sync = () => { cardPatch.active_attachment_preloads = (status.id && !(status.claimed && status.status !== "failed")) ? [{ ...status, original_filename: 'sample.webp', file_size: 12 }] : []; };
+  await h.page.route('**/api/v1/tickets/demo-0/attachment-preloads**', async route => {
+    const req = route.request(), p = new URL(req.url()).pathname;
+    if (req.method() === 'DELETE') { status.deletes++; if (status.deleteError) return route.fulfill({ status: 403, json: { detail: { error: { message: 'Не удалось удалить файл' } } } }); status.id = null; sync(); return route.fulfill({ json: { ok: true } }); }
+    if (p.endsWith('/retry')) {
+      status.retries++; assert.doesNotMatch(req.postData() || '', /filename=/);
+      if (uncertain) assert.match(req.postData(), /name="confirm_uncertain"\r\n\r\ntrue/);
+      status.status = 'ready'; status.error = null; status.uncertain = false; sync();
+      return route.fulfill({ json: { ...status, status: 'uploading' } });
+    }
+    if (req.method() === 'POST') {
+      status.uploads++; status.id = req.postData().match(/name="upload_id"\r\n\r\n([^\r]+)/)[1]; sync();
+      return route.fulfill({ json: { id: status.id, status: 'uploading' } });
+    }
+    return route.fulfill({ json: status });
+  });
+  await h.page.route('**/api/v1/tickets/demo-0/reply', route => { replies.push(route.request().postData()); cardPatch.active_attachment_preloads = []; status.id = null; return route.fulfill({ json: { ok: true } }); });
+  await h.page.locator('#replyFilesInput').setInputFiles({ name: 'sample.webp', mimeType: 'image/webp', buffer: Buffer.from('RIFFWEBPtest!') });
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).waitFor();
+  assert.equal(await h.page.locator('.selected-file-item').count(), 1);
+  await h.page.waitForFunction(() => document.querySelector('.selected-file-item')?.textContent.includes('Ошибка подготовки WEBP'));
+  await h.page.reload(); await h.page.waitForSelector('.message');
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).waitFor();
+  assert.equal(await h.page.locator('.selected-file-item').count(), 1);
+  assert.equal(status.uploads, 1);
+  return { ...h, status, replies };
+}
+
+for (const workflow of ['ticket', 'task']) for (const theme of ['light', 'dark']) test(`failed WEBP survives polling/reload, retries same preload and sends once: ${workflow} ${theme}`, async t => {
+  const h = await attachmentFailureUi(t, workflow, theme);
+  const id = h.status.id;
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await h.page.waitForFunction(() => document.querySelector('.selected-file-item-ready'));
+  assert.equal(h.status.retries, 1); assert.equal(h.status.uploads, 1); assert.equal(h.status.id, id);
+  assert.equal(await h.page.locator('.selected-file-item').count(), 1);
+  await h.page.locator('#ticketMessageBody').fill('Готовый ответ');
+  await h.page.locator('#sendNowBtn').evaluate(button => { button.click(); button.click(); });
+  await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
+  assert.equal(h.replies.length, 1);
+  assert.equal((h.replies[0].match(/name="preloaded_attachment_id"/g) || []).length, 1);
+  assert.ok(h.replies[0].includes(id)); assert.doesNotMatch(h.replies[0], /filename=/);
+});
+
+for (const workflow of ['ticket', 'task']) test(`failed WEBP can be removed after reload: ${workflow}`, async t => {
+  const h = await attachmentFailureUi(t, workflow, 'light');
+  await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
+  await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
+  assert.equal(h.status.deletes, 1); assert.equal(h.status.retries, 0); assert.equal(h.replies.length, 0);
+  await h.page.reload(); await h.page.waitForSelector('.message');
+  assert.equal(await h.page.locator('.selected-file-item').count(), 0);
+});
+
+test('uncertain WEBP retry requires explicit confirmation and cancel retains the tile', async t => {
+  const h = await attachmentFailureUi(t, 'ticket', 'dark', true);
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).click();
+  await h.page.locator('[data-dialog-cancel]').click();
+  assert.equal(h.status.retries, 0); assert.equal(await h.page.locator('.selected-file-item').count(), 1);
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).click();
+  await h.page.locator('[data-dialog-accept]').click();
+  await h.page.waitForFunction(() => document.querySelector('.selected-file-item-ready'));
+  assert.equal(h.status.retries, 1);
+});
+
+test('failed claimed task retry resumes its attachment without posting another reply', async t => {
+  const h = await attachmentFailureUi(t, 'task', 'dark', false, true);
+  await h.page.getByRole('button', { name: 'Повторить', exact: true }).click();
+  await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
+  assert.equal(h.status.retries, 1); assert.equal(h.status.uploads, 1); assert.equal(h.replies.length, 0);
+});
+
+test('failed tile stays visible when manual removal fails', async t => {
+  const h = await attachmentFailureUi(t, 'ticket', 'light'); h.status.deleteError = true;
+  await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
+  await h.page.locator('#errorModal').waitFor({ state: 'visible' });
+  assert.equal(await h.page.locator('.selected-file-item').count(), 1);
+  await h.page.locator('#closeErrorModalBtn').click(); h.status.deleteError = false;
+  await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
+  await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
+});

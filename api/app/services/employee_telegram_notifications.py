@@ -352,7 +352,7 @@ def _load_message_attachments(db: Session, message_id: str) -> list[TicketAttach
 
 def _composite_message_body(message: TicketMessage, attachments: list[TicketAttachment]) -> str:
     body = _truncate_message_text(str(message.body or "").strip())
-    labels = [_attachment_label(attachment) for attachment in attachments]
+    labels = [_attachment_label(attachment) for attachment in attachments if attachment.source != "sticker"]
     lines: list[str] = []
     if body:
         lines.append(body)

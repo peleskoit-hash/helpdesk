@@ -156,6 +156,8 @@ def _attachment_from_preload(
         ticket_id=ticket.id,
         message_id=message.id,
         source="helpdesk",
+        telegram_upload_state_json={"receipt": (preload.telegram_upload_state_json or {}).get("receipt"),
+            "upload_id": preload.id, "content_sha256": (preload.telegram_upload_state_json or {}).get("content_sha256")},
         telegram_file_id=preload.telegram_file_id,
         telegram_file_unique_id=preload.telegram_file_unique_id,
         telegram_file_path=None,

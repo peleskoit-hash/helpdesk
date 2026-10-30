@@ -8,7 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import Select, asc, select
+from sqlalchemy import Select, asc, event, inspect, select
+from sqlalchemy.orm import Session, object_session
 
 from ..config import settings
 from ..db import SessionLocal
@@ -18,6 +19,8 @@ from .telegram_text_format import prepare_telegram_html_message, strip_telegram_
 from .ticket_links import public_ticket_url
 from .ticket_messages import TELEGRAM_CAPTION_LIMIT, record_client_delivery_failure
 
+
+from . import telegram_upload_state as upload_state
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +61,29 @@ def _staging_chat_id() -> str:
     return staging_chat_id
 
 
-def _safe_unlink(path_value: str | None) -> None:
+def _safe_unlink(path_value: str | None, *, db=None, archived=False, ignored_attachment_ids=()) -> None:
     path = Path(path_value or "")
     try:
-        if path.exists() and path.is_file():
-            path.unlink()
+        if not path.is_file():
+            return
+        if db is not None:
+            references = [row for row in upload_state.source_references(db, path_value)
+                if not (isinstance(row, TicketAttachment) and row.id in ignored_attachment_ids)]
+            if any(not archived or (isinstance(row, TicketAttachmentPreload) and row.status == "failed")
+                   or not upload_state.archived_document(row) for row in references):
+                return
+        path.unlink()
     except OSError:
         logger.warning("Failed to remove file %s", path, exc_info=True)
 
 
-def _unlink_attachment_local_file(path_value: str | None) -> None:
-    _safe_unlink(path_value)
+def _release_prepared_source(row, path):
+    if upload_state.archived_document(row):
+        _safe_unlink(path, db=object_session(row), archived=True)
+
+
+def _unlink_attachment_local_file(path_value: str | None, db=None) -> None:
+    _safe_unlink(path_value, db=db)
 
 
 def _project_dt(value: datetime | None) -> datetime:
@@ -120,7 +135,9 @@ def _group_status_text(group_rows: list[TicketAttachmentPreload]) -> str:
     count = len(group_rows)
     if not count:
         return "подготовка файла"
-    if any(row.final_attachment_id and row.status == "failed" for row in group_rows):
+    if any(row.status == "failed" and not row.final_attachment_id for row in group_rows):
+        return "ошибка подготовки"
+    if any(row.status == "failed" for row in group_rows):
         return "ошибка доставки"
     if any(row.final_attachment_id and row.status not in {"sent", "failed"} for row in group_rows):
         return "отправляется клиенту"
@@ -140,7 +157,7 @@ def _archive_rows_for_display(group_rows: list[TicketAttachmentPreload]) -> list
             if row.status != "cancelled":
                 rows.append(row)
             continue
-        if row.status in {"uploading", "ready"}:
+        if row.status in {"uploading", "ready", "failed"}:
             rows.append(row)
     return rows
 
@@ -268,7 +285,7 @@ def _delete_archive_message_by_id(message_id: str | None) -> None:
     try:
         delete_message(_staging_chat_id(), message_id_value)
     except (RuntimeError, TelegramApiError):
-        logger.warning("Failed to delete technical archive message %s", message_id_value, exc_info=True)
+        logger.warning("Failed to delete technical archive message %s", message_id_value)
 
 
 def _clear_pending_info_reservation(db, preload: TicketAttachmentPreload) -> bool:
@@ -280,7 +297,10 @@ def _clear_pending_info_reservation(db, preload: TicketAttachmentPreload) -> boo
 
 
 def _best_effort_delete_preload_file_message(preload: TicketAttachmentPreload) -> None:
-    _delete_archive_message_by_id(preload.telegram_staging_file_message_id)
+    ids = [preload.telegram_staging_file_message_id]
+    ids.extend(value.get("message_id") for value in upload_state.state(preload).get("previous_receipts", []))
+    for message_id in dict.fromkeys(ids):
+        _delete_archive_message_by_id(message_id)
 
 
 def _best_effort_delete_preload_info_message(preload: TicketAttachmentPreload) -> None:
@@ -301,19 +321,19 @@ def _best_effort_edit_group_archive_message(
     event_label: str | None = None,
     event_at: datetime | None = None,
     force: bool = False,
-) -> None:
+) -> bool:
     message_id = _actual_info_message_id(group_rows)
     if not message_id:
-        return
+        return False
     active_final_rows = _group_active_final_rows(group_rows)
     if not force and event_label is None and _group_has_preparing_preloads(group_rows):
-        return
+        return False
     if not force and event_label is not None and len(active_final_rows) > 1:
-        return
+        return False
     try:
         chat_id = _staging_chat_id()
     except RuntimeError:
-        return
+        return False
     archive_text = _archive_info_text(
         ticket=ticket,
         user=user,
@@ -325,20 +345,23 @@ def _best_effort_edit_group_archive_message(
     try:
         payload_text, parse_mode = _prepare_archive_html_text(archive_text)
         edit_message_text(chat_id, message_id, payload_text, parse_mode=parse_mode)
+        return True
     except TelegramApiError as exc:
         leader = group_rows[0].id if group_rows else "unknown"
         description = str(exc)
         lowered = description.lower()
         if "message is not modified" in lowered:
             logger.debug("Skipped unchanged technical archive edit for group leader=%s", leader)
-            return
+            return True
         if "too many requests" in lowered or "retry after" in lowered:
-            logger.warning("Technical archive edit rate-limited for group leader=%s: %s", leader, description)
-            return
-        logger.warning("Failed to edit technical archive info message for group leader=%s: %s", leader, description)
+            logger.warning("Technical archive edit rate-limited for group leader=%s", leader)
+            return False
+        logger.warning("Failed to edit technical archive info message for group leader=%s", leader)
     except RuntimeError as exc:
         leader = group_rows[0].id if group_rows else "unknown"
-        logger.warning("Failed to edit technical archive info message for group leader=%s: %s", leader, exc)
+        logger.warning("Failed to edit technical archive info message for group leader=%s", leader)
+
+    return False
 
 
 def _send_preload_archive_info(
@@ -360,6 +383,7 @@ def _send_preload_archive_info(
         _staging_chat_id(),
         payload_text,
         parse_mode=parse_mode,
+        retry_only_parse_errors=True,
     )
     message_id = _telegram_message_id(response)
     if not message_id:
@@ -375,6 +399,8 @@ def _send_staging_document(
         local_path=preload.local_path,
         original_filename=preload.original_filename,
         mime_type=preload.mime_type,
+        on_receipt=lambda response: upload_state.store_receipt(object_session(preload), preload, response),
+        on_wait=lambda: upload_state.heartbeat(object_session(preload), preload, "staging_attempt"),
     )
 
 
@@ -383,12 +409,19 @@ def _send_staging_document_from_path(
     local_path: str,
     original_filename: str | None,
     mime_type: str | None,
+    on_receipt=None,
+    on_wait=None,
 ) -> tuple[str, str | None, str]:
     path = Path(local_path)
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(str(path))
 
-    with STAGING_BINARY_UPLOAD_SEMAPHORE:
+    while not STAGING_BINARY_UPLOAD_SEMAPHORE.acquire(timeout=30):
+        if on_wait:
+            on_wait()
+    try:
+        if on_wait:
+            on_wait()
         response = send_document(
             _staging_chat_id(),
             path,
@@ -396,18 +429,15 @@ def _send_staging_document_from_path(
             mime_type=mime_type or "application/octet-stream",
             timeout=STAGING_BINARY_UPLOAD_TIMEOUT_SECONDS,
         )
-    result = (response or {}).get("result") or {}
-    document = result.get("document") or {}
-    media = result.get("video") or document
+    finally:
+        STAGING_BINARY_UPLOAD_SEMAPHORE.release()
+    if on_receipt:
+        on_receipt(response)
+    value = upload_state.receipt(response)
+    if not upload_state.usable_receipt(value):
+        raise RuntimeError("Telegram staging upload returned incomplete media receipt")
+    return value["file_id"], value.get("file_unique_id"), value["message_id"]
 
-    file_id = str(media.get("file_id") or "").strip()
-    file_unique_id = str(media.get("file_unique_id") or "").strip() or None
-    message_id = str(result.get("message_id") or "").strip()
-    if not file_id:
-        raise RuntimeError("Telegram staging upload returned no file_id")
-    if not message_id:
-        raise RuntimeError("Telegram staging upload returned no message_id")
-    return file_id, file_unique_id, message_id
 
 
 def _ensure_group_archive_info_message(*, preload_id: str) -> str:
@@ -587,23 +617,163 @@ def _discard_preload(
 
     db.commit()
     if unlink_local:
-        _safe_unlink(cleanup_path)
+        _safe_unlink(cleanup_path, db=db)
 
 
-def cleanup_stale_attachment_preloads(db) -> int:
+def recover_ticket_uploads(db, ticket_id):
+    # Reconcile persisted attempts on the next card read, never resend a binary or client message.
+    rows = db.scalars(select(TicketAttachmentPreload).where(TicketAttachmentPreload.ticket_id == ticket_id)).all()
+    for row in rows:
+        if row.status == "cancelled":
+            row = upload_state.lock_row(db, TicketAttachmentPreload, row.id)
+            if row is None:
+                continue
+            attachment = db.get(TicketAttachment, row.final_attachment_id) if row.final_attachment_id else None
+            staging_active = (upload_state.state(row).get("staging_attempt") or {}).get("active")
+            delivery_active = attachment is not None and (upload_state.state(attachment).get("delivery_attempt") or {}).get("active")
+            if (staging_active and not upload_state.attempt_expired(row, "staging_attempt")) or (delivery_active and not upload_state.attempt_expired(attachment, "delivery_attempt")):
+                continue
+            _discard_preload(db, row, delete_row=True, unlink_local=True)
+        elif row.status == "uploading":
+            upload_state.expire_attempt(db, row)
+        elif row.status == "failed" and upload_state.attempt_expired(row, "staging_attempt"):
+            attempt = upload_state.state(row).get("staging_attempt") or {}
+            if attempt.get("active"):
+                upload_state.end_attempt(row, "staging_attempt", attempt.get("token"))
+                db.commit()
+        if row in db and row.status not in {"cancelled", "failed"} and upload_state.archived_document(row):
+            _release_prepared_source(row, row.local_path)
+    for row in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id,
+            TicketAttachment.telegram_delivery_status.in_(["uploading", "sending"]))):
+        upload_state.expire_delivery(db, row)
+    for row in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id,
+            TicketAttachment.source == "helpdesk", TicketAttachment.telegram_file_id.is_not(None))):
+        _release_prepared_source(row, row.local_path)
+    for row in db.scalars(select(TicketAttachmentPreload).where(TicketAttachmentPreload.ticket_id == ticket_id)).all():
+        if not upload_state.state(row).get("archive_reconcile_pending"):
+            continue
+        group = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
+            user_id=row.user_id, archive_group_id=_archive_group_id(row), for_update=False))
+        ticket = db.get(Ticket, ticket_id)
+        if ticket is not None and group and _actual_info_message_id(group):
+            if not _best_effort_edit_group_archive_message(group_rows=group, ticket=ticket,
+                    user=db.get(User, row.user_id), status_text=_group_status_text(group), force=True):
+                continue
+        upload_state.patch(row, archive_reconcile_pending=False)
+        db.commit()
+    cleanup_failed_attachment_preloads(db, ticket_id)
+    cleanup_stale_attachment_preloads(db, ticket_id=ticket_id)
+
+
+def cleanup_failed_attachment_preloads(db, ticket_id):
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None or ticket.status != "closed":
+        return 0
+    ticket = upload_state.lock_row(db, Ticket, ticket_id)
+    if ticket is None or ticket.status != "closed":
+        return 0
+    rows = db.scalars(select(TicketAttachmentPreload).where(
+        TicketAttachmentPreload.ticket_id == ticket_id, TicketAttachmentPreload.status == "failed"
+    ).order_by(TicketAttachmentPreload.id)).all()
+    paths = set()
+    ignored_attachment_ids = set()
+    removed = 0
+    for candidate in rows:
+        row = upload_state.lock_row(db, TicketAttachmentPreload, candidate.id)
+        if row is None or row.status != "failed":
+            continue
+        attachment = db.get(TicketAttachment, row.final_attachment_id) if row.final_attachment_id else None
+        if ((upload_state.state(row).get("staging_attempt") or {}).get("active")
+                and not upload_state.attempt_expired(row, "staging_attempt")):
+            continue
+        if attachment is not None and ((upload_state.state(attachment).get("delivery_attempt") or {}).get("active")
+                and not upload_state.attempt_expired(attachment, "delivery_attempt")):
+            continue
+        if attachment is not None and attachment.ticket_id == ticket_id and attachment.telegram_delivery_status == "failed":
+            info = upload_state.state(row)
+            saved = upload_state.state(attachment)
+            upload_state.patch(attachment, receipt=saved.get("receipt") or info.get("receipt"),
+                previous_receipts=[*saved.get("previous_receipts", []), *info.get("previous_receipts", [])])
+            if not attachment.telegram_archive_message_id:
+                attachment.telegram_archive_message_id = row.telegram_staging_file_message_id
+            ignored_attachment_ids.add(attachment.id)
+        paths.add(row.local_path)
+        db.delete(row)
+        removed += 1
+    # A parent's failed copy can outlive the child's preload and share its source.
+    for attachment in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id,
+            TicketAttachment.telegram_delivery_status == "failed")):
+        if (upload_state.state(attachment).get("delivery_attempt") or {}).get("active") and not upload_state.attempt_expired(attachment, "delivery_attempt"):
+            continue
+        paths.add(attachment.local_path)
+        ignored_attachment_ids.add(attachment.id)
+    if removed or paths:
+        db.commit()
+        for attachment in db.scalars(select(TicketAttachment).join(Ticket, TicketAttachment.ticket_id == Ticket.id).where(
+                TicketAttachment.local_path.in_(paths), TicketAttachment.telegram_delivery_status == "failed", Ticket.status == "closed")):
+            if not (upload_state.state(attachment).get("delivery_attempt") or {}).get("active") or upload_state.attempt_expired(attachment, "delivery_attempt"):
+                ignored_attachment_ids.add(attachment.id)
+        for path in paths:
+            _safe_unlink(path, db=db, ignored_attachment_ids=ignored_attachment_ids)
+    return removed
+
+
+_FAILED_CLOSE_CLEANUP = "failed_attachment_close_cleanup"
+
+
+@event.listens_for(Session, "before_flush")
+def _schedule_failed_cleanup_on_close(db, *_args):
+    ids = {row.id for row in db.dirty.union(db.new) if isinstance(row, Ticket)
+           and row.status == "closed" and inspect(row).attrs.status.history.has_changes()}
+    if ids:
+        transaction = db.get_nested_transaction() or db.get_transaction()
+        db.info.setdefault(_FAILED_CLOSE_CLEANUP, {}).setdefault(transaction, set()).update(ids)
+
+
+@event.listens_for(Session, "after_commit")
+def _cleanup_failed_after_close_commit(db):
+    pending = db.info.get(_FAILED_CLOSE_CLEANUP, {})
+    nested = db.get_nested_transaction()
+    if nested is not None:
+        pending.setdefault(nested.parent, set()).update(pending.pop(nested, set()))
+        return
+    db.info.pop(_FAILED_CLOSE_CLEANUP, None)
+    ids = set().union(*pending.values()) if pending else set()
+    for ticket_id in ids:
+        try:
+            with SessionLocal(bind=db.get_bind()) as cleanup_db:
+                cleanup_failed_attachment_preloads(cleanup_db, ticket_id)
+        except Exception:
+            logger.warning("Failed preload cleanup deferred ticket=%s", ticket_id)
+
+
+@event.listens_for(Session, "after_rollback")
+def _cancel_failed_cleanup_on_rollback(db):
+    nested = db.get_nested_transaction()
+    if nested is not None:
+        db.info.get(_FAILED_CLOSE_CLEANUP, {}).pop(nested, None)
+    else:
+        db.info.pop(_FAILED_CLOSE_CLEANUP, None)
+
+
+def cleanup_stale_attachment_preloads(db, ticket_id=None) -> int:
     threshold = datetime.utcnow() - timedelta(hours=PRELOAD_STALE_TTL_HOURS)
     stale_rows = db.execute(
         select(TicketAttachmentPreload)
         .where(
             TicketAttachmentPreload.final_attachment_id.is_(None),
+            TicketAttachmentPreload.status != "failed",
+            TicketAttachmentPreload.ticket_id == ticket_id if ticket_id is not None else True,
             TicketAttachmentPreload.created_at < threshold,
         )
         .order_by(asc(TicketAttachmentPreload.created_at), asc(TicketAttachmentPreload.id))
     ).scalars().all()
     removed = 0
     for stale in stale_rows:
-        current = db.get(TicketAttachmentPreload, stale.id)
-        if current is None or current.final_attachment_id:
+        current = upload_state.lock_row(db, TicketAttachmentPreload, stale.id)
+        if current is None or current.final_attachment_id or current.status == "failed":
+            continue
+        if (upload_state.state(current).get("staging_attempt") or {}).get("active") and not upload_state.attempt_expired(current, "staging_attempt"):
             continue
         _discard_preload(db, current, delete_row=True, unlink_local=True)
         removed += 1
@@ -663,50 +833,54 @@ def _deliver_attachment_to_client(
         )
         return
 
+    info = upload_state.state(attachment)
+    stored_receipt = info.get("receipt")
+
+    def checkpoint_send(kind, send):
+        current = upload_state.state(attachment)
+        saved_id = current.get(f"sent_{kind}_message_id")
+        if saved_id:
+            return saved_id
+        if current.get("delivery_pending"):
+            raise RuntimeError("Previous Telegram delivery has no confirmed acknowledgement")
+        upload_state.heartbeat(db, attachment, "delivery_attempt")
+        upload_state.patch(attachment, delivery_pending=kind)
+        db.commit()
+        response = send()
+        sent_id = _telegram_message_id(response)
+        if not sent_id:
+            raise RuntimeError("Telegram delivery returned no message_id")
+        upload_state.patch(attachment, **{f"sent_{kind}_message_id": sent_id, "delivery_pending": None})
+        if kind == "file":
+            attachment.telegram_message_id = sent_id
+        else:
+            message.telegram_message_id = sent_id
+        db.commit()
+        return sent_id
+
+    def send_file(caption=None, parse_mode=None, reply=None):
+        return send_document_by_file_id(contact.external_chat_id, file_id, caption=caption,
+                                        parse_mode=parse_mode, reply_to_message_id=reply, retry_only_parse_errors=True)
+
     body = (message.body or "").strip()
     try:
+        if isinstance(stored_receipt, dict) and not upload_state.usable_receipt(stored_receipt):
+            raise RuntimeError("Unsupported prepared media type")
         if body and prefer_caption and _caption_compatible_text(body):
-            logger.info("attachment=%s final_send_by_file_id", attachment.id)
             payload_caption, parse_mode = prepare_telegram_html_message(body)
-            response = send_document_by_file_id(
-                contact.external_chat_id,
-                file_id,
-                caption=payload_caption,
-                parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id,
-            )
-            final_message_id = _telegram_message_id(response)
-            message.telegram_message_id = final_message_id
-            attachment.telegram_message_id = final_message_id
+            sent_id = checkpoint_send("file", lambda: send_file(payload_caption, parse_mode, reply_to_message_id))
+            message.telegram_message_id = sent_id
         elif body:
             payload_text, parse_mode = prepare_telegram_html_message(body)
-            text_response = send_message(
-                contact.external_chat_id,
-                payload_text,
-                parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id,
-            )
-            logger.info("attachment=%s final_send_by_file_id", attachment.id)
-            file_response = send_document_by_file_id(contact.external_chat_id, file_id)
-            message.telegram_message_id = _telegram_message_id(text_response)
-            attachment.telegram_message_id = _telegram_message_id(file_response)
+            checkpoint_send("text", lambda: send_message(contact.external_chat_id, payload_text,
+                            parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, retry_only_parse_errors=True))
+            checkpoint_send("file", send_file)
         else:
-            logger.info("attachment=%s final_send_by_file_id", attachment.id)
-            file_response = send_document_by_file_id(
-                contact.external_chat_id,
-                file_id,
-                reply_to_message_id=reply_to_message_id,
-            )
-            attachment.telegram_message_id = _telegram_message_id(file_response)
-    except TelegramApiError as exc:
-        _mark_delivery_failed(
-            db,
-            ticket=ticket,
-            attachment=attachment,
-            failure_note=f"Не удалось отправить клиенту вложение «{filename}» в Telegram: {exc}",
-        )
+            checkpoint_send("file", lambda: send_file(reply=reply_to_message_id))
+    except (TelegramApiError, RuntimeError):
+        _mark_delivery_failed(db, ticket=ticket, attachment=attachment,
+            failure_note=f"Telegram не подтвердил доставку вложения «{filename}». Автоматический повтор отключён во избежание дубликата.")
         return
-
     attachment.telegram_delivery_status = "sent"
     db.commit()
 
@@ -780,7 +954,8 @@ def _finalize_claimed_preload_archive(*, preload_id: str, final_status: str) -> 
                     for_update=False,
                 )
                 for row in cleanup_rows:
-                    cleanup_db.delete(row)
+                    if row.status == "sent":
+                        cleanup_db.delete(row)
                 cleanup_db.commit()
             finally:
                 cleanup_db.close()
@@ -788,7 +963,43 @@ def _finalize_claimed_preload_archive(*, preload_id: str, final_status: str) -> 
         db.close()
 
 
-def deliver_ticket_attachment(
+def deliver_ticket_attachment(*, attachment_id: str, message_id: str, ticket_id: str,
+                              reply_to_message_id=None, prefer_caption=False, preload_id=None) -> None:
+    with SessionLocal() as db:
+        row = upload_state.lock_row(db, TicketAttachment, attachment_id)
+        if row is not None:
+            upload_state.expire_delivery(db, row)
+        if row is None or row.telegram_delivery_status not in {"uploading", "sending"}:
+            return
+        token = upload_state.begin_attempt(row, "delivery_attempt")
+        db.commit()
+        if not token:
+            return
+    try:
+        _deliver_ticket_attachment(attachment_id=attachment_id, message_id=message_id, ticket_id=ticket_id,
+            reply_to_message_id=reply_to_message_id, prefer_caption=prefer_caption, preload_id=preload_id)
+    except Exception as exc:
+        with SessionLocal() as db:
+            row = upload_state.lock_row(db, TicketAttachment, attachment_id)
+            if row is not None and (upload_state.state(row).get("delivery_attempt") or {}).get("token") == token:
+                row.telegram_delivery_status = "failed"
+                if isinstance(exc, upload_state.ReceiptRegistrationError):
+                    upload_state.patch(row, receipt=exc.receipt)
+                    row.telegram_archive_message_id = exc.receipt.get("message_id")
+                upload_state.patch(row, error_code="delivery_registration_failed", error="Не удалось подтвердить доставку. Автоматический повтор отключён.")
+                db.commit()
+        logger.warning("attachment=%s delivery_failed=%s", attachment_id, type(exc).__name__)
+    finally:
+        with SessionLocal() as db:
+            row = upload_state.lock_row(db, TicketAttachment, attachment_id)
+            if row is not None:
+                upload_state.end_attempt(row, "delivery_attempt", token)
+                db.commit()
+                if row.telegram_delivery_status == "failed":
+                    cleanup_failed_attachment_preloads(db, row.ticket_id)
+
+
+def _deliver_ticket_attachment(
     *,
     attachment_id: str,
     message_id: str,
@@ -846,6 +1057,8 @@ def deliver_ticket_attachment(
                     local_path=attachment.local_path,
                     original_filename=attachment.original_filename,
                     mime_type=attachment.mime_type,
+                    on_receipt=lambda response: upload_state.store_receipt(db, attachment, response),
+                    on_wait=lambda: upload_state.heartbeat(db, attachment, "delivery_attempt"),
                 )
             except FileNotFoundError:
                 _mark_delivery_failed(
@@ -858,6 +1071,8 @@ def deliver_ticket_attachment(
                     _finalize_claimed_preload_archive(preload_id=preload_id, final_status="failed")
                 return
             except (RuntimeError, TelegramApiError) as exc:
+                if isinstance(exc, upload_state.ReceiptRegistrationError):
+                    upload_state.store_receipt_value(db, attachment, exc.receipt)
                 _mark_delivery_failed(
                     db,
                     ticket=ticket,
@@ -876,9 +1091,9 @@ def deliver_ticket_attachment(
                 _delete_archive_message_by_id(_staging_message_id)
                 attachment.telegram_delivery_status = "failed"
                 db.commit()
-                _unlink_attachment_local_file(cleanup_path)
+                _unlink_attachment_local_file(cleanup_path, db=db)
                 return
-            _unlink_attachment_local_file(cleanup_path)
+            _release_prepared_source(attachment, cleanup_path)
 
         _deliver_attachment_to_client(
             db,
@@ -896,13 +1111,21 @@ def deliver_ticket_attachment(
 
 def _mark_preload_preparation_failed(db, preload: TicketAttachmentPreload) -> bool:
     """Keep a claimed task attachment linked, including claims made during staging."""
+    token = (upload_state.state(preload).get("staging_attempt") or {}).get("token")
+    upload_state.lock_row(db, TicketAttachmentPreload, preload.id)
+    if preload.status == "cancelled" or (upload_state.state(preload).get("staging_attempt") or {}).get("token") != token:
+        return False
     ticket = db.get(Ticket, preload.ticket_id)
     task = ticket is not None and ticket.workflow_type == TicketWorkflowType.TASK.value
     if task:
         db.refresh(preload, with_for_update=True)
         if preload.status == "cancelled":
             return False
-    preload.status = "failed"
+    upload_state.fail(preload, uncertain=bool(upload_state.state(preload).get("binary_started")) and not upload_state.usable_receipt(upload_state.state(preload).get("receipt") or {}))
+    value = upload_state.state(preload).get("receipt") or {}
+    if value.get("accepted") and value.get("media_type") not in {None, "document"}:
+        upload_state.patch(preload, error_code="staging_media_mismatch",
+            error="Telegram вернул другой тип файла вместо документа. Исходник сохранён; повтор требует подтверждения.", uncertain=True)
     if task and preload.final_attachment_id:
         attachment = db.get(TicketAttachment, preload.final_attachment_id)
         message = db.get(TicketMessage, attachment.message_id) if attachment is not None else None
@@ -913,6 +1136,51 @@ def _mark_preload_preparation_failed(db, preload: TicketAttachmentPreload) -> bo
 
 
 def deliver_attachment_preload(*, preload_id: str) -> None:
+    with SessionLocal() as db:
+        row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+        if row is None or row.status not in {"uploading", "ready", "cancelled"}:
+            return
+        token = upload_state.begin_attempt(row, "staging_attempt")
+        db.commit()
+        if not token:
+            return
+    try:
+        _deliver_attachment_preload(preload_id=preload_id)
+    except Exception as exc:
+        with SessionLocal() as db:
+            row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+            if row is not None and (upload_state.state(row).get("staging_attempt") or {}).get("token") == token:
+                if row.status != "cancelled":
+                    _mark_preload_preparation_failed(db, row)
+                    if isinstance(exc, upload_state.ReceiptRegistrationError):
+                        upload_state.patch(row, receipt=exc.receipt)
+                        row.telegram_staging_file_message_id = exc.receipt.get("message_id")
+                    upload_state.patch(row, error_code="staging_registration_failed",
+                        uncertain=not upload_state.usable_receipt(upload_state.state(row).get("receipt") or {}))
+                db.commit()
+        logger.warning("preload=%s preparation_failed=%s", preload_id, type(exc).__name__)
+    finally:
+        with SessionLocal() as db:
+            row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+            if row is not None:
+                upload_state.end_attempt(row, "staging_attempt", token)
+                db.commit()
+                if row.status == "cancelled":
+                    _discard_preload(db, row, delete_row=True, unlink_local=True)
+                    return
+                if row.status == "failed":
+                    ticket = db.get(Ticket, row.ticket_id)
+                    if ticket is not None and ticket.status == "closed":
+                        cleanup_failed_attachment_preloads(db, ticket.id)
+                        return
+                    if ticket is not None:
+                        group = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
+                            user_id=row.user_id, archive_group_id=_archive_group_id(row), for_update=False))
+                        _best_effort_edit_group_archive_message(group_rows=group, ticket=ticket,
+                            user=db.get(User, row.user_id), status_text="ошибка подготовки", force=True)
+
+
+def _deliver_attachment_preload(*, preload_id: str) -> None:
     staged_task_file = False
     db = SessionLocal()
     try:
@@ -956,8 +1224,9 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                 if preload.status == "cancelled":
                     _discard_preload(db, preload, delete_row=True, unlink_local=True)
                     return
+                upload_state.patch(preload, uncertain=True)
                 _clear_pending_info_reservation(db, preload)
-                logger.warning("preload=%s filename=%s staging_failed=%s", preload.id, preload.original_filename, exc)
+                logger.warning("preload=%s staging_failed=%s", preload.id, type(exc).__name__)
                 db.commit()
                 return
 
@@ -966,23 +1235,36 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             _discard_preload(db, preload, delete_row=True, unlink_local=True)
             return
 
+        attempt_token = (upload_state.state(preload).get("staging_attempt") or {}).get("token")
+        saved_receipt = upload_state.state(preload).get("receipt") or {}
+        if upload_state.usable_receipt(saved_receipt):
+            preload.telegram_file_id = saved_receipt["file_id"]
+            preload.telegram_file_unique_id = saved_receipt.get("file_unique_id")
+            preload.telegram_staging_file_message_id = saved_receipt["message_id"]
+            db.commit()
+        elif saved_receipt.get("accepted"):
+            _mark_preload_preparation_failed(db, preload)
+            upload_state.patch(preload, error_code="staging_response_invalid", uncertain=True)
+            db.commit()
+            return
         if not (preload.telegram_file_id or "").strip():
             try:
+                upload_state.patch(preload, binary_started=True)
+                db.commit()
                 file_id, file_unique_id, file_message_id = _send_staging_document(preload=preload)
                 staged_task_file = ticket.workflow_type == TicketWorkflowType.TASK.value
             except FileNotFoundError:
                 claimed_task = _mark_preload_preparation_failed(db, preload)
+                upload_state.patch(preload, error_code="staging_file_missing", uncertain=False)
                 db.commit()
-                if not claimed_task:
-                    _discard_preload(db, preload, delete_row=True, unlink_local=True)
                 logger.warning("preload=%s filename=%s staging_failed=file_missing", preload.id, preload.original_filename)
                 return
             except (RuntimeError, TelegramApiError) as exc:
+                if isinstance(exc, upload_state.ReceiptRegistrationError):
+                    upload_state.store_receipt_value(db, preload, exc.receipt)
                 claimed_task = _mark_preload_preparation_failed(db, preload)
                 db.commit()
-                if not claimed_task:
-                    _discard_preload(db, preload, delete_row=True, unlink_local=True)
-                logger.warning("preload=%s filename=%s staging_failed=%s", preload.id, preload.original_filename, exc)
+                logger.warning("preload=%s staging_failed=%s", preload.id, type(exc).__name__)
                 return
         else:
             file_id = str(preload.telegram_file_id).strip()
@@ -998,10 +1280,13 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             if staged_task_file:
                 _delete_archive_message_by_id(file_message_id)
             return
+        if (upload_state.state(preload).get("staging_attempt") or {}).get("token") != attempt_token:
+            return
         _ensure_archive_group_id(finalize_db, preload)
         ticket = finalize_db.get(Ticket, preload.ticket_id)
         user = finalize_db.get(User, preload.user_id)
 
+        upload_state.patch(preload, error=None, error_code=None, uncertain=False)
         preload.telegram_file_id = file_id
         preload.telegram_file_unique_id = file_unique_id
         preload.telegram_staging_file_message_id = file_message_id or preload.telegram_staging_file_message_id
@@ -1015,7 +1300,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if not preload.final_attachment_id:
             preload.status = "ready"
             finalize_db.commit()
-            _safe_unlink(cleanup_path)
+            _release_prepared_source(preload, cleanup_path)
             if ticket is not None:
                 group_rows = _archive_rows_for_display(
                     _load_group_preloads(
@@ -1038,20 +1323,22 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if attachment is None:
             finalize_db.delete(preload)
             finalize_db.commit()
-            _safe_unlink(cleanup_path)
+            _safe_unlink(cleanup_path, db=finalize_db)
             return
 
         message = finalize_db.get(TicketMessage, attachment.message_id)
         if message is None or ticket is None:
             finalize_db.delete(preload)
             finalize_db.commit()
-            _safe_unlink(cleanup_path)
+            _safe_unlink(cleanup_path, db=finalize_db)
             return
 
         if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_status == "deleted":
             _discard_preload(finalize_db, preload, delete_row=True, unlink_local=True)
             return
 
+        if upload_state.state(preload).get("receipt"):
+            upload_state.patch(attachment, receipt=upload_state.state(preload)["receipt"])
         attachment.telegram_file_id = file_id
         attachment.telegram_file_unique_id = file_unique_id
         already_sent = attachment.telegram_delivery_status == "sent" or bool(str(attachment.telegram_message_id or "").strip())
@@ -1063,7 +1350,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         if already_sent:
             preload.status = "sent"
             finalize_db.commit()
-            _safe_unlink(cleanup_path)
+            _release_prepared_source(preload, cleanup_path)
             _finalize_claimed_preload_archive(preload_id=preload.id, final_status="sent")
             return
 
@@ -1072,14 +1359,14 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
             attachment.telegram_delivery_status = "ready"
             attachment.telegram_archive_message_id = file_message_id or None
             finalize_db.commit()
-            _safe_unlink(cleanup_path)
+            _release_prepared_source(preload, cleanup_path)
             _finalize_claimed_preload_archive(preload_id=preload.id, final_status="ready")
             return
 
         preload.status = "sending"
         attachment.telegram_delivery_status = "sending"
         finalize_db.commit()
-        _safe_unlink(cleanup_path)
+        _release_prepared_source(preload, cleanup_path)
     finally:
         finalize_db.close()
 

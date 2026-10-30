@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Ticket, TicketAttachment, TicketMessage, TicketView
 from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
+from .telegram_upload_state import source_references
 
 
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
@@ -24,6 +25,8 @@ def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
     ).all()
     attachment_paths = list(dict.fromkeys(row[0] for row in attachment_rows if row[0]))
     for file_path in attachment_paths:
+        if source_references(db, file_path, excluded_ticket_ids=attachment_ticket_ids):
+            continue
         try:
             path_obj = Path(file_path)
             if path_obj.exists():

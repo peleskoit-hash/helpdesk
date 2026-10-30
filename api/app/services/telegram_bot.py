@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from pathlib import Path
 import uuid
 from urllib.error import HTTPError, URLError
@@ -61,7 +62,14 @@ def fake_telegram_response(method: str, payload: dict | None = None) -> dict:
 
 
 class TelegramApiError(RuntimeError):
-    pass
+    def __init__(self, message):
+        safe = re.sub(r"https?://api\.telegram\.org/(?:file/)?bot[^/\s]+", "[Telegram API]", str(message))
+        safe = re.sub(r"\b[0-9]{5,}:[A-Za-z0-9_-]{20,}\b", "[redacted]", safe)
+        super().__init__(safe)
+
+
+def _html_rejection(error):
+    return any(marker in str(error).lower() for marker in ("can't parse entities", "unsupported start tag", "can't find end tag"))
 
 
 def _api_url(method: str, *, bot_token: str | None = None) -> str:
@@ -225,6 +233,7 @@ def send_message(
     bot_token: str | None = None,
     disable_web_page_preview: bool = True,
     disable_notification: bool = False,
+    retry_only_parse_errors: bool = False,
 ) -> dict:
     payload: dict = {
         "chat_id": chat_id,
@@ -246,7 +255,7 @@ def send_message(
     try:
         return telegram_request("sendMessage", payload=payload, bot_token=bot_token)
     except TelegramApiError as exc:
-        if parse_mode == "HTML":
+        if parse_mode == "HTML" and (not retry_only_parse_errors or _html_rejection(exc)):
             logger.warning("Telegram rejected HTML message, falling back to plain text: %s", exc)
             fallback_payload = dict(payload)
             fallback_payload.pop("parse_mode", None)
@@ -351,6 +360,8 @@ def send_document(
     else:
         path = Path(file_path)
     payload = {"chat_id": chat_id}
+    if (mime_type or "").lower() == "image/webp" or Path(filename or path.name).suffix.lower() == ".webp":
+        payload["disable_content_type_detection"] = "true"
     if caption:
         payload["caption"] = caption
     if parse_mode:
@@ -407,6 +418,7 @@ def send_document_by_file_id(
     caption: str | None = None,
     parse_mode: str | None = None,
     reply_to_message_id: str | int | None = None,
+    retry_only_parse_errors: bool = False,
 ) -> dict:
     payload: dict = {
         "chat_id": chat_id,
@@ -423,7 +435,7 @@ def send_document_by_file_id(
     try:
         return telegram_request("sendDocument", payload=payload)
     except TelegramApiError as exc:
-        if parse_mode == "HTML" and caption:
+        if parse_mode == "HTML" and caption and (not retry_only_parse_errors or _html_rejection(exc)):
             logger.warning("Telegram rejected HTML document caption, falling back to plain text: %s", exc)
             fallback_payload = dict(payload)
             fallback_payload.pop("parse_mode", None)

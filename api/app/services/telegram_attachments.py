@@ -218,16 +218,17 @@ def _inbound_group_archive_info_text(ticket: Ticket, attachments: list[TicketAtt
     if not attachments:
         raise RuntimeError("Cannot render inbound archive group info without attachments")
     sorted_rows = sorted(attachments, key=lambda row: (row.created_at or datetime.min, row.id))
-    filenames = [((row.original_filename or "").strip() or "Файл") for row in sorted_rows]
+    filenames = [((row.original_filename or "").strip() or "Файл") for row in sorted_rows if row.source != "sticker"]
     file_label = "Файлы:" if len(filenames) > 1 else "Файл:"
     event_at = sorted_rows[0].created_at
     lines = [
         _archive_ticket_header(ticket),
         f"Клиент: {telegram_html_text(client_name)}",
         f"Получено: {_format_project_dt(event_at)}",
-        file_label,
     ]
-    lines.extend(f"• {telegram_html_code(filename)}" for filename in filenames)
+    if filenames:
+        lines.append(file_label)
+        lines.extend(f"• {telegram_html_code(filename)}" for filename in filenames)
     lines.append("Статус: получено от клиента")
     return "\n".join(lines)
 

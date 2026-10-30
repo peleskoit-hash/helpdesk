@@ -82,11 +82,12 @@ def test_card_flag_clears_and_task_can_close_after_ready_or_failure(case, termin
         row.telegram_delivery_status = terminal
     case.db.commit()
     assert case.http.get(card_url).json()["has_active_attachment_uploads"] is False
+    row_id = row.id
     response = case.http.post(card_url + "/close")
     assert response.status_code == 200, response.text
     assert case.target.status == "closed"
     if terminal == "failed":
-        assert row.id not in case.sent
+        assert row_id not in case.sent
 
 
 def test_admin_batch_preflight_does_not_close_or_send_first_task(case):
