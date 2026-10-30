@@ -964,6 +964,10 @@ def close_ticket_by_actor(
         else:
             subject_text = resolve_ticket_subject(db, ticket)
             final_attachments = message_attachments_fn(db, last_agent_message.id)
+            if ticket.channel == "web" and ticket.task_kind == TicketTaskKind.NORMAL.value and not suppress_task_client_delivery and not skip_client_notification:
+                from .web_task_results import publish_result
+
+                publish_result(db, ticket, last_agent_message, final_attachments)
             if suppress_task_client_delivery and not is_force_close_action:
                 schedule_internal_task_completion_notification(
                     db,

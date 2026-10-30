@@ -49,12 +49,14 @@ from .routers.users import router as users_router
 from .routers.web_auth import router as web_auth_router
 from .routers.web_menu import router as web_menu_router
 from .routers.web_tasks import router as web_tasks_router
+from .routers.web_task_results import router as web_task_results_router
 from .services.web_tasks import web_task_cleanup_loop
 from .services import telegram_client_avatar_cleanup  # Register post-commit cleanup for every closing path.
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (
     ensure_background_contours_table,
+    ensure_web_task_results_tables,
     ensure_bot_menu_level_layouts_table,
     ensure_bot_menu_profiles_tables,
     ensure_bot_button_settings_table,
@@ -110,6 +112,7 @@ app.include_router(background_contours_router)
 app.include_router(web_auth_router)
 app.include_router(web_menu_router)
 app.include_router(web_tasks_router)
+app.include_router(web_task_results_router)
 app.include_router(settings_router)
 app.include_router(settings_automatic_messages_router)
 app.include_router(settings_bot_button_items_router)
@@ -157,6 +160,7 @@ async def on_startup():
             ensure_ticket_columns()
             ensure_ticket_message_columns()
             ensure_ticket_attachment_table()
+            ensure_web_task_results_tables()
             ensure_ticket_attachment_preload_table()
             ensure_ticket_reviews_tables()
             ensure_ticket_feedback_tables()

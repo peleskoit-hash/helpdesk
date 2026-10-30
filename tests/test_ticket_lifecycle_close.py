@@ -1738,7 +1738,7 @@ def test_all_task_close_paths_send_feedback_action_to_client(channel):
 @pytest.mark.parametrize("channel", ["telegram", "web"])
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
 @pytest.mark.parametrize("role,force", [("agent", False), ("admin", False), ("admin", True)])
-def test_channel_close_preserves_result_and_completion_rules(channel, workflow, role, force):
+def test_channel_close_preserves_result_and_completion_rules(channel, workflow, role, force, tmp_path, monkeypatch):
     session = _session()
     ticket = _seed_ticket(session, channel=channel, workflow_type=workflow, assignee_id="agent-1")
     _seed_contact_for_ticket(session, ticket)
@@ -1746,6 +1746,13 @@ def test_channel_close_preserves_result_and_completion_rules(channel, workflow, 
     client_message = _add_message(session, ticket, MessageType.CLIENT, "Request", None)
     answer = None if force else _seed_agent_message(session, ticket, "agent-1", body="Final answer")
     attachment = _seed_attachment(session, ticket, answer) if answer is not None else None
+    if channel == "web" and workflow == "task" and attachment is not None:
+        from api.app.config import settings
+
+        monkeypatch.setattr(settings, "attachment_storage_dir", str(tmp_path))
+        path = tmp_path / "result.pdf"
+        path.write_bytes(b"synthetic PDF")
+        attachment.local_path = str(path)
     session.commit()
     sent, files = [], []
     result = close_ticket_by_actor(

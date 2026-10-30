@@ -98,6 +98,14 @@ def ensure_background_contours_table() -> None:
         BackgroundContour.__table__.create(bind=conn, checkfirst=True)
 
 
+def ensure_web_task_results_tables() -> None:
+    from ..models import WebTaskResult, WebTaskResultFile
+
+    with engine.begin() as conn:
+        WebTaskResult.__table__.create(bind=conn, checkfirst=True)
+        WebTaskResultFile.__table__.create(bind=conn, checkfirst=True)
+
+
 def ensure_saved_files_table() -> None:
     with engine.begin() as conn:
         dialect = conn.dialect.name

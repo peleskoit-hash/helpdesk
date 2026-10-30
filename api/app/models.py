@@ -411,6 +411,32 @@ class TicketAttachment(Base):
     message: Mapped[TicketMessage] = relationship(back_populates="attachments")
 
 
+class WebTaskResult(Base):
+    __tablename__ = "web_task_results"
+    __table_args__ = (Index("ix_web_task_results_owner_read", "company_id", "client_id", "read_at"),)
+
+    # No FK to mutable/deletable correspondence: this is a publication snapshot.
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36))
+    client_id: Mapped[str] = mapped_column(String(36))
+    message_id: Mapped[str] = mapped_column(String(36))
+    text: Mapped[str] = mapped_column(Text)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebTaskResultFile(Base):
+    __tablename__ = "web_task_result_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    result_task_id: Mapped[str] = mapped_column(ForeignKey("web_task_results.task_id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(255))
+    size: Mapped[int] = mapped_column(Integer)
+    position: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+
+
 class TicketAttachmentPreload(Base):
     __tablename__ = "ticket_attachment_preloads"
 
