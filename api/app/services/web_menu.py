@@ -52,6 +52,7 @@ def read_client_menu(db: Session, client_id: str) -> dict:
                     continue
             label = (row.label_override or "").strip() if row.label_overridden else ""
             result.append([{"id": row.id, "label": label or row.button_label,
+                            "workflow_type": workflow,
                             "style": _button_style_value(row), "children": children,
                             "__layout_key": row.button_key}])
         arranged = _apply_layout_to_markup_rows(result, layouts.get(build_level_layout_key(name, parent_path)))

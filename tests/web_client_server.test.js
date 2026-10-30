@@ -18,7 +18,7 @@ async function listen(t, server) {
   return server.address().port;
 }
 
-function request(port, path = '/', headers = {}, method = 'GET') {
+function request(port, path = '/', headers = {}, method = 'GET', body) {
   return new Promise((resolve, reject) => {
     const req = http.request({ hostname: '127.0.0.1', port, path, headers, method }, res => {
       let body = '';
@@ -26,7 +26,7 @@ function request(port, path = '/', headers = {}, method = 'GET') {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -140,6 +140,37 @@ test('menu proxy allows only exact GET with isolated WEB cookies', async t => {
   assert.equal((await request(port, '/api/v1/web/menu/extra', headers)).status, 404);
   assert.equal((await request(port, '/api/v1/settings/bot-buttons', headers)).status, 404);
   assert.deepEqual(seen, [{ method: 'GET', url: '/api/v1/web/menu', cookie: 'esdesk_web_session=web', authorization: undefined }]);
+});
+
+test('task proxy forwards only three task actions, WEB cookie, JSON and Origin', async t => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', data => { body += data; });
+    req.on('end', () => {
+      seen.push({ method: req.method, path: req.url, cookie: req.headers.cookie, origin: req.headers.origin,
+        authorization: req.headers.authorization, body });
+      res.setHeader('Content-Type', 'application/json');
+      res.end('{"state":"collecting"}');
+    });
+  });
+  const upstreamPort = await listen(t, upstream);
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
+  const origin = `http://127.0.0.1:${port}`;
+  const headers = { Origin: origin, Cookie: 'esdesk_session=staff; esdesk_web_session=web', 'Content-Type': 'application/json', Authorization: 'Bearer staff' };
+  const uuid = '11111111-1111-4111-8111-111111111111';
+  for (const path of ['/api/v1/web/tasks/select', `/api/v1/web/tasks/${uuid}/description`, `/api/v1/web/tasks/${uuid}/cancel`]) {
+    assert.equal((await request(port, path, headers, 'POST', '{"text":"test"}')).status, 200);
+    assert.equal((await request(port, path, headers)).status, 405);
+    assert.equal((await request(port, path, { ...headers, Origin: 'http://foreign.example' }, 'POST')).status, 403);
+    assert.equal((await request(port, path, {}, 'POST')).status, 403);
+  }
+  for (const path of [`/api/v1/web/tasks/${uuid}/close`, '/api/v1/web/tasks/not-a-uuid/cancel', '/api/v1/web/tasks', '/api/v1/web/tasks/select/extra', '/api/v1/settings/bot-buttons']) {
+    assert.equal((await request(port, path, headers, 'POST')).status, 404);
+  }
+  assert.equal(seen.length, 3);
+  assert.ok(seen.every(item => item.method === 'POST' && item.origin === origin && item.cookie === 'esdesk_web_session=web'
+    && item.authorization === undefined && item.body === '{"text":"test"}'));
 });
 
 test('CLI selects loopback by default and wildcard only in explicit Docker mode', async () => {

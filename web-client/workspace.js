@@ -1,5 +1,5 @@
-// Menu is read-only. Chat actions remain local demos with no API or persistence.
-import { getWebMenu } from './api.js';
+// Ordinary tasks use WEB API. The technical chat stays temporary, in memory only.
+import { getWebMenu, sendTaskAction, TaskError } from './api.js';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
@@ -17,13 +17,14 @@ export function mountWorkspace(root) {
         <div class="section-heading"><h2 id="bot-title">Помощник ES DESK+</h2><span class="online-dot" aria-hidden="true"></span></div>
         <p id="bot-hint">Выберите, с чем нужна помощь</p>
         <div id="bot-buttons" class="bot-buttons"></div>
+        <section id="task-controls" hidden><p id="task-feedback" role="status"></p><p id="task-error" role="alert" hidden></p><div class="task-actions"><button id="task-confirm" type="button" class="primary" hidden>Подтвердить</button><button id="task-cancel" type="button" hidden>Отменить создание задачи</button><button id="task-retry" type="button" hidden>Повторить запрос</button><button id="task-sign-in" type="button" hidden>Войти снова</button></div></section>
       </section>
       <button id="history-open">История заявок и задач <span aria-hidden="true">↗</span></button>
       <section class="client-info" aria-labelledby="client-info-title">
         <h2 id="client-info-title">Информация о клиенте</h2><p class="demo-caption">Демонстрационные данные</p>
         <dl><div><dt>Клиент</dt><dd>Александр Смирнов</dd></div><div><dt>Организация</dt><dd>ООО «Пример»</dd></div><div><dt>Подразделение</dt><dd>Клиентский отдел</dd></div><div><dt>Электронная почта</dt><dd>client@example.com</dd></div></dl>
       </section>
-      <div class="client-bottom"><p class="demo-caption">UI-прототип · действия только на экране</p><p class="message" id="logout-error" role="alert" hidden></p><button id="logout-button">Выйти</button></div>
+      <div class="client-bottom"><p class="demo-caption">Временный WEB-чат · история не сохраняется после обновления</p><p class="message" id="logout-error" role="alert" hidden></p><button id="logout-button">Выйти</button></div>
     </aside>
     <section class="client-chat" aria-label="Чат с поддержкой">
       <header class="chat-toolbar">
@@ -35,15 +36,18 @@ export function mountWorkspace(root) {
       <form id="demo-composer" class="demo-composer">
         <label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="2000" placeholder="Напишите сообщение…"></textarea>
         <div class="composer-options"><label class="composer-enter-toggle" for="sendByEnterCheckbox"><input id="sendByEnterCheckbox" type="checkbox"><span>Отправлять по Enter</span></label><span id="sendHotkeyHint" class="composer-hotkey-hint">Отправка: Ctrl+Enter</span></div>
-        <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Текст и файлы никуда не отправляются</small><button type="submit" id="demo-send" class="primary">Отправка <span aria-hidden="true">↑</span></button></div>
+        <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Выберите задачу в меню, чтобы отправить описание</small><button type="submit" id="demo-send" class="primary">Отправка <span aria-hidden="true">↑</span></button></div>
       </form>
     </section>
     <dialog id="history-dialog" aria-labelledby="history-title"><div class="section-heading"><h2 id="history-title">История заявок и задач</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><p class="demo-caption">Демонстрационные данные</p><div class="history-layout"><div id="history-list"></div><section id="history-detail" aria-label="История выбранной записи" aria-live="polite"></section></div></dialog>
     <dialog id="appearanceMenu" class="appearance-menu" aria-labelledby="appearance-title"><div class="section-heading"><h2 id="appearance-title">Оформление</h2><button data-close-dialog aria-label="Закрыть оформление">×</button></div><p class="demo-caption">Настройки действуют до обновления страницы</p><div class="appearance-themes"><button data-appearance-theme="light" aria-pressed="true">Светлая</button><button data-appearance-theme="dark" aria-pressed="false">Тёмная</button></div><div class="appearance-controls"></div><button id="appearance-reset">Сбросить настройки</button></dialog>`;
 
   const byId = id => root.querySelector(`#${id}`);
-  let stage = 'menu';
-  let category = '';
+  let activeTask = null;
+  let pendingAction = null;
+  let taskBusy = false;
+  let taskRequest;
+  let generation = 0;
   const records = [
     { title: 'Задача № Д-1042', subject: 'Настройка рабочего компьютера', status: 'В работе · сегодня', messages: [['client', 'Вы', 'Нужна помощь с настройкой рабочего компьютера.'], ['system', 'Система', 'Демонстрационная задача Д-1042 создана.'], ['bot', 'Поддержка', 'Специалист принял задачу в работу.']] },
     { title: 'Заявка № Д-1038', subject: 'Восстановление доступа', status: 'Закрыта · вчера', messages: [['client', 'Вы', 'Не получается войти в учётную запись.'], ['bot', 'Поддержка', 'Доступ восстановлен. Проверьте вход.'], ['client', 'Вы', 'Всё работает, спасибо!'], ['system', 'Система', 'Обращение закрыто.']] },
@@ -58,7 +62,7 @@ export function mountWorkspace(root) {
     const name = document.createElement('strong');
     name.textContent = author;
     const time = document.createElement('span');
-    time.textContent = 'Демо';
+    time.textContent = container.id === 'chat-messages' ? new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : 'Демо';
     header.append(name, time);
     const body = document.createElement('p');
     body.textContent = text;
@@ -75,7 +79,7 @@ export function mountWorkspace(root) {
     root.querySelector('.bot-panel').classList.toggle('waiting', waiting);
   }
   function renderMenu(rows, container, parents = [], moveFocus = false) {
-    menuStatus(rows.length ? 'Меню поддержки · только просмотр' : 'В вашем меню пока нет доступных кнопок', rows.length > 0);
+    menuStatus(rows.length ? 'Выберите тему в меню' : 'В вашем меню пока нет доступных кнопок', rows.length > 0);
     for (const row of rows) {
       const line = document.createElement('div');
       line.className = `menu-row columns-${row.length}`;
@@ -86,11 +90,14 @@ export function mountWorkspace(root) {
         button.className = `bot-button ${{ primary: 'blue', success: 'green', danger: 'red' }[item.style] || 'plain'}`;
         button.textContent = item.label;
         const hasChildren = Array.isArray(item.children) && item.children.length > 0;
-        button.title = hasChildren ? 'Открыть подменю' : 'Действия кнопки пока недоступны';
+        button.title = hasChildren ? 'Открыть подменю' : item.workflow_type === 'task' ? 'Создать обычную задачу' : 'Этот тип кнопки пока недоступен';
+        if (!hasChildren && item.workflow_type === 'task') button.dataset.taskTerminal = item.id;
         if (!hasChildren) button.setAttribute('aria-pressed', 'false');
         button.addEventListener('click', () => {
           if (hasChildren) {
             renderMenu(item.children, container, [...parents, rows], true);
+          } else if (item.workflow_type === 'task') {
+            beginTask(item);
           } else {
             container.querySelectorAll('[aria-pressed]').forEach(other => other.setAttribute('aria-pressed', 'false'));
             button.setAttribute('aria-pressed', 'true');
@@ -110,7 +117,8 @@ export function mountWorkspace(root) {
       back.addEventListener('click', () => renderMenu(parents.at(-1), container, parents.slice(0, -1), true));
       container.append(back);
     }
-    if (moveFocus) container.querySelector('button')?.focus();
+    updateTaskUI();
+    if (moveFocus) container.querySelector('button:not(:disabled)')?.focus();
   }
   async function loadMenu() {
     menuRequest?.abort();
@@ -137,28 +145,112 @@ export function mountWorkspace(root) {
     }
   }
 
+  function updateTaskUI() {
+    const unresolved = Boolean(pendingAction);
+    byId('task-controls').hidden = !activeTask && byId('task-error').hidden;
+    byId('task-confirm').hidden = activeTask?.state !== 'confirmation_required';
+    byId('task-confirm').disabled = taskBusy || unresolved;
+    byId('task-cancel').hidden = !activeTask?.taskId;
+    byId('task-cancel').disabled = taskBusy || unresolved;
+    byId('task-retry').hidden = taskBusy || !unresolved;
+    byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
+    byId('demo-text').disabled = taskBusy || unresolved || activeTask?.state === 'confirmation_required';
+    byId('demo-send').disabled = byId('demo-text').disabled;
+    byId('demo-files').disabled = taskBusy || unresolved;
+    byId('close-conversation').disabled = true; // Ordinary requests are not connected.
+    for (const button of root.querySelectorAll('[data-task-terminal]')) {
+      button.disabled = taskBusy || Boolean(activeTask);
+      button.setAttribute('aria-pressed', String(activeTask?.buttonId === button.dataset.taskTerminal));
+    }
+    byId('conversation-label').textContent = 'Технический WEB-чат';
+    byId('composer-hint').textContent = taskBusy ? 'Ожидаем ответ сервера…' : unresolved
+      ? 'Результат неизвестен. Повторите тот же запрос кнопкой слева.' : activeTask?.state === 'collecting'
+        ? 'Отправьте одно текстовое описание задачи' : activeTask?.state === 'confirmation_required'
+          ? 'Подтвердите или отмените создание задачи' : 'Чат временный. Для создания задачи выберите кнопку меню.';
+  }
+  function clearTaskError() {
+    byId('task-error').hidden = true;
+    byId('task-error').textContent = '';
+    delete byId('task-error').dataset.status;
+  }
+  async function runTaskAction(operation) {
+    if (taskBusy) return;
+    pendingAction = operation;
+    taskBusy = true;
+    clearTaskError();
+    const current = generation;
+    const controller = new AbortController();
+    taskRequest = controller;
+    byId('task-feedback').textContent = 'Ожидаем ответ сервера…';
+    updateTaskUI();
+    try {
+      const result = await sendTaskAction(operation.path, operation.body, controller.signal);
+      if (current !== generation) return;
+      pendingAction = null;
+      if (operation.kind === 'description' && result.state === 'ready') {
+        add('client', 'Вы', operation.body.text);
+        byId('demo-text').value = '';
+      }
+      add('bot', 'ES DESK+', result.text);
+      if (['ready', 'cancelled'].includes(result.state)) {
+        activeTask = null;
+        byId('task-feedback').textContent = '';
+      } else {
+        activeTask = { ...activeTask, taskId: result.task_id, state: result.state };
+        byId('task-feedback').textContent = result.state === 'confirmation_required' ? result.text : 'Ожидаем описание задачи в чате';
+      }
+    } catch (error) {
+      if (current !== generation) return;
+      // An auth error on a retry does not tell us whether the earlier attempt committed.
+      const uncertain = !(error instanceof TaskError) || error.status >= 500 || [401, 403].includes(error.status);
+      byId('task-error').textContent = error instanceof TaskError ? error.message
+        : 'Ответ сервера не получен. Повторите запрос: его ключ сохранён до обновления страницы.';
+      byId('task-error').hidden = false;
+      byId('task-error').dataset.status = String(error.status || 0);
+      byId('task-feedback').textContent = uncertain ? 'Результат операции пока неизвестен' : '';
+      if (!uncertain) {
+        pendingAction = null;
+        if ((operation.kind === 'select' && !activeTask?.taskId) || error.status === 410 || error.status === 404
+            || ['web_task_cancelled', 'web_task_no_longer_collecting', 'web_task_already_created'].includes(error.code)) activeTask = null;
+      }
+    } finally {
+      if (current === generation) {
+        taskBusy = false;
+        taskRequest = null;
+        updateTaskUI();
+        if (activeTask?.state === 'collecting' && !pendingAction) byId('demo-text').focus();
+      }
+    }
+  }
+  function beginTask(item) {
+    if (taskBusy || activeTask || pendingAction) return;
+    activeTask = { buttonId: item.id, requestId: crypto.randomUUID(), taskId: null, state: 'selecting' };
+    runTaskAction({ kind: 'select', path: 'select', body: { button_id: activeTask.buttonId, request_id: activeTask.requestId } });
+  }
+  byId('task-confirm').addEventListener('click', () => {
+    if (activeTask?.state !== 'confirmation_required' || taskBusy || pendingAction) return;
+    runTaskAction({ kind: 'select', path: 'select', body: { button_id: activeTask.buttonId, request_id: activeTask.requestId, confirmed: true } });
+  });
+  byId('task-cancel').addEventListener('click', () => {
+    if (!activeTask?.taskId || taskBusy || pendingAction) return;
+    runTaskAction({ kind: 'cancel', path: activeTask.taskId + '/cancel' });
+  });
+  byId('task-retry').addEventListener('click', () => { if (pendingAction) runTaskAction(pendingAction); });
+  byId('task-sign-in').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   function start() {
-    stage = 'description';
-    category = 'Демонстрационное описание';
+    activeTask = null;
+    pendingAction = null;
+    taskBusy = false;
+    clearTaskError();
     byId('chat-messages').replaceChildren();
     byId('demo-text').value = '';
-    for (const id of ['demo-text', 'demo-send', 'demo-files']) byId(id).disabled = false;
-    byId('close-conversation').disabled = false;
-    byId('conversation-label').textContent = 'Поможем решить ваш вопрос';
-    byId('composer-hint').textContent = 'Текст и файлы никуда не отправляются';
-    add('system', 'ES DESK+', 'Демонстрационный чат · сегодня');
-    add('bot', 'Помощник ES DESK+', 'Здравствуйте! Я помогу направить ваш вопрос нужному специалисту. Меню слева доступно только для просмотра. Переписка здесь остаётся демонстрационной.');
+    byId('task-feedback').textContent = '';
+    updateTaskUI();
+    add('system', 'ES DESK+', 'Временный WEB-чат · история не сохраняется после обновления');
+    add('bot', 'ES DESK+', 'Выберите обычную задачу в меню. После выбора отправьте одно описание.');
   }
   byId('new-conversation').addEventListener('click', () => {
-    if (stage === 'closed') start();
-    else add('system', 'Система', 'Сначала закройте текущее демонстрационное обращение. Переписка остаётся в чате.');
-  });
-  byId('close-conversation').addEventListener('click', () => {
-    stage = 'closed';
-    add('system', 'Система', 'Демонстрационное обращение закрыто. Переписка сохранена на экране. Чтобы продолжить, нажмите «Новое обращение».');
-    for (const id of ['demo-text', 'demo-send', 'demo-files', 'close-conversation']) byId(id).disabled = true;
-    byId('conversation-label').textContent = 'Демо-обращение · закрыто';
-    byId('composer-hint').textContent = 'Обращение закрыто · ввод недоступен';
+    byId('composer-hint').textContent = activeTask ? 'Завершите или отмените создание текущей задачи' : 'Обычные заявки пока недоступны. Выберите кнопку задачи в меню.';
   });
   // Same shortcuts as agent ticket_composer.js; preference stays local to this UI.
   byId('sendByEnterCheckbox').addEventListener('change', () => {
@@ -183,19 +275,17 @@ export function mountWorkspace(root) {
   byId('demo-composer').addEventListener('submit', event => {
     event.preventDefault();
     const text = byId('demo-text').value.trim();
-    if (!text || stage === 'closed') return;
-    add('client', 'Вы', text);
-    byId('demo-text').value = '';
-    if (stage === 'description') {
-      stage = 'active';
-      add('system', 'Система', `Демонстрационная задача Д-1043 создана: ${category}.`);
-      add('bot', 'Помощник ES DESK+', 'Спасибо! Описание принято в демонстрационном режиме. Специалист подключится к обращению.');
-      byId('conversation-label').textContent = 'Демо-обращение Д-1043 · открыто';
-    } else add('bot', 'Поддержка ES DESK+', 'Это пример ответа поддержки. Сообщение осталось только в этом макете.');
-    byId('composer-hint').textContent = 'Показано локально · ничего не отправлено';
+    if (!text || taskBusy || pendingAction || activeTask?.state === 'confirmation_required') return;
+    if (activeTask?.state === 'collecting') {
+      runTaskAction({ kind: 'description', path: activeTask.taskId + '/description', body: { text } });
+    } else if (!activeTask) {
+      add('client', 'Вы', text);
+      byId('demo-text').value = '';
+      byId('composer-hint').textContent = 'Сообщение осталось во временном чате и не отправлено сотруднику';
+    }
   });
   byId('demo-files').addEventListener('click', () => {
-    byId('composer-hint').textContent = 'Демо: файл «Описание проблемы.png» · выбор и загрузка отключены';
+    byId('composer-hint').textContent = 'В этом сценарии поддерживается только текстовое описание';
   });
   function notifications(open) {
     byId('notifications-panel').hidden = !open;
@@ -237,6 +327,9 @@ export function mountWorkspace(root) {
   return {
     loadMenu,
     reset() {
+      generation++;
+      taskRequest?.abort();
+      taskRequest = null;
       menuRequest?.abort();
       menuRequest = null;
       root.querySelector('.bot-panel').removeAttribute('aria-busy');

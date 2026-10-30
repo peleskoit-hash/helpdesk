@@ -33,6 +33,10 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel #bot-hint { color: var(--desk-muted); font-size: 12px; margin: 8px 0 14px; }
 #session-panel .online-dot { width: 7px; height: 7px; flex-shrink: 0; background: var(--desk-success); border-radius: 50%; }
 #session-panel .bot-buttons { display: grid; gap: 8px; }
+#session-panel #task-controls { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--desk-border); }
+#session-panel :is(#task-feedback, #task-error) { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#session-panel #task-error { color: var(--desk-danger); margin-top: 8px; }
+#session-panel .task-actions { display: grid; gap: 8px; margin-top: 10px; }
 #session-panel .bot-button { width: 100%; text-align: left; padding: 13px 12px; border-radius: 10px; animation: menu-appear .18s ease-out; }
 #session-panel .bot-button.blue { color: var(--desk-blue-text); background: var(--desk-blue-bg); }
 #session-panel .bot-button.purple { color: var(--desk-on-tint); background: var(--desk-tint); }

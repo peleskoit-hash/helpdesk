@@ -13,15 +13,19 @@ from starlette.middleware.sessions import SessionMiddleware
 from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
-from api.app.models import BotButtonSetting, Client, ClientProfile, Company, TelegramContact, WebClientSession, WebLoginLimit
+from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
+                            TelegramContact, Ticket, TicketMessage, WebClientSession, WebLoginLimit)
 from api.app.routers.web_auth import router
 from api.app.routers.web_menu import router as menu_router
+from api.app.routers.web_tasks import router as task_router
 from api.app.services import web_auth
 
 
 def run():
     settings.app_env = "dev"
     settings.session_cookie_secure = False
+    settings.telegram_bot_token = ''
+    settings.employee_telegram_bot_token = ''
     settings.app_public_base_url = "http://127.0.0.1:8000"
     settings.web_public_base_url = os.environ.get("WEB_CLIENT_TEST_ORIGIN")
     clock_start = datetime(2026, 10, 19, 16, tzinfo=timezone.utc)
@@ -40,12 +44,19 @@ def run():
         db.add(TelegramContact(id="synthetic-contact", company_id="synthetic-company", client_id="synthetic-client",
                                external_user_id="123", external_chat_id="123"))
         db.add(BotButtonSetting(id='synthetic-button', button_key='synthetic-button', menu_type='Базовое',
-                                workflow_type='ticket', button_path='Synthetic', button_label='Synthetic menu'))
+                                workflow_type='task', button_path='Synthetic', button_label='Synthetic menu',
+                                confirmation_enabled=True, confirmation_text='Synthetic confirmation'))
+        for key, body in [('telegram.task.request_text', 'Synthetic description prompt'),
+                          ('telegram.task.created', 'Synthetic task created'),
+                          ('telegram.intake.task_timeout', 'Synthetic task expired'),
+                          ('telegram.ticket.close.unassigned.client', 'Synthetic task cancelled')]:
+            db.add(AutomaticMessageTemplate(id=key, key=key, body=body, is_overridden=True))
         db.commit()
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="synthetic-test-only", session_cookie="esdesk_session")
     app.include_router(router)
     app.include_router(menu_router)
+    app.include_router(task_router)
     requests = []
 
     def get_test_db():
@@ -64,6 +75,8 @@ def run():
 
     @app.post("/__test__/reset")
     def reset(db=Depends(get_db)):
+        db.execute(delete(TicketMessage))
+        db.execute(delete(Ticket))
         db.execute(delete(WebClientSession))
         db.execute(delete(WebLoginLimit))
         db.commit()
@@ -81,9 +94,17 @@ def run():
         clock[0] += timedelta(hours=2)
         return {}
 
+    @app.post('/__test__/task-timeout')
+    def task_timeout():
+        clock[0] += timedelta(minutes=10)
+        return {}
+
     @app.get("/__test__/state")
     def state(db=Depends(get_db)):
         return {"requests": requests, "app_public_base_url": settings.app_public_base_url,
+                'tasks': [{'id': row.id, 'channel': row.channel, 'intake_state': row.intake_state,
+                           'workflow_type': row.workflow_type} for row in db.scalars(select(Ticket))],
+                'client_messages': [row.body for row in db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client'))],
                 "activities": [row.last_activity_at.isoformat()
                 for row in db.scalars(select(WebClientSession))]}
 

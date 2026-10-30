@@ -139,5 +139,6 @@ logoutButton.addEventListener('click', async () => {
 });
 
 byId('retry-button').addEventListener('click', checkSession);
+byId('session-panel').addEventListener('web-session-expired', checkSession);
 window.addEventListener('pageshow', event => { if (event.persisted) checkSession(); });
 checkSession();

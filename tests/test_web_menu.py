@@ -83,7 +83,8 @@ def test_access_and_no_writes_or_session_extension(case):
     assert all(sql.lstrip().upper().startswith('SELECT') for sql in statements)
     assert 'PRIVATE' not in response.text
     assert set(response.json()) == {'menu_type', 'rows'}
-    assert set(response.json()['rows'][0][0]) == {'id', 'label', 'style', 'children'}
+    assert set(response.json()['rows'][0][0]) == {'id', 'label', 'workflow_type', 'style', 'children'}
+    assert response.json()['rows'][0][0]['workflow_type'] == 'ticket'
     session = case.db.scalar(select(WebClientSession))
     assert web_auth.as_utc(session.last_activity_at) == case.now
     assert case.http.post('/api/v1/web/menu', headers={'Origin': 'http://evil.example'}).status_code == 405

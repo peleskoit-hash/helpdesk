@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/v1/web", tags=["web-menu"], route_class=WebAuthR
 class MenuButton(BaseModel):
     id: str
     label: str
+    workflow_type: str
     style: Literal["primary", "success", "danger"] | None = None
     children: list[list["MenuButton"]] | None = None
 

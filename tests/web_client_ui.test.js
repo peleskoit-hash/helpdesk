@@ -9,9 +9,18 @@ let browser, server, origin, fixture, fixtureOrigin;
 const password = 'Synthetic-Web-A1!';
 const authPath = '/api/v1/web/auth/';
 const menuExample = { menu_type: 'Базовое', rows: [
-  [{ id: 'section', label: 'Техническая поддержка', style: 'primary', children: [[{ id: 'child', label: 'Компьютер и программы', style: 'success', children: [[{ id: 'leaf', label: 'Настройка', style: 'danger', children: null }], [{ id: 'leaf2', label: 'Диагностика', style: 'primary', children: null }]] }], [{ id: 'side', label: 'Справка', style: null, children: null }]] }],
-  [{ id: 'access', label: 'Доступы и учётная запись', style: 'danger', children: null }, { id: 'guide', label: 'Руководства', style: null, children: null }],
+  [{ id: 'section', label: 'Техническая поддержка', style: 'primary', children: [[{ id: 'child', label: 'Компьютер и программы', style: 'success', children: [[{ id: 'leaf', label: 'Настройка', workflow_type: 'ticket', style: 'danger', children: null }], [{ id: 'leaf2', label: 'Диагностика', workflow_type: 'auto', style: 'primary', children: null }]] }], [{ id: 'side', label: 'Справка', workflow_type: 'group_task', style: null, children: null }]] }],
+  [{ id: 'access', label: 'Доступы и учётная запись', workflow_type: 'ticket', style: 'danger', children: null }, { id: 'guide', label: 'Руководства', workflow_type: 'group_task', style: null, children: null }],
 ] };
+
+const taskMenu = structuredClone(menuExample);
+taskMenu.rows[0][0].children[0][0].children[0][0].workflow_type = 'task';
+const taskId = '11111111-1111-4111-8111-111111111111';
+async function openTask(page) {
+  await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
+  await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
+  await page.getByRole('button', { name: 'Настройка', exact: true }).click();
+}
 
 const { once } = require('node:events');
 
@@ -78,7 +87,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const state = { me: 401, login: 200, logout: 204, retry: null, network: false, hold: null, loginCount: 0, logoutCount: 0, menuStatus: 200, menu: menuExample, menuHold: null, menuCount: 0 };
+  const state = { me: 401, login: 200, logout: 204, retry: null, network: false, hold: null, loginCount: 0, logoutCount: 0, menuStatus: 200, menu: menuExample, menuHold: null, menuCount: 0, taskCalls: [], taskConfirmation: true, taskHold: null, taskNetwork: false, taskStatus: 200, taskError: { error: { code: 'test_error', message: 'Ошибка API' } } };
   if (mocked) await page.route(`**${authPath}*`, async route => {
     const kind = new URL(route.request().url()).pathname.split('/').pop();
     if (state.network) return route.abort('failed');
@@ -97,6 +106,18 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     state.menuCount++;
     if (state.menuHold) await state.menuHold;
     await route.fulfill({ status: state.menuStatus, contentType: 'application/json', body: JSON.stringify(state.menu) });
+  });
+  if (mocked) await page.route('**/api/v1/web/tasks/**', async route => {
+    const url = new URL(route.request().url());
+    const body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    state.taskCalls.push({ path: url.pathname, body, method: route.request().method() });
+    if (state.taskHold) await state.taskHold;
+    if (state.taskNetwork) return route.abort('failed');
+    let result;
+    if (url.pathname.endsWith('/select')) result = { state: state.taskConfirmation && !body.confirmed ? 'confirmation_required' : 'collecting', text: state.taskConfirmation && !body.confirmed ? 'Подтвердите создание (сервер)' : 'Опишите задачу (сервер)' };
+    else if (url.pathname.endsWith('/description')) result = { state: 'ready', text: 'Задача создана (сервер)' };
+    else result = { state: 'cancelled', text: 'Создание отменено (сервер)' };
+    await route.fulfill({ status: state.taskStatus, contentType: 'application/json', body: JSON.stringify(state.taskStatus === 200 ? { ...result, task_id: taskId, status: 'unassigned', expires_at: null } : { detail: state.taskError }) });
   });
   await page.goto(origin);
   return { page, context, state };
@@ -159,7 +180,7 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     const { page } = await pageFor(t, { width, colorScheme });
     await submit(page);
     await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
-    await page.getByText('Меню поддержки · только просмотр', { exact: true }).waitFor();
+    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
     const requests = [];
     page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
     const workspace = page.locator('#session-panel');
@@ -187,13 +208,13 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.locator('.columns-2 > div').count(), 2);
     await page.locator('#demo-text').fill('Не запускается рабочая программа');
     await page.locator('#demo-send').click();
-    assert.equal(await page.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).isVisible(), true);
+    assert.equal(await page.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 0);
     assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).isVisible(), true);
     await page.locator('#demo-files').click();
-    assert.ok((await page.locator('#composer-hint').innerText()).includes('загрузка отключены'));
-    await page.locator('#close-conversation').click();
-    assert.equal(await page.locator('#demo-text').isDisabled(), true);
-    assert.equal(await page.locator('#demo-send').isDisabled(), true);
+    assert.ok((await page.locator('#composer-hint').innerText()).includes('только текстовое описание'));
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
+    assert.equal(await page.locator('#demo-text').isEnabled(), true);
+    assert.equal(await page.locator('#demo-send').isEnabled(), true);
     assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).isVisible(), true);
     await page.locator('#history-open').click();
     await page.locator('[data-record="1"]').click();
@@ -226,7 +247,7 @@ for (const sendByEnter of [false, true]) {
     const { page } = await pageFor(t);
     await submit(page);
     await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
-    await page.getByText('Меню поддержки · только просмотр', { exact: true }).waitFor();
+    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
     const requests = [];
     page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
     const toggle = page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true });
@@ -249,19 +270,18 @@ for (const sendByEnter of [false, true]) {
     await input.press(sendByEnter ? 'Enter' : 'Control+Enter');
     assert.equal(await input.inputValue(), '');
     assert.equal(await messages.getByText('Первая строка\nx', { exact: true }).count(), 1);
-    assert.equal(await messages.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 1);
+    assert.equal(await messages.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 0);
     // Both button and keyboard use the same submit handler, without duplicates.
     await input.fill('Повторное сообщение');
     await page.locator('#demo-send').click();
     assert.equal(await input.inputValue(), '');
     assert.equal(await messages.getByText('Повторное сообщение', { exact: true }).count(), 1);
-    assert.equal(await messages.getByText('Это пример ответа поддержки.', { exact: false }).count(), 1);
+    assert.equal(await messages.getByText('Это пример ответа поддержки.', { exact: false }).count(), 0);
     const sent = await messages.locator('article').count();
     await input.fill('   ');
     await input.press(sendByEnter ? 'Enter' : 'Control+Enter');
     assert.equal(await messages.locator('article').count(), sent);
-    await page.locator('#close-conversation').click();
-    assert.equal(await input.isDisabled(), true);
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
     const closed = await messages.locator('article').count();
     await input.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(await messages.locator('article').count(), closed);
@@ -274,7 +294,7 @@ for (const width of [1440, 390]) {
   test(`client menu: nested navigation, back and visual-only terminal buttons at ${width}px`, async t => {
     const { page, state } = await pageFor(t, { width, colorScheme: width === 390 ? 'dark' : 'light' });
     await submit(page);
-    await page.getByText('Меню поддержки · только просмотр', { exact: true }).waitFor();
+    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
     const menu = page.locator('#bot-buttons');
     const rows = () => menu.locator('.menu-row').evaluateAll(lines => lines.map(line => [...line.querySelectorAll('button')].map(button => ({ label: button.textContent, color: button.className }))));
     const original = await rows();
@@ -312,6 +332,168 @@ for (const width of [1440, 390]) {
   });
 }
 
+for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
+test(`WEB task: confirmation, one description via Enter, READY and temporary chat ${width}px ${colorScheme}`, async t => {
+  const { page, state } = await pageFor(t, { width, colorScheme });
+  state.menu = taskMenu;
+  await submit(page);
+  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  await page.locator('#demo-text').fill('Временная заметка');
+  await page.locator('#demo-send').click();
+  let release;
+  state.taskHold = new Promise(resolve => { release = resolve; });
+  await openTask(page);
+  await page.locator('#task-feedback').getByText('Ожидаем ответ сервера…', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Настройка', exact: true }).evaluate(button => button.click());
+  assert.equal(state.taskCalls.length, 1);
+  state.taskHold = null;
+  release();
+  await page.locator('#task-confirm').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  assert.equal(await page.locator('#task-feedback').innerText(), 'Подтвердите создание (сервер)');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `task-confirm-${width}-${colorScheme}.png`), fullPage: true });
+  await page.locator('#task-confirm').evaluate(button => { button.click(); button.click(); });
+  await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+  assert.equal(state.taskCalls.length, 2);
+  assert.equal(state.taskCalls[0].body.request_id, state.taskCalls[1].body.request_id);
+  assert.match(state.taskCalls[0].body.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.equal(state.taskCalls[1].body.confirmed, true);
+  await page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true }).check();
+  await page.locator('#demo-text').fill('Описание');
+  await page.locator('#demo-text').press('Shift+Enter');
+  await page.locator('#demo-text').press('x');
+  assert.equal(state.taskCalls.length, 2);
+  state.taskHold = new Promise(resolve => { release = resolve; });
+  await page.locator('#demo-text').press('Enter');
+  await page.locator('#demo-composer').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
+  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  state.taskHold = null;
+  release();
+  await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+  assert.equal(state.taskCalls.length, 3);
+  assert.deepEqual(state.taskCalls[2].body, { text: 'Описание\nx' });
+  assert.equal(await page.locator('#demo-text').inputValue(), '');
+  assert.equal(await page.getByText('Временная заметка', { exact: true }).isVisible(), true);
+  assert.equal(await page.getByText('Описание\nx', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#conversation-label').innerText(), 'Технический WEB-чат');
+  if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `task-ready-${width}-${colorScheme}.png`), fullPage: true });
+  await page.locator('#demo-text').fill('После READY — временная заметка');
+  await page.locator('#demo-send').click();
+  assert.equal(state.taskCalls.length, 3);
+  assert.ok((await page.locator('#composer-hint').innerText()).includes('не отправлено сотруднику'));
+  assert.equal(await page.getByText('Это пример ответа поддержки.', { exact: false }).count(), 0);
+  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+});
+}
+
+for (const confirmation of [false, true]) {
+  test(`WEB task: server cancellation, confirmation ${confirmation}`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu;
+    state.taskConfirmation = confirmation;
+    await submit(page);
+    await openTask(page);
+    await page.locator('#task-cancel').waitFor({ state: 'visible' });
+    await page.locator('#task-cancel').evaluate(button => { button.click(); button.click(); });
+    await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
+    assert.equal(state.taskCalls.length, 2);
+    assert.equal(state.taskCalls[1].path, `/api/v1/web/tasks/${taskId}/cancel`);
+    assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isEnabled(), true);
+    assert.equal(await page.locator('#task-controls').isHidden(), true);
+  });
+}
+
+for (const operation of ['select', 'description', 'cancel']) {
+  test(`WEB task: lost ${operation} response retries the exact same operation`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu;
+    state.taskConfirmation = false;
+    await submit(page);
+    state.taskNetwork = operation === 'select';
+    await openTask(page);
+    if (operation !== 'select') {
+      await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+      state.taskNetwork = true;
+      if (operation === 'description') {
+        await page.locator('#demo-text').fill('Описание для повтора');
+        await page.locator('#demo-send').click();
+      } else await page.locator('#task-cancel').click();
+    }
+    await page.locator('#task-retry').waitFor({ state: 'visible' });
+    const first = structuredClone(state.taskCalls.at(-1));
+    assert.equal(await page.locator('#demo-text').isDisabled(), true);
+    state.taskNetwork = false;
+    await page.locator('#task-retry').evaluate(button => { button.click(); button.click(); });
+    await page.getByText(operation === 'select' ? 'Опишите задачу (сервер)' : operation === 'description' ? 'Задача создана (сервер)' : 'Создание отменено (сервер)', { exact: true }).waitFor();
+    assert.deepEqual(state.taskCalls.at(-1), first);
+    assert.equal(state.taskCalls.length, operation === 'select' ? 2 : 3);
+  });
+}
+
+for (const [status, code] of [[401, 'web_unauthorized'], [403, 'web_csrf_failed'], [410, 'web_task_expired'], [503, 'unavailable']]) {
+  test(`WEB task: API error ${status} shown without fabricated success`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu;
+    state.taskConfirmation = false;
+    await submit(page);
+    await openTask(page);
+    await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+    state.taskStatus = status;
+    state.taskError = { error: { code, message: `Сообщение API ${status}` } };
+    await page.locator('#demo-text').fill('Не потерять описание');
+    await page.locator('#demo-send').click();
+    await page.locator('#task-error').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#task-error').innerText(), `Сообщение API ${status}`);
+    assert.equal(await page.locator('#demo-text').inputValue(), 'Не потерять описание');
+    assert.equal(await page.getByText('Задача создана (сервер)', { exact: true }).count(), 0);
+    if (status === 401) {
+      await page.locator('#task-sign-in').click();
+      await waitLogin(page);
+    } else if (status === 503) {
+      state.taskStatus = 200;
+      await page.locator('#task-retry').click();
+      await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+    } else if (status === 410) {
+      assert.equal(await page.locator('#task-cancel').isHidden(), true);
+      assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isEnabled(), true);
+    }
+  });
+}
+
+test('WEB task: auth failure during a network retry preserves the original UUID', async t => {
+  const { page, state } = await pageFor(t);
+  state.menu = taskMenu;
+  state.taskConfirmation = false;
+  state.taskNetwork = true;
+  await submit(page);
+  await openTask(page);
+  await page.locator('#task-retry').waitFor({ state: 'visible' });
+  const uuid = state.taskCalls[0].body.request_id;
+  state.taskNetwork = false;
+  state.taskStatus = 401;
+  await page.locator('#task-retry').click();
+  await page.locator('#task-sign-in').waitFor({ state: 'visible' });
+  state.taskStatus = 200; // Session renewed in another tab; this page retains its operation.
+  await page.locator('#task-retry').click();
+  await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+  assert.equal(state.taskCalls.length, 3);
+  assert.ok(state.taskCalls.every(call => call.body.request_id === uuid));
+});
+
+test('WEB task: other terminal workflows never call select', async t => {
+  const { page, state } = await pageFor(t);
+  state.menu = { menu_type: 'Базовое', rows: ['ticket', 'auto', 'group_task', 'group_task_child', undefined].map((workflow_type, i) => [
+    { id: `unsupported-${i}`, label: `Тип ${i}`, workflow_type, style: 'danger', children: null },
+  ]) };
+  await submit(page);
+  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  const before = await page.locator('#chat-messages').innerText();
+  for (let i = 0; i < 5; i++) await page.getByRole('button', { name: `Тип ${i}`, exact: true }).click();
+  assert.deepEqual(state.taskCalls, []);
+  assert.equal(await page.locator('#chat-messages').innerText(), before);
+});
+
 test('client menu: loading, safe error, retry, empty state and read-only colors', async t => {
   const { page, state } = await pageFor(t);
   let release;
@@ -333,7 +515,7 @@ test('client menu: loading, safe error, retry, empty state and read-only colors'
   state.menu = menuExample;
   state.me = 200;
   await page.reload();
-  await page.getByText('Меню поддержки · только просмотр', { exact: true }).waitFor();
+  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
   assert.equal(await page.locator('.bot-button.blue').innerText(), 'Техническая поддержка');
   assert.equal(await page.locator('.bot-button.green').count(), 0);
   assert.equal(await page.locator('.bot-button.red').innerText(), 'Доступы и учётная запись');
@@ -438,6 +620,90 @@ test('failed logout preserves the signed-in view and allows retry', async t => {
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await waitLogin(page);
 });
+
+test('real task API through proxy: lost committed select, confirmation, description and one READY task', async t => {
+  await control('reset');
+  await control('origin', { origin });
+  const { page } = await pageFor(t, { mocked: false });
+  await submit(page);
+  await page.getByRole('button', { name: 'Synthetic menu', exact: true }).waitFor();
+  const selections = [];
+  page.on('request', request => {
+    if (request.url().endsWith('/api/v1/web/tasks/select')) selections.push(request.postDataJSON());
+  });
+  let lost = false;
+  await page.route('**/api/v1/web/tasks/select', async route => {
+    if (!lost) {
+      lost = true;
+      const result = await route.fetch();
+      assert.equal(result.status(), 200);
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.getByRole('button', { name: 'Synthetic menu', exact: true }).click();
+  await page.locator('#task-retry').waitFor({ state: 'visible' });
+  assert.equal((await control('state')).tasks.length, 1);
+  await page.locator('#task-retry').click();
+  await page.locator('#task-confirm').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#task-feedback').innerText(), 'Synthetic confirmation');
+  await page.locator('#task-confirm').click();
+  await page.getByText('Synthetic description prompt', { exact: true }).waitFor();
+  let descriptionLost = false;
+  await page.route('**/api/v1/web/tasks/*/description', async route => {
+    if (!descriptionLost) {
+      descriptionLost = true;
+      assert.equal((await route.fetch()).status(), 200);
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  await page.locator('#demo-text').fill('Real isolated task description');
+  await page.locator('#demo-send').click();
+  await page.locator('#task-retry').waitFor({ state: 'visible' });
+  assert.deepEqual((await control('state')).client_messages, ['Real isolated task description']);
+  await page.locator('#task-retry').click();
+  await page.getByText('Synthetic task created', { exact: true }).waitFor();
+  const server = await control('state');
+  assert.equal(server.tasks.length, 1);
+  assert.equal(server.tasks[0].channel, 'web');
+  assert.equal(server.tasks[0].workflow_type, 'task');
+  assert.equal(server.tasks[0].intake_state, 'ready');
+  assert.deepEqual(server.client_messages, ['Real isolated task description']);
+  assert.equal(selections.length, 3);
+  assert.ok(selections.every(body => body.request_id === selections[0].request_id));
+  assert.equal(server.requests.some(request => request.cookie_names.includes('esdesk_session')), false);
+  const requests = [];
+  page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
+  await page.locator('#demo-text').fill('Temporary technical note');
+  await page.locator('#demo-send').click();
+  assert.deepEqual(requests, []);
+  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+});
+
+for (const action of ['cancel', 'timeout']) {
+  test(`real task API through proxy: ${action}`, async t => {
+    await control('reset');
+    await control('origin', { origin });
+    const { page } = await pageFor(t, { mocked: false });
+    await submit(page);
+    await page.getByRole('button', { name: 'Synthetic menu', exact: true }).click();
+    await page.locator('#task-confirm').waitFor({ state: 'visible' });
+    if (action === 'cancel') {
+      await page.locator('#task-cancel').click();
+      await page.getByText('Synthetic task cancelled', { exact: true }).waitFor();
+    } else {
+      await page.locator('#task-confirm').click();
+      await page.getByText('Synthetic description prompt', { exact: true }).waitFor();
+      await control('task-timeout');
+      await page.locator('#demo-text').fill('Too late');
+      await page.locator('#demo-send').click();
+      await page.locator('#task-error').getByText('Synthetic task expired', { exact: true }).waitFor();
+    }
+    const server = await control('state');
+    assert.equal(server.tasks.length, 1);
+    assert.equal(server.tasks[0].intake_state, 'cancelled');
+    assert.deepEqual(server.client_messages, []);
+  });
+}
 
 test('real API through proxy: cookie, Origin, reload, idle, expiry, logout and empty storage', async t => {
   await control('reset');

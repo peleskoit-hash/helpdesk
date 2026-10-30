@@ -15,6 +15,7 @@ const assets = new Map([
 ]);
 const routes = new Map([
   ['/api/v1/web/menu', 'GET'],
+  ['/api/v1/web/tasks/select', 'POST'],
   ['/api/v1/web/auth/login', 'POST'],
   ['/api/v1/web/auth/logout', 'POST'],
   ['/api/v1/web/auth/me', 'GET'],
@@ -55,9 +56,11 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     let path;
     try { path = new URL(req.url, 'http://127.0.0.1').pathname; }
     catch { res.writeHead(400).end(); return; }
-    if (routes.has(path)) {
-      if (req.method !== routes.get(path)) {
-        res.writeHead(405, { Allow: routes.get(path) }).end();
+    const taskAction = /^\/api\/v1\/web\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(description|cancel)$/i.test(path);
+    const method = routes.get(path) || (taskAction ? 'POST' : undefined);
+    if (method) {
+      if (req.method !== method) {
+        res.writeHead(405, { Allow: method }).end();
         return;
       }
       const headers = { host: req.headers.host };
