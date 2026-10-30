@@ -59,6 +59,7 @@ def _seed_ticket(
         subject="Need help",
         workflow_type=workflow_type,
         task_kind=TicketTaskKind.NORMAL.value,
+        client_close_message_id="12",
         status=TicketStatus.PENDING.value,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),

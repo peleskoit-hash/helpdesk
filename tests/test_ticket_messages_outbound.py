@@ -249,10 +249,11 @@ def test_text_channel_reply_edit_delete(text_channel_case):
     assert message.status_note
     assert _run_text_channel_operation(case, "delete", message.id) == {"ok": True}
     if case.ticket.channel == "telegram":
-        assert [call[0] for call in case.calls] == ["send", "keyboard", "edit", "delete"]
+        assert [call[0] for call in case.calls] == ["send", "edit", "delete"]
+        assert case.ticket.client_close_message_id == "700"
         assert case.calls[0][1][:2] == ("chat-42", "Answer")
-        assert case.calls[2][1] == ("chat-42", "901", "Edited")
-        assert case.calls[3][1] == ("chat-42", "901")
+        assert case.calls[1][1] == ("chat-42", "901", "Edited")
+        assert case.calls[2][1] == ("chat-42", "901")
     else:
         assert case.calls == []
 
@@ -314,6 +315,52 @@ def test_text_channel_edit_requires_telegram_id_only_for_telegram(text_channel_c
     assert _run_text_channel_operation(case, "edit", message.id) == {"ok": True}
     assert _run_text_channel_operation(case, "delete", message.id) == {"ok": True}
     assert [call[0] for call in case.calls] == (["edit", "delete"] if case.ticket.channel == "telegram" else [])
+
+
+@pytest.mark.parametrize("workflow,kind,keep_button", [
+    ("ticket", "normal", True), ("ticket", "group_parent", False),
+    ("task", "normal", False), ("task", "group_parent", False),
+    ("task", "group_child", False), ("auto", "normal", False),
+])
+def test_telegram_attachment_reply_preserves_close_button_only_for_normal_ticket(
+    monkeypatch, tmp_path, workflow, kind, keep_button,
+):
+    engine, _, db = _session_bundle()
+    ticket = _seed_ticket(db)
+    ticket.channel = "telegram"
+    ticket.workflow_type = workflow
+    ticket.task_kind = kind
+    ticket.intake_state = "ready"
+    ticket.client_close_message_id = "700"
+    db.commit()
+    removed = []
+
+    def remove_button(_db, current):
+        removed.append(current.id)
+        current.client_close_message_id = None
+
+    monkeypatch.setattr(ticket_messages_service, "schedule_new_message_notification", lambda *args, **kwargs: None)
+    try:
+        result = asyncio.run(reply_to_ticket(
+            request=_MultipartRequest(_FormData(text="Answer", files=[_upload("answer.pdf", b"answer")])),
+            db=db, user=SimpleNamespace(id="agent-1", role="agent"), ticket=ticket,
+            send_to_telegram_client=lambda *args, **kwargs: {"result": {"message_id": 901}},
+            telegram_message_id_from_response=lambda response: "901",
+            save_upload_attachment=_save_upload_attachment_factory(tmp_path),
+            send_attachment_to_telegram_client=lambda *args, **kwargs: None,
+            claim_attachment_preload=lambda *args, **kwargs: None,
+            schedule_attachment_delivery=lambda **kwargs: None,
+            unfreeze_ticket_on_message=lambda *args: None,
+            remove_client_close_button=remove_button,
+            refresh_ticket_auto_close=lambda *args: None,
+        ))
+        assert result == {"ok": True}
+        db.refresh(ticket)
+        assert ticket.client_close_message_id == ("700" if keep_button else None)
+        assert removed == ([] if keep_button else [ticket.id])
+    finally:
+        db.close()
+        engine.dispose()
 
 
 @pytest.mark.parametrize("channel", ["telegram", "web"])
@@ -400,6 +447,8 @@ def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path,
     assert attachment.ticket_id == ticket.id
     assert attachment.message_id == message.id
     assert message.body == "Final answer"
+    if workflow == "ticket" and channel == "telegram":
+        assert ticket.client_close_message_id == "700"
     if not (workflow == "task" and transport == "raw" and channel == "telegram"):
         assert attachment.telegram_file_id == "archive-file-id"
         assert attachment.telegram_file_unique_id == "archive-unique-id"

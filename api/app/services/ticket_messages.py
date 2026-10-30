@@ -9,7 +9,7 @@ from sqlalchemy import asc, func, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
-from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketWorkflowType, User
+from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from ..schemas import TextPayload
 from ..services.employee_telegram_notifications import schedule_new_message_notification
 from ..services.statistics_lifecycle import set_user_availability_status, sync_work_interval_after_unfreeze
@@ -426,7 +426,7 @@ async def reply_to_ticket(
             if actor_user is not None and actor_user.availability_status != "on_ticket":
                 set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
-        if ticket.channel != "web":
+        if ticket.channel != "web" and not (is_plain_ticket and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value):
             remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
@@ -552,7 +552,7 @@ async def reply_to_ticket(
             set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
 
     if not is_internal_comment:
-        if ticket.channel != "web":
+        if ticket.channel != "web" and not (is_plain_ticket and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value):
             remove_client_close_button(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value

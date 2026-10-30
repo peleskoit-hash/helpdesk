@@ -334,7 +334,8 @@ def apply_wrong_problem(
             agent_visible=False,
             telegram_message_id=telegram_message_id_from_response_fn(response),
         )
-        remove_client_close_button_fn(db, ticket)
+        if workflow_type != TicketWorkflowType.TICKET.value or task_kind != TicketTaskKind.NORMAL.value:
+            remove_client_close_button_fn(db, ticket)
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
 

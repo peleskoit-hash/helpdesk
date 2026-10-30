@@ -415,6 +415,8 @@ def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSp
     if assignee is None:
         append_system_message(db, ticket, "На распределении")
         _apply_button_creation_flags(db, ticket)
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and ticket.task_kind == TicketTaskKind.NORMAL.value:
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         return None
     if assign_ticket_to_agent(db, ticket, assignee, notify_client=False):
         _apply_button_creation_flags(db, ticket)
@@ -423,6 +425,8 @@ def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSp
         return assignee
     append_system_message(db, ticket, "На распределении")
     _apply_button_creation_flags(db, ticket)
+    if ticket.workflow_type == TicketWorkflowType.TASK.value and ticket.task_kind == TicketTaskKind.NORMAL.value:
+        remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
     return None
 
 def _complete_auto_ticket(db: Session, ticket: Ticket, external_chat_id: str | None, notify_client: bool):

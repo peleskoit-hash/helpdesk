@@ -190,6 +190,7 @@ def test_wrong_problem_menu_and_apply_without_txt(db, monkeypatch, no_txt, use_d
     db.commit()
     sent, messages = [], []
     args = wrong_problem_args(sent, messages)
+    args["remove_client_close_button_fn"] = lambda *args: pytest.fail("An active normal ticket must retain its close button")
     menu = flow.get_problem_menu_for_ticket(db, ticket, get_or_create_client_profile_fn=args["get_or_create_client_profile_fn"])
     assert menu["menu_name"] == "menu-a"
     assert len(menu["rows"]) == 1

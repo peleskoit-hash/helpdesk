@@ -15,6 +15,7 @@ from ..models import (
     TicketIntakeState,
     TicketMessage,
     TicketStatus,
+    TicketTaskKind,
     TicketWorkflowType,
 )
 from .automatic_messages import render_automatic_message_for_telegram
@@ -72,9 +73,14 @@ def client_can_close_ticket(db: Session, ticket: Ticket) -> bool:
     if ticket.status == TicketStatus.CLOSED.value:
         return False
     if ticket.workflow_type == TicketWorkflowType.TASK.value:
+        if (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value:
+            return ticket.intake_state == TicketIntakeState.COLLECTING.value
         return ticket.assignee_id is None
     if ticket.workflow_type == TicketWorkflowType.AUTO.value:
         return ticket.assignee_id is None
+    if ((ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value
+            and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value):
+        return True
     return not has_agent_message(db, ticket)
 
 
@@ -248,6 +254,12 @@ def process_client_close_callback(
         if notify_client and callback_id:
             answer_callback_query_fn(callback_id, "Активное обращение не найдено")
         return {"ok": True, "closed": False}
+
+    if message_id is None or str(message_id) != ticket.client_close_message_id:
+        db.commit()
+        if notify_client and callback_id:
+            answer_callback_query_fn(callback_id, "Эта кнопка больше не относится к активному обращению")
+        return {"ok": True, "closed": False, "ignored": "stale_client_close"}
 
     if not client_can_close_ticket_fn(db, ticket):
         db.commit()
