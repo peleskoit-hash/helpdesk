@@ -48,6 +48,8 @@ from .routers.ticket_client_avatars import router as ticket_client_avatars_route
 from .routers.users import router as users_router
 from .routers.web_auth import router as web_auth_router
 from .routers.web_menu import router as web_menu_router
+from .routers.web_tasks import router as web_tasks_router
+from .services.web_tasks import web_task_cleanup_loop
 from .services import telegram_client_avatar_cleanup  # Register post-commit cleanup for every closing path.
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
@@ -107,6 +109,7 @@ app.include_router(users_router)
 app.include_router(background_contours_router)
 app.include_router(web_auth_router)
 app.include_router(web_menu_router)
+app.include_router(web_tasks_router)
 app.include_router(settings_router)
 app.include_router(settings_automatic_messages_router)
 app.include_router(settings_bot_button_items_router)
@@ -130,12 +133,14 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 telegram_polling_task: asyncio.Task | None = None
 employee_telegram_polling_task: asyncio.Task | None = None
 internal_task_scheduler_task: asyncio.Task | None = None
+web_task_cleanup_task: asyncio.Task | None = None
 call_center_employee_refresh_thread = None
 
 
 @app.on_event("startup")
 async def on_startup():
     global telegram_polling_task, employee_telegram_polling_task, internal_task_scheduler_task, call_center_employee_refresh_thread
+    global web_task_cleanup_task
 
     settings.validate_runtime_guards()
 
@@ -213,6 +218,8 @@ async def on_startup():
 
     if internal_task_scheduler_task is None:
         internal_task_scheduler_task = asyncio.create_task(internal_task_scheduler_loop())
+    if web_task_cleanup_task is None:
+        web_task_cleanup_task = asyncio.create_task(web_task_cleanup_loop())
 
     if call_center_employee_refresh_thread is None:
         call_center_employee_refresh_thread = start_periodic_refresh_loop()
@@ -221,6 +228,7 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     global telegram_polling_task, employee_telegram_polling_task, internal_task_scheduler_task, call_center_employee_refresh_thread
+    global web_task_cleanup_task
 
     if telegram_polling_task is not None:
         telegram_polling_task.cancel()
@@ -243,6 +251,13 @@ async def on_shutdown():
         except asyncio.CancelledError:
             pass
         internal_task_scheduler_task = None
+    if web_task_cleanup_task is not None:
+        web_task_cleanup_task.cancel()
+        try:
+            await web_task_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        web_task_cleanup_task = None
     stop_periodic_refresh_loop()
     call_center_employee_refresh_thread = None
 

@@ -321,14 +321,18 @@ def _task_for_client_album(db: Session, contact: TelegramContact, attachment_dat
     return tickets[0] if len(tickets) == 1 else None
 
 
-def _create_collecting_ticket(db: Session, company_id: str, client_id: str, subject: str = "Выбор типа проблемы") -> Ticket:
+def _create_collecting_ticket(
+    db: Session, company_id: str, client_id: str, subject: str = "Выбор типа проблемы", *,
+    channel: str = "telegram", workflow_type: str = TicketWorkflowType.TICKET.value, ticket_id: str | None = None,
+) -> Ticket:
     ticket = Ticket(
-        id=str(uuid.uuid4()),
+        id=ticket_id or str(uuid.uuid4()),
         company_id=company_id,
         client_id=client_id,
         assignee_id=None,
         subject=subject,
-        workflow_type=TicketWorkflowType.TICKET.value,
+        channel=channel,
+        workflow_type=workflow_type,
         intake_state=TicketIntakeState.COLLECTING.value,
         status=TicketStatus.UNASSIGNED.value,
         menu_message_id=None,
@@ -339,7 +343,8 @@ def _create_collecting_ticket(db: Session, company_id: str, client_id: str, subj
     db.add(ticket)
     db.flush()
     append_system_message(db, ticket, "Клиент начал создание обращения")
-    schedule_avatar_refresh(db, ticket)
+    if channel == "telegram":
+        schedule_avatar_refresh(db, ticket)
     return ticket
 
 
