@@ -11,6 +11,7 @@ from ..config import settings
 from ..models import Client, Ticket, WebTaskResult, WebTaskResultFile
 from . import web_auth
 from .ticket_attachments import _ensure_local_attachment_file
+from .web_history import history_scope
 
 
 def fail(status, code, message):
@@ -66,7 +67,7 @@ def owner_filter(db, client):
         fail(401, 'web_unauthorized', 'Требуется WEB-авторизация')
     return (WebTaskResult.client_id == owner.id, WebTaskResult.company_id == owner.company_id,
             select(Ticket.id).where(Ticket.id == WebTaskResult.task_id,
-                Ticket.client_id == owner.id, Ticket.company_id == owner.company_id).exists())
+                *history_scope(db, client)).exists())
 
 
 def owned_result(db, client, task_id):

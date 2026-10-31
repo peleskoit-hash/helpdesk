@@ -2,20 +2,32 @@
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_, select
 
-from ..models import Client, Ticket, WebTaskResult
+from ..models import Client, InternalTaskOccurrence, Ticket, WebTaskResult
 
 PAGE_SIZE = 15
 
 
-def list_history(db, client, page):
+def history_scope(db, client):
     owner = db.get(Client, client.id)
     if owner is None:
         raise HTTPException(401, detail='Требуется WEB-авторизация')
-    scope = (
+    return (
         Ticket.client_id == owner.id, Ticket.company_id == owner.company_id,
         or_(Ticket.intake_state == 'ready', Ticket.intake_state.is_(None)),
         or_(Ticket.task_kind != 'group_child', Ticket.task_kind.is_(None)),
+        ~select(InternalTaskOccurrence.id).where(InternalTaskOccurrence.ticket_id == Ticket.id).exists(),
     )
+
+
+def owned_history_ticket(db, client, ticket_id):
+    ticket = db.scalar(select(Ticket).where(Ticket.id == str(ticket_id), *history_scope(db, client)))
+    if ticket is None:
+        raise HTTPException(404, detail='Обращение не найдено')
+    return ticket
+
+
+def list_history(db, client, page):
+    scope = history_scope(db, client)
     total = db.scalar(select(func.count()).select_from(Ticket).where(*scope))
     publication = and_(
         WebTaskResult.task_id == Ticket.id, WebTaskResult.client_id == Ticket.client_id,
