@@ -14,10 +14,12 @@ from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
 from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
-                            TelegramContact, Ticket, TicketMessage, WebClientSession, WebLoginLimit)
+                            TelegramContact, Ticket, TicketMessage, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile)
 from api.app.routers.web_auth import router
 from api.app.routers.web_menu import router as menu_router
 from api.app.routers.web_tasks import router as task_router
+from api.app.routers.web_task_results import router as results_router
+from api.app.routers.web_history import router as history_router
 from api.app.services import web_auth
 
 
@@ -57,6 +59,8 @@ def run():
     app.include_router(router)
     app.include_router(menu_router)
     app.include_router(task_router)
+    app.include_router(results_router)
+    app.include_router(history_router)
     requests = []
 
     def get_test_db():
@@ -75,6 +79,8 @@ def run():
 
     @app.post("/__test__/reset")
     def reset(db=Depends(get_db)):
+        db.execute(delete(WebTaskResultFile))
+        db.execute(delete(WebTaskResult))
         db.execute(delete(TicketMessage))
         db.execute(delete(Ticket))
         db.execute(delete(WebClientSession))
@@ -82,6 +88,22 @@ def run():
         db.commit()
         clock[0] = clock_start
         requests.clear()
+        return {}
+
+    @app.post('/__test__/seed-results')
+    def seed_results(db=Depends(get_db)):
+        task_id = '11111111-1111-4111-8111-111111111111'
+        file_id = '33333333-3333-4333-8333-333333333333'
+        db.add(Ticket(id=task_id, company_id='synthetic-company', client_id='synthetic-client',
+                      subject='Live Ticket subject', channel='web', workflow_type='task', intake_state='ready',
+                      task_kind='normal', status='closed', created_at=clock[0] - timedelta(days=1)))
+        db.flush()
+        db.add(WebTaskResult(task_id=task_id, message_id=file_id, client_id='synthetic-client',
+                            company_id='synthetic-company', text='Published final answer', closed_at=clock[0]))
+        db.flush()
+        db.add(WebTaskResultFile(id=file_id, result_task_id=task_id, filename='final.txt',
+                                mime_type='text/plain', size=12, position=0, data=b'result bytes'))
+        db.commit()
         return {}
 
     @app.post("/__test__/origin")

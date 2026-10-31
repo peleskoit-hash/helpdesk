@@ -49,6 +49,29 @@ export async function getWebMenu(signal) {
   return menu;
 }
 
+// Use only WEB-session endpoints, including for binary downloads. Never follow a supplied URL.
+async function requestWebHistory(path, signal, method = 'GET', file = false) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  const timeout = setTimeout(abort, 15000);
+  try {
+    const response = await fetch('/api/v1/web' + path, {
+      method, signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
+      cache: 'no-store', redirect: 'error',
+    });
+    if (!response.ok) throw new TaskError(response.status, 'Не удалось загрузить результат заявки.');
+    return await (file ? response.blob() : response.json());
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener('abort', abort);
+  }
+}
+
+export const requestTaskResult = (path, signal, method, file) => requestWebHistory('/task-results' + path, signal, method, file);
+export const getWebHistory = (page, signal) => requestWebHistory('/history?page=' + page, signal);
+
 export class TaskError extends Error {
   constructor(status, message, code = '') {
     super(message);

@@ -490,6 +490,7 @@ def list_tickets_paginated(
         items.append(
             TicketListItem(
                 id=t.id,
+                channel=t.channel,
                 ticket_number=ticket_number,
                 subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,
@@ -565,6 +566,7 @@ def list_special_tickets(
         items.append(
             TicketListItem(
                 id=t.id,
+                channel=t.channel,
                 ticket_number=t.ticket_number,
                 subject=subject_map.get(t.id, t.subject),
                 workflow_type=t.workflow_type or TicketWorkflowType.TICKET.value,

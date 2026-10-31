@@ -745,6 +745,7 @@ function fixedTableWidth(columns) {
 }
 
 function ticketChannel(ticket) {
+  if (ticket?.channel === "web") return "web";
   if (ticket?.is_internal_task) return "internal";
   if (ticket?.channel) return ticket.channel;
   if (ticket?.workflow_type === "ticket") return "telegram";
@@ -760,6 +761,9 @@ function channelIconSvg(channel) {
 
 function renderChannelIcon(ticket) {
   const channel = ticketChannel(ticket);
+  if (channel === "web") {
+    return '<span class="ticket-channel-icon ticket-channel-web" title="WEB" aria-label="WEB"><img src="/static/icons/web-source.webp" width="26" height="26" alt="" aria-hidden="true" /></span>';
+  }
   const title = channel === "telegram" ? "Telegram" : (channel === "internal" ? "Внутренняя" : "Другой канал");
   const iconClass = channel === "telegram" ? "ticket-channel-telegram" : "ticket-channel-sync";
   return `<span class="ticket-channel-icon ${iconClass}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${channelIconSvg(channel)}</span>`;

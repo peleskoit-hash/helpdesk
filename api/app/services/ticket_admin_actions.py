@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Ticket, TicketAttachment, TicketMessage, TicketView
+from ..models import Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
 from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
 from .telegram_upload_state import source_references
 
@@ -33,6 +33,11 @@ def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
                 os.remove(path_obj)
         except Exception as exc:
             warnings.append(f"{ticket.ticket_number or ticket.id}: {file_path} ({exc})")
+
+    # Publications have no FK to mutable correspondence. Delete blobs before their result,
+    # for both the selected ticket and children, in the caller's existing transaction.
+    db.execute(WebTaskResultFile.__table__.delete().where(WebTaskResultFile.result_task_id.in_(attachment_ticket_ids)))
+    db.execute(WebTaskResult.__table__.delete().where(WebTaskResult.task_id.in_(attachment_ticket_ids)))
 
     if child_ids:
         db.execute(TicketAttachment.__table__.delete().where(TicketAttachment.ticket_id.in_(child_ids)))

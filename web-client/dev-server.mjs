@@ -12,8 +12,12 @@ const assets = new Map([
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
   ['/Manrope-Variable.ttf', ['Manrope-Variable.ttf', 'font/ttf']],
   ['/api.js', ['api.js', 'text/javascript; charset=utf-8']],
+  ['/assets/web-source.webp', ['assets/web-source.webp', 'image/webp']],
+  ['/assets/telegram-source.svg', ['assets/telegram-source.svg', 'image/svg+xml']],
 ]);
 const routes = new Map([
+  ['/api/v1/web/task-results', 'GET'],
+  ['/api/v1/web/history', 'GET'],
   ['/api/v1/web/menu', 'GET'],
   ['/api/v1/web/tasks/select', 'POST'],
   ['/api/v1/web/auth/login', 'POST'],
@@ -57,7 +61,9 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     try { path = new URL(req.url, 'http://127.0.0.1').pathname; }
     catch { res.writeHead(400).end(); return; }
     const taskAction = /^\/api\/v1\/web\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(description|cancel)$/i.test(path);
-    const method = routes.get(path) || (taskAction ? 'POST' : undefined);
+    const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+    const resultRoute = new RegExp(`^/api/v1/web/task-results/${uuid}(/read|/files/${uuid})?$`, 'i').test(path);
+    const method = routes.get(path) || (taskAction ? 'POST' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
     if (method) {
       if (req.method !== method) {
         res.writeHead(405, { Allow: method }).end();
@@ -71,7 +77,8 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
       const cookie = (req.headers.cookie || '').split(';').map(part => part.trim())
         .filter(part => part.startsWith('esdesk_web_session=')).join('; ');
       if (cookie) headers.cookie = cookie;
-      const proxy = http.request(new URL(path, upstream), { method: req.method, headers }, incoming => {
+      const query = ['/api/v1/web/task-results', '/api/v1/web/history'].includes(path) ? new URL(req.url, expectedOrigin).search : '';
+      const proxy = http.request(new URL(path + query, upstream), { method: req.method, headers }, incoming => {
         res.statusCode = incoming.statusCode;
         for (const key of ['content-type', 'retry-after']) {
           if (incoming.headers[key]) res.setHeader(key, incoming.headers[key]);

@@ -495,3 +495,21 @@ test("MAIN marks only group parents in subject independently of colors and type 
     }
   }
 });
+
+test("WEB source uses channel independently of workflow; existing Telegram and internal icons stay intact", () => {
+  const source = sourceBetween(listSource, 'function ticketChannel(ticket)', 'function lastReplyText(ticket)');
+  const context = { escapeHtml: String };
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  for (const workflow_type of ['ticket', 'task', 'auto']) {
+    const html = context.renderChannelIcon({ channel: 'web', workflow_type });
+    assert.match(html, /ticket-channel-web/);
+    assert.match(context.renderChannelIcon({ channel: "web", workflow_type, is_internal_task: true }), /ticket-channel-web/);
+    assert.match(html, /src="\/static\/icons\/web-source.webp"/);
+    assert.doesNotMatch(html, /<svg|ticket-channel-sync/);
+    assert.match(context.renderChannelIcon({ channel: 'telegram', workflow_type }), /ticket-channel-telegram/);
+  }
+  assert.match(context.renderChannelIcon({ is_internal_task: true }), /ticket-channel-sync/);
+  assert.match(context.renderChannelIcon({ channel: "telegram", is_internal_task: true }), /ticket-channel-sync/);
+  assert.match(context.renderChannelIcon({}), /ticket-channel-telegram/);
+});

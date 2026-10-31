@@ -2149,6 +2149,12 @@ th, td {
   fill: currentColor;
 }
 
+.ticket-channel-icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
 .ticket-channel-telegram {
   color: #229ed9;
 }

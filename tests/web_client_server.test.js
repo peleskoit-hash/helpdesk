@@ -193,3 +193,64 @@ test('CLI selects loopback by default and wildcard only in explicit Docker mode'
     else assert.equal(output, '');
   }
 });
+
+test('result proxy preserves pagination and isolates WEB authorization for all result routes', async t => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push({ path: req.url, method: req.method, cookie: req.headers.cookie, authorization: req.headers.authorization });
+    res.setHeader('Content-Type', req.url.includes('/files/') ? 'application/octet-stream' : 'application/json');
+    res.end(req.url.includes('/files/') ? 'binary result' : '{}');
+  });
+  const upstreamPort = await listen(t, upstream);
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
+  const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: 'esdesk_session=staff; esdesk_web_session=web', Authorization: 'Bearer staff' };
+  const id = '11111111-1111-4111-8111-111111111111';
+  const base = '/api/v1/web/task-results';
+  for (const [path, method] of [[base + '?limit=50&offset=50', 'GET'], [`${base}/${id}`, 'GET'],
+    [`${base}/${id}/read`, 'POST'], [`${base}/${id}/files/${id}`, 'GET'], ['/api/v1/web/history?page=2', 'GET']]) {
+    const response = await request(port, path, headers, method);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    if (path.includes('/files/')) {
+      assert.equal(response.body, 'binary result');
+      assert.equal(response.headers['content-type'], 'application/octet-stream');
+    }
+    assert.equal((await request(port, path, headers, method === 'GET' ? 'POST' : 'GET')).status, 405);
+    assert.equal((await request(port, path, { ...headers, Origin: 'http://foreign.example' }, method)).status, 403);
+  }
+  assert.equal((await request(port, `${base}/${id}/read`, {}, 'POST')).status, 403);
+  for (const path of [base + '/bad-id', `${base}/${id}/files/no-id`, `${base}/${id}/messages`, `${base}/${id}/close`]) {
+    assert.equal((await request(port, path, headers)).status, 404);
+  }
+  assert.equal(seen.length, 5);
+  assert.equal(seen.at(-1).path, '/api/v1/web/history?page=2');
+  assert.equal(seen[0].path, base + '?limit=50&offset=50');
+  assert.ok(seen.every(item => item.cookie === 'esdesk_web_session=web' && item.authorization === undefined));
+});
+
+test('source icons: static assets preserve original WEB bytes and correct media types', async t => {
+  const { readFile } = require('node:fs/promises');
+  const { createHash } = require('node:crypto');
+  const port = await listen(t, createDevServer());
+  for (const [name, mime] of [['web-source.webp', 'image/webp'], ['telegram-source.svg', 'image/svg+xml']]) {
+    const bytes = await readFile(`web-client/assets/${name}`);
+    const response = await fetch(`http://127.0.0.1:${port}/assets/${name}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), mime);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    if (name === 'web-source.webp') assert.equal(createHash('sha256').update(bytes).digest('hex'),
+      '997a2edcfa40a1fb1c3eb273fe19daeafec3a5417de09cc8d272fffdb3845014');
+  }
+});
+
+test('source icons: client Telegram matches the staff contour and WEB copies match', async () => {
+  const { readFile } = require('node:fs/promises');
+  const staff = await readFile('api/app/static/list.js', 'utf8');
+  const telegram = await readFile('web-client/assets/telegram-source.svg', 'utf8');
+  const original = staff.match(/if \(channel === "telegram"\) \{\s*return '([^']+)';/)[1];
+  assert.equal(telegram.match(/<path d="([^"]+)"/)[1], original.match(/<path d="([^"]+)"/)[1]);
+  assert.match(telegram, /fill="#229ed9"/);
+  assert.doesNotMatch(telegram, /<circle/);
+  assert.deepEqual(await readFile('api/app/static/icons/web-source.webp'), await readFile('web-client/assets/web-source.webp'));
+});

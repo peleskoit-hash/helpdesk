@@ -17,6 +17,7 @@ from api.app.db import get_db
 from api.app.models import (Company, Client, ClientProfile, TelegramContact, Ticket, TicketMessage,
                             TicketAttachment, User, WebClientSession, WebTaskResult, WebTaskResultFile)
 from api.app.routers import tickets
+from api.app.routers.web_history import router as history_router
 from api.app.routers.web_task_results import router
 from api.app.services import web_auth, web_task_results, schema_evolution
 from api.app.services.ticket_lifecycle import close_ticket_by_actor
@@ -59,6 +60,7 @@ def case(engine, tmp_path, monkeypatch):
     actor = SimpleNamespace(id='agent', company_id='co', role='agent', full_name='Synthetic agent')
     app = FastAPI()
     app.include_router(router)
+    app.include_router(history_router)
     app.include_router(tickets.router)
     app.dependency_overrides[get_current_user] = lambda: actor
     def session():

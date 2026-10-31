@@ -86,12 +86,32 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel #composer-hint { color: var(--desk-muted); font-size: 11px; flex: 1; }
 #session-panel dialog { width: min(900px, calc(100vw - 24px)); max-height: calc(100svh - 32px); overflow-y: auto; padding: 24px; border: 1px solid var(--desk-border); border-radius: 18px; background: var(--desk-surface); color: var(--desk-text); font: 14px/1.5 var(--desk-font); box-shadow: 0 12px 36px #0003; }
 #session-panel dialog::backdrop { background: #171b2880; }
-#session-panel .history-layout { display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
-#session-panel #history-list { display: grid; align-content: start; gap: 8px; }
-#session-panel #history-list button { white-space: pre-line; text-align: left; line-height: 1.8; }
-#session-panel #history-list button[aria-pressed="true"] { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-focus); }
-#session-panel #history-detail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--desk-soft); }
-#session-panel #history-detail .chat-message { max-width: 95%; font-size: 13px; }
+#session-panel #history-dialog { width: 1420px; max-width: calc(100vw - 40px); height: 760px; max-height: calc(100svh - 40px); }
+#session-panel #history-dialog[open] { display: flex; flex-direction: column; }
+#session-panel #history-dialog > .section-heading { flex-shrink: 0; }
+#session-panel #history-title { flex: 1; }
+#session-panel #history-back { display: none; font-size: 13px; }
+#session-panel .history-layout { display: grid; grid-template-columns: minmax(0, 52fr) minmax(0, 48fr); flex: 1; min-height: 0; gap: 16px; margin-top: 12px; }
+#session-panel #history-list { align-self: start; }
+#session-panel .history-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+#session-panel .history-source-column { width: 60px; }
+#session-panel .history-date-column { width: 132px; }
+#session-panel .history-table :is(th, td) { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--desk-border); }
+#session-panel .history-table th { color: var(--desk-muted); font-size: 11px; }
+#session-panel .history-table td { height: 32px; }
+#session-panel .history-table button { width: 100%; min-height: 26px; padding: 3px 6px; border-radius: 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; }
+#session-panel .history-table button[data-read="false"] { font-weight: 800; }
+#session-panel .history-table button[aria-pressed="true"], #session-panel .history-pagination [aria-current="page"] { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-focus); }
+#session-panel .history-source { display: block; width: 26px; height: 26px; object-fit: contain; }
+#session-panel .history-pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+#session-panel .history-pagination button { min-height: 30px; padding: 3px 8px; border-radius: 6px; }
+#session-panel #history-detail { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--desk-soft); }
+#session-panel #history-detail button { max-width: 100%; overflow-wrap: anywhere; }
+#session-panel #history-detail > * { flex-shrink: 0; }
+#session-panel #history-detail .chat-message { max-width: 95%; font-size: 15px; line-height: 1.6; }
+#session-panel .history-message-text { user-select: text; -webkit-user-select: text; }
+#session-panel .history-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 12px; }
+#session-panel #history-detail .history-copy { min-height: 28px; padding: 3px 8px; font-size: 12px; font-weight: 500; color: inherit; background: transparent; border-color: currentColor; opacity: .8; }
 #session-panel #appearanceMenu { inset: 0; margin: auto; }
 #session-panel #appearance-reset { margin-top: 20px; }
 @keyframes menu-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -117,7 +137,16 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
   #session-panel #composer-hint { order: 3; flex-basis: 100%; }
   #session-panel #demo-send { margin-left: auto; }
   #session-panel .notification-panel { top: 120px; left: 12px; }
-  #session-panel .history-layout { grid-template-columns: minmax(0, 1fr); }
+  #session-panel #history-dialog { max-width: calc(100vw - 32px); max-height: calc(100svh - 32px); }
+  #session-panel .history-layout { display: block; overflow-y: auto; }
+  #session-panel #history-detail { height: 100%; }
+  #session-panel #history-dialog[data-view="list"] #history-detail,
+  #session-panel #history-dialog[data-view="detail"] #history-list { display: none; }
+  #session-panel #history-dialog[data-view="detail"] #history-back { display: inline-flex; }
+  #session-panel #history-dialog > .section-heading > #history-back { padding: 8px; }
+  #session-panel .history-date-column { width: 104px; }
+  #session-panel .history-table :is(th, td) { padding: 3px; }
+  #session-panel .history-table td { height: 38px; }
   #session-panel dialog { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { #session-panel .bot-button { animation: none; } }

@@ -67,6 +67,7 @@ class AssigneeTicketCounts(BaseModel):
 
 class TicketListItem(BaseModel):
     id: str
+    channel: Literal['telegram', 'web']
     ticket_number: int | None = None
     subject: str
     workflow_type: str = "ticket"

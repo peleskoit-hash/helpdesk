@@ -119,6 +119,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     else result = { state: 'cancelled', text: 'Создание отменено (сервер)' };
     await route.fulfill({ status: state.taskStatus, contentType: 'application/json', body: JSON.stringify(state.taskStatus === 200 ? { ...result, task_id: taskId, status: 'unassigned', expires_at: null } : { detail: state.taskError }) });
   });
+  if (mocked) await page.route('**/api/v1/web/history?*', route => route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 15 } }));
   await page.goto(origin);
   return { page, context, state };
 }
@@ -195,10 +196,8 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.ok(layout.font.includes('Manrope'));
     if (width > 700) assert.ok(Math.abs(layout.chat / layout.sidebar - 2) < .1);
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `workspace-${width}-${colorScheme}.png`), fullPage: true });
-    await page.locator('#notifications-toggle').click();
-    assert.equal(await page.locator('#notifications-panel').isVisible(), true);
-    await page.keyboard.press('Escape');
-    assert.equal(await page.locator('#notifications-panel').isVisible(), false);
+    assert.equal(await page.locator('#notifications-toggle').isDisabled(), true);
+    assert.equal(await page.locator('#notifications-toggle .counter').count(), 0);
     assert.equal(await page.locator('#bot-buttons button').count(), 3);
     for (const button of await page.locator('#bot-buttons button').all()) assert.equal(await button.isEnabled(), true);
     const beforeMenu = await page.locator('#chat-messages').innerText();
@@ -217,8 +216,7 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.locator('#demo-send').isEnabled(), true);
     assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).isVisible(), true);
     await page.locator('#history-open').click();
-    await page.locator('[data-record="1"]').click();
-    assert.ok((await page.locator('#history-detail').innerText()).includes('Доступ восстановлен'));
+    await page.getByText('Заявок пока нет.', { exact: true }).waitFor();
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-${width}-${colorScheme}.png`) });
     await page.keyboard.press('Escape');
     await page.locator('#appearance-open').click();
@@ -238,7 +236,8 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.locator('#bot-buttons button').count(), 3);
     assert.equal(await page.locator('.bot-panel').evaluate(el => el.classList.contains('waiting')), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    assert.deepEqual(requests, []);
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].includes('/api/v1/web/history?page=1'));
   });
 }
 
@@ -816,4 +815,395 @@ test('unavailable upstream returns a generic 502', async () => {
     proxy.closeAllConnections();
     await new Promise(resolve => proxy.close(resolve));
   }
+});
+
+const resultBase = '/api/v1/web/task-results';
+const historyBase = '/api/v1/web/history';
+const fileId = '33333333-3333-4333-8333-333333333333';
+const secondTaskId = '22222222-2222-4222-8222-222222222222';
+const resultSummary = (id = taskId) => ({ task_id: id, message_id: fileId, closed_at: '2026-10-30T12:00:00Z', read_at: null });
+const resultDetail = (id = taskId) => ({ ...resultSummary(id), text: '<script>secret()</script>\nИтоговый ответ',
+  files: [{ id: fileId, filename: 'Ответ.txt', size: 12, mime_type: 'text/plain', download_url: 'https://foreign.example/secret' }],
+  messages: [{ body: 'INTERNAL SECRET' }], intermediate_text: 'INTERNAL SECRET', system: 'INTERNAL SECRET' });
+
+const historyEntry = (id = taskId) => ({ id, subject: 'Тема из Ticket ' + id, channel: 'web',
+  created_at: '2026-10-29T10:00:00Z', has_web_result: true, read_at: null });
+
+async function mockResults(page) {
+  const state = { items: [historyEntry()], total: 1, detail: resultDetail(), calls: [], status: {}, hold: {}, network: {}, invalid: {} };
+  const handle = async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const action = url.pathname.includes('/files/') ? 'file' : url.pathname.endsWith('/read') ? 'read'
+      : url.pathname === historyBase ? 'list' : 'detail';
+    state.calls.push({ action, path: url.pathname, query: url.search, method: request.method() });
+    if (state.hold[action]) await state.hold[action];
+    if (state.network[action]) return route.abort('failed');
+    const status = state.status[action] || 200;
+    if (status !== 200) return route.fulfill({ status, json: { detail: 'INTERNAL SECRET' } });
+    if (action === 'file') return route.fulfill({ contentType: 'application/octet-stream', body: 'result bytes' });
+    const id = url.pathname.split('/')[5];
+    const pageNumber = Number(url.searchParams.get('page') || 1);
+    const json = action === 'list' ? { items: state.items.slice((pageNumber - 1) * 15, pageNumber * 15), total: state.total, page: pageNumber, page_size: 15 }
+      : action === 'read' ? { task_id: id, read_at: '2026-10-31T12:00:00Z' } : { ...state.detail, task_id: id };
+    await route.fulfill({ json: state.invalid[action] || json });
+  };
+  await page.route('**/api/v1/web/task-results**', handle);
+  await page.route('**/api/v1/web/history?*', handle);
+  return state;
+}
+async function openResults(page) {
+  await submit(page);
+  await page.locator('#history-open').click();
+}
+async function selectResult(page, id = taskId) {
+  await page.locator(`[data-record="${id}"]`).click();
+}
+
+for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
+  test(`WEB results: final answer, read marker, literal text and responsive layout ${width} ${colorScheme}`, async t => {
+    const { page } = await pageFor(t, { width, colorScheme });
+    const state = await mockResults(page);
+    await openResults(page);
+    const row = page.locator(`[data-record="${taskId}"]`);
+    await row.waitFor();
+    assert.equal(await row.innerText(), historyEntry().subject);
+    assert.match(await row.getAttribute('title'), /Не прочитана/);
+    assert.match(await page.locator('.history-table time').innerText(), /29\.10\.2026/);
+    assert.equal(await page.locator('.history-table th').count(), 3);
+    assert.equal(state.calls.some(call => call.action === 'read'), false);
+    await row.click();
+    await page.waitForFunction(() => document.querySelector('[data-record]')?.dataset.read === 'true');
+    assert.match(await page.locator('#history-detail').innerText(), /<script>secret\(\)<\/script>/);
+    assert.equal(await page.locator('#history-detail script').count(), 0);
+    assert.doesNotMatch(await page.locator('#history-dialog').innerText(), /INTERNAL SECRET|Демо|Оставить отзыв|Предложения и замечания|Задача/);
+    assert.equal(state.calls.filter(call => call.action === 'read').length, 1);
+    assert.equal(state.calls.find(call => call.action === 'read').method, 'POST');
+    const bounds = await page.locator('#history-dialog').evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth, right: el.getBoundingClientRect().right }));
+    assert.ok(bounds.scroll <= bounds.width + 1);
+    assert.ok(bounds.right <= width);
+    if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `results-${width}-${colorScheme}.png`) });
+  });
+}
+
+test('WEB results: loading, numbered pagination and list refresh on reopen', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.items = Array.from({ length: 16 }, (_, i) => historyEntry(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+  state.total = 16;
+  let release;
+  state.hold.list = new Promise(resolve => { release = resolve; });
+  await openResults(page);
+  await page.getByText('Загружаем историю…').waitFor();
+  assert.equal(await page.locator('#history-list').getAttribute('aria-busy'), 'true');
+  release();
+  await page.getByRole('button', { name: 'Страница 2', exact: true }).waitFor();
+  assert.equal(await page.locator('[data-record]').count(), 15);
+  assert.equal(await page.getByRole('button', { name: 'Назад', exact: true }).isDisabled(), true);
+  state.status.list = 500;
+  await page.getByRole('button', { name: 'Страница 2', exact: true }).click();
+  await page.locator('#history-list').getByRole('alert').waitFor();
+  state.status.list = 200;
+  await page.locator('#history-list').getByRole('button', { name: 'Повторить', exact: true }).click();
+  await page.locator(`[data-record="${state.items[15].id}"]`).waitFor();
+  assert.equal(await page.locator('[data-record]').count(), 1);
+  assert.deepEqual(state.calls.filter(call => call.action === 'list').slice(1).map(call => call.query), ['?page=2', '?page=2']);
+  assert.equal(await page.getByRole('button', { name: 'Вперёд', exact: true }).isDisabled(), true);
+  await page.keyboard.press('Escape');
+  await page.locator('#history-open').click();
+  await page.locator(`[data-record="${state.items[0].id}"]`).waitFor();
+  assert.equal(state.calls.filter(call => call.action === 'list').at(-1).query, '?page=1');
+});
+
+for (const action of ['list', 'detail', 'read', 'file']) {
+  for (const failure of [401, 403, 404, 500, 'network', 'invalid']) {
+    if (action === 'file' && failure === 'invalid') continue;
+    test(`WEB results: ${action} ${failure} stays safe and retries`, async t => {
+      const { page } = await pageFor(t);
+      const state = await mockResults(page);
+      if (failure === 'network') state.network[action] = true;
+      else if (failure === 'invalid') state.invalid[action] = {};
+      else state.status[action] = failure;
+      await openResults(page);
+      if (action !== 'list') await selectResult(page);
+      if (action === 'file') await page.getByRole('button', { name: 'Скачать: Ответ.txt', exact: true }).click();
+      const container = page.locator(action === 'list' ? '#history-list' : '#history-detail');
+      await container.getByRole('alert').waitFor();
+      assert.doesNotMatch(await container.innerText(), /INTERNAL SECRET/);
+      if (action === 'read') {
+        assert.match(await container.innerText(), /Итоговый ответ/);
+        assert.match(await page.locator('[data-record]').getAttribute('title'), /Не прочитана/);
+      }
+      if (action === 'detail') assert.equal(state.calls.filter(call => call.action === 'read').length, 0);
+      if (failure === 401) assert.equal(await container.getByRole('button', { name: 'Войти снова', exact: true }).count(), 1);
+      state.status[action] = 200;
+      state.network[action] = false;
+      delete state.invalid[action];
+      const download = action === 'file' ? page.waitForEvent('download') : null;
+      await container.getByRole('button', { name: 'Повторить', exact: true }).click();
+      if (download) await download;
+      await container.getByRole('alert').waitFor({ state: 'detached' });
+      assert.ok(state.calls.filter(call => call.action === action).length >= 2);
+      if (action === 'read') assert.equal(state.calls.filter(call => call.action === 'detail').length, 1);
+    });
+  }
+}
+
+test('WEB results: attachment uses WEB endpoint, selected ids and browser download', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  await openResults(page);
+  await selectResult(page);
+  const waiting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать: Ответ.txt', exact: true }).click();
+  const download = await waiting;
+  assert.equal(download.suggestedFilename(), 'Ответ.txt');
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString(), 'result bytes');
+  assert.equal(state.calls.find(call => call.action === 'file').path, `${resultBase}/${taskId}/files/${fileId}`);
+  assert.equal(await download.failure(), null);
+});
+
+test('WEB results: file-only result and already-read result', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.detail.text = '';
+  state.detail.read_at = '2026-10-31T12:00:00Z';
+  await openResults(page);
+  await selectResult(page);
+  await page.getByRole('button', { name: 'Скачать: Ответ.txt', exact: true }).waitFor();
+  assert.equal(state.calls.some(call => call.action === 'read'), false);
+});
+
+test('WEB results: stale detail after switching or closing is discarded; logout clears history', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.items.push(historyEntry(secondTaskId));
+  state.total = 2;
+  let release;
+  state.hold.detail = new Promise(resolve => { release = resolve; });
+  await openResults(page);
+  await selectResult(page);
+  await page.getByText('Загружаем ответ…').waitFor();
+  delete state.hold.detail;
+  await selectResult(page, secondTaskId);
+  await page.waitForFunction(id => document.querySelector('#history-detail h3')?.textContent === 'Тема из Ticket ' + id, secondTaskId);
+  release();
+  assert.deepEqual(state.calls.filter(call => call.action === 'read').map(call => call.path), [`${resultBase}/${secondTaskId}/read`]);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#history-detail').childElementCount === 0);
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click();
+  await waitLogin(page);
+  assert.equal(await page.locator('[data-record]').count(), 0);
+});
+
+test('real result API through proxy: WEB cookie, final answer, read persistence and file bytes', async t => {
+  await control('reset');
+  await control('seed-results');
+  const { page, context } = await pageFor(t, { mocked: false });
+  await context.addCookies([{ name: 'esdesk_session', value: 'synthetic-staff-cookie', url: origin, httpOnly: true }]);
+  await openResults(page);
+  await selectResult(page);
+  await page.getByText('Published final answer', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-record]')?.dataset.read === 'true');
+  const waiting = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать: final.txt', exact: true }).click();
+  const download = await waiting;
+  const chunks = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString(), 'result bytes');
+  assert.equal(download.suggestedFilename(), 'final.txt');
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await page.locator('#history-open').click();
+  await page.waitForFunction(() => document.querySelector('[data-record]')?.dataset.read === 'true');
+  const state = await control('state');
+  const requests = state.requests.filter(request => request.path.startsWith(resultBase));
+  assert.ok(requests.some(request => request.path.endsWith('/read') && request.origin === origin));
+  assert.ok(requests.some(request => request.path.endsWith('/files/' + fileId)));
+  assert.ok(requests.every(request => request.cookie_names.includes('esdesk_web_session') && !request.cookie_names.includes('esdesk_session')));
+});
+
+for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
+  test(`WEB history: 15 compact rows, three columns and mixed sources ${width}px ${colorScheme}`, async t => {
+    const { page } = await pageFor(t, { width, colorScheme });
+    const state = await mockResults(page);
+    state.items = Array.from({ length: 15 }, (_, i) => ({ ...historyEntry(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`),
+      subject: i === 0 ? '<img src=x onerror=alert(1)> ' + 'Long subject '.repeat(30) : `Заявка ${i}`,
+      channel: i % 2 ? 'telegram' : 'web', has_web_result: false }));
+    state.total = 15;
+    await openResults(page);
+    await page.locator('[data-record]').last().waitFor();
+    assert.equal(await page.locator('.history-table tbody tr').count(), 15);
+    assert.deepEqual(await page.locator('.history-table th').allTextContents(), ['Источник', 'Тема', 'Дата и время']);
+    assert.equal(await page.locator('.history-table tbody tr').first().locator('td').count(), 3);
+    const sourceHeaderFits = await page.locator('.history-table th').first().evaluate(el => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().right <= el.getBoundingClientRect().right;
+    });
+    assert.equal(sourceHeaderFits, true);
+    assert.equal(await page.locator('.history-table img').count(), 15);
+    assert.equal(await page.locator('.history-table button img').count(), 0);
+    await page.waitForFunction(() => [...document.querySelectorAll('.history-source')].every(icon => icon.complete && icon.naturalWidth > 0));
+    const icons = await page.locator('.history-source').evaluateAll(elements => elements.map(el => ({
+      width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, fit: getComputedStyle(el).objectFit,
+      src: el.getAttribute('src'), alt: el.alt,
+    })));
+    assert.ok(icons.every(icon => icon.width === 26 && icon.height === 26 && icon.fit === 'contain'));
+    assert.ok(icons.every(icon => icon.src === (icon.alt === 'WEB' ? '/assets/web-source.webp' : '/assets/telegram-source.svg')));
+    assert.equal(await page.getByRole('img', { name: 'WEB', exact: true }).count(), 8);
+    assert.equal(await page.getByRole('img', { name: 'Telegram', exact: true }).count(), 7);
+    const bounds = await page.locator('#history-dialog').evaluate(el => ({ height: el.clientHeight, scroll: el.scrollHeight,
+      width: el.clientWidth, scrollWidth: el.scrollWidth, bottom: el.getBoundingClientRect().bottom }));
+    assert.ok(bounds.scrollWidth <= bounds.width + 1);
+    if (width > 700) { assert.ok(bounds.scroll <= bounds.height + 1); assert.ok(bounds.bottom <= 900); }
+    await selectResult(page, state.items[1].id);
+    await page.getByText('Для этой заявки опубликованный ответ пока недоступен.', { exact: true }).waitFor();
+    assert.equal(state.calls.some(call => call.action !== 'list'), false);
+    assert.equal(await page.getByRole('button', { name: 'Показать ещё', exact: true }).count(), 0);
+    if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-table-${width}-${colorScheme}.png`) });
+  });
+}
+
+test('WEB history: closing cancels list; deletion of last page returns to an existing page', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  let release;
+  state.hold.list = new Promise(resolve => { release = resolve; });
+  await openResults(page);
+  await page.getByText('Загружаем историю…').waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#history-list').childElementCount === 0);
+  delete state.hold.list;
+  release();
+  state.items = Array.from({ length: 16 }, (_, i) => historyEntry(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+  state.total = 16;
+  await page.locator('#history-open').click();
+  await page.getByRole('button', { name: 'Страница 2', exact: true }).waitFor();
+  state.items.pop();
+  state.total = 15;
+  await page.getByRole('button', { name: 'Страница 2', exact: true }).click();
+  await page.locator('[aria-current="page"]').waitFor();
+  await page.waitForFunction(() => document.querySelector('[aria-current="page"]')?.textContent === '1');
+  assert.equal(await page.locator('[data-record]').count(), 15);
+  assert.deepEqual(state.calls.filter(call => call.action === 'list').slice(-2).map(call => call.query), ['?page=2', '?page=1']);
+});
+
+async function stubHistoryClipboard(page) {
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async text => {
+      if (window.historyCopyDenied) throw new Error('PRIVATE clipboard failure');
+      window.historyCopiedText = text;
+    },
+  } }));
+}
+
+for (const [width, height] of [[1600, 900], [1366, 768]]) for (const colorScheme of ['light', 'dark']) {
+  test(`history modal: desktop geometry, scroll, selection and copy ${width} ${colorScheme}`, async t => {
+    const { page } = await pageFor(t, { width, height, colorScheme });
+    const state = await mockResults(page);
+    state.items = Array.from({ length: 15 }, (_, i) => historyEntry(i === 0 ? taskId : `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+    state.total = 15;
+    state.detail.text = 'Итоговый ответ сотрудника\n' + 'Подробное описание выполненной работы.\n'.repeat(60);
+    await stubHistoryClipboard(page);
+    await openResults(page);
+    await page.locator('[data-record]').last().waitFor();
+    const dimensions = await page.locator('#history-dialog').evaluate(el => {
+      const box = el.getBoundingClientRect(), list = el.querySelector('#history-list'), detail = el.querySelector('#history-detail');
+      return { width: box.width, height: box.height, x: box.x, y: box.y,
+        ratio: list.getBoundingClientRect().width / detail.getBoundingClientRect().width,
+        listHeight: list.clientHeight, listScroll: list.scrollHeight, dialogHeight: el.clientHeight, dialogScroll: el.scrollHeight,
+        paginationBottom: el.querySelector('.history-pagination').getBoundingClientRect().bottom, bottom: box.bottom };
+    });
+    assert.equal(dimensions.width, Math.min(1420, width - 40));
+    assert.equal(dimensions.height, Math.min(760, height - 40));
+    assert.ok(dimensions.x >= 20 && dimensions.y >= 20);
+    assert.ok(Math.abs(dimensions.ratio - 52 / 48) < .01);
+    assert.equal(dimensions.listHeight, dimensions.listScroll);
+    assert.ok(dimensions.dialogScroll <= dimensions.dialogHeight + 1);
+    assert.ok(dimensions.paginationBottom <= dimensions.bottom - 20);
+    assert.equal(await page.locator('.history-table tbody tr').count(), 15);
+    await selectResult(page);
+    await page.locator('.history-message-text').waitFor();
+    const detail = page.locator('#history-detail');
+    assert.equal(await page.locator('#history-list').isVisible(), true);
+    assert.equal(await page.locator('#history-back').isVisible(), false);
+    const scroll = await detail.evaluate(el => { el.scrollTop = 120; return { top: el.scrollTop, height: el.clientHeight, scroll: el.scrollHeight }; });
+    assert.ok(scroll.scroll > scroll.height && scroll.top > 0);
+    const selection = await page.locator('.history-message-text').evaluate(el => {
+      const range = document.createRange(); range.selectNodeContents(el);
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      return { text: String(selection), userSelect: getComputedStyle(el).userSelect, fontSize: getComputedStyle(el).fontSize };
+    });
+    assert.equal(selection.text, state.detail.text.trimEnd()); // Browser selection omits the final unpainted newline.
+    assert.equal(selection.userSelect, 'text');
+    assert.equal(selection.fontSize, '15px');
+    await page.getByRole('button', { name: 'Копировать текст ответа', exact: true }).click();
+    await page.getByText('Скопировано', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.historyCopiedText), state.detail.text);
+    assert.equal(await page.locator('.history-table tbody tr').count(), 15);
+    assert.equal(await page.locator('#history-dialog').evaluate(el => el.scrollHeight <= el.clientHeight + 1), true);
+    if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-modal-${width}-${colorScheme}.png`) });
+  });
+}
+
+for (const width of [390, 320]) for (const colorScheme of ['light', 'dark']) {
+  test(`history modal: mobile detail replaces list and returns to same page ${width} ${colorScheme}`, async t => {
+    const { page } = await pageFor(t, { width, height: 844, colorScheme });
+    const state = await mockResults(page);
+    state.items = Array.from({ length: 16 }, (_, i) => historyEntry(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+    state.total = 16;
+    await stubHistoryClipboard(page);
+    await openResults(page);
+    await page.getByRole('button', { name: 'Страница 2', exact: true }).click();
+    const id = state.items[15].id;
+    await page.locator(`[data-record="${id}"]`).waitFor();
+    const listCalls = state.calls.filter(call => call.action === 'list').length;
+    await selectResult(page, id);
+    await page.locator('.history-message-text').waitFor();
+    assert.equal(await page.locator('#history-list').isVisible(), false);
+    assert.equal(await page.locator('#history-detail').isVisible(), true);
+    assert.equal(await page.locator('#history-back').isVisible(), true);
+    await page.getByRole('button', { name: 'Копировать текст ответа', exact: true }).click();
+    await page.getByText('Скопировано', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.historyCopiedText), state.detail.text);
+    const waiting = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Скачать: Ответ.txt', exact: true }).click();
+    assert.equal((await waiting).suggestedFilename(), 'Ответ.txt');
+    assert.equal(await page.locator('#history-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+    if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-detail-${width}-${colorScheme}.png`) });
+    await page.locator('#history-back').click();
+    assert.equal(await page.locator('#history-list').isVisible(), true);
+    assert.equal(await page.locator('#history-detail').isVisible(), false);
+    assert.equal(await page.locator('[aria-current="page"]').textContent(), '2');
+    assert.equal(await page.locator(`[data-record="${id}"]`).evaluate(el => el === document.activeElement), true);
+    assert.equal(state.calls.filter(call => call.action === 'list').length, listCalls);
+  });
+}
+
+test('history modal: copy denial keeps text selectable; mobile back cancels pending detail', async t => {
+  const { page } = await pageFor(t, { width: 390 });
+  const state = await mockResults(page);
+  await stubHistoryClipboard(page);
+  await page.evaluate(() => { window.historyCopyDenied = true; });
+  await openResults(page);
+  await selectResult(page);
+  await page.getByRole('button', { name: 'Копировать текст ответа', exact: true }).click();
+  await page.getByText('Не удалось скопировать. Выделите текст и скопируйте вручную.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.history-message-text').textContent(), state.detail.text);
+  assert.doesNotMatch(await page.locator('#history-detail').innerText(), /PRIVATE/);
+  await page.locator('#history-back').click();
+  const reads = state.calls.filter(call => call.action === 'read').length;
+  let release;
+  state.hold.detail = new Promise(resolve => { release = resolve; });
+  await selectResult(page);
+  await page.getByText('Загружаем ответ…', { exact: true }).waitFor();
+  await page.locator('#history-back').click();
+  release();
+  assert.equal(await page.locator('#history-list').isVisible(), true);
+  assert.equal(await page.locator('#history-detail').isVisible(), false);
+  assert.equal(state.calls.filter(call => call.action === 'read').length, reads);
 });

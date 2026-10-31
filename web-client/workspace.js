@@ -1,25 +1,17 @@
 // Ordinary tasks use WEB API. The technical chat stays temporary, in memory only.
-import { getWebMenu, sendTaskAction, TaskError } from './api.js';
+import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, TaskError } from './api.js';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
       <div class="client-brand">ES DESK<span>+</span><small>Клиентская поддержка</small></div>
-      <div class="notification-anchor">
-        <button id="notifications-toggle" aria-expanded="false" aria-controls="notifications-panel">Уведомления по задачам <b class="counter">2</b><span aria-hidden="true">›</span></button>
-        <section id="notifications-panel" class="notification-panel" aria-label="Уведомления по задачам" hidden>
-          <div class="section-heading"><h2>Уведомления</h2><button id="notifications-close" aria-label="Закрыть уведомления">×</button></div>
-          <p class="demo-caption">Демонстрационные события</p>
-          <button class="notification-item" data-history="0"><strong>Задача № Д-1042</strong><small>Специалист принял задачу в работу · 10:24</small></button>
-          <button class="notification-item" data-history="1"><strong>Заявка № Д-1038</strong><small>Обращение закрыто · вчера</small></button>
-        </section>
-      </div>
+      <button id="notifications-toggle" disabled>Уведомления пока недоступны</button>
       <section class="bot-panel waiting" aria-labelledby="bot-title">
         <div class="section-heading"><h2 id="bot-title">Помощник ES DESK+</h2><span class="online-dot" aria-hidden="true"></span></div>
         <p id="bot-hint">Выберите, с чем нужна помощь</p>
         <div id="bot-buttons" class="bot-buttons"></div>
         <section id="task-controls" hidden><p id="task-feedback" role="status"></p><p id="task-error" role="alert" hidden></p><div class="task-actions"><button id="task-confirm" type="button" class="primary" hidden>Подтвердить</button><button id="task-cancel" type="button" hidden>Отменить создание задачи</button><button id="task-retry" type="button" hidden>Повторить запрос</button><button id="task-sign-in" type="button" hidden>Войти снова</button></div></section>
       </section>
-      <button id="history-open">История заявок и задач <span aria-hidden="true">↗</span></button>
+      <button id="history-open">История заявок <span aria-hidden="true">↗</span></button>
       <section class="client-info" aria-labelledby="client-info-title">
         <h2 id="client-info-title">Информация о клиенте</h2><p class="demo-caption">Демонстрационные данные</p>
         <dl><div><dt>Клиент</dt><dd>Александр Смирнов</dd></div><div><dt>Организация</dt><dd>ООО «Пример»</dd></div><div><dt>Подразделение</dt><dd>Клиентский отдел</dd></div><div><dt>Электронная почта</dt><dd>client@example.com</dd></div></dl>
@@ -39,7 +31,7 @@ export function mountWorkspace(root) {
         <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Выберите задачу в меню, чтобы отправить описание</small><button type="submit" id="demo-send" class="primary">Отправка <span aria-hidden="true">↑</span></button></div>
       </form>
     </section>
-    <dialog id="history-dialog" aria-labelledby="history-title"><div class="section-heading"><h2 id="history-title">История заявок и задач</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><p class="demo-caption">Демонстрационные данные</p><div class="history-layout"><div id="history-list"></div><section id="history-detail" aria-label="История выбранной записи" aria-live="polite"></section></div></dialog>
+    <dialog id="history-dialog" data-view="list" aria-labelledby="history-title"><div class="section-heading"><button id="history-back" type="button" aria-label="Назад к списку заявок">← Назад</button><h2 id="history-title">История заявок</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><div class="history-layout"><div id="history-list" aria-live="polite"></div><section id="history-detail" tabindex="-1" aria-label="История выбранной записи" aria-live="polite"></section></div></dialog>
     <dialog id="appearanceMenu" class="appearance-menu" aria-labelledby="appearance-title"><div class="section-heading"><h2 id="appearance-title">Оформление</h2><button data-close-dialog aria-label="Закрыть оформление">×</button></div><p class="demo-caption">Настройки действуют до обновления страницы</p><div class="appearance-themes"><button data-appearance-theme="light" aria-pressed="true">Светлая</button><button data-appearance-theme="dark" aria-pressed="false">Тёмная</button></div><div class="appearance-controls"></div><button id="appearance-reset">Сбросить настройки</button></dialog>`;
 
   const byId = id => root.querySelector(`#${id}`);
@@ -48,11 +40,12 @@ export function mountWorkspace(root) {
   let taskBusy = false;
   let taskRequest;
   let generation = 0;
-  const records = [
-    { title: 'Задача № Д-1042', subject: 'Настройка рабочего компьютера', status: 'В работе · сегодня', messages: [['client', 'Вы', 'Нужна помощь с настройкой рабочего компьютера.'], ['system', 'Система', 'Демонстрационная задача Д-1042 создана.'], ['bot', 'Поддержка', 'Специалист принял задачу в работу.']] },
-    { title: 'Заявка № Д-1038', subject: 'Восстановление доступа', status: 'Закрыта · вчера', messages: [['client', 'Вы', 'Не получается войти в учётную запись.'], ['bot', 'Поддержка', 'Доступ восстановлен. Проверьте вход.'], ['client', 'Вы', 'Всё работает, спасибо!'], ['system', 'Система', 'Обращение закрыто.']] },
-    { title: 'Задача № Д-1031', subject: 'Подключение принтера', status: 'Выполнена · 27 октября', messages: [['client', 'Вы', 'Помогите подключить принтер.'], ['bot', 'Поддержка', 'Принтер настроен и готов к работе.'], ['system', 'Система', 'Задача выполнена.']] },
-  ];
+  let records = [];
+  let historyPage = 1;
+  let selectedResult = null;
+  let listRequest;
+  let detailRequest;
+  const downloads = new Set();
 
   function message(container, kind, author, text) {
     const article = document.createElement('article');
@@ -287,40 +280,283 @@ export function mountWorkspace(root) {
   byId('demo-files').addEventListener('click', () => {
     byId('composer-hint').textContent = 'В этом сценарии поддерживается только текстовое описание';
   });
-  function notifications(open) {
-    byId('notifications-panel').hidden = !open;
-    byId('notifications-toggle').setAttribute('aria-expanded', String(open));
-    if (!open) byId('notifications-toggle').focus();
+  function historyButton(container, text, action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = text;
+    button.addEventListener('click', action);
+    container.append(button);
+    return button;
   }
-  byId('notifications-toggle').addEventListener('click', () => notifications(byId('notifications-panel').hidden));
-  byId('notifications-close').addEventListener('click', () => notifications(false));
-  root.addEventListener('keydown', event => { if (event.key === 'Escape' && !byId('notifications-panel').hidden) notifications(false); });
-  function selectHistory(index) {
-    const record = records[index];
+  function historyText(container, text, tag = 'p') {
+    const element = document.createElement(tag);
+    element.textContent = text;
+    container.append(element);
+    return element;
+  }
+  function historyError(container, error, text, retry) {
+    historyText(container, error.status === 401 ? 'Сессия истекла. Войдите снова.' : text).setAttribute('role', 'alert');
+    historyButton(container, 'Повторить', retry);
+    if (error.status === 401) historyButton(container, 'Войти снова', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
+  }
+  const resultPath = id => '/' + encodeURIComponent(id);
+  const validSummary = record => typeof record?.task_id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.task_id)
+    && typeof record.closed_at === 'string' && Number.isFinite(Date.parse(record.closed_at))
+    && (record.read_at === null || (typeof record.read_at === 'string' && Number.isFinite(Date.parse(record.read_at))));
+  const historyLabel = record => record.subject || `Заявка № ${record.id}`;
+  function renderHistoryList(total) {
+    const list = byId('history-list');
+    list.replaceChildren();
+    const table = document.createElement('table');
+    table.className = 'history-table';
+    table.setAttribute('aria-label', 'История заявок');
+    table.innerHTML = '<colgroup><col class="history-source-column"><col><col class="history-date-column"></colgroup><thead><tr><th scope="col">Источник</th><th scope="col">Тема</th><th scope="col">Дата и время</th></tr></thead>';
+    const body = document.createElement('tbody');
+    for (const record of records) {
+      const row = document.createElement('tr');
+      const source = document.createElement('td');
+      const icon = document.createElement('img');
+      icon.className = 'history-source ' + record.channel;
+      icon.src = record.channel === 'web' ? '/assets/web-source.webp' : '/assets/telegram-source.svg';
+      icon.alt = record.channel === 'web' ? 'WEB' : 'Telegram';
+      icon.width = icon.height = 26;
+      source.append(icon);
+      const subject = document.createElement('td');
+      const button = historyButton(subject, historyLabel(record), () => selectHistory(record));
+      button.dataset.record = record.id;
+      const date = document.createElement('td');
+      const time = historyText(date, new Date(record.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }), 'time');
+      time.dateTime = record.created_at;
+      row.append(source, subject, date);
+      body.append(row);
+    }
+    table.append(body);
+    list.append(table);
+    updateHistoryRows();
+    if (!records.length) historyText(list, 'Заявок пока нет.');
+    const pages = Math.max(1, Math.ceil(total / 15));
+    const pagination = document.createElement('nav');
+    pagination.className = 'history-pagination';
+    pagination.setAttribute('aria-label', 'Страницы истории');
+    historyButton(pagination, 'Назад', () => loadHistory(historyPage - 1)).disabled = historyPage === 1;
+    let previous = 0;
+    for (const page of [...new Set([1, historyPage - 1, historyPage, historyPage + 1, pages])].filter(page => page >= 1 && page <= pages).sort((a, b) => a - b)) {
+      if (previous && page - previous > 1) historyText(pagination, '…', 'span');
+      const button = historyButton(pagination, String(page), () => loadHistory(page));
+      button.setAttribute('aria-label', `Страница ${page}`);
+      if (page === historyPage) {
+        button.setAttribute('aria-current', 'page');
+        button.disabled = true;
+      }
+      previous = page;
+    }
+    historyButton(pagination, 'Вперёд', () => loadHistory(historyPage + 1)).disabled = historyPage === pages;
+    list.append(pagination);
+  }
+  function updateHistoryRows() {
+    for (const record of records) {
+      const button = root.querySelector(`[data-record="${record.id}"]`);
+      if (!button) continue;
+      button.title = historyLabel(record) + (record.has_web_result ? ` · ${record.read_at ? 'Прочитана' : 'Не прочитана'}` : '');
+      button.dataset.read = record.has_web_result ? String(Boolean(record.read_at)) : '';
+      button.setAttribute('aria-pressed', String(selectedResult === record.id));
+    }
+  }
+  async function loadHistory(page = 1) {
+    byId('history-dialog').dataset.view = 'list';
+    listRequest?.abort();
+    detailRequest?.abort();
+    for (const controller of downloads) controller.abort();
+    const controller = new AbortController();
+    listRequest = controller;
+    records = [];
+    selectedResult = null;
     const detail = byId('history-detail');
     detail.replaceChildren();
-    const title = document.createElement('h3');
-    title.textContent = `${record.title} · ${record.subject}`;
-    detail.append(title);
-    for (const row of record.messages) message(detail, ...row);
-    root.querySelectorAll('[data-record]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.record) === index)));
+    detail.removeAttribute('aria-busy');
+    historyText(detail, 'Выберите заявку, чтобы посмотреть доступный ответ.');
+    const list = byId('history-list');
+    list.replaceChildren();
+    list.setAttribute('aria-busy', 'true');
+    historyText(list, 'Загружаем историю…');
+    try {
+      const result = await getWebHistory(page, controller.signal);
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(result?.items) || result.items.length > 15 || !result.items.every(record =>
+          typeof record?.id === 'string' && /^[0-9a-f-]{36}$/i.test(record.id)
+          && typeof record.subject === 'string' && ['web', 'telegram'].includes(record.channel)
+          && typeof record.created_at === 'string' && Number.isFinite(Date.parse(record.created_at))
+          && typeof record.has_web_result === 'boolean'
+          && (record.read_at === null || (typeof record.read_at === 'string' && Number.isFinite(Date.parse(record.read_at)))))
+          || !Number.isInteger(result.total) || result.total < 0 || result.page !== page || result.page_size !== 15) throw new Error('Invalid history');
+      const lastPage = Math.max(1, Math.ceil(result.total / 15));
+      if (page > lastPage) { loadHistory(lastPage); return; }
+      records = result.items;
+      historyPage = page;
+      renderHistoryList(result.total);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      list.replaceChildren();
+      historyError(list, error, 'Не удалось загрузить историю заявок.', () => loadHistory(page));
+    } finally {
+      if (listRequest === controller) {
+        listRequest = null;
+        list.removeAttribute('aria-busy');
+      }
+    }
   }
-  records.forEach((record, index) => {
-    const button = document.createElement('button');
-    button.dataset.record = index;
-    button.textContent = `${record.title}\n${record.subject}\n${record.status}`;
-    button.addEventListener('click', () => selectHistory(index));
-    byId('history-list').append(button);
+  async function downloadResult(record, file, button, status) {
+    const controller = new AbortController();
+    downloads.add(controller);
+    button.disabled = true;
+    status.replaceChildren();
+    historyText(status, 'Скачиваем файл…');
+    try {
+      const blob = await requestTaskResult(resultPath(record.id) + '/files/' + encodeURIComponent(file.id), controller.signal, 'GET', true);
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.replaceChildren();
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      status.replaceChildren();
+      historyError(status, error, 'Не удалось скачать файл.', () => downloadResult(record, file, button, status));
+    } finally {
+      downloads.delete(controller);
+      button.disabled = false;
+    }
+  }
+  async function markResultRead(record, controller, status) {
+    status.replaceChildren();
+    try {
+      const result = await requestTaskResult(resultPath(record.id) + '/read', controller.signal, 'POST');
+      if (controller.signal.aborted) return;
+      if (result?.task_id !== record.id || typeof result.read_at !== 'string' || !Number.isFinite(Date.parse(result.read_at))) throw new Error('Invalid read result');
+      record.read_at = result.read_at;
+      updateHistoryRows();
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      historyError(status, error, 'Ответ открыт, но отметить заявку прочитанной не удалось.', () => markResultRead(record, controller, status));
+    }
+  }
+  async function selectHistory(record) {
+    detailRequest?.abort();
+    for (const controller of downloads) controller.abort();
+    const controller = new AbortController();
+    detailRequest = controller;
+    selectedResult = record.id;
+    updateHistoryRows();
+    const detail = byId('history-detail');
+    detail.replaceChildren();
+    detail.scrollTop = 0;
+    byId('history-dialog').dataset.view = 'detail';
+    if (matchMedia('(max-width: 700px)').matches) detail.focus();
+    if (!record.has_web_result) {
+      detail.removeAttribute('aria-busy');
+      historyText(detail, 'Для этой заявки опубликованный ответ пока недоступен.');
+      return;
+    }
+    detail.setAttribute('aria-busy', 'true');
+    historyText(detail, 'Загружаем ответ…');
+    try {
+      const result = await requestTaskResult(resultPath(record.id), controller.signal);
+      if (controller.signal.aborted) return;
+      if (!validSummary(result) || result.task_id !== record.id || typeof result.text !== 'string'
+          || !Array.isArray(result.files) || !result.files.every(file => typeof file.id === 'string'
+            && /^[0-9a-f-]{36}$/i.test(file.id) && typeof file.filename === 'string')) throw new Error('Invalid detail');
+      detail.replaceChildren();
+      historyText(detail, historyLabel(record), 'h3');
+      const answer = historyText(detail, '', 'article');
+      answer.className = 'chat-message bot';
+      historyText(answer, 'Итоговый ответ сотрудника', 'strong');
+      if (result.text) {
+        historyText(answer, result.text).className = 'history-message-text';
+        const actions = document.createElement('div');
+        actions.className = 'history-message-actions';
+        const status = document.createElement('span');
+        status.setAttribute('role', 'status');
+        const copy = historyButton(actions, 'Копировать', async () => {
+          copy.disabled = true;
+          status.textContent = '';
+          try {
+            await navigator.clipboard.writeText(result.text);
+            status.textContent = 'Скопировано';
+          } catch {
+            status.textContent = 'Не удалось скопировать. Выделите текст и скопируйте вручную.';
+          } finally {
+            copy.disabled = false;
+          }
+        });
+        copy.className = 'history-copy';
+        copy.setAttribute('aria-label', 'Копировать текст ответа');
+        actions.append(status);
+        answer.append(actions);
+      }
+      for (const file of result.files) {
+        const row = document.createElement('div');
+        const status = document.createElement('div');
+        status.setAttribute('role', 'status');
+        const button = historyButton(row, `Скачать: ${file.filename}`, () => downloadResult(record, file, button, status));
+        row.append(status);
+        detail.append(row);
+      }
+      const readStatus = document.createElement('div');
+      detail.append(readStatus);
+      detail.removeAttribute('aria-busy');
+      // A successful GET alone is not enough: publish the answer in the dialog first.
+      if (!result.read_at) await markResultRead(record, controller, readStatus);
+      else {
+        record.read_at = result.read_at;
+        updateHistoryRows();
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      detail.replaceChildren();
+      historyError(detail, error, 'Не удалось загрузить ответ по заявке.', () => selectHistory(record));
+    } finally {
+      if (detailRequest === controller) detail.removeAttribute('aria-busy');
+    }
+  }
+  function clearHistory() {
+    byId('history-dialog').dataset.view = 'list';
+    listRequest?.abort();
+    detailRequest?.abort();
+    for (const controller of downloads) controller.abort();
+    listRequest = null;
+    detailRequest = null;
+    records = [];
+    historyPage = 1;
+    selectedResult = null;
+    for (const id of ['history-list', 'history-detail']) {
+      byId(id).replaceChildren();
+      byId(id).removeAttribute('aria-busy');
+    }
+  }
+  byId('history-back').addEventListener('click', () => {
+    detailRequest?.abort();
+    for (const controller of downloads) controller.abort();
+    const selected = root.querySelector(`[data-record="${selectedResult}"]`);
+    selectedResult = null;
+    updateHistoryRows();
+    byId('history-dialog').dataset.view = 'list';
+    const detail = byId('history-detail');
+    detail.replaceChildren();
+    detail.removeAttribute('aria-busy');
+    historyText(detail, 'Выберите заявку, чтобы посмотреть доступный ответ.');
+    selected?.focus();
   });
-  function openHistory(index = 0) {
-    selectHistory(index);
+  byId('history-dialog').addEventListener('close', clearHistory);
+  byId('history-open').addEventListener('click', () => {
     byId('history-dialog').showModal();
-  }
-  byId('history-open').addEventListener('click', () => openHistory());
-  root.querySelectorAll('[data-history]').forEach(button => button.addEventListener('click', () => {
-    notifications(false);
-    openHistory(Number(button.dataset.history));
-  }));
+    loadHistory();
+  });
   byId('appearance-open').addEventListener('click', () => byId('appearanceMenu').showModal());
   root.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
   start();
@@ -334,7 +570,7 @@ export function mountWorkspace(root) {
       menuRequest = null;
       root.querySelector('.bot-panel').removeAttribute('aria-busy');
       menuStatus('Меню поддержки');
-      notifications(false);
+      clearHistory();
       start();
     },
   };

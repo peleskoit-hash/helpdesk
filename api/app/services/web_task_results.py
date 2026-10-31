@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from ..config import settings
-from ..models import Client, WebTaskResult, WebTaskResultFile
+from ..models import Client, Ticket, WebTaskResult, WebTaskResultFile
 from . import web_auth
 from .ticket_attachments import _ensure_local_attachment_file
 
@@ -64,7 +64,9 @@ def owner_filter(db, client):
     owner = db.get(Client, client.id)
     if owner is None:
         fail(401, 'web_unauthorized', 'Требуется WEB-авторизация')
-    return (WebTaskResult.client_id == owner.id, WebTaskResult.company_id == owner.company_id)
+    return (WebTaskResult.client_id == owner.id, WebTaskResult.company_id == owner.company_id,
+            select(Ticket.id).where(Ticket.id == WebTaskResult.task_id,
+                Ticket.client_id == owner.id, Ticket.company_id == owner.company_id).exists())
 
 
 def owned_result(db, client, task_id):

@@ -491,7 +491,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
       const file = path.resolve('api/app', p.slice(1));
       if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
       const ext = path.extname(file);
-      return route.fulfill({ body: fs.readFileSync(file), contentType: { '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' }[ext] || 'application/octet-stream' });
+      return route.fulfill({ body: fs.readFileSync(file), contentType: { '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ttf': 'font/ttf' }[ext] || 'application/octet-stream' });
     }
     if (!p.startsWith('/api/')) {
       const template = p === '/quick-replies' ? 'quick_replies' : p === '/profile/notification-bot' ? 'profile_notification_bot' : p === '/tickets' ? 'tickets' : p.startsWith('/tickets/') ? 'ticket' : 'profile';
@@ -2066,3 +2066,28 @@ test('failed tile stays visible when manual removal fails', async t => {
   await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
   await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
 });
+
+for (const theme of ['light', 'dark']) for (const tab of ['active', 'closed']) {
+  test(`source icons: staff selects WEB by channel for tickets and tasks, ${theme} ${tab}`, async t => {
+    const ticketRows = ['web', 'web', 'telegram', 'telegram'].map((channel, i) => ({ ...rows[i],
+      channel, workflow_type: i % 2 ? 'task' : 'ticket', is_internal_task: i < 2, task_kind: 'normal',
+      status: tab === 'closed' ? 'closed' : 'new',
+    }));
+    const { page } = await setup(t, { width: 1440, height: 900, theme, pageName: 'list', ticketRows,
+      initialPath: `/tickets?tab=${tab}` });
+    await page.waitForFunction(() => [...document.querySelectorAll('.ticket-channel-web img')].length === 2
+      && [...document.querySelectorAll('.ticket-channel-web img')].every(img => img.complete && img.naturalWidth > 0));
+    assert.equal(await page.locator('.ticket-channel-telegram svg').count(), 2);
+    assert.equal(await page.locator('.ticket-channel-telegram img').count(), 0);
+    const icons = await page.locator('.ticket-channel-icon :is(img, svg)').evaluateAll(nodes => nodes.map(el => ({
+      width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height,
+      tag: el.tagName.toLowerCase(), color: getComputedStyle(el).fill, fit: getComputedStyle(el).objectFit,
+      src: el.getAttribute('src'),
+    })));
+    assert.equal(icons.length, 4);
+    assert.ok(icons.every(icon => icon.width === 26 && icon.height === 26));
+    assert.ok(icons.filter(icon => icon.tag === 'img').every(icon => icon.src === '/static/icons/web-source.webp' && icon.fit === 'contain'));
+    assert.ok(icons.filter(icon => icon.tag === 'svg').every(icon => icon.color === 'rgb(34, 158, 217)'));
+    if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `staff-sources-${theme}-${tab}.png`) });
+  });
+}
