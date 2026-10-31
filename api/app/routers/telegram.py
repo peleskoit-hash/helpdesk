@@ -1061,12 +1061,30 @@ def _fallback_auto_to_support(
     client_message_fallback: str = MATERIAL_UNAVAILABLE_TEXT,
     client_message_extra: dict | None = None,
 ) -> User | None:
-    append_system_message(db, ticket, f"Автоматическая отправка материала не выполнена: {reason}", agent_visible=True)
+    setting = _button_setting_for_ticket(db, ticket)
+    context = {
+        "workflow_type": ticket.workflow_type,
+        "button_key": ticket.instruction_button_key or ticket.button_config_key,
+        "button_label": ticket.subject,
+        "automation_key": getattr(setting, "automation_key", None),
+        "files": getattr(setting, "files_json", None),
+    }
+    append_system_message(db, ticket,
+        f"Автоматическая отправка материала не выполнена: {reason}\n"
+        f"Исходные данные автоматизации: {json.dumps(context, ensure_ascii=False)}", agent_visible=True)
     ticket.intake_state = TicketIntakeState.READY.value
-    ticket.workflow_type = TicketWorkflowType.TICKET.value
+    ticket.workflow_type = TicketWorkflowType.TASK.value
     ticket.task_kind = TicketTaskKind.NORMAL.value
     ticket.agent_visible = True
     ticket.load_counted = True
+    db.flush()
+    client_message = db.scalar(select(TicketMessage.id).where(
+        TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.CLIENT.value,
+    ).limit(1))
+    if client_message is None:
+        message = _append_client_message(db, ticket, f"Запрос по кнопке: {ticket.subject}", schedule_notification=False)
+        message.status_note = "automation_fallback: запрос сформирован автоматически по нажатию кнопки"
+        db.flush()
     assigned_agent = _ready_ticket_for_distribution(db, ticket, None)
     if notify_client:
         material_text, material_parse_mode = _automatic_telegram_text(
@@ -1077,8 +1095,6 @@ def _fallback_auto_to_support(
             extra={"reason": reason, **(client_message_extra or {})},
         )
         send_message(external_chat_id, material_text, parse_mode=material_parse_mode)
-        if assigned_agent is not None:
-            notify_client_about_assignee(db, ticket, assigned_agent)
     return assigned_agent
 
 
@@ -1112,7 +1128,7 @@ def _dispatch_builtin_button_automation(
         else:
             append_system_message(db, ticket, "Не удалось начать ожидание сообщения для Telegram-группы", agent_visible=True)
         db.commit()
-        return {"ok": True, "ticket_id": ticket.id, "automation_pending": True, "status": ticket.status}
+        return {"ok": True, "ticket_id": ticket.id, "workflow_type": ticket.workflow_type, "automation_pending": True, "status": ticket.status}
 
     if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
         if workflow_type == TicketWorkflowType.AUTO.value:
@@ -1139,7 +1155,7 @@ def _dispatch_builtin_button_automation(
                     return {
                         "ok": True,
                         "ticket_id": ticket.id,
-                        "workflow_type": TicketWorkflowType.TICKET.value,
+                        "workflow_type": ticket.workflow_type,
                         "status": ticket.status,
                         "automation_handoff": True,
                     }
@@ -1157,7 +1173,7 @@ def _dispatch_builtin_button_automation(
                 return {
                     "ok": True,
                     "ticket_id": ticket.id,
-                    "workflow_type": TicketWorkflowType.TICKET.value,
+                    "workflow_type": ticket.workflow_type,
                     "status": ticket.status,
                     "auto_file_error": True,
                 }
@@ -1216,7 +1232,7 @@ def _dispatch_builtin_button_automation(
                 return {
                     "ok": True,
                     "ticket_id": ticket.id,
-                    "workflow_type": TicketWorkflowType.TICKET.value,
+                    "workflow_type": ticket.workflow_type,
                     "status": ticket.status,
                     "automation_handoff": True,
                 }
@@ -1243,7 +1259,7 @@ def _dispatch_builtin_button_automation(
         return {
             "ok": True,
             "ticket_id": ticket.id,
-            "workflow_type": TicketWorkflowType.TICKET.value,
+            "workflow_type": ticket.workflow_type,
             "status": ticket.status,
             "automation_handoff": True,
         }
@@ -2266,7 +2282,7 @@ def _process_problem_type_callback(
             return {
                 "ok": True,
                 "ticket_id": collecting_ticket.id,
-                "workflow_type": TicketWorkflowType.TICKET.value,
+                "workflow_type": collecting_ticket.workflow_type,
                 "status": collecting_ticket.status,
                 "auto_file_error": True,
             }
@@ -2701,7 +2717,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                     return {
                         "ok": True,
                         "ticket_id": collecting_ticket.id,
-                        "workflow_type": TicketWorkflowType.TICKET.value,
+                        "workflow_type": collecting_ticket.workflow_type,
                         "status": collecting_ticket.status,
                         "auto_file_error": True,
                     }

@@ -1257,6 +1257,7 @@ def test_auto_send_files_direct_error_handoffs(monkeypatch):
     monkeypatch.setattr(telegram_router, "_send_button_direct_file", lambda *args, **kwargs: (False, "file error"))
     monkeypatch.setattr(telegram_router, "_send_button_rule_files", lambda *args, **kwargs: None)
     def fake_fallback(_db, current_ticket, *args, **kwargs):
+        current_ticket.workflow_type = TicketWorkflowType.TASK.value
         current_ticket.status = TicketStatus.UNASSIGNED.value
         fallback_calls.append((args, kwargs))
         return None
@@ -1273,7 +1274,7 @@ def test_auto_send_files_direct_error_handoffs(monkeypatch):
     )
 
     assert result["auto_file_error"] is True
-    assert result["workflow_type"] == "ticket"
+    assert result["workflow_type"] == "task"
     assert result["status"] == TicketStatus.UNASSIGNED.value
     assert len(fallback_calls) == 1
 
@@ -1313,6 +1314,7 @@ def test_auto_message_only_send_failure_handoffs(monkeypatch):
     monkeypatch.setattr(telegram_router, "_render_client_text_for_telegram", lambda *args, **kwargs: ("fallback", None))
     monkeypatch.setattr(telegram_router, "send_message", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     def fake_fallback(_db, current_ticket, *args, **kwargs):
+        current_ticket.workflow_type = TicketWorkflowType.TASK.value
         current_ticket.status = TicketStatus.UNASSIGNED.value
         fallback_calls.append((args, kwargs))
         return None
@@ -1330,7 +1332,7 @@ def test_auto_message_only_send_failure_handoffs(monkeypatch):
     )
 
     assert result["automation_handoff"] is True
-    assert result["workflow_type"] == "ticket"
+    assert result["workflow_type"] == "task"
     assert result["status"] == TicketStatus.UNASSIGNED.value
     assert len(fallback_calls) == 1
 
