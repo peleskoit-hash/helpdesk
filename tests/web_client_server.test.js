@@ -207,7 +207,10 @@ test('result proxy preserves pagination and isolates WEB authorization for all r
   const id = '11111111-1111-4111-8111-111111111111';
   const base = '/api/v1/web/task-results';
   for (const [path, method] of [[base + '?limit=50&offset=50', 'GET'], [`${base}/${id}`, 'GET'],
-    [`${base}/${id}/read`, 'POST'], [`${base}/${id}/files/${id}`, 'GET'], ['/api/v1/web/history?page=2', 'GET']]) {
+    [`${base}/${id}/read`, 'POST'], [`${base}/${id}/files/${id}`, 'GET'],
+    [`/api/v1/web/history/${id}/messages`, 'GET'], [`/api/v1/web/history/${id}/attachments/${id}/download`, 'GET'],
+    ['/static/ticket_attachments.js', 'GET'],
+    ['/api/v1/web/history?page=2', 'GET']]) {
     const response = await request(port, path, headers, method);
     assert.equal(response.status, 200);
     assert.equal(response.headers['cache-control'], 'no-store');
@@ -219,10 +222,12 @@ test('result proxy preserves pagination and isolates WEB authorization for all r
     assert.equal((await request(port, path, { ...headers, Origin: 'http://foreign.example' }, method)).status, 403);
   }
   assert.equal((await request(port, `${base}/${id}/read`, {}, 'POST')).status, 403);
-  for (const path of [base + '/bad-id', `${base}/${id}/files/no-id`, `${base}/${id}/messages`, `${base}/${id}/close`]) {
+  for (const path of [base + '/bad-id', `${base}/${id}/files/no-id`, `${base}/${id}/messages`, `${base}/${id}/close`,
+    `/api/v1/web/history/${id}/close`, `/api/v1/web/history/${id}/attachments/bad/download`,
+    `/api/v1/web/history/${id}/messages/extra`, '/static/ticket_api.js']) {
     assert.equal((await request(port, path, headers)).status, 404);
   }
-  assert.equal(seen.length, 5);
+  assert.equal(seen.length, 8);
   assert.equal(seen.at(-1).path, '/api/v1/web/history?page=2');
   assert.equal(seen[0].path, base + '?limit=50&offset=50');
   assert.ok(seen.every(item => item.cookie === 'esdesk_web_session=web' && item.authorization === undefined));

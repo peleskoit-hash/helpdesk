@@ -34,7 +34,7 @@ async function setup(t, theme, width, kind) {
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${origin}/tickets/${kind === 'task' ? 531 : 530}`);
   await page.addScriptTag({ url: '/static/ticket_api.js' });
-  await page.addScriptTag({ url: '/static/ticket_attachments.js?v=20261029-image-actions-v1' });
+  await page.addScriptTag({ url: '/static/ticket_attachments.js?v=20261031-web-history-v1' });
   await page.evaluate(endpoint => {
     window.ctx = { el: {}, showError: message => { throw Error(message); }, setStatus: value => { window.statusText = value; },
       closeOnBackdropClick: (modal, close) => modal.addEventListener('click', event => { if (event.target === modal) close(); }) };

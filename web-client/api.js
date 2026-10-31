@@ -71,6 +71,10 @@ async function requestWebHistory(path, signal, method = 'GET', file = false) {
 
 export const requestTaskResult = (path, signal, method, file) => requestWebHistory('/task-results' + path, signal, method, file);
 export const getWebHistory = (page, signal) => requestWebHistory('/history?page=' + page, signal);
+export const getHistoryMessages = (id, signal) => requestWebHistory('/history/' + encodeURIComponent(id) + '/messages', signal);
+export const getHistoryFile = (ticketId, file, signal) => file.source === 'web_result'
+  ? requestTaskResult('/' + encodeURIComponent(ticketId) + '/files/' + encodeURIComponent(file.id), signal, 'GET', true)
+  : requestWebHistory('/history/' + encodeURIComponent(ticketId) + '/attachments/' + encodeURIComponent(file.id) + '/download', signal, 'GET', true);
 
 export class TaskError extends Error {
   constructor(status, message, code = '') {

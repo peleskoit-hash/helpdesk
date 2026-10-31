@@ -34,7 +34,7 @@ def list_history(db, client, page):
         WebTaskResult.company_id == Ticket.company_id, Ticket.channel == 'web',
     )
     rows = db.execute(select(
-        Ticket.id, Ticket.subject, Ticket.channel, Ticket.created_at,
+        Ticket.id, Ticket.subject, Ticket.channel, Ticket.status, Ticket.created_at,
         WebTaskResult.task_id.is_not(None).label('has_web_result'), WebTaskResult.read_at,
     ).outerjoin(WebTaskResult, publication).where(*scope)
         .order_by(Ticket.created_at.desc(), Ticket.id).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE)).mappings().all()

@@ -827,29 +827,33 @@ const resultDetail = (id = taskId) => ({ ...resultSummary(id), text: '<script>se
   messages: [{ body: 'INTERNAL SECRET' }], intermediate_text: 'INTERNAL SECRET', system: 'INTERNAL SECRET' });
 
 const historyEntry = (id = taskId) => ({ id, subject: 'Тема из Ticket ' + id, channel: 'web',
-  created_at: '2026-10-29T10:00:00Z', has_web_result: true, read_at: null });
+  status: 'closed', created_at: '2026-10-29T10:00:00Z', has_web_result: true, read_at: null });
 
 async function mockResults(page) {
   const state = { items: [historyEntry()], total: 1, detail: resultDetail(), calls: [], status: {}, hold: {}, network: {}, invalid: {} };
   const handle = async route => {
     const request = route.request();
     const url = new URL(request.url());
-    const action = url.pathname.includes('/files/') ? 'file' : url.pathname.endsWith('/read') ? 'read'
+    const action = /\/(files|attachments)\//.test(url.pathname) ? 'file' : url.pathname.endsWith('/read') ? 'read'
       : url.pathname === historyBase ? 'list' : 'detail';
     state.calls.push({ action, path: url.pathname, query: url.search, method: request.method() });
     if (state.hold[action]) await state.hold[action];
     if (state.network[action]) return route.abort('failed');
     const status = state.status[action] || 200;
     if (status !== 200) return route.fulfill({ status, json: { detail: 'INTERNAL SECRET' } });
-    if (action === 'file') return route.fulfill({ contentType: 'application/octet-stream', body: 'result bytes' });
+    if (action === 'file') return route.fulfill({ contentType: 'application/octet-stream', body: state.filePayloads?.[url.pathname.split('/').at(-2)] || state.filePayloads?.[url.pathname.split('/').at(-1)] || 'result bytes' });
     const id = url.pathname.split('/')[5];
     const pageNumber = Number(url.searchParams.get('page') || 1);
-    const json = action === 'list' ? { items: state.items.slice((pageNumber - 1) * 15, pageNumber * 15), total: state.total, page: pageNumber, page_size: 15 }
-      : action === 'read' ? { task_id: id, read_at: '2026-10-31T12:00:00Z' } : { ...state.detail, task_id: id };
+    const json = action === 'list' ? { items: state.items.slice((pageNumber - 1) * 15, pageNumber * 15)
+      .map(item => ({ ...item, read_at: item.read_at || state.detail.read_at })), total: state.total, page: pageNumber, page_size: 15 }
+      : action === 'read' ? { task_id: id, read_at: '2026-10-31T12:00:00Z' } : { ticket_id: id, items: state.messages || [{
+        id: fileId, message_type: 'agent', text: state.detail.text, created_at: state.detail.closed_at,
+        files: state.detail.files.map(file => ({ ...file, source: 'web_result', preview_kind: null })),
+      }] };
     await route.fulfill({ json: state.invalid[action] || json });
   };
   await page.route('**/api/v1/web/task-results**', handle);
-  await page.route('**/api/v1/web/history?*', handle);
+  await page.route('**/api/v1/web/history**', handle);
   return state;
 }
 async function openResults(page) {
@@ -870,7 +874,7 @@ for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
     assert.equal(await row.innerText(), historyEntry().subject);
     assert.match(await row.getAttribute('title'), /Не прочитана/);
     assert.match(await page.locator('.history-table time').innerText(), /29\.10\.2026/);
-    assert.equal(await page.locator('.history-table th').count(), 3);
+    assert.equal(await page.locator('.history-table th').count(), 4);
     assert.equal(state.calls.some(call => call.action === 'read'), false);
     await row.click();
     await page.waitForFunction(() => document.querySelector('[data-record]')?.dataset.read === 'true');
@@ -1027,18 +1031,20 @@ test('real result API through proxy: WEB cookie, final answer, read persistence 
 });
 
 for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
-  test(`WEB history: 15 compact rows, three columns and mixed sources ${width}px ${colorScheme}`, async t => {
+  test(`WEB history: 15 compact rows, four columns and mixed sources ${width}px ${colorScheme}`, async t => {
     const { page } = await pageFor(t, { width, colorScheme });
     const state = await mockResults(page);
     state.items = Array.from({ length: 15 }, (_, i) => ({ ...historyEntry(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`),
       subject: i === 0 ? '<img src=x onerror=alert(1)> ' + 'Long subject '.repeat(30) : `Заявка ${i}`,
-      channel: i % 2 ? 'telegram' : 'web', has_web_result: false }));
+      channel: i % 2 ? 'telegram' : 'web', status: i % 2 ? 'pending' : 'closed', has_web_result: false }));
     state.total = 15;
     await openResults(page);
     await page.locator('[data-record]').last().waitFor();
     assert.equal(await page.locator('.history-table tbody tr').count(), 15);
-    assert.deepEqual(await page.locator('.history-table th').allTextContents(), ['Источник', 'Тема', 'Дата и время']);
-    assert.equal(await page.locator('.history-table tbody tr').first().locator('td').count(), 3);
+    assert.deepEqual(await page.locator('.history-table th').allTextContents(), ['Источник', 'Тема', 'Дата и время', 'Статус']);
+    assert.equal(await page.locator('.history-table tbody tr').first().locator('td').count(), 4);
+    assert.equal(await page.locator('.history-table tbody tr').first().locator('td').last().innerText(), 'Закрыта');
+    assert.equal(await page.locator('.history-table tbody tr').nth(1).locator('td').last().innerText(), 'В работе');
     const sourceHeaderFits = await page.locator('.history-table th').first().evaluate(el => {
       const range = document.createRange();
       range.selectNodeContents(el);
@@ -1061,8 +1067,9 @@ for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
     assert.ok(bounds.scrollWidth <= bounds.width + 1);
     if (width > 700) { assert.ok(bounds.scroll <= bounds.height + 1); assert.ok(bounds.bottom <= 900); }
     await selectResult(page, state.items[1].id);
-    await page.getByText('Для этой заявки опубликованный ответ пока недоступен.', { exact: true }).waitFor();
-    assert.equal(state.calls.some(call => call.action !== 'list'), false);
+    await page.locator('.history-message-text').waitFor();
+    assert.equal(state.calls.some(call => call.action === 'detail'), true);
+    assert.equal(state.calls.some(call => call.action === 'read'), false);
     assert.equal(await page.getByRole('button', { name: 'Показать ещё', exact: true }).count(), 0);
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-table-${width}-${colorScheme}.png`) });
   });
@@ -1206,4 +1213,123 @@ test('history modal: copy denial keeps text selectable; mobile back cancels pend
   assert.equal(await page.locator('#history-list').isVisible(), true);
   assert.equal(await page.locator('#history-detail').isVisible(), false);
   assert.equal(state.calls.filter(call => call.action === 'read').length, reads);
+});
+
+const historyFile = (index, source, mime) => ({ id: `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`,
+  source, mime_type: mime, filename: `file-${index}.${mime === 'image/webp' ? 'webp' : mime.split('/')[1]}`,
+  size: 2048, preview_kind: null, download_url: 'https://foreign.example/forbidden' });
+const historyMessage = (text, files = [], type = 'client', created = '2026-10-29T10:00:00Z') => ({
+  id: fileId, message_type: type, text, files, created_at: created,
+});
+
+async function trackHistoryUrls(page) {
+  await page.evaluate(() => {
+    window.liveHistoryUrls = new Set();
+    const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = blob => { const url = create(blob); window.liveHistoryUrls.add(url); return url; };
+    URL.revokeObjectURL = url => { window.liveHistoryUrls.delete(url); revoke(url); };
+  });
+}
+
+test('history conversation: API order, client text, empty response, no duplicate publication', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.messages = [historyMessage('Итог из API', [], 'agent', '2026-10-30T10:00:00Z'), historyMessage('Исходный запрос')];
+  await openResults(page);
+  await selectResult(page);
+  await page.waitForFunction(() => document.querySelectorAll('#history-detail article').length === 2);
+  assert.deepEqual(await page.locator('.history-message-text').allTextContents(), ['Исходный запрос', 'Итог из API']);
+  assert.equal(await page.getByText('Итог из API', { exact: true }).count(), 1);
+  assert.deepEqual(state.calls.filter(call => call.action === 'detail').map(call => call.path), [`${historyBase}/${taskId}/messages`]);
+  state.messages = [];
+  await selectResult(page);
+  await page.getByText('Доступных сообщений пока нет.', { exact: true }).waitFor();
+});
+
+test('history media: authorized blobs, four image types, enlargement and download-only ordinary files', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.items[0].has_web_result = false;
+  const files = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/webm', 'audio/ogg']
+    .map((mime, index) => historyFile(index, 'document', mime));
+  state.messages = [historyMessage('Мои файлы', files)];
+  const png = require('node:fs').readFileSync('api/app/static/icons/image-open-original.png');
+  state.filePayloads = Object.fromEntries(files.map(file => [file.id, file.mime_type === 'image/webp'
+    ? require('node:fs').readFileSync('web-client/assets/web-source.webp') : png]));
+  const unexpected = [];
+  page.on('request', request => { if (request.url().includes('foreign.example')) unexpected.push(request.url()); });
+  await trackHistoryUrls(page);
+  await openResults(page);
+  await selectResult(page);
+  await page.waitForFunction(() => document.querySelectorAll('.history-image img').length === 4);
+  assert.equal(await page.locator('.history-sticker').count(), 0);
+  assert.equal(await page.locator('#history-detail video').count(), 0);
+  assert.equal(await page.locator('.history-file small').first().innerText(), '2.0 КБ');
+  assert.equal(await page.locator('.history-file button').filter({ hasText: 'Скачать:' }).count(), 7);
+  assert.ok(state.calls.filter(call => call.action === 'file').every(call => call.path.startsWith(`${historyBase}/${taskId}/attachments/`)));
+  await page.getByRole('button', { name: `Увеличить: ${files[1].filename}`, exact: true }).click();
+  await page.locator('.history-image-dialog[open] img').evaluate(img => img.decode());
+  assert.equal(await page.locator('.history-image-dialog[open] img').getAttribute('src').then(src => src.startsWith('blob:')), true);
+  await page.getByRole('button', { name: 'Закрыть изображение', exact: true }).click();
+  if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, 'history-media.png') });
+  const waiting = page.waitForEvent('download');
+  await page.getByRole('button', { name: `Скачать: ${files[4].filename}`, exact: true }).click();
+  assert.equal((await waiting).suggestedFilename(), files[4].filename);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.liveHistoryUrls.size === 0);
+  assert.deepEqual(unexpected, []);
+});
+
+test('history stickers: shared WEBP/WEBM/TGS players destroy resources on switching', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.items.push(historyEntry(secondTaskId));
+  state.total = 2;
+  const files = ['image/webp', 'video/webm', 'application/x-tgsticker'].map((mime, index) => historyFile(index, 'sticker', mime));
+  files[2].filename = 'animated.tgs';
+  state.messages = [historyMessage('', files)];
+  state.filePayloads = { [files[0].id]: require('node:fs').readFileSync('web-client/assets/web-source.webp'),
+    [files[2].id]: require('node:zlib').gzipSync(JSON.stringify({ v: '5.5.2', layers: [] })) };
+  // Exercise the shared loader/player lifecycle without relying on external CDN availability.
+  await page.route('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js', route => route.fulfill({
+    contentType: 'text/javascript', body: 'window.pako={ungzip(bytes){if(bytes[0]!==31||bytes[1]!==139)throw Error("Not gzip");window.tgsDecoded=true;return JSON.stringify({v:"5.5.2",layers:[]})}};' }));
+  await page.route('https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie.min.js', route => route.fulfill({
+    contentType: 'text/javascript', body: 'window.lottie={loadAnimation({container}){const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");container.append(svg);return {destroy(){svg.remove();window.tgsDestroyed=true}}}};' }));
+  await trackHistoryUrls(page);
+  await openResults(page);
+  await selectResult(page);
+  await page.locator('.history-sticker svg').waitFor();
+  assert.equal(await page.evaluate(() => window.tgsDecoded), true);
+  assert.equal(await page.locator('.history-sticker img').count(), 1);
+  await page.locator('.history-sticker video').evaluate(video => { window.previousStickerVideo = video; });
+  assert.deepEqual(await page.locator('.history-sticker video').evaluate(video => [video.muted, video.loop, video.autoplay, video.playsInline]), [true, true, true, true]);
+  state.messages = [];
+  await selectResult(page, secondTaskId);
+  await page.getByText('Доступных сообщений пока нет.', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.tgsDestroyed), true);
+  assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
+  assert.equal(await page.evaluate(() => window.previousStickerVideo.getAttribute('src')), null);
+});
+
+test('history preview: switching aborts pending file fetch and discards late blobs', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  state.items.push(historyEntry(secondTaskId));
+  state.total = 2;
+  state.messages = [historyMessage('Первая запись', [historyFile(1, 'photo', 'image/png')])];
+  let release;
+  state.hold.file = new Promise(resolve => { release = resolve; });
+  const aborted = [];
+  page.on('requestfailed', request => { if (request.url().includes('/attachments/')) aborted.push(request.failure()?.errorText); });
+  await trackHistoryUrls(page);
+  await openResults(page);
+  await selectResult(page);
+  await page.waitForRequest('**/attachments/**/download');
+  state.messages = [];
+  await selectResult(page, secondTaskId);
+  release();
+  await page.getByText('Доступных сообщений пока нет.', { exact: true }).waitFor();
+  await page.waitForFunction(() => window.liveHistoryUrls.size === 0);
+  assert.ok(aborted.length > 0);
+  assert.equal(await page.locator('#history-detail img').count(), 0);
 });

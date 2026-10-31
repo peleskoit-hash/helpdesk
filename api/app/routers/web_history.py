@@ -21,6 +21,7 @@ class HistoryItem(BaseModel):
     id: str
     subject: str
     channel: Literal['web', 'telegram']
+    status: str
     created_at: datetime
     has_web_result: bool
     read_at: datetime | None

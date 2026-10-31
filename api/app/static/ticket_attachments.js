@@ -561,7 +561,49 @@
     stickerAnimationDataCache.clear();
   }
 
+  // WEB history supplies an authorized blob and owns the request's lifetime.
+  // Keep staff rendering and transport unchanged; share its sticker players/deps.
+  async function renderStickerBlob(attachment, blob, container, signal) {
+    if (attachment.source !== 'sticker' || signal.aborted) return;
+    let animation, media, objectUrl;
+    const cleanup = () => {
+      animation?.destroy();
+      animation = null;
+      if (media?.tagName === 'VIDEO') {
+        media.pause();
+        media.removeAttribute('src');
+        media.load();
+      }
+      media?.remove();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      signal.removeEventListener('abort', cleanup);
+    };
+    if (isTgsSticker(attachment)) {
+      await ensureStickerDeps();
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (signal.aborted || !container.isConnected) return;
+      const animationData = JSON.parse(window.pako.ungzip(bytes, { to: 'string' }));
+      animation = window.lottie.loadAnimation({ container, renderer: 'svg', loop: true, autoplay: true, animationData });
+    } else {
+      if (signal.aborted || !container.isConnected) return;
+      media = document.createElement(isVideoSticker(attachment) ? 'video' : 'img');
+      if (isVideoSticker(attachment)) {
+        media.muted = true;
+        media.loop = true;
+        media.autoplay = true;
+        media.playsInline = true;
+      } else media.alt = attachment.original_filename || 'Стикер';
+      objectUrl = URL.createObjectURL(blob);
+      media.src = objectUrl;
+      container.append(media);
+    }
+    signal.addEventListener('abort', cleanup, { once: true });
+    return cleanup;
+  }
+
   global.TicketAttachments = {
+    renderStickerBlob,
     renderQuoteThumbnail,
     openClientAvatarPreview,
     renderAttachments,

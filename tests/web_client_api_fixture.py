@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import uvicorn
 from fastapi import Depends, FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -55,6 +56,7 @@ def run():
             db.add(AutomaticMessageTemplate(id=key, key=key, body=body, is_overridden=True))
         db.commit()
     app = FastAPI()
+    app.mount('/static', StaticFiles(directory='api/app/static'), name='static')
     app.add_middleware(SessionMiddleware, secret_key="synthetic-test-only", session_cookie="esdesk_session")
     app.include_router(router)
     app.include_router(menu_router)

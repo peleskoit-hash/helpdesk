@@ -96,6 +96,14 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel .history-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 #session-panel .history-source-column { width: 60px; }
 #session-panel .history-date-column { width: 132px; }
+#session-panel .history-status-column { width: 70px; }
+#session-panel .history-file { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; }
+#session-panel .history-file small, #session-panel #history-detail time { display: block; font-size: 11px; color: var(--desk-muted); }
+#session-panel :is(.history-image, .history-sticker) :is(img, video), #session-panel .history-sticker svg { display: block; max-width: 100%; width: 180px; max-height: 180px; object-fit: contain; }
+#session-panel .history-sticker { width: 180px; max-width: 100%; }
+#session-panel .history-image button { padding: 0; overflow: hidden; cursor: zoom-in; }
+#session-panel .history-image-dialog { width: min(1000px, calc(100vw - 32px)); max-height: calc(100svh - 32px); overflow: auto; }
+#session-panel .history-image-dialog img { display: block; max-width: 100%; height: auto; margin: 12px auto 0; }
 #session-panel .history-table :is(th, td) { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--desk-border); }
 #session-panel .history-table th { color: var(--desk-muted); font-size: 11px; }
 #session-panel .history-table td { height: 32px; }
@@ -144,7 +152,9 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
   #session-panel #history-dialog[data-view="detail"] #history-list { display: none; }
   #session-panel #history-dialog[data-view="detail"] #history-back { display: inline-flex; }
   #session-panel #history-dialog > .section-heading > #history-back { padding: 8px; }
-  #session-panel .history-date-column { width: 104px; }
+  #session-panel .history-source-column { width: 60px; }
+  #session-panel .history-date-column { width: 76px; }
+  #session-panel .history-status-column { width: 54px; }
   #session-panel .history-table :is(th, td) { padding: 3px; }
   #session-panel .history-table td { height: 38px; }
   #session-panel dialog { padding: 16px; }

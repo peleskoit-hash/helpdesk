@@ -8,6 +8,7 @@ const assets = new Map([
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
+  ['/history-media.js', ['history-media.js', 'text/javascript; charset=utf-8']],
   ['/appearance.js', ['appearance.js', 'text/javascript; charset=utf-8']],
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
   ['/Manrope-Variable.ttf', ['Manrope-Variable.ttf', 'font/ttf']],
@@ -16,6 +17,7 @@ const assets = new Map([
   ['/assets/telegram-source.svg', ['assets/telegram-source.svg', 'image/svg+xml']],
 ]);
 const routes = new Map([
+  ['/static/ticket_attachments.js', 'GET'],
   ['/api/v1/web/task-results', 'GET'],
   ['/api/v1/web/history', 'GET'],
   ['/api/v1/web/menu', 'GET'],
@@ -45,7 +47,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie.min.js; style-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     const expectedOrigin = publicUrl?.origin || `http://127.0.0.1:${res.socket.localPort}`;
     const expectedHost = publicUrl?.host || `127.0.0.1:${res.socket.localPort}`;
     if (req.headers.host !== expectedHost) {
@@ -63,7 +65,8 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     const taskAction = /^\/api\/v1\/web\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(description|cancel)$/i.test(path);
     const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
     const resultRoute = new RegExp(`^/api/v1/web/task-results/${uuid}(/read|/files/${uuid})?$`, 'i').test(path);
-    const method = routes.get(path) || (taskAction ? 'POST' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
+    const historyRoute = new RegExp(`^/api/v1/web/history/${uuid}/(messages|attachments/${uuid}/download)$`, 'i').test(path);
+    const method = routes.get(path) || (taskAction ? 'POST' : historyRoute ? 'GET' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
     if (method) {
       if (req.method !== method) {
         res.writeHead(405, { Allow: method }).end();
@@ -80,7 +83,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
       const query = ['/api/v1/web/task-results', '/api/v1/web/history'].includes(path) ? new URL(req.url, expectedOrigin).search : '';
       const proxy = http.request(new URL(path + query, upstream), { method: req.method, headers }, incoming => {
         res.statusCode = incoming.statusCode;
-        for (const key of ['content-type', 'retry-after']) {
+        for (const key of ['content-type', 'retry-after', 'content-disposition']) {
           if (incoming.headers[key]) res.setHeader(key, incoming.headers[key]);
         }
         const cookies = (incoming.headers['set-cookie'] || []).filter(value => value.startsWith('esdesk_web_session='));
@@ -94,6 +97,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
         else res.writeHead(502, { 'Content-Type': 'application/json' }).end('{"detail":"API unavailable"}');
       });
       req.on('aborted', () => proxy.destroy());
+      res.on('close', () => { if (!res.writableEnded) proxy.destroy(); });
       req.pipe(proxy);
       return;
     }

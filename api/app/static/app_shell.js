@@ -129,7 +129,7 @@
       scripts: [
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/ticket_api.js?v=20260521a",
-        "/static/ticket_attachments.js?v=20261029-image-actions-v1",
+        "/static/ticket_attachments.js?v=20261031-web-history-v1",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_composer.js?v=20261029-staging-recovery-v1",

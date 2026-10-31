@@ -37,6 +37,8 @@ def test_intake_filter_precedes_pagination_and_keeps_all_execution_statuses(case
     assert first['page_size'] == second['page_size'] == 15
     assert len(first['items']) == 15 and len(second['items']) == 1
     assert {row['id'] for row in first['items'] + second['items']} == expected
+    with Session(case.engine) as db:
+        assert all(row['status'] == db.get(Ticket, row['id']).status for row in first['items'] + second['items'])
     assert case.http.get(HISTORY + '?page=3').json()['items'] == []
     assert case.http.get(HISTORY + '?page=0').status_code == 422
     assert case.http.get(HISTORY + '?page=invalid').status_code == 422
@@ -66,7 +68,8 @@ def test_owner_scope_sources_group_children_and_live_ticket_fields(case):
     row = next(row for row in case.http.get(HISTORY).json()['items'] if row['id'] == normal)
     assert row['subject'] == 'Changed live subject'
     assert row['created_at'].startswith(created_at.strftime('%Y-%m-%dT%H:%M:%S'))
-    assert set(row) == {'id', 'subject', 'channel', 'created_at', 'has_web_result', 'read_at'}
+    assert set(row) == {'id', 'subject', 'channel', 'status', 'created_at', 'has_web_result', 'read_at'}
+    assert row['status'] == 'pending'
     case.http.cookies.clear()
     assert case.http.get(HISTORY).status_code == 401
     case.http.cookies.set('esdesk_web_session', 'peer')

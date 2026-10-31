@@ -1,5 +1,6 @@
 // Ordinary tasks use WEB API. The technical chat stays temporary, in memory only.
-import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, TaskError } from './api.js';
+import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261031-web-history-v1';
+import { renderHistoryFile } from './history-media.js?v=20261031-web-history-v1';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
@@ -300,10 +301,7 @@ export function mountWorkspace(root) {
     if (error.status === 401) historyButton(container, 'Войти снова', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   }
   const resultPath = id => '/' + encodeURIComponent(id);
-  const validSummary = record => typeof record?.task_id === 'string'
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.task_id)
-    && typeof record.closed_at === 'string' && Number.isFinite(Date.parse(record.closed_at))
-    && (record.read_at === null || (typeof record.read_at === 'string' && Number.isFinite(Date.parse(record.read_at))));
+  const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   const historyLabel = record => record.subject || `Заявка № ${record.id}`;
   function renderHistoryList(total) {
     const list = byId('history-list');
@@ -311,7 +309,7 @@ export function mountWorkspace(root) {
     const table = document.createElement('table');
     table.className = 'history-table';
     table.setAttribute('aria-label', 'История заявок');
-    table.innerHTML = '<colgroup><col class="history-source-column"><col><col class="history-date-column"></colgroup><thead><tr><th scope="col">Источник</th><th scope="col">Тема</th><th scope="col">Дата и время</th></tr></thead>';
+    table.innerHTML = '<colgroup><col class="history-source-column"><col><col class="history-date-column"><col class="history-status-column"></colgroup><thead><tr><th scope="col">Источник</th><th scope="col">Тема</th><th scope="col">Дата и время</th><th scope="col">Статус</th></tr></thead>';
     const body = document.createElement('tbody');
     for (const record of records) {
       const row = document.createElement('tr');
@@ -328,7 +326,9 @@ export function mountWorkspace(root) {
       const date = document.createElement('td');
       const time = historyText(date, new Date(record.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }), 'time');
       time.dateTime = record.created_at;
-      row.append(source, subject, date);
+      const status = document.createElement('td');
+      status.textContent = record.status === 'closed' ? 'Закрыта' : 'В работе';
+      row.append(source, subject, date, status);
       body.append(row);
     }
     table.append(body);
@@ -386,6 +386,7 @@ export function mountWorkspace(root) {
       if (!Array.isArray(result?.items) || result.items.length > 15 || !result.items.every(record =>
           typeof record?.id === 'string' && /^[0-9a-f-]{36}$/i.test(record.id)
           && typeof record.subject === 'string' && ['web', 'telegram'].includes(record.channel)
+          && typeof record.status === 'string'
           && typeof record.created_at === 'string' && Number.isFinite(Date.parse(record.created_at))
           && typeof record.has_web_result === 'boolean'
           && (record.read_at === null || (typeof record.read_at === 'string' && Number.isFinite(Date.parse(record.read_at)))))
@@ -413,7 +414,7 @@ export function mountWorkspace(root) {
     status.replaceChildren();
     historyText(status, 'Скачиваем файл…');
     try {
-      const blob = await requestTaskResult(resultPath(record.id) + '/files/' + encodeURIComponent(file.id), controller.signal, 'GET', true);
+      const blob = await getHistoryFile(record.id, file, controller.signal);
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -458,64 +459,61 @@ export function mountWorkspace(root) {
     detail.scrollTop = 0;
     byId('history-dialog').dataset.view = 'detail';
     if (matchMedia('(max-width: 700px)').matches) detail.focus();
-    if (!record.has_web_result) {
-      detail.removeAttribute('aria-busy');
-      historyText(detail, 'Для этой заявки опубликованный ответ пока недоступен.');
-      return;
-    }
     detail.setAttribute('aria-busy', 'true');
     historyText(detail, 'Загружаем ответ…');
     try {
-      const result = await requestTaskResult(resultPath(record.id), controller.signal);
+      const result = await getHistoryMessages(record.id, controller.signal);
       if (controller.signal.aborted) return;
-      if (!validSummary(result) || result.task_id !== record.id || typeof result.text !== 'string'
-          || !Array.isArray(result.files) || !result.files.every(file => typeof file.id === 'string'
-            && /^[0-9a-f-]{36}$/i.test(file.id) && typeof file.filename === 'string')) throw new Error('Invalid detail');
+      if (result?.ticket_id !== record.id || !Array.isArray(result.items) || !result.items.every(message =>
+          validId(message.id) && ['client', 'agent'].includes(message.message_type) && typeof message.text === 'string'
+          && typeof message.created_at === 'string' && Number.isFinite(Date.parse(message.created_at))
+          && Array.isArray(message.files) && message.files.every(file => validId(file.id)
+            && typeof file.filename === 'string' && typeof file.source === 'string' && typeof file.mime_type === 'string'
+            && (file.size === null || (Number.isInteger(file.size) && file.size >= 0))))) throw new Error('Invalid detail');
       detail.replaceChildren();
       historyText(detail, historyLabel(record), 'h3');
-      const answer = historyText(detail, '', 'article');
-      answer.className = 'chat-message bot';
-      historyText(answer, 'Итоговый ответ сотрудника', 'strong');
-      if (result.text) {
-        historyText(answer, result.text).className = 'history-message-text';
-        const actions = document.createElement('div');
-        actions.className = 'history-message-actions';
-        const status = document.createElement('span');
-        status.setAttribute('role', 'status');
-        const copy = historyButton(actions, 'Копировать', async () => {
-          copy.disabled = true;
-          status.textContent = '';
-          try {
-            await navigator.clipboard.writeText(result.text);
-            status.textContent = 'Скопировано';
-          } catch {
-            status.textContent = 'Не удалось скопировать. Выделите текст и скопируйте вручную.';
-          } finally {
-            copy.disabled = false;
-          }
-        });
-        copy.className = 'history-copy';
-        copy.setAttribute('aria-label', 'Копировать текст ответа');
-        actions.append(status);
-        answer.append(actions);
-      }
-      for (const file of result.files) {
-        const row = document.createElement('div');
-        const status = document.createElement('div');
-        status.setAttribute('role', 'status');
-        const button = historyButton(row, `Скачать: ${file.filename}`, () => downloadResult(record, file, button, status));
-        row.append(status);
-        detail.append(row);
+      if (!result.items.length) historyText(detail, 'Доступных сообщений пока нет.');
+      for (const message of [...result.items].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
+        const answer = historyText(detail, '', 'article');
+        answer.className = 'chat-message ' + (message.message_type === 'client' ? 'client' : 'bot');
+        historyText(answer, message.message_type === 'client' ? 'Вы' : record.has_web_result ? 'Итоговый ответ сотрудника' : 'Ответ сотрудника', 'strong');
+        const time = historyText(answer, new Date(message.created_at).toLocaleString('ru-RU'), 'time');
+        time.dateTime = message.created_at;
+        if (message.text) {
+          historyText(answer, message.text).className = 'history-message-text';
+          const actions = document.createElement('div');
+          actions.className = 'history-message-actions';
+          const status = document.createElement('span');
+          status.setAttribute('role', 'status');
+          const copy = historyButton(actions, 'Копировать', async () => {
+            copy.disabled = true;
+            status.textContent = '';
+            try {
+              await navigator.clipboard.writeText(message.text);
+              if (controller.signal.aborted) return;
+              status.textContent = 'Скопировано';
+            } catch {
+              if (!controller.signal.aborted) status.textContent = 'Не удалось скопировать. Выделите текст и скопируйте вручную.';
+            } finally {
+              copy.disabled = false;
+            }
+          });
+          copy.className = 'history-copy';
+          copy.setAttribute('aria-label', 'Копировать текст ответа');
+          actions.append(status);
+          answer.append(actions);
+        }
+        for (const file of message.files) {
+          renderHistoryFile(answer, record.id, file, controller.signal,
+            (file, button, status) => downloadResult(record, file, button, status));
+        }
       }
       const readStatus = document.createElement('div');
       detail.append(readStatus);
       detail.removeAttribute('aria-busy');
       // A successful GET alone is not enough: publish the answer in the dialog first.
-      if (!result.read_at) await markResultRead(record, controller, readStatus);
-      else {
-        record.read_at = result.read_at;
-        updateHistoryRows();
-      }
+      if (record.has_web_result && !record.read_at && result.items.some(message => message.message_type === 'agent'))
+        await markResultRead(record, controller, readStatus);
     } catch (error) {
       if (controller.signal.aborted) return;
       detail.replaceChildren();
