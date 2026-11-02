@@ -9,6 +9,7 @@ const assets = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
   ['/history-media.js', ['history-media.js', 'text/javascript; charset=utf-8']],
+  ['/task-files.js', ['task-files.js', 'text/javascript; charset=utf-8']],
   ['/appearance.js', ['appearance.js', 'text/javascript; charset=utf-8']],
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
   ['/Manrope-Variable.ttf', ['Manrope-Variable.ttf', 'font/ttf']],
@@ -55,7 +56,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
       return;
     }
     if ((req.headers.origin !== undefined && req.headers.origin !== expectedOrigin)
-        || (req.method === 'POST' && req.headers.origin === undefined)) {
+        || (['POST', 'DELETE'].includes(req.method) && req.headers.origin === undefined)) {
       res.writeHead(403).end();
       return;
     }
@@ -66,9 +67,12 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
     const resultRoute = new RegExp(`^/api/v1/web/task-results/${uuid}(/read|/files/${uuid})?$`, 'i').test(path);
     const historyRoute = new RegExp(`^/api/v1/web/history/${uuid}/(messages|attachments/${uuid}/download)$`, 'i').test(path);
-    const method = routes.get(path) || (taskAction ? 'POST' : historyRoute ? 'GET' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
+    const preloadCreate = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads$`, 'i').test(path);
+    const preloadFile = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads/${uuid}$`, 'i').test(path);
+    const preloadRetry = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads/${uuid}/retry$`, 'i').test(path);
+    const method = (preloadFile ? 'GET, DELETE' : preloadCreate || preloadRetry ? 'POST' : null) || routes.get(path) || (taskAction ? 'POST' : historyRoute ? 'GET' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
     if (method) {
-      if (req.method !== method) {
+      if (!method.split(', ').includes(req.method)) {
         res.writeHead(405, { Allow: method }).end();
         return;
       }
@@ -91,7 +95,8 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
         incoming.on('error', () => res.destroy());
         incoming.pipe(res);
       });
-      proxy.setTimeout(15000, () => proxy.destroy());
+      const upload = (preloadCreate || path.endsWith('/description')) && (req.headers['content-type'] || '').startsWith('multipart/form-data');
+      proxy.setTimeout(upload ? 360000 : 15000, () => proxy.destroy());
       proxy.on('error', () => {
         if (res.headersSent) res.destroy();
         else res.writeHead(502, { 'Content-Type': 'application/json' }).end('{"detail":"API unavailable"}');

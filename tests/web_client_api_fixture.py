@@ -1,6 +1,7 @@
 """Test-only HTTP host for the EXISTING auth router; no DEV DB or main startup."""
 import os
 import socket
+from tempfile import TemporaryDirectory
 from datetime import datetime, timedelta, timezone
 
 import uvicorn
@@ -8,23 +9,64 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 from starlette.middleware.sessions import SessionMiddleware
 
 from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
 from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
-                            TelegramContact, Ticket, TicketMessage, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile)
+                            TelegramContact, Ticket, TicketMessage, TicketAttachment, TicketAttachmentPreload, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile)
 from api.app.routers.web_auth import router
 from api.app.routers.web_menu import router as menu_router
 from api.app.routers.web_tasks import router as task_router
 from api.app.routers.web_task_results import router as results_router
 from api.app.routers.web_history import router as history_router
 from api.app.services import web_auth
+from api.app.services import telegram_outbound_delivery, telegram_attachments
 
 
 def run():
+    storage = TemporaryDirectory(prefix='web-client-test-')
+    settings.attachment_storage_dir = storage.name
+    settings.telegram_staging_chat_id = 'synthetic-staging'
+    archive_bytes = {}
+    archive_calls = []
+    summary_calls = []
+    active_summaries = {}
+    deleted_archive_ids = []
+    def archive(chat_id, path, **kwargs):
+        if chat_id != 'synthetic-staging':
+            raise AssertionError('Unexpected Telegram destination')
+        archive_calls.append({'name': kwargs['filename'], 'size': path.stat().st_size})
+        message_id = 900 + len(archive_calls)
+        archive_bytes['synthetic-file-' + str(message_id)] = path.read_bytes()
+        return {'ok': True, 'result': {'message_id': message_id, 'document': {
+            'file_id': 'synthetic-file-' + str(message_id), 'file_unique_id': 'synthetic-unique-' + str(message_id)}}}
+    telegram_outbound_delivery.send_document = archive
+    def archive_summary(chat_id, text, **kwargs):
+        if chat_id != 'synthetic-staging':
+            raise AssertionError('Unexpected Telegram summary destination')
+        summary_calls.append(text)
+        message_id = str(2000 + len(summary_calls))
+        active_summaries[message_id] = text
+        return {'ok': True, 'result': {'message_id': int(message_id)}}
+    telegram_attachments.send_message = archive_summary
+    telegram_outbound_delivery.send_message = archive_summary
+    def edit_summary(chat, message_id, text, **kwargs):
+        if str(message_id) not in active_summaries:
+            from api.app.services.telegram_bot import TelegramApiError
+            raise TelegramApiError('message to edit not found')
+        active_summaries[str(message_id)] = text
+        return {'ok': True}
+    def delete_archive(chat, message_id):
+        deleted_archive_ids.append(str(message_id))
+        active_summaries.pop(str(message_id), None)
+        return {'ok': True}
+    telegram_outbound_delivery.edit_message_text = edit_summary
+    telegram_outbound_delivery.delete_message = delete_archive
+    from api.app.services import ticket_attachments
+    ticket_attachments.get_file = lambda file_id, **kwargs: {'result': {'file_path': file_id}}
+    ticket_attachments.download_file = lambda file_id, path, **kwargs: path.write_bytes(archive_bytes[file_id])
     settings.app_env = "dev"
     settings.session_cookie_secure = False
     settings.telegram_bot_token = ''
@@ -34,7 +76,9 @@ def run():
     clock_start = datetime(2026, 10, 19, 16, tzinfo=timezone.utc)
     clock = [clock_start]
     web_auth.utcnow = lambda: clock[0]
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine('sqlite:///' + storage.name.replace('\\', '/') + '/fixture.sqlite',
+                           connect_args={'check_same_thread': False, 'timeout': 20})
+    telegram_outbound_delivery.SessionLocal = lambda **kwargs: Session(kwargs.get('bind', engine), expire_on_commit=False)
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         db.add(Company(id="synthetic-company", name="Synthetic"))
@@ -83,6 +127,8 @@ def run():
     def reset(db=Depends(get_db)):
         db.execute(delete(WebTaskResultFile))
         db.execute(delete(WebTaskResult))
+        db.execute(delete(TicketAttachmentPreload))
+        db.execute(delete(TicketAttachment))
         db.execute(delete(TicketMessage))
         db.execute(delete(Ticket))
         db.execute(delete(WebClientSession))
@@ -90,6 +136,11 @@ def run():
         db.commit()
         clock[0] = clock_start
         requests.clear()
+        archive_bytes.clear()
+        archive_calls.clear()
+        summary_calls.clear()
+        active_summaries.clear()
+        deleted_archive_ids.clear()
         return {}
 
     @app.post('/__test__/seed-results')
@@ -129,6 +180,12 @@ def run():
                 'tasks': [{'id': row.id, 'channel': row.channel, 'intake_state': row.intake_state,
                            'workflow_type': row.workflow_type} for row in db.scalars(select(Ticket))],
                 'client_messages': [row.body for row in db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client'))],
+                'attachments': [{'ticket_id': row.ticket_id, 'message_id': row.message_id, 'filename': row.original_filename,
+                                 'archive_id': row.telegram_archive_message_id} for row in db.scalars(select(TicketAttachment))],
+                'archive_calls': archive_calls,
+                'summary_calls': summary_calls,
+                'active_summaries': active_summaries,
+                'deleted_archive_ids': deleted_archive_ids,
                 "activities": [row.last_activity_at.isoformat()
                 for row in db.scalars(select(WebClientSession))]}
 
@@ -146,6 +203,7 @@ def run():
     finally:
         sock.close()
         engine.dispose()
+        storage.cleanup()
 
 
 if __name__ == "__main__":

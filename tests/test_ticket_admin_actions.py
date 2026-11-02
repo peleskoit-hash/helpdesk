@@ -107,6 +107,8 @@ def test_delete_ticket_hard_removes_group_child_attachment_files(tmp_path):
     assert session.execute(select(TicketAttachment.id).where(TicketAttachment.id == parent_attachment_id)).scalar_one_or_none() is None
     assert session.execute(select(TicketAttachment.id).where(TicketAttachment.id == child_attachment_id)).scalar_one_or_none() is None
     assert session.execute(select(Ticket.id).where(Ticket.id == child_id)).scalar_one_or_none() is None
+    assert parent_file.exists() and child_file.exists()
+    session.commit()
     assert not parent_file.exists()
     assert not child_file.exists()
     assert session.execute(select(Ticket.id).where(Ticket.id == parent_id)).scalar_one_or_none() is None

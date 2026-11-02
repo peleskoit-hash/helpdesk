@@ -1,4 +1,4 @@
-import { getHistoryFile } from './api.js?v=20261031-web-history-v1';
+import { getHistoryFile } from './api.js?v=20261102-web-preloads-v1';
 
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 

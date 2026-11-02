@@ -79,6 +79,12 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel .demo-composer .composer-enter-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--desk-muted); white-space: nowrap; cursor: pointer; }
 #session-panel .composer-enter-toggle input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--desk-accent); }
 #session-panel .composer-hotkey-hint { font-size: 12px; color: var(--desk-muted); white-space: nowrap; }
+#session-panel #task-selected-files { max-height: 180px; overflow-y: auto; }
+#session-panel .task-selected-file { display: flex; align-items: center; gap: 8px; padding: 6px 0; overflow-wrap: anywhere; font-size: 12px; }
+#session-panel .task-selected-file img { width: 54px; height: 54px; object-fit: contain; }
+#session-panel .task-selected-file span { flex: 1; min-width: 0; }
+#session-panel .task-selected-file button { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
+#session-panel #task-file-error { color: var(--desk-danger); font-size: 12px; white-space: pre-wrap; }
 #session-panel textarea { resize: vertical; display: block; width: 100%; min-height: 96px; max-height: 28svh; padding: 14px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-surface); color: var(--desk-text); font: 15px/1.5 var(--desk-font); }
 #session-panel textarea::placeholder { color: var(--desk-muted); }
 #session-panel textarea:disabled { background: var(--desk-soft); opacity: .65; }
@@ -299,3 +305,12 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
 
 #session-panel #appearanceMenu.appearance-menu { inset: 0; margin: auto; }
+
+#session-panel .task-selected-file .task-file-icon { flex: 0 0 30px; font-size: 22px; }
+#session-panel .task-file-details { flex: 1; min-width: 0; }
+#session-panel .task-file-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; max-width: 110px; }
+#session-panel .task-file-loading { margin-top: 4px; color: var(--desk-muted); }
+#session-panel .task-file-failure { margin-top: 4px; color: var(--desk-danger); }
+#session-panel .task-file-progress { height: 4px; margin-top: 4px; overflow: hidden; border-radius: 2px; background: var(--desk-soft); }
+#session-panel .task-file-progress::after { content: ''; display: block; width: 35%; height: 100%; background: var(--desk-accent); animation: task-file-loading 1.2s linear infinite; }
+@keyframes task-file-loading { from { transform: translateX(-110%); } to { transform: translateX(300%); } }

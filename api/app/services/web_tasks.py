@@ -15,13 +15,19 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import BotButtonSetting, Client, Ticket, TicketMessage
+from ..models import BotButtonSetting, Client, Ticket, TicketAttachmentPreload, TicketMessage
 from ..routers import telegram
-from . import web_auth
+from . import web_auth, telegram_upload_state as upload_state
+from .attachment_preload_owners import client_collecting_ticket, owned_client_preload
+from .telegram_outbound_delivery import claim_attachment_preload, _discard_preload
+from .ticket_attachments import _save_attachment_preload
+from .ticket_messages import _attachment_from_preload
+from .ticket_numbering import ensure_ticket_number
 from .assignment import append_system_message
 from .automatic_messages import get_automatic_message_row, render_automatic_message_text
 from .statistics_lifecycle import sync_work_interval_after_close
 from .web_menu import read_client_menu
+from .web_task_attachments import attach_client_files, file_manifest
 
 STATE_KEY = 'web_task_intake'
 REQUEST_NAMESPACE = UUID('9f1eb726-545d-4f8d-8cbc-a20eb97113f1')
@@ -171,13 +177,20 @@ def select_task(db, owner, client, button_id, request_id, confirmed=False):
     return response(db, ticket)
 
 
-def describe_task(db, owner, client, task_id, body):
+def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
     ticket = owned_task(db, owner, task_id)
     body = body.strip()
+    if uploads and preload_ids:
+        fail(db, 'web_task_upload_methods_mixed', 422)
+    if len(set(preload_ids)) != len(preload_ids):
+        fail(db, 'web_task_duplicate_preloads', 422)
+    preload_ids = sorted(preload_ids)
+    files = file_manifest(uploads)
     if ticket.intake_state == 'ready':
         original = db.scalar(select(TicketMessage.body).where(TicketMessage.ticket_id == ticket.id,
                               TicketMessage.message_type == 'client').order_by(TicketMessage.created_at).limit(1))
-        if original != body:
+        if (original != body or state(ticket).get('description_files', []) != files
+                or state(ticket).get('description_preload_ids', []) != preload_ids):
             fail(db, 'web_task_description_already_sent')
         return response(db, ticket)
     if ticket.intake_state != 'collecting':
@@ -189,10 +202,33 @@ def describe_task(db, owner, client, task_id, body):
         fail(db, 'web_task_confirmation_required', ticket=ticket, key='telegram.task.request_text')
     if not body:
         fail(db, 'web_task_description_required', 422, ticket, 'telegram.task.request_text')
-    telegram._append_client_message(db, ticket, body)
-    telegram._store_button_system_text(db, ticket, button, client_message=body)
-    telegram._ready_ticket_for_distribution(db, ticket, button)
-    web_auth.register_web_activity(db, client)
+    preloads = []
+    for preload_id in preload_ids:
+        row = claim_attachment_preload(db, preload_id=preload_id, ticket_id=ticket.id, client_id=owner.id)
+        if row is None:
+            fail(db, 'attachment_preload_not_found', 404)
+        if row.status != 'ready' or not (row.telegram_file_id or '').strip():
+            fail(db, 'attachment_preload_not_ready')
+        preloads.append(row)
+    message = telegram._append_client_message(db, ticket, body)
+    for row in preloads:
+        attachment = _attachment_from_preload(db=db, ticket=ticket, message=message, preload=row, delivery_status='ready')
+        attachment.source = 'web'
+        attachment.telegram_archive_message_id = row.telegram_staging_file_message_id
+        attachment.telegram_archive_info_message_id = row.telegram_staging_info_message_id
+    if preload_ids:
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json,
+            STATE_KEY: {**state(ticket), 'description_preload_ids': preload_ids}}
+    with attach_client_files(db, ticket, message, uploads):
+        if files:
+            ticket.quick_action_state_json = {**ticket.quick_action_state_json,
+                STATE_KEY: {**state(ticket), 'description_files': files}}
+        telegram._store_button_system_text(db, ticket, button, client_message=body)
+        telegram._ready_ticket_for_distribution(db, ticket, button)
+        web_auth.register_web_activity(db, client)
+        db.flush()
+    # Retain files if the commit outcome is uncertain: a retry checks persisted
+    # intake state and fingerprints before it can save or archive anything again.
     db.commit()
     return response(db, ticket)
 
@@ -234,3 +270,79 @@ async def web_task_cleanup_loop():
         except Exception:
             logger.exception('WEB task timeout cleanup failed')
         await asyncio.sleep(30)
+
+
+def collecting_preload_task(db, owner, task_id):
+    ticket = owned_task(db, owner, task_id)
+    if client_collecting_ticket(db, ticket.id, owner.id) is None:
+        fail(db, 'web_task_no_longer_collecting', 409)
+    if not state(ticket)['confirmed']:
+        fail(db, 'web_task_confirmation_required', ticket=ticket, key='telegram.task.request_text')
+    return ticket
+
+
+def create_preload(db, owner, task_id, upload, upload_id):
+    ticket = collecting_preload_task(db, owner, task_id)
+    manifest, = file_manifest([upload])
+    # Scope browser upload IDs to the actual session owner and the existing task.
+    row_id = str(uuid5(REQUEST_NAMESPACE, f'preload:{owner.company_id}:{owner.id}:{ticket.id}:{upload_id}'))
+    if row_id in state(ticket).get('deleted_preload_ids', []):
+        fail(db, 'attachment_preload_deleted', 409)
+    row = upload_state.lock_row(db, TicketAttachmentPreload, row_id)
+    if row is not None:
+        if (row.ticket_id != ticket.id or row.client_id != owner.id or row.user_id is not None
+                or row.original_filename != manifest['filename'] or row.mime_type != manifest['mime_type']
+                or row.file_size != manifest['size'] or upload_state.state(row).get('content_sha256') != manifest['sha256']):
+            fail(db, 'attachment_upload_id_conflict', 409)
+        if row.status == 'cancelled' or row.final_attachment_id:
+            fail(db, 'attachment_preload_deleted', 409)
+        db.commit()
+    else:
+        ensure_ticket_number(db, ticket)
+        try:
+            row = _save_attachment_preload(db, ticket, None, upload, archive_group_id=ticket.id,
+                preload_id=row_id, client_id=owner.id)
+        except OSError:
+            fail(db, 'web_task_upload_failed', 503)
+        cleanup_path = row.local_path
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            from .telegram_outbound_delivery import _safe_unlink
+            _safe_unlink(cleanup_path, db=db)
+            raise
+    return row, row.status == 'uploading'
+
+
+def preload_status(db, owner, task_id, preload_id):
+    owned_task(db, owner, task_id)
+    row = owned_client_preload(db, str(preload_id), str(task_id), owner.id, allow_bound=True)
+    row = upload_state.expire_attempt(db, row)
+    if row is None:
+        fail(db, 'attachment_preload_not_found', 404)
+    # Polling must not count as client activity.
+    return upload_state.preload_payload(row)
+
+
+def retry_preload(db, owner, task_id, preload_id, confirm_uncertain=False):
+    collecting_preload_task(db, owner, task_id)
+    row = owned_client_preload(db, str(preload_id), str(task_id), owner.id)
+    if row.final_attachment_id or row.status == 'cancelled':
+        fail(db, 'attachment_preload_deleted', 409)
+    return upload_state.retry_preload(db, row, confirm_uncertain, client_id=owner.id)
+
+
+def delete_preload(db, owner, task_id, preload_id):
+    ticket = collecting_preload_task(db, owner, task_id)
+    deleted = state(ticket).get('deleted_preload_ids', [])
+    row = upload_state.lock_row(db, TicketAttachmentPreload, str(preload_id))
+    if row is None and str(preload_id) in deleted:
+        return {'ok': True}
+    row = owned_client_preload(db, str(preload_id), ticket.id, owner.id)
+    if row.final_attachment_id:
+        fail(db, 'attachment_preload_already_claimed', 409)
+    ticket.quick_action_state_json = {**ticket.quick_action_state_json,
+        STATE_KEY: {**state(ticket), 'deleted_preload_ids': sorted(set(deleted) | {row.id})}}
+    _discard_preload(db, row, delete_row=True, unlink_local=True)
+    return {'ok': True}

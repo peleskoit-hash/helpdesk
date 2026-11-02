@@ -8,12 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import Select, asc, event, inspect, select
+from sqlalchemy import Select, asc, event, inspect, or_, select
 from sqlalchemy.orm import Session, object_session
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType, User
+from ..models import Client, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType, User
 from .telegram_bot import TelegramApiError, delete_message, edit_message_text, send_document, send_document_by_file_id, send_message
 from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html, telegram_html_code, telegram_html_link, telegram_html_text
 from .ticket_links import public_ticket_url
@@ -21,6 +21,7 @@ from .ticket_messages import TELEGRAM_CAPTION_LIMIT, record_client_delivery_fail
 
 
 from . import telegram_upload_state as upload_state
+from .attachment_preload_owners import archive_owner, client_bound_attachment, client_preload_allowed, owner_scope
 
 logger = logging.getLogger(__name__)
 
@@ -61,20 +62,23 @@ def _staging_chat_id() -> str:
     return staging_chat_id
 
 
-def _safe_unlink(path_value: str | None, *, db=None, archived=False, ignored_attachment_ids=()) -> None:
+def _safe_unlink(path_value: str | None, *, db=None, archived=False, ignored_attachment_ids=(), ignored_preload_ids=()) -> bool:
     path = Path(path_value or "")
     try:
         if not path.is_file():
-            return
+            return True
         if db is not None:
             references = [row for row in upload_state.source_references(db, path_value)
-                if not (isinstance(row, TicketAttachment) and row.id in ignored_attachment_ids)]
+                if not (isinstance(row, TicketAttachment) and row.id in ignored_attachment_ids)
+                and not (isinstance(row, TicketAttachmentPreload) and row.id in ignored_preload_ids)]
             if any(not archived or (isinstance(row, TicketAttachmentPreload) and row.status == "failed")
                    or not upload_state.archived_document(row) for row in references):
-                return
+                return True
         path.unlink()
+        return True
     except OSError:
         logger.warning("Failed to remove file %s", path, exc_info=True)
+        return False
 
 
 def _release_prepared_source(row, path):
@@ -185,6 +189,7 @@ def _snapshot_group_rows(group_rows: list[TicketAttachmentPreload]) -> list[Simp
             id=row.id,
             ticket_id=row.ticket_id,
             user_id=row.user_id,
+            client_id=row.client_id,
             archive_group_id=row.archive_group_id,
             original_filename=row.original_filename,
             mime_type=row.mime_type,
@@ -207,7 +212,7 @@ def _snapshot_group_rows(group_rows: list[TicketAttachmentPreload]) -> list[Simp
 def _archive_info_text(
     *,
     ticket: Ticket,
-    user: User | None,
+    user: User | Client | None,
     group_rows: list[TicketAttachmentPreload],
     status_text: str,
     event_label: str | None = None,
@@ -217,11 +222,13 @@ def _archive_info_text(
         raise RuntimeError("Cannot render archive info text without group rows")
     sorted_rows = sorted(group_rows, key=lambda row: (row.created_at or datetime.min, row.id))
     filenames = [((row.original_filename or "").strip() or "Файл") for row in sorted_rows]
+    is_client = isinstance(user, Client) or getattr(sorted_rows[0], 'client_id', None) is not None
     file_label = "Файлы:" if len(filenames) > 1 else "Файл:"
     prepared_at = sorted_rows[0].created_at
     lines = [
         _archive_ticket_header(ticket),
-        f"Сотрудник: {telegram_html_text(_archive_actor_name(user))}",
+        (f"Клиент: {telegram_html_text(getattr(user, 'display_name', None) or 'Клиент не найден')}" if is_client
+         else f"Сотрудник: {telegram_html_text(_archive_actor_name(user))}"),
         f"Подготовлено: {_format_project_dt(prepared_at)}",
         file_label,
     ]
@@ -236,23 +243,24 @@ def _prepare_archive_html_text(text: str) -> tuple[str, str | None]:
     return prepare_telegram_html_message(text)
 
 
-def _group_key_from_preload(preload: TicketAttachmentPreload) -> tuple[str, str, str]:
-    return preload.ticket_id, preload.user_id, _archive_group_id(preload)
+def _group_key_from_preload(preload: TicketAttachmentPreload) -> tuple[str, str | None, str | None, str]:
+    return preload.ticket_id, preload.user_id, preload.client_id, _archive_group_id(preload)
 
 
 def _load_group_preloads(
     db,
     *,
     ticket_id: str,
-    user_id: str,
+    user_id: str | None,
     archive_group_id: str,
+    client_id: str | None = None,
     for_update: bool = False,
 ) -> list[TicketAttachmentPreload]:
     stmt = (
         select(TicketAttachmentPreload)
         .where(
             TicketAttachmentPreload.ticket_id == ticket_id,
-            TicketAttachmentPreload.user_id == user_id,
+            *owner_scope(user_id=user_id, client_id=client_id),
             TicketAttachmentPreload.archive_group_id == archive_group_id,
         )
         .order_by(asc(TicketAttachmentPreload.created_at), asc(TicketAttachmentPreload.id))
@@ -278,14 +286,128 @@ def _pending_info_message_id(group_rows: list[TicketAttachmentPreload]) -> str |
     return None
 
 
-def _delete_archive_message_by_id(message_id: str | None) -> None:
+def _delete_archive_message_by_id(message_id: str | None) -> bool:
     message_id_value = str(message_id or "").strip()
     if not message_id_value or _is_pending_archive_message_id(message_id_value):
-        return
+        return True
     try:
         delete_message(_staging_chat_id(), message_id_value)
-    except (RuntimeError, TelegramApiError):
-        logger.warning("Failed to delete technical archive message %s", message_id_value)
+        return True
+    except (RuntimeError, TelegramApiError) as exc:
+        if 'message to delete not found' in str(exc).lower():
+            return True
+        logger.warning("Failed to delete technical archive message %s (%s)", message_id_value, type(exc).__name__)
+        return False
+
+
+def _preload_archive_ids(row):
+    info = upload_state.state(row)
+    return {str(mid) for mid in [row.telegram_staging_file_message_id, row.telegram_staging_info_message_id,
+        (info.get('receipt') or {}).get('message_id'),
+        *(value.get('message_id') for value in info.get('previous_receipts', []))] if mid and not _is_pending_archive_message_id(str(mid))}
+
+
+def _archive_message_referenced(db, message_id, ignored_preload_ids=()):
+    return bool(db.scalar(select(TicketAttachment.id).where(or_(
+        TicketAttachment.telegram_archive_message_id == message_id,
+        TicketAttachment.telegram_archive_info_message_id == message_id)).limit(1)) or db.scalar(
+        select(TicketAttachmentPreload.id).where(TicketAttachmentPreload.id.not_in(ignored_preload_ids), or_(
+            TicketAttachmentPreload.telegram_staging_file_message_id == message_id,
+            TicketAttachmentPreload.telegram_staging_info_message_id == message_id)).limit(1)))
+
+
+def _discard_client_preload(db, preload):
+    if client_bound_attachment(db, preload) is not None:
+        return  # An accepted message owns the file; retiring a preload must not erase it.
+    preload.status = 'cancelled'
+    db.flush()
+    remaining = _archive_rows_for_display(_load_group_preloads(db, ticket_id=preload.ticket_id,
+        user_id=None, client_id=preload.client_id, archive_group_id=_archive_group_id(preload)))
+    info_id = preload.telegram_staging_info_message_id
+    failed = []
+    for message_id in _preload_archive_ids(preload):
+        if (message_id == info_id and remaining) or _archive_message_referenced(db, message_id, [preload.id]):
+            continue
+        if not _delete_archive_message_by_id(message_id):
+            failed.append(message_id)
+    if remaining:
+        if info_id and not _actual_info_message_id(remaining):
+            remaining[0].telegram_staging_info_message_id = info_id
+        ticket = db.get(Ticket, preload.ticket_id)
+        if ticket is not None and not _best_effort_edit_group_archive_message(group_rows=remaining, ticket=ticket,
+                user=archive_owner(db, preload), status_text=_group_status_text(remaining), force=True):
+            for row in remaining:
+                upload_state.patch(row, archive_reconcile_pending=True)
+    active = bool((upload_state.state(preload).get('staging_attempt') or {}).get('active')) and not upload_state.attempt_expired(preload, 'staging_attempt')
+    path, row_id = preload.local_path, preload.id
+    upload_state.patch(preload, cleanup_pending=True, cleanup_failed_message_ids=failed,
+        error_code='archive_cleanup_failed' if failed else None)
+    db.commit()
+    if not active:
+        if not _safe_unlink(path, db=db, ignored_preload_ids=[row_id]):
+            upload_state.patch(preload, cleanup_local_failed=True, error_code='local_cleanup_failed')
+            db.commit()
+        elif not failed:
+            db.delete(preload)
+            db.commit()
+
+
+def cleanup_client_preloads(db, ticket_id):
+    rows = db.scalars(select(TicketAttachmentPreload).where(TicketAttachmentPreload.ticket_id == ticket_id,
+        TicketAttachmentPreload.client_id.is_not(None))).all()
+    for candidate in rows:
+        row = upload_state.lock_row(db, TicketAttachmentPreload, candidate.id)
+        if row is not None and (row.status == 'cancelled' or not client_preload_allowed(db, row)):
+            _discard_client_preload(db, row)
+
+
+_DELETED_UPLOAD_CLEANUP = 'deleted_ticket_upload_cleanup'
+
+
+def schedule_ticket_upload_delete(db, ticket_ids, warnings):
+    """Detach preload FKs now; delete external resources only after the caller commits."""
+    rows = db.scalars(_lock_stmt(select(TicketAttachmentPreload).where(
+        TicketAttachmentPreload.ticket_id.in_(ticket_ids)).order_by(TicketAttachmentPreload.id), db)).all()
+    paths = {row.local_path for row in rows if row.local_path}
+    ids = set().union(*(_preload_archive_ids(row) for row in rows)) if rows else set()
+    for row in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id.in_(ticket_ids))):
+        if row.local_path: paths.add(row.local_path)
+        ids.update(str(mid) for mid in [row.telegram_archive_message_id, row.telegram_archive_info_message_id] if mid)
+    db.execute(TicketAttachmentPreload.__table__.delete().where(TicketAttachmentPreload.ticket_id.in_(ticket_ids)))
+    transaction = db.get_nested_transaction() or db.get_transaction()
+    db.info.setdefault(_DELETED_UPLOAD_CLEANUP, {}).setdefault(transaction, []).append((paths, ids, tuple(ticket_ids), warnings))
+
+
+@event.listens_for(Session, 'after_commit')
+def _delete_committed_ticket_uploads(db):
+    pending = db.info.get(_DELETED_UPLOAD_CLEANUP, {})
+    nested = db.get_nested_transaction()
+    if nested is not None:
+        pending.setdefault(nested.parent, []).extend(pending.pop(nested, []))
+        return
+    db.info.pop(_DELETED_UPLOAD_CLEANUP, None)
+    for items in pending.values():
+        for paths, ids, ticket_ids, warnings in items:
+            try:
+                with Session(bind=db.get_bind()) as cleanup_db:
+                    for message_id in ids:
+                        if not _archive_message_referenced(cleanup_db, message_id) and not _delete_archive_message_by_id(message_id):
+                            warnings.append(f'Не удалось удалить сообщение технического архива {message_id}: {ticket_ids}')
+                    for path in paths:
+                        if not _safe_unlink(path, db=cleanup_db):
+                            warnings.append(f'Не удалось удалить локальный файл {path}: {ticket_ids}')
+            except Exception:
+                warnings.append(f'Очистка вложений после удаления требует повтора: {ticket_ids}')
+                logger.exception('Deleted ticket upload cleanup failed tickets=%s archive_ids=%s paths=%s', ticket_ids, sorted(ids), sorted(paths))
+
+
+@event.listens_for(Session, 'after_rollback')
+def _rollback_ticket_upload_delete(db):
+    nested = db.get_nested_transaction()
+    if nested is not None:
+        db.info.get(_DELETED_UPLOAD_CLEANUP, {}).pop(nested, None)
+    else:
+        db.info.pop(_DELETED_UPLOAD_CLEANUP, None)
 
 
 def _clear_pending_info_reservation(db, preload: TicketAttachmentPreload) -> bool:
@@ -316,7 +438,7 @@ def _best_effort_edit_group_archive_message(
     *,
     group_rows: list[TicketAttachmentPreload],
     ticket: Ticket,
-    user: User | None,
+    user: User | Client | None,
     status_text: str,
     event_label: str | None = None,
     event_at: datetime | None = None,
@@ -367,7 +489,7 @@ def _best_effort_edit_group_archive_message(
 def _send_preload_archive_info(
     *,
     ticket: Ticket,
-    user: User | None,
+    user: User | Client | None,
     group_rows: list[TicketAttachmentPreload],
     status_text: str,
 ) -> str:
@@ -447,12 +569,14 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
             preload = db.get(TicketAttachmentPreload, preload_id)
             if preload is None:
                 return ""
+            if not client_preload_allowed(db, preload):
+                raise RuntimeError('Client preload owner or collecting task is unavailable')
             _ensure_archive_group_id(db, preload)
-            ticket_id, user_id, archive_group_id = _group_key_from_preload(preload)
+            ticket_id, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
             group_rows = _load_group_preloads(
                 db,
                 ticket_id=ticket_id,
-                user_id=user_id,
+                user_id=user_id, client_id=client_id,
                 archive_group_id=archive_group_id,
                 for_update=False,
             )
@@ -482,7 +606,7 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                         _load_group_preloads(
                             db,
                             ticket_id=ticket_id,
-                            user_id=user_id,
+                            user_id=user_id, client_id=client_id,
                             archive_group_id=archive_group_id,
                             for_update=False,
                         )
@@ -506,7 +630,7 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                             preload.telegram_staging_info_message_id = token
                         db.commit()
                         ticket = db.get(Ticket, preload.ticket_id)
-                        user = db.get(User, preload.user_id)
+                        user = archive_owner(db, preload)
                         snapshot_rows = _snapshot_group_rows(refreshed_group_rows)
             else:
                 db.rollback()
@@ -531,11 +655,11 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                     _delete_archive_message_by_id(created_message_id)
                     return ""
                 _ensure_archive_group_id(finalize_db, preload)
-                ticket_id, user_id, archive_group_id = _group_key_from_preload(preload)
+                ticket_id, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
                 group_rows = _load_group_preloads(
                     finalize_db,
                     ticket_id=ticket_id,
-                    user_id=user_id,
+                    user_id=user_id, client_id=client_id,
                     archive_group_id=archive_group_id,
                     for_update=False,
                 )
@@ -576,8 +700,10 @@ def _discard_preload(
     delete_row: bool,
     unlink_local: bool,
 ) -> None:
+    if preload.client_id is not None:
+        return _discard_client_preload(db, preload)
     _ensure_archive_group_id(db, preload)
-    ticket_id, user_id, archive_group_id = _group_key_from_preload(preload)
+    ticket_id, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
     info_message_id = _actual_info_message_id([preload]) or str(preload.telegram_staging_info_message_id or "").strip()
     cleanup_path = preload.local_path
     _best_effort_delete_preload_file_message(preload)
@@ -592,7 +718,7 @@ def _discard_preload(
         _load_group_preloads(
             db,
             ticket_id=ticket_id,
-            user_id=user_id,
+            user_id=user_id, client_id=client_id,
             archive_group_id=archive_group_id,
             for_update=False,
         )
@@ -603,7 +729,7 @@ def _discard_preload(
             if next_leader is not None:
                 next_leader.telegram_staging_info_message_id = info_message_id
         ticket = db.get(Ticket, ticket_id)
-        user = db.get(User, user_id)
+        user = archive_owner(db, preload)
         if ticket is not None:
             _best_effort_edit_group_archive_message(
                 group_rows=remaining_rows,
@@ -653,11 +779,11 @@ def recover_ticket_uploads(db, ticket_id):
         if not upload_state.state(row).get("archive_reconcile_pending"):
             continue
         group = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
-            user_id=row.user_id, archive_group_id=_archive_group_id(row), for_update=False))
+            user_id=row.user_id, client_id=row.client_id, archive_group_id=_archive_group_id(row), for_update=False))
         ticket = db.get(Ticket, ticket_id)
         if ticket is not None and group and _actual_info_message_id(group):
             if not _best_effort_edit_group_archive_message(group_rows=group, ticket=ticket,
-                    user=db.get(User, row.user_id), status_text=_group_status_text(group), force=True):
+                    user=archive_owner(db, row), status_text=_group_status_text(group), force=True):
                 continue
         upload_state.patch(row, archive_reconcile_pending=False)
         db.commit()
@@ -666,6 +792,7 @@ def recover_ticket_uploads(db, ticket_id):
 
 
 def cleanup_failed_attachment_preloads(db, ticket_id):
+    cleanup_client_preloads(db, ticket_id)
     ticket = db.get(Ticket, ticket_id)
     if ticket is None or ticket.status != "closed":
         return 0
@@ -673,7 +800,8 @@ def cleanup_failed_attachment_preloads(db, ticket_id):
     if ticket is None or ticket.status != "closed":
         return 0
     rows = db.scalars(select(TicketAttachmentPreload).where(
-        TicketAttachmentPreload.ticket_id == ticket_id, TicketAttachmentPreload.status == "failed"
+        TicketAttachmentPreload.ticket_id == ticket_id, TicketAttachmentPreload.status == "failed",
+        TicketAttachmentPreload.client_id.is_(None),
     ).order_by(TicketAttachmentPreload.id)).all()
     paths = set()
     ignored_attachment_ids = set()
@@ -701,8 +829,10 @@ def cleanup_failed_attachment_preloads(db, ticket_id):
         db.delete(row)
         removed += 1
     # A parent's failed copy can outlive the child's preload and share its source.
+    client_bound_ids = select(TicketAttachmentPreload.final_attachment_id).where(
+        TicketAttachmentPreload.client_id.is_not(None), TicketAttachmentPreload.final_attachment_id.is_not(None))
     for attachment in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id,
-            TicketAttachment.telegram_delivery_status == "failed")):
+            TicketAttachment.telegram_delivery_status == "failed", TicketAttachment.id.not_in(client_bound_ids))):
         if (upload_state.state(attachment).get("delivery_attempt") or {}).get("active") and not upload_state.attempt_expired(attachment, "delivery_attempt"):
             continue
         paths.add(attachment.local_path)
@@ -724,7 +854,8 @@ _FAILED_CLOSE_CLEANUP = "failed_attachment_close_cleanup"
 @event.listens_for(Session, "before_flush")
 def _schedule_failed_cleanup_on_close(db, *_args):
     ids = {row.id for row in db.dirty.union(db.new) if isinstance(row, Ticket)
-           and row.status == "closed" and inspect(row).attrs.status.history.has_changes()}
+           and ((row.status == "closed" and inspect(row).attrs.status.history.has_changes())
+                or (row.channel == 'web' and inspect(row).attrs.intake_state.history.has_changes()))}
     if ids:
         transaction = db.get_nested_transaction() or db.get_transaction()
         db.info.setdefault(_FAILED_CLOSE_CLEANUP, {}).setdefault(transaction, set()).update(ids)
@@ -912,17 +1043,17 @@ def _finalize_claimed_preload_archive(*, preload_id: str, final_status: str) -> 
             return
         _ensure_archive_group_id(db, preload)
         preload.status = final_status
-        ticket_id, user_id, archive_group_id = _group_key_from_preload(preload)
+        ticket_id, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
         group_rows = _load_group_preloads(
             db,
             ticket_id=ticket_id,
-            user_id=user_id,
+            user_id=user_id, client_id=client_id,
             archive_group_id=archive_group_id,
             for_update=False,
         )
         display_rows = _archive_rows_for_display(group_rows)
         ticket = db.get(Ticket, ticket_id)
-        user = db.get(User, user_id)
+        user = archive_owner(db, preload)
         status_text = _group_status_text(display_rows)
         if final_status == "ready" and ticket is not None and ticket.workflow_type == TicketWorkflowType.TASK.value:
             if not any(row.status == "failed" for row in display_rows):
@@ -949,7 +1080,7 @@ def _finalize_claimed_preload_archive(*, preload_id: str, final_status: str) -> 
                 cleanup_rows = _load_group_preloads(
                     cleanup_db,
                     ticket_id=ticket_id,
-                    user_id=user_id,
+                    user_id=user_id, client_id=client_id,
                     archive_group_id=archive_group_id,
                     for_update=False,
                 )
@@ -1029,17 +1160,17 @@ def _deliver_ticket_attachment(
                 _ensure_archive_group_id(db, preload)
                 preload.status = "sending"
                 db.commit()
-                ticket_id_value, user_id, archive_group_id = _group_key_from_preload(preload)
+                ticket_id_value, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
                 group_rows = _archive_rows_for_display(
                     _load_group_preloads(
                         db,
                         ticket_id=ticket_id_value,
-                        user_id=user_id,
+                        user_id=user_id, client_id=client_id,
                         archive_group_id=archive_group_id,
                         for_update=False,
                     )
                 )
-                user = db.get(User, preload.user_id)
+                user = archive_owner(db, preload)
                 _best_effort_edit_group_archive_message(
                     group_rows=group_rows,
                     ticket=ticket,
@@ -1140,6 +1271,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
         row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
         if row is None or row.status not in {"uploading", "ready", "cancelled"}:
             return
+        cleanup_path = row.local_path
         token = upload_state.begin_attempt(row, "staging_attempt")
         db.commit()
         if not token:
@@ -1149,6 +1281,10 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
     except Exception as exc:
         with SessionLocal() as db:
             row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+            if (row is None or (upload_state.state(row).get('staging_attempt') or {}).get('token') != token) and isinstance(exc, upload_state.ReceiptRegistrationError):
+                message_id = exc.receipt.get('message_id')
+                if message_id and not _archive_message_referenced(db, message_id):
+                    _delete_archive_message_by_id(message_id)
             if row is not None and (upload_state.state(row).get("staging_attempt") or {}).get("token") == token:
                 if row.status != "cancelled":
                     _mark_preload_preparation_failed(db, row)
@@ -1162,6 +1298,9 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
     finally:
         with SessionLocal() as db:
             row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+            if row is None:
+                _safe_unlink(cleanup_path, db=db)
+                return
             if row is not None:
                 upload_state.end_attempt(row, "staging_attempt", token)
                 db.commit()
@@ -1175,9 +1314,9 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                         return
                     if ticket is not None:
                         group = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
-                            user_id=row.user_id, archive_group_id=_archive_group_id(row), for_update=False))
+                            user_id=row.user_id, client_id=row.client_id, archive_group_id=_archive_group_id(row), for_update=False))
                         _best_effort_edit_group_archive_message(group_rows=group, ticket=ticket,
-                            user=db.get(User, row.user_id), status_text="ошибка подготовки", force=True)
+                            user=archive_owner(db, row), status_text="ошибка подготовки", force=True)
 
 
 def _deliver_attachment_preload(*, preload_id: str) -> None:
@@ -1198,8 +1337,11 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
             return
 
         ticket = db.get(Ticket, preload.ticket_id)
-        user = db.get(User, preload.user_id)
-        if ticket is None:
+        user = archive_owner(db, preload)
+        if ticket is None or not client_preload_allowed(db, preload):
+            if preload.client_id is not None:
+                _discard_client_preload(db, preload)
+                return
             preload.status = "failed"
             db.commit()
             return
@@ -1277,14 +1419,14 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
     try:
         preload = _load_locked_preload(finalize_db, preload_id=preload_id)
         if preload is None:
-            if staged_task_file:
+            if staged_task_file and not _archive_message_referenced(finalize_db, file_message_id):
                 _delete_archive_message_by_id(file_message_id)
             return
         if (upload_state.state(preload).get("staging_attempt") or {}).get("token") != attempt_token:
             return
         _ensure_archive_group_id(finalize_db, preload)
         ticket = finalize_db.get(Ticket, preload.ticket_id)
-        user = finalize_db.get(User, preload.user_id)
+        user = archive_owner(finalize_db, preload)
 
         upload_state.patch(preload, error=None, error_code=None, uncertain=False)
         preload.telegram_file_id = file_id
@@ -1297,6 +1439,10 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
             _discard_preload(finalize_db, preload, delete_row=True, unlink_local=True)
             return
 
+        if not client_preload_allowed(finalize_db, preload):
+            _discard_client_preload(finalize_db, preload)
+            return
+
         if not preload.final_attachment_id:
             preload.status = "ready"
             finalize_db.commit()
@@ -1306,7 +1452,7 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
                     _load_group_preloads(
                         finalize_db,
                         ticket_id=preload.ticket_id,
-                        user_id=preload.user_id,
+                        user_id=preload.user_id, client_id=preload.client_id,
                         archive_group_id=_archive_group_id(preload),
                         for_update=False,
                     )
@@ -1339,6 +1485,9 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
 
         if upload_state.state(preload).get("receipt"):
             upload_state.patch(attachment, receipt=upload_state.state(preload)["receipt"])
+        if preload.client_id is not None:
+            attachment.telegram_archive_message_id = file_message_id
+            attachment.telegram_archive_info_message_id = preload.telegram_staging_info_message_id
         attachment.telegram_file_id = file_id
         attachment.telegram_file_unique_id = file_unique_id
         already_sent = attachment.telegram_delivery_status == "sent" or bool(str(attachment.telegram_message_id or "").strip())
@@ -1354,7 +1503,7 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
             _finalize_claimed_preload_archive(preload_id=preload.id, final_status="sent")
             return
 
-        if ticket.workflow_type == TicketWorkflowType.TASK.value and message.message_type == MessageType.AGENT.value:
+        if ticket.workflow_type == TicketWorkflowType.TASK.value and (preload.client_id is not None or message.message_type == MessageType.AGENT.value):
             preload.status = "ready"
             attachment.telegram_delivery_status = "ready"
             attachment.telegram_archive_message_id = file_message_id or None
@@ -1385,13 +1534,18 @@ def claim_attachment_preload(
     *,
     preload_id: str,
     ticket_id: str,
-    user_id: str,
+    user_id: str | None = None,
+    client_id: str | None = None,
 ) -> TicketAttachmentPreload | None:
+    if client_id is not None:
+        from .attachment_preload_owners import client_collecting_ticket
+        if client_collecting_ticket(db, ticket_id, client_id) is None:
+            return None
     stmt = _lock_stmt(
         select(TicketAttachmentPreload).where(
             TicketAttachmentPreload.id == preload_id,
             TicketAttachmentPreload.ticket_id == ticket_id,
-            TicketAttachmentPreload.user_id == user_id,
+            *owner_scope(user_id=user_id, client_id=client_id),
         ),
         db,
     )

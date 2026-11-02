@@ -84,18 +84,18 @@ export class TaskError extends Error {
   }
 }
 
-export async function sendTaskAction(path, body, signal) {
+async function taskRequest(path, method, body, signal, upload = false) {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
-  if (signal.aborted) controller.abort();
-  const timeout = setTimeout(abort, 15000);
+  if (signal.aborted) abort();
+  const timeout = setTimeout(abort, upload ? 360000 : 15000);
   try {
     const response = await fetch('/api/v1/web/tasks/' + path, {
-      method: 'POST', signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
+      method, signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
       cache: 'no-store', redirect: 'error',
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: upload || body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: upload ? body : body === undefined ? undefined : JSON.stringify(body),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
@@ -103,13 +103,41 @@ export async function sendTaskAction(path, body, signal) {
       throw new TaskError(response.status, detail?.error?.message || (typeof detail === 'string' ? detail : '')
         || 'Не удалось выполнить запрос. Попробуйте ещё раз.', detail?.error?.code);
     }
-    if (!result || typeof result.text !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(result.task_id)
-        || !['collecting', 'confirmation_required', 'ready', 'cancelled'].includes(result.state)) {
-      throw new TaskError(502, 'Не удалось проверить ответ сервера. Повторите запрос.');
-    }
     return result;
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener('abort', abort);
   }
+}
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export async function sendTaskAction(path, body, signal) {
+  const result = await taskRequest(path, 'POST', body, signal);
+  if (!result || typeof result.text !== 'string' || !uuid.test(result.task_id)
+      || !['collecting', 'confirmation_required', 'ready', 'cancelled'].includes(result.state)) {
+    throw new TaskError(502, 'Не удалось проверить ответ сервера. Повторите запрос.');
+  }
+  return result;
+}
+
+const preloadPath = (taskId, id) => encodeURIComponent(taskId) + '/attachment-preloads'
+  + (id ? '/' + encodeURIComponent(id) : '');
+async function preloadRequest(path, method, body, signal, upload = false) {
+  const result = await taskRequest(path, method, body, signal, upload);
+  if (!uuid.test(result?.id) || !['uploading', 'ready', 'failed', 'cancelled', 'sending', 'sent'].includes(result.status)) {
+    throw new TaskError(502, 'Не удалось проверить состояние файла.');
+  }
+  return result;
+}
+export function createTaskPreload(taskId, file, uploadId, signal) {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  body.append('upload_id', uploadId);
+  return preloadRequest(preloadPath(taskId), 'POST', body, signal, true);
+}
+export const getTaskPreload = (taskId, id, signal) => preloadRequest(preloadPath(taskId, id), 'GET', undefined, signal);
+export const retryTaskPreload = (taskId, id, confirm, signal) => preloadRequest(preloadPath(taskId, id) + '/retry', 'POST', { confirm_uncertain: confirm }, signal);
+export async function deleteTaskPreload(taskId, id, signal) {
+  const result = await taskRequest(preloadPath(taskId, id), 'DELETE', undefined, signal);
+  if (result?.ok !== true) throw new TaskError(502, 'Не удалось подтвердить удаление файла.');
 }

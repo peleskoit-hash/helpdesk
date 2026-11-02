@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
 from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
-from .telegram_upload_state import source_references
 
 
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
@@ -20,19 +16,8 @@ def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
     attachment_ticket_ids = [ticket.id]
     if child_ids:
         attachment_ticket_ids.extend(child_ids)
-    attachment_rows = db.execute(
-        select(TicketAttachment.local_path).where(TicketAttachment.ticket_id.in_(attachment_ticket_ids))
-    ).all()
-    attachment_paths = list(dict.fromkeys(row[0] for row in attachment_rows if row[0]))
-    for file_path in attachment_paths:
-        if source_references(db, file_path, excluded_ticket_ids=attachment_ticket_ids):
-            continue
-        try:
-            path_obj = Path(file_path)
-            if path_obj.exists():
-                os.remove(path_obj)
-        except Exception as exc:
-            warnings.append(f"{ticket.ticket_number or ticket.id}: {file_path} ({exc})")
+    from .telegram_outbound_delivery import schedule_ticket_upload_delete
+    schedule_ticket_upload_delete(db, attachment_ticket_ids, warnings)
 
     # Publications have no FK to mutable correspondence. Delete blobs before their result,
     # for both the selected ticket and children, in the caller's existing transaction.

@@ -1,5 +1,5 @@
-import { AuthError, webAuth } from './api.js?v=20261031-web-history-v1';
-import { mountWorkspace } from './workspace.js?v=20261031-web-history-v1';
+import { AuthError, webAuth } from './api.js?v=20261102-web-preloads-v1';
+import { mountWorkspace } from './workspace.js?v=20261102-web-preloads-v1';
 import { setupAppearance } from './appearance.js';
 
 const workspace = mountWorkspace(document.getElementById('session-panel'));

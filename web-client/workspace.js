@@ -1,6 +1,7 @@
 // Ordinary tasks use WEB API. The technical chat stays temporary, in memory only.
-import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261031-web-history-v1';
-import { renderHistoryFile } from './history-media.js?v=20261031-web-history-v1';
+import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261102-web-preloads-v1';
+import { renderHistoryFile } from './history-media.js?v=20261102-web-preloads-v1';
+import { createTaskFiles } from './task-files.js?v=20261102-web-preloads-v1';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
@@ -28,14 +29,17 @@ export function mountWorkspace(root) {
       <div id="chat-messages" class="chat-messages" role="log" aria-label="Сообщения" aria-live="polite"></div>
       <form id="demo-composer" class="demo-composer">
         <label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="2000" placeholder="Напишите сообщение…"></textarea>
+        <input id="task-file-input" type="file" multiple hidden aria-label="Файлы первоначального описания задачи">
+        <div id="task-selected-files" hidden></div><p id="task-file-error" role="alert" hidden></p>
         <div class="composer-options"><label class="composer-enter-toggle" for="sendByEnterCheckbox"><input id="sendByEnterCheckbox" type="checkbox"><span>Отправлять по Enter</span></label><span id="sendHotkeyHint" class="composer-hotkey-hint">Отправка: Ctrl+Enter</span></div>
-        <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Выберите задачу в меню, чтобы отправить описание</small><button type="submit" id="demo-send" class="primary">Отправка <span aria-hidden="true">↑</span></button></div>
+        <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Выберите задачу в меню, чтобы отправить описание</small><button type="submit" id="demo-send" class="primary">Отправить <span aria-hidden="true">↑</span></button></div>
       </form>
     </section>
     <dialog id="history-dialog" data-view="list" aria-labelledby="history-title"><div class="section-heading"><button id="history-back" type="button" aria-label="Назад к списку заявок">← Назад</button><h2 id="history-title">История заявок</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><div class="history-layout"><div id="history-list" aria-live="polite"></div><section id="history-detail" tabindex="-1" aria-label="История выбранной записи" aria-live="polite"></section></div></dialog>
     <dialog id="appearanceMenu" class="appearance-menu" aria-labelledby="appearance-title"><div class="section-heading"><h2 id="appearance-title">Оформление</h2><button data-close-dialog aria-label="Закрыть оформление">×</button></div><p class="demo-caption">Настройки действуют до обновления страницы</p><div class="appearance-themes"><button data-appearance-theme="light" aria-pressed="true">Светлая</button><button data-appearance-theme="dark" aria-pressed="false">Тёмная</button></div><div class="appearance-controls"></div><button id="appearance-reset">Сбросить настройки</button></dialog>`;
 
   const byId = id => root.querySelector(`#${id}`);
+  const taskFiles = createTaskFiles(byId('task-file-input'), byId('task-selected-files'), byId('task-file-error'), updateTaskUI);
   let activeTask = null;
   let pendingAction = null;
   let taskBusy = false;
@@ -63,6 +67,7 @@ export function mountWorkspace(root) {
     article.append(header, body);
     container.append(article);
     container.scrollTop = container.scrollHeight;
+    return article;
   }
   const add = (kind, author, text) => message(byId('chat-messages'), kind, author, text);
 
@@ -141,6 +146,7 @@ export function mountWorkspace(root) {
 
   function updateTaskUI() {
     const unresolved = Boolean(pendingAction);
+    byId('demo-composer').setAttribute('aria-busy', String(taskBusy));
     byId('task-controls').hidden = !activeTask && byId('task-error').hidden;
     byId('task-confirm').hidden = activeTask?.state !== 'confirmation_required';
     byId('task-confirm').disabled = taskBusy || unresolved;
@@ -149,8 +155,9 @@ export function mountWorkspace(root) {
     byId('task-retry').hidden = taskBusy || !unresolved;
     byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
     byId('demo-text').disabled = taskBusy || unresolved || activeTask?.state === 'confirmation_required';
-    byId('demo-send').disabled = byId('demo-text').disabled;
+    byId('demo-send').disabled = byId('demo-text').disabled || (activeTask?.state === 'collecting' && !byId('demo-text').value.trim()) || !taskFiles.ready();
     byId('demo-files').disabled = taskBusy || unresolved;
+    taskFiles.setDisabled(taskBusy || unresolved || activeTask?.state !== 'collecting');
     byId('close-conversation').disabled = true; // Ordinary requests are not connected.
     for (const button of root.querySelectorAll('[data-task-terminal]')) {
       button.disabled = taskBusy || Boolean(activeTask);
@@ -182,21 +189,24 @@ export function mountWorkspace(root) {
       if (current !== generation) return;
       pendingAction = null;
       if (operation.kind === 'description' && result.state === 'ready') {
-        add('client', 'Вы', operation.body.text);
+        const sent = add('client', 'Вы', operation.body.text);
+        taskFiles.appendSent(sent);
         byId('demo-text').value = '';
       }
       add('bot', 'ES DESK+', result.text);
       if (['ready', 'cancelled'].includes(result.state)) {
+        taskFiles.clear({ serverCleanup: true });
         activeTask = null;
         byId('task-feedback').textContent = '';
       } else {
         activeTask = { ...activeTask, taskId: result.task_id, state: result.state };
+        if (result.state === 'collecting') taskFiles.setTask(result.task_id);
         byId('task-feedback').textContent = result.state === 'confirmation_required' ? result.text : 'Ожидаем описание задачи в чате';
       }
     } catch (error) {
       if (current !== generation) return;
       // An auth error on a retry does not tell us whether the earlier attempt committed.
-      const uncertain = !(error instanceof TaskError) || error.status >= 500 || [401, 403].includes(error.status);
+      const uncertain = error.code !== 'web_task_upload_failed' && (!(error instanceof TaskError) || error.status >= 500 || [401, 403].includes(error.status));
       byId('task-error').textContent = error instanceof TaskError ? error.message
         : 'Ответ сервера не получен. Повторите запрос: его ключ сохранён до обновления страницы.';
       byId('task-error').hidden = false;
@@ -205,7 +215,10 @@ export function mountWorkspace(root) {
       if (!uncertain) {
         pendingAction = null;
         if ((operation.kind === 'select' && !activeTask?.taskId) || error.status === 410 || error.status === 404
-            || ['web_task_cancelled', 'web_task_no_longer_collecting', 'web_task_already_created'].includes(error.code)) activeTask = null;
+            || ['web_task_cancelled', 'web_task_no_longer_collecting', 'web_task_already_created'].includes(error.code)) {
+          taskFiles.clear({ serverCleanup: true });
+          activeTask = null;
+        }
       }
     } finally {
       if (current === generation) {
@@ -232,6 +245,8 @@ export function mountWorkspace(root) {
   byId('task-retry').addEventListener('click', () => { if (pendingAction) runTaskAction(pendingAction); });
   byId('task-sign-in').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   function start() {
+    taskFiles.clear();
+    taskFiles.clearSent();
     activeTask = null;
     pendingAction = null;
     taskBusy = false;
@@ -251,6 +266,7 @@ export function mountWorkspace(root) {
     byId('sendHotkeyHint').textContent = byId('sendByEnterCheckbox').checked
       ? 'Новая строка: Shift+Enter' : 'Отправка: Ctrl+Enter';
   });
+  byId('demo-text').addEventListener('input', updateTaskUI);
   byId('demo-text').addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.isComposing || byId('demo-send').disabled) return;
     if (byId('sendByEnterCheckbox').checked) {
@@ -269,9 +285,9 @@ export function mountWorkspace(root) {
   byId('demo-composer').addEventListener('submit', event => {
     event.preventDefault();
     const text = byId('demo-text').value.trim();
-    if (!text || taskBusy || pendingAction || activeTask?.state === 'confirmation_required') return;
+    if (!text || taskBusy || pendingAction || !taskFiles.ready() || activeTask?.state === 'confirmation_required') return;
     if (activeTask?.state === 'collecting') {
-      runTaskAction({ kind: 'description', path: activeTask.taskId + '/description', body: { text } });
+      runTaskAction({ kind: 'description', path: activeTask.taskId + '/description', body: { text, preload_ids: taskFiles.preloadIds() } });
     } else if (!activeTask) {
       add('client', 'Вы', text);
       byId('demo-text').value = '';
@@ -279,7 +295,8 @@ export function mountWorkspace(root) {
     }
   });
   byId('demo-files').addEventListener('click', () => {
-    byId('composer-hint').textContent = 'В этом сценарии поддерживается только текстовое описание';
+    if (activeTask?.state === 'collecting' && !taskBusy && !pendingAction) byId('task-file-input').click();
+    else byId('composer-hint').textContent = 'В этом сценарии поддерживается только текстовое описание';
   });
   function historyButton(container, text, action) {
     const button = document.createElement('button');

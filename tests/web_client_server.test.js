@@ -259,3 +259,78 @@ test('source icons: client Telegram matches the staff contour and WEB copies mat
   assert.doesNotMatch(telegram, /<circle/);
   assert.deepEqual(await readFile('api/app/static/icons/web-source.webp'), await readFile('web-client/assets/web-source.webp'));
 });
+
+test('initial task multipart upload forwards original bytes and only the WEB cookie', async t => {
+  let received;
+  const upstreamPort = await listen(t, http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    received = { body: Buffer.concat(chunks).toString(), headers: req.headers, path: req.url };
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
+  }));
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
+  const body = '--test-boundary\r\nContent-Disposition: form-data; name="text"\r\n\r\nDescription\r\n'
+    + '--test-boundary\r\nContent-Disposition: form-data; name="files"; filename="note.txt"\r\nContent-Type: text/plain\r\n\r\nFile bytes\r\n--test-boundary--\r\n';
+  const path = '/api/v1/web/tasks/11111111-1111-4111-8111-111111111111/description';
+  const response = await request(port, path, { Origin: `http://127.0.0.1:${port}`,
+    'Content-Type': 'multipart/form-data; boundary=test-boundary',
+    Cookie: 'esdesk_session=staff; esdesk_web_session=client', Authorization: 'Bearer staff' }, 'POST', body);
+  assert.equal(response.status, 200);
+  assert.equal(received.body, body);
+  assert.equal(received.path, path);
+  assert.equal(received.headers['content-type'], 'multipart/form-data; boundary=test-boundary');
+  assert.equal(received.headers.cookie, 'esdesk_web_session=client');
+  assert.equal(received.headers.authorization, undefined);
+});
+
+test('WEB task upload resources use matching versions in direct and module entrypoints', async t => {
+  const { readFile } = require('node:fs/promises');
+  const version = '20261102-web-preloads-v1';
+  const smokeVersion = '20261102-web-preloads-v1';
+  const index = await readFile('web-client/index.html', 'utf8');
+  assert.ok(index.includes('/app.js?v=' + smokeVersion) && index.includes('/workspace.css?v=' + version));
+  const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js'] };
+  for (const [file, imports] of Object.entries(expected)) {
+    const source = await readFile('web-client/' + file, 'utf8');
+    for (const dependency of imports) {
+      const expectedVersion = ['workspace.js', 'task-files.js'].includes(dependency) ? smokeVersion : version;
+      assert.ok(source.includes(`./${dependency}?v=${expectedVersion}`), file + ': ' + dependency);
+    }
+  }
+  const port = await listen(t, createDevServer());
+  assert.equal((await request(port, '/task-files.js?v=' + smokeVersion)).status, 200);
+  assert.ok((await readFile('web-client/Dockerfile', 'utf8')).includes('task-files.js'));
+  assert.ok((await readFile('web-client/.dockerignore', 'utf8')).includes('!task-files.js'));
+});
+
+test('preload proxy forwards only exact WEB routes, methods, original upload and isolated cookie', async t => {
+  const received = [];
+  const upstreamPort = await listen(t, http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    received.push({ path: req.url, method: req.method, headers: req.headers, body: Buffer.concat(chunks).toString() });
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
+  }));
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
+  const root = '/api/v1/web/tasks/11111111-1111-4111-8111-111111111111/attachment-preloads';
+  const item = root + '/22222222-2222-4222-8222-222222222222';
+  const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: 'esdesk_session=staff; esdesk_web_session=client', Authorization: 'Bearer staff' };
+  const body = '--boundary\r\nContent-Disposition: form-data; name="upload_id"\r\n\r\nstable\r\n'
+    + '--boundary\r\nContent-Disposition: form-data; name="file"; filename="note.txt"\r\n\r\nOriginal bytes\r\n--boundary--\r\n';
+  assert.equal((await request(port, root, { ...headers, 'Content-Type': 'multipart/form-data; boundary=boundary' }, 'POST', body)).status, 200);
+  assert.equal((await request(port, item, headers)).status, 200);
+  assert.equal((await request(port, item + '/retry', { ...headers, 'Content-Type': 'application/json' }, 'POST', '{"confirm_uncertain":false}')).status, 200);
+  assert.equal((await request(port, item, headers, 'DELETE')).status, 200);
+  assert.equal(received[0].body, body);
+  assert.deepEqual(received.map(call => call.method), ['POST', 'GET', 'POST', 'DELETE']);
+  assert.ok(received.every(call => call.headers.cookie === 'esdesk_web_session=client' && !call.headers.authorization));
+  assert.equal((await request(port, root, headers)).status, 405);
+  assert.equal((await request(port, item, headers, 'POST')).status, 405);
+  assert.equal((await request(port, item, headers, 'PUT')).status, 405);
+  assert.equal((await request(port, item, {}, 'DELETE')).status, 403);
+  assert.equal((await request(port, item, { Origin: 'https://foreign.invalid' }, 'DELETE')).status, 403);
+  for (const path of [root + '/bad', item + '/extra', item + '/download', '/api/v1/tickets/11111111-1111-4111-8111-111111111111/attachment-preloads']) {
+    assert.equal((await request(port, path, headers)).status, 404);
+  }
+  assert.equal(received.length, 4);
+});

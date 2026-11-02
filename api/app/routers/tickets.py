@@ -900,7 +900,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
     found_ids = {ticket.id for ticket in tickets}
     not_found = [ticket_id for ticket_id in payload.ticket_ids if ticket_id not in found_ids]
 
-    warnings: list[str] = []
+    warning_batches: list[list[str]] = []
     deleted = 0
     deleted_ids: set[str] = set()
     for ticket in tickets:
@@ -955,7 +955,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
             except Exception:
                 # Deletion must not be blocked by Telegram delivery issues.
                 pass
-        warnings.extend(_delete_ticket_hard(db, ticket))
+        warning_batches.append(_delete_ticket_hard(db, ticket))
         deleted_ids.add(ticket_id)
         if parent_ticket_id:
             # Parent is being deleted in the same bulk action:
@@ -983,7 +983,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
         ok=True,
         deleted=deleted,
         not_found=not_found,
-        file_delete_warnings=warnings,
+        file_delete_warnings=[warning for batch in warning_batches for warning in batch],
     )
 
 

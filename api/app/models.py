@@ -439,10 +439,17 @@ class WebTaskResultFile(Base):
 
 class TicketAttachmentPreload(Base):
     __tablename__ = "ticket_attachment_preloads"
+    __table_args__ = (
+        CheckConstraint('(user_id IS NOT NULL AND client_id IS NULL) OR '
+                        '(user_id IS NULL AND client_id IS NOT NULL)', name='ck_attachment_preload_owner'),
+        Index('ix_ticket_attachment_preloads_ticket_user', 'ticket_id', 'user_id'),
+        Index('ix_ticket_attachment_preloads_ticket_client', 'ticket_id', 'client_id'),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"))
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(ForeignKey("clients.id"), nullable=True)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_size: Mapped[int | None] = mapped_column(nullable=True)

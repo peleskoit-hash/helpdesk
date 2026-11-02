@@ -90,6 +90,10 @@ def preload_payload(row):
 def recoverable_task_attachment(db, row):
     from ..models import Ticket, TicketAttachment, TicketMessage
 
+    if row.client_id is not None:
+        from .attachment_preload_owners import client_bound_attachment
+        attachment = client_bound_attachment(db, row)
+        return attachment if row.status == 'failed' and attachment is not None and attachment.telegram_delivery_status != 'sent' else None
     if not row.final_attachment_id or row.status != "failed":
         return None
     ticket = db.get(Ticket, row.ticket_id)
@@ -200,7 +204,8 @@ def store_receipt_value(db, row, value):
         expected = (state(row).get("staging_attempt") or {}).get("token")
         current = lock_row(db, type(row), row.id)
         if current is None or (state(current).get("staging_attempt") or {}).get("token") != expected:
-            raise RuntimeError("Staging attempt was superseded")
+            db.rollback()
+            raise ReceiptRegistrationError(value)
         patch(current, receipt=value)
         if value.get("message_id"):
             if hasattr(current, "telegram_staging_file_message_id"):
@@ -213,7 +218,7 @@ def store_receipt_value(db, row, value):
         raise ReceiptRegistrationError(value) from exc
 
 
-def retry_preload(db, row, confirm_uncertain=False):
+def retry_preload(db, row, confirm_uncertain=False, *, client_id=None):
     from fastapi import HTTPException
 
     def error(code, message):
@@ -224,6 +229,9 @@ def retry_preload(db, row, confirm_uncertain=False):
     if row is None:
         db.rollback()
         raise HTTPException(404, detail={"error": {"code": "attachment_preload_not_found", "message": "Предзагруженный файл не найден"}})
+    if row.client_id is not None or client_id is not None:
+        from .attachment_preload_owners import owned_client_preload
+        owned_client_preload(db, row.id, row.ticket_id, client_id, allow_bound=True)
     refreshed = expire_attempt(db, row)
     row = lock_row(db, type(row), row.id) if refreshed is not None else None
     if row is None:

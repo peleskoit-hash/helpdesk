@@ -1972,6 +1972,86 @@ def ensure_ticket_attachment_preload_table() -> None:
         conn.execute(text("ALTER TABLE ticket_attachment_preloads ADD COLUMN IF NOT EXISTS telegram_upload_state_json JSON"))
 
 
+def ensure_ticket_attachment_preload_owners() -> None:
+    """Explicit upgrade only; deliberately NOT called by application startup.
+
+    Run as a planned schema change before deploying the new preload model.
+    SQLite needs a table copy to relax its legacy user_id NOT NULL constraint.
+    """
+    import re
+    from ..models import TicketAttachmentPreload
+
+    table = 'ticket_attachment_preloads'
+    check_name = 'ck_attachment_preload_owner'
+    check_sql = ('(user_id IS NOT NULL AND client_id IS NULL) OR '
+                 '(user_id IS NULL AND client_id IS NOT NULL)')
+    with engine.begin() as conn:
+        sqlite = conn.dialect.name == 'sqlite'
+        if sqlite:
+            conn.exec_driver_sql('BEGIN IMMEDIATE')
+        if not inspect(conn).has_table(table):
+            TicketAttachmentPreload.__table__.create(conn)
+            return
+        columns = {column['name']: column for column in inspect(conn).get_columns(table)}
+        if 'client_id' not in columns:
+            conn.execute(text(f'ALTER TABLE {table} ADD COLUMN client_id VARCHAR(36) REFERENCES clients(id)'))
+        checks = {check['name'] for check in inspect(conn).get_check_constraints(table)}
+        if sqlite:
+            # SQLite's inspector can merge adjacent CHECKs on one line. Read the
+            # named constraint too, so compact legacy DDL remains idempotent.
+            raw_ddl = conn.scalar(text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"), {'name': table})
+            if re.search(r'(?i)\bCONSTRAINT\s+[\"`\[]?ck_attachment_preload_owner[\"`\]]?\s+CHECK\s*\(', raw_ddl):
+                checks.add(check_name)
+        client_fk = any(fk['constrained_columns'] == ['client_id'] and fk['referred_table'] == 'clients'
+                        and fk['referred_columns'] == ['id'] for fk in inspect(conn).get_foreign_keys(table))
+        if sqlite and (not columns['user_id']['nullable'] or check_name not in checks or not client_fk):
+            # Refuse to rebuild a table with inbound FKs rather than silently
+            # rewriting another subsystem. Currently no table references preloads.
+            if any(fk['referred_table'] == table for name in inspect(conn).get_table_names() if name != table
+                   for fk in inspect(conn).get_foreign_keys(name)):
+                raise RuntimeError('Preload owner migration requires review of dependent foreign keys')
+            ddl = conn.scalar(text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"), {'name': table})
+            if not columns['user_id']['nullable']:
+                # Match the column declaration only, never "user_id IS NOT NULL"
+                # inside an existing CHECK. Support SQLite's quoted identifiers.
+                ddl, changed = re.subn(r'(?i)((?:^|[,(])\s*(?:"user_id"|`user_id`|\[user_id\]|user_id)\s+'
+                    r'(?:VARCHAR|CHAR|TEXT)(?:\s*\(\s*\d+\s*\))?\s+)NOT\s+NULL\b', r'\1', ddl, count=1)
+                if changed != 1:
+                    raise RuntimeError('Unsupported preload user_id declaration; migration was rolled back')
+            ddl, changed = re.subn(r'(?i)^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"ticket_attachment_preloads"|'
+                r'`ticket_attachment_preloads`|\[ticket_attachment_preloads\]|ticket_attachment_preloads)',
+                'CREATE TABLE ticket_attachment_preloads_owner_upgrade', ddl, count=1)
+            if changed != 1:
+                raise RuntimeError('Unsupported preload table declaration')
+            additions = []
+            if check_name not in checks:
+                additions.append(f'CONSTRAINT {check_name} CHECK ({check_sql})')
+            if not client_fk:
+                additions.append('FOREIGN KEY(client_id) REFERENCES clients(id)')
+            if additions:
+                end = ddl.rfind(')')
+                ddl = ddl[:end] + ',\n ' + ',\n '.join(additions) + ddl[end:]
+            extras = conn.scalars(text("SELECT sql FROM sqlite_master WHERE tbl_name=:name "
+                "AND type IN ('index', 'trigger') AND sql IS NOT NULL"), {'name': table}).all()
+            names = [column['name'] for column in inspect(conn).get_columns(table)]
+            quoted = ', '.join(conn.dialect.identifier_preparer.quote(name) for name in names)
+            conn.execute(text(ddl))
+            conn.execute(text(f'INSERT INTO ticket_attachment_preloads_owner_upgrade ({quoted}) SELECT {quoted} FROM {table}'))
+            conn.execute(text(f'DROP TABLE {table}'))
+            conn.execute(text(f'ALTER TABLE ticket_attachment_preloads_owner_upgrade RENAME TO {table}'))
+            for statement in extras:
+                conn.execute(text(statement))
+        elif not sqlite:
+            conn.execute(text(f'ALTER TABLE {table} ALTER COLUMN user_id DROP NOT NULL'))
+            if not client_fk:
+                conn.execute(text(f'ALTER TABLE {table} ADD CONSTRAINT fk_attachment_preload_client '
+                                  'FOREIGN KEY(client_id) REFERENCES clients(id)'))
+            if check_name not in checks:
+                conn.execute(text(f'ALTER TABLE {table} ADD CONSTRAINT {check_name} CHECK ({check_sql})'))
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_user ON {table}(ticket_id, user_id)'))
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_client ON {table}(ticket_id, client_id)'))
+
+
 def ensure_quick_reply_tables() -> None:
     with engine.begin() as conn:
         dialect = conn.dialect.name

@@ -92,7 +92,11 @@ def _store_upload_file(upload: UploadFile) -> tuple[Path, int, str, str]:
     content = upload.file.read()
     if isinstance(content, str):
         content = content.encode("utf-8")
-    file_path.write_bytes(content)
+    try:
+        file_path.write_bytes(content)
+    except OSError:
+        file_path.unlink(missing_ok=True)
+        raise
 
     safe_filename = _safe_filename(upload.filename, fallback=f"file{ext}")
     mime_type = upload.content_type or "application/octet-stream"
@@ -114,17 +118,25 @@ def _stream_sha256(stream):
 def _save_attachment_preload(
     db: Session,
     ticket: Ticket,
-    user_id: str,
+    user_id: str | None,
     upload: UploadFile,
     archive_group_id: str | None = None,
     preload_id: str | None = None,
+    *,
+    client_id: str | None = None,
 ) -> TicketAttachmentPreload:
+    from .attachment_preload_owners import client_collecting_ticket
+
+    if ((user_id is None) == (client_id is None)
+            or (client_id is not None and client_collecting_ticket(db, ticket.id, client_id) is None)):
+        _error(404, 'attachment_preload_not_found', 'Предзагруженный файл не найден')
     file_path, content_size, safe_filename, mime_type = _store_upload_file(upload)
     normalized_archive_group_id = archive_group_id.strip() if isinstance(archive_group_id, str) else None
     preload = TicketAttachmentPreload(
         id=preload_id or str(uuid.uuid4()),
         ticket_id=ticket.id,
         user_id=user_id,
+        client_id=client_id,
         original_filename=safe_filename,
         mime_type=mime_type,
         file_size=content_size,
