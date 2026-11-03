@@ -56,16 +56,92 @@ Origin не подменяется. Для входа действующий API
 `WEB_PUBLIC_BASE_URL=http://127.0.0.1:5173`; если он ещё не настроен, возможен 403.
 Изменение `.env`, авторизации и пересоздание API не входят в этот шаг.
 
-## Будущий отдельный PROD
+## Отдельный WEB PROD
 
-PROD будет отдельной копией проекта на сервере `10.171.1.218`, со своей
-конфигурацией и развёртыванием, независимо от DEV. Планируемые адреса:
-API `http://10.171.1.218:8000`, WEB `http://10.171.1.218:<отдельный порт>`.
-`WEB_CLIENT_ORIGIN` позволяет задать этот браузерный адрес независимо от
-внутреннего upstream и порта процесса. Будущий PROD отдельно определит публикацию
-порта во внутреннюю сеть и согласованную конфигурацию API/cookie/HTTPS.
-Текущий DEV Compose не использует серверный IP или общие с PROD переменные.
-`docker-compose.prod.yml` не меняется; PROD сейчас не запускается и не настраивается.
+Основной PROD остаётся в `/opt/es-desk`. WEB использует тот же Git-репозиторий
+и ветку `main`, но отдельную папку `/opt/webdesk` и Compose-проект `webdesk`.
+Корневой `compose.web.yml` собирает только `web-client/Dockerfile` и подключает
+WEB к существующей external-сети `es-desk_default`. API должен уже работать
+и быть доступен в этой сети как `api:8000`. Второй API и PostgreSQL не создаются.
+
+Нужны Git, Docker и Docker Compose plugin. Следующие команды предназначены
+для будущего развёртывания/обновления; уже работающий WEB сейчас менять не нужно.
+
+### Подготовка отдельной копии
+
+Только если `/opt/webdesk` ещё не существует (замените `<repo-url>` адресом репозитория):
+
+```bash
+git clone --branch main --single-branch --filter=blob:none --sparse <repo-url> /opt/webdesk
+cd /opt/webdesk
+git sparse-checkout set web-client
+```
+
+Cone-mode sparse-checkout сохраняет файлы корня, включая `compose.web.yml`,
+`.env.web.example` и `.gitignore`, вместе с каталогом `web-client/`.
+Для существующей копии используйте раздел обновления ниже.
+
+```bash
+cd /opt/webdesk
+cp .env.web.example .env.web
+chmod 600 .env.web
+```
+
+Копирование выполняется один раз: существующий `.env.web` не перезаписывайте.
+Отредактируйте локальный `.env.web`. Для текущего LAN:
+
+```dotenv
+WEB_BIND_IP=10.171.1.218
+WEB_CLIENT_ORIGIN=http://10.171.1.218:5173
+WEB_NETWORK_NAME=es-desk_default
+```
+
+При переносе задайте IP интерфейса нового сервера и точный браузерный Origin
+(с протоколом и портом, без завершающего `/`). Порт публикации — `5173`.
+Пример в Git использует `127.0.0.1`; реальный `.env.web` игнорируется Git.
+`WEB_BIND_IP` и `WEB_CLIENT_ORIGIN` обязательны: без них или с пустыми значениями
+Compose завершится ошибкой. Не задавайте `0.0.0.0` или `::`: используйте конкретный
+IP интерфейса. Внутреннее прослушивание `0.0.0.0` в контейнере необходимо для Docker
+и не определяет адрес публикации на хосте.
+
+Существующий API должен разрешать этот Origin через `WEB_PUBLIC_BASE_URL`;
+настройки cookie должны соответствовать HTTP/HTTPS. При переносе это отдельная
+предпосылка для входа. Данный Compose не меняет настройки и контейнер API.
+
+### Проверка и запуск только WEB
+
+```bash
+cd /opt/webdesk
+docker network inspect es-desk_default
+docker compose --env-file .env.web -f compose.web.yml config --quiet
+docker compose --env-file .env.web -f compose.web.yml up -d --build web_client
+docker compose --env-file .env.web -f compose.web.yml ps
+docker compose --env-file .env.web -f compose.web.yml logs --tail=100 web_client
+```
+
+Если задан другой `WEB_NETWORK_NAME`, подставьте его в `docker network inspect`.
+Отсутствующая external-сеть не создаётся автоматически. Откройте адрес из
+`WEB_CLIENT_ORIGIN` и проверьте вход и загрузку меню. Не объединяйте этот файл
+с основным Compose через дополнительные `-f`.
+
+### Обновление только WEB
+
+```bash
+cd /opt/webdesk
+git pull --ff-only origin main
+docker compose --env-file .env.web -f compose.web.yml config --quiet
+docker compose --env-file .env.web -f compose.web.yml up -d --build web_client
+docker compose --env-file .env.web -f compose.web.yml ps
+docker compose --env-file .env.web -f compose.web.yml logs --tail=100 web_client
+```
+
+Локальный `.env.web` сохраняется при обновлении; после изменения примера сверяйте
+новые параметры вручную. Основной PROD обновляется отдельно из `/opt/es-desk`.
+Остановка только WEB:
+
+```bash
+docker compose --env-file .env.web -f compose.web.yml stop web_client
+```
 
 ## Изолированный DEV-запуск
 

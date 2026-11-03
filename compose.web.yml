@@ -1,0 +1,24 @@
+name: webdesk
+
+services:
+  web_client:
+    build:
+      context: ./web-client
+    restart: unless-stopped
+    environment:
+      WEB_DOCKER_MODE: "true"
+      WEB_CLIENT_PORT: "5173"
+      WEB_CLIENT_ORIGIN: ${WEB_CLIENT_ORIGIN:?Set WEB_CLIENT_ORIGIN in .env.web}
+      WEB_API_ORIGIN: http://api:8000
+    ports:
+      - target: 5173
+        published: "5173"
+        host_ip: ${WEB_BIND_IP:?Set WEB_BIND_IP to an explicit interface IP in .env.web}
+        protocol: tcp
+    networks:
+      - api_network
+
+networks:
+  api_network:
+    external: true
+    name: ${WEB_NETWORK_NAME:-es-desk_default}
