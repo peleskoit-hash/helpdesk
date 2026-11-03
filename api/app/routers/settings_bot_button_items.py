@@ -1031,7 +1031,6 @@ def save_bot_button_instruction(
             row.label_overridden = bool(payload.label_overridden)
             if not row.label_overridden:
                 row.label_override = None
-                row.button_label = button_label
             elif not (row.label_override or "").strip():
                 _error(422, "label_override_required", "Название в боте не может быть пустым")
         if "instruction_text" in fields_set:

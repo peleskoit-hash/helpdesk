@@ -156,6 +156,37 @@ for (const theme of ['light', 'dark']) test(`V2 modal opens with local processin
   assert.equal(await h.page.locator('.desk-dialog').count(), 0, 'unchanged modal closes without confirmation');
 });
 
+test('cancelling the file chooser keeps a clean editor open; its own Escape still closes it', async t => {
+  const h = await setup(t);
+  await h.editor.locator('#contourEditorFile').dispatchEvent('cancel', { bubbles: true, cancelable: false });
+  assert.equal(await h.page.locator('#contourEditor').count(), 1);
+  assert.equal(await h.editor.evaluate(el => el.open), true);
+  assert.equal(await h.page.locator('.desk-dialog:not(#contourEditor)').count(), 0);
+  await h.page.keyboard.press('Escape');
+  assert.equal(await h.page.locator('#contourEditor').count(), 0);
+});
+
+test('file chooser cancellation preserves the photo, processing and edited fields without a close confirmation', async t => {
+  const h = await setup(t);
+  await load(h, await photo(h.page)); await processed(h.page);
+  await h.editor.locator('#contourEditorName').fill('Мой узор');
+  await h.editor.locator('#contourRotation').fill('35');
+  const snapshot = () => h.editor.evaluate(el => ({
+    fields: [...el.querySelectorAll('input:not([type="file"]), select')].map(input => [input.id, input.value, input.checked]),
+    photo: el.querySelector('.editor-photo-stage img').src,
+    result: el.querySelector('.editor-scheme image').getAttribute('href'),
+  }));
+  const before = await snapshot();
+  await h.editor.locator('#contourEditorFile').dispatchEvent('cancel', { bubbles: true, cancelable: false });
+  assert.equal(await h.page.locator('.desk-dialog:not(#contourEditor)').count(), 0);
+  assert.equal(await h.editor.evaluate(el => el.open), true);
+  assert.deepEqual(await snapshot(), before);
+  await load(h, await photo(h.page, 'image/png', '#ff0000')); await processed(h.page);
+  assert.notEqual((await snapshot()).photo, before.photo);
+  assert.equal(await h.editor.locator('#contourEditorName').inputValue(), 'Мой узор');
+  await discard(h.page, 'cross');
+});
+
 for (const mime of ['image/jpeg', 'image/png', 'image/webp']) test(`photo ${mime} is decoded locally and its URL is cleared on close`, async t => {
   const h = await setup(t); await load(h, await photo(h.page, mime));
   assert.ok(await h.page.evaluate(() => editorMemory.live.size >= 1 && editorMemory.live.size <= 2));

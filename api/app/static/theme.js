@@ -433,7 +433,7 @@ function initThemeToggle() {
     const createContourButton = patternSection.querySelector('[data-contour-create]');
     createContourButton.addEventListener('click', async () => {
       try {
-        const { openContourEditor } = await import('/static/contour_editor.js?v=20261029-composition-intensity-v1');
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261102-file-cancel-v1');
         if (createContourButton.isConnected) await openContourEditor(createContourButton);
       } catch {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';

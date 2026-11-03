@@ -650,6 +650,7 @@
     nodeClass,
     cloneRows,
     currentLevel,
+    refreshLevelStack,
     isLayoutEditableLevel,
     renderLevel,
     buildArchiveRowsFromStructure,

@@ -1027,10 +1027,7 @@ async function openEditor(leaf) {
 async function refreshMenuStructure() {
   if (!state.selectedMenu) return;
   const refreshed = await api(`/api/v1/settings/bot-buttons/menu-types/${encodeURIComponent(state.selectedMenu)}/structure`);
-  state.menuStructure = refreshed;
-  if (state.view === "level") {
-    state.levelStack = [{ label: state.selectedMenu, rows: refreshed.tree_rows || [], levelKey: refreshed.root_level_key || `${state.selectedMenu}|level|__root__`, fullPath: "", kind: "root" }];
-  }
+  BotButtonsLevelView.refreshLevelStack(levelViewCtx(), refreshed);
 }
 
 async function saveInstruction() {

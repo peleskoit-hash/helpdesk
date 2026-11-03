@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES DESK - Карточка заявки</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/chert.svg?v=20261028-favicon-v1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261029-image-actions-v1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261102-visual-fixes-v2" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -216,11 +216,13 @@
               <div class="btn-row">
                 <button id="modeReplyBtn" class="action primary">Ответ</button>
                 <button id="modeCommentBtn" class="action">Комментарий</button>
-                <label class="composer-enter-toggle" for="sendByEnterCheckbox">
-                  <input id="sendByEnterCheckbox" type="checkbox" />
-                  <span>Отправлять по Enter</span>
-                </label>
-                <span id="sendHotkeyHint" class="status composer-hotkey-hint">Отправка: Ctrl+Enter</span>
+                <div class="composer-enter-settings">
+                  <label class="composer-enter-toggle" for="sendByEnterCheckbox">
+                    <input id="sendByEnterCheckbox" class="desk-toggle" type="checkbox" aria-describedby="sendHotkeyHint" />
+                    <span>Отправлять по Enter</span>
+                  </label>
+                  <span id="sendHotkeyHint" class="status composer-hotkey-hint">Отправка: Ctrl+Enter</span>
+                </div>
                 <div class="composer-send-actions">
                   <button id="addFilesBtn" type="button" class="action add-files-btn">Добавить файлы</button>
                   <button id="quickRepliesBtn" type="button" class="action quick-replies-toggle" aria-label="Быстрые ответы"><img src="/static/quick_reply_book_icon.png" alt="" class="quick-replies-icon" /></button>
@@ -292,47 +294,35 @@
     </div>
   </div>
 
-  <div id="errorModal" class="modal hidden">
-    <div class="modal-dialog error-dialog">
-      <div class="modal-head">
-        <div style="font-weight:700;">Ошибка</div>
-        <button id="closeErrorModalBtn" type="button" class="action">Закрыть</button>
-      </div>
-      <div class="modal-body">
-        <textarea id="errorText" class="error-textarea" readonly></textarea>
-      </div>
-      <div class="modal-foot">
-        <button id="copyErrorBtn" type="button" class="action">Скопировать</button>
-        <button id="okErrorBtn" type="button" class="action primary">Понятно</button>
+  <div id="errorModal" class="modal hidden ticket-feedback-modal">
+    <div class="desk-dialog" role="dialog" aria-modal="true" aria-labelledby="errorModalTitle" aria-describedby="errorText">
+      <h2 id="errorModalTitle">Ошибка</h2>
+      <div id="errorText" class="desk-dialog-message"></div>
+      <div class="desk-dialog-actions">
+        <button id="copyErrorBtn" type="button">Скопировать</button>
+        <button id="okErrorBtn" type="button" data-dialog-accept>Понятно</button>
       </div>
     </div>
   </div>
 
-  <div id="specialConfirmModal" class="modal hidden">
-    <div class="modal-dialog assign-dialog">
-      <div class="modal-head">
-        <div style="font-weight:700;">Подтверждение</div>
-        <button id="closeSpecialConfirmBtn" type="button" class="action">Закрыть</button>
-      </div>
-      <div class="modal-body">
-        Вы уверены, что хотите перевести заявку в особые?
-      </div>
-      <div class="modal-foot">
-        <button id="confirmSpecialBtn" type="button" class="action primary">Подтвердить</button>
+  <div id="specialConfirmModal" class="modal hidden ticket-feedback-modal">
+    <div class="desk-dialog" role="dialog" aria-modal="true" aria-labelledby="specialConfirmTitle" aria-describedby="specialConfirmText">
+      <h2 id="specialConfirmTitle">Подтверждение</h2>
+      <div id="specialConfirmText" class="desk-dialog-message">Вы уверены, что хотите перевести заявку в особые?</div>
+      <div class="desk-dialog-actions">
+        <button id="closeSpecialConfirmBtn" type="button">Отмена</button>
+        <button id="confirmSpecialBtn" type="button" data-dialog-accept>Подтвердить</button>
       </div>
     </div>
   </div>
 
-  <div id="adminActionModal" class="modal hidden">
-    <div class="modal-dialog assign-dialog">
-      <div class="modal-head">
-        <div id="adminActionModalTitle" style="font-weight:700;">Подтверждение</div>
-        <button id="closeAdminActionModalBtn" type="button" class="action">Закрыть</button>
-      </div>
-      <div id="adminActionModalText" class="modal-body"></div>
-      <div class="modal-foot">
-        <button id="cancelAdminActionBtn" type="button" class="action">Отмена</button>
-        <button id="confirmAdminActionBtn" type="button" class="action primary">Подтвердить</button>
+  <div id="adminActionModal" class="modal hidden ticket-feedback-modal">
+    <div class="desk-dialog" role="dialog" aria-modal="true" aria-labelledby="adminActionModalTitle" aria-describedby="adminActionModalText">
+      <h2 id="adminActionModalTitle">Подтверждение</h2>
+      <div id="adminActionModalText" class="desk-dialog-message"></div>
+      <div class="desk-dialog-actions">
+        <button id="cancelAdminActionBtn" type="button">Отмена</button>
+        <button id="confirmAdminActionBtn" type="button" data-dialog-accept>Подтвердить</button>
       </div>
     </div>
   </div>
@@ -356,13 +346,13 @@
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
   <script src="/static/app_shell.js?v=20261031-web-history-v1"></script>
-  <script src="/static/ticket_api.js?v=20260521a"></script>
+  <script src="/static/ticket_api.js?v=20261102-error-status-v1"></script>
   <script src="/static/ticket_attachments.js?v=20261031-web-history-v1"></script>
   <script src="/static/client_web_credentials.js?v=20261018-web-empty-autofill"></script>
   <script src="/static/ticket_client_card.js?v=20261027-dialogs-complete-v3"></script>
   <script src="/static/ticket_composer.js?v=20261029-staging-recovery-v1"></script>
   <script src="/static/ticket_controls.js?v=20261027-dialogs-complete-v3"></script>
   <script src="/static/ticket_message_view.js?v=20261027-dialogs-complete-v3"></script>
-  <script src="/static/ticket.js?v=20261029-ticket-history-v1"></script>
+  <script src="/static/ticket.js?v=20261102-ticket-dialogs-v1"></script>
 </body>
 </html>

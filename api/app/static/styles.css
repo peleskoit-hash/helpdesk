@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261027-active-status-v1");
+@import url("/static/desk-v2.css?v=20261102-status-selection-v1");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -8253,4 +8253,88 @@ body[data-theme="dark"] .bot-emoji-item:focus-visible {
     align-items: stretch;
     flex-direction: column;
   }
+}
+
+/* Ticket feedback reuses HelpdeskDialogs without changing other modal forms. */
+#errorModal.ticket-feedback-modal {
+  z-index: 10000;
+}
+body #appContent .ticket-feedback-modal {
+  background: #14122188;
+  backdrop-filter: blur(6px);
+}
+.ticket-feedback-modal > .desk-dialog {
+  position: relative;
+  inset: auto;
+  margin: 0;
+  height: fit-content;
+  min-height: 0;
+  flex: 0 1 auto;
+  align-self: center;
+}
+.ticket-feedback-modal .desk-dialog button.danger {
+  background: var(--desk-danger-bg);
+  border-color: var(--desk-danger);
+  color: var(--desk-danger);
+}
+
+body #appContent[data-shell-page="ticket-card"] .composer-enter-settings {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0 8px;
+  line-height: 1.2;
+  margin-left: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  background: var(--desk-soft);
+}
+body #appContent[data-shell-page="ticket-card"] .composer-enter-settings .composer-enter-toggle {
+  display: contents;
+}
+body #appContent[data-shell-page="ticket-card"] .composer-enter-settings input {
+  grid-row: span 2;
+}
+body #appContent[data-shell-page="ticket-card"] .composer-enter-settings .status {
+  margin: 0;
+}
+
+.bot-create-menu-overlay {
+  background: #14122188;
+  backdrop-filter: blur(6px);
+}
+.bot-create-menu-dialog.desk-dialog {
+  position: relative;
+  inset: auto;
+  margin: 0;
+  height: fit-content;
+}
+.bot-create-menu-fields {
+  display: grid;
+  gap: 20px;
+  font-size: 20px;
+}
+.bot-create-menu-fields .desk-dialog-input {
+  margin-top: 8px;
+}
+.bot-create-menu-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  max-height: 240px;
+  overflow: auto;
+}
+.bot-create-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.bot-create-menu-fields .bot-create-menu-error {
+  color: var(--desk-danger);
+}
+.bot-create-menu-fields .bot-create-menu-error:empty {
+  display: none;
 }

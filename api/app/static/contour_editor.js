@@ -453,7 +453,10 @@ function createEditor(invoker) {
   stage.addEventListener('pointercancel', () => { if (drag) { crop = drag.crop; drag = null; renderCrop(); scheduleProcessing(); } });
   processing.addEventListener('input', () => { dirty = true; scheduleProcessing(); });
   retryProcessing.addEventListener('click', startWorker);
-  dialog.addEventListener('cancel', event => { event.preventDefault(); void requestClose(); });
+  dialog.addEventListener('cancel', event => {
+    if (event.target !== dialog) return;
+    event.preventDefault(); void requestClose();
+  });
   dialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => void requestClose()));
   dialog.addEventListener('close', () => { if (!closed) { cleanup(); dialog.remove(); active = null; } });
   document.body.appendChild(dialog); active = dialog;

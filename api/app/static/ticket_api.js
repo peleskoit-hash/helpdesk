@@ -23,7 +23,9 @@
     }
     if (!response.ok) {
       const detail = payload?.detail?.error?.message || raw || "Ошибка запроса";
-      throw new Error(detail);
+      const error = new Error(detail);
+      error.status = response.status;
+      throw error;
     }
     return payload;
   }

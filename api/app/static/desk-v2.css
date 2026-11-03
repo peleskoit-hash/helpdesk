@@ -241,7 +241,7 @@ body:has(.layout > .main) :is(.sidebar .agent-status-btn, #appContent[data-shell
   &.status-lunch { background: #afd8f9; color: #235b8a; }
   &.status-offline { background: #f5baca; color: #913d59; }
   &.active { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
-  &.agent-status-btn.active { box-shadow: inset 0 0 0 5px currentColor; font-weight: 700; }
+  &:is(.agent-status-btn, .status-board-btn).active { box-shadow: inset 0 0 0 5px currentColor; font-weight: 700; }
 }
 body:has(.layout > .main) .toolbar { padding: 6px 24px; gap: 8px; min-height: 57px; }
 body:has(.layout > .main) .toolbar :is(input, select, button.action) {

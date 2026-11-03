@@ -15,6 +15,7 @@ const state = {
   supportAgents: [],
   adminAssigneeIds: JSON.parse(localStorage.getItem("hd_admin_assignee_ids") || "[]"),
   card: null,
+  returnToListOnErrorClose: false,
   wrongProblemMenu: null,
   quoteMessageId: null,
   composeMode: "reply",
@@ -76,7 +77,6 @@ const el = {
   saveClientBtn: document.getElementById("saveClientBtn"),
   errorModal: document.getElementById("errorModal"),
   errorText: document.getElementById("errorText"),
-  closeErrorModalBtn: document.getElementById("closeErrorModalBtn"),
   copyErrorBtn: document.getElementById("copyErrorBtn"),
   okErrorBtn: document.getElementById("okErrorBtn"),
   editMessageModal: null,
@@ -1009,12 +1009,14 @@ function messageViewCtx() {
 function setStatus() {}
 
 function showError(message) {
-  el.errorText.value = message || "Неизвестная ошибка";
+  el.errorText.textContent = message || "Неизвестная ошибка";
   el.errorModal.classList.remove("hidden");
 }
 
 function closeError() {
+  if (el.errorModal.classList.contains("hidden")) return;
   el.errorModal.classList.add("hidden");
+  if (state.returnToListOnErrorClose) shellNavigateOrReload("/tickets");
 }
 
 function openInstructionModal() {
@@ -1452,7 +1454,7 @@ function renderCard() {
 }
 
 async function loadCard(options = {}) {
-  if (destroyed) return;
+  if (destroyed || state.returnToListOnErrorClose) return;
   if (state.isLoading) {
     state.pendingCardReloadOptions = {
       silent: state.pendingCardReloadOptions
@@ -1502,7 +1504,13 @@ async function loadCard(options = {}) {
     setStatus("Карточка загружена");
     await loadTaskPanel({ silent: true });
   } catch (e) {
+    if (destroyed) return;
     console.error("loadCard failed", e);
+    if (!state.card && (e.status === 403 || e.status === 404)) {
+      state.returnToListOnErrorClose = true;
+      showError(e.status === 404 ? "Тикет не найден" : "Нет доступа к заявке");
+      return;
+    }
     if (!silent) setStatus(`Ошибка: ${e.message}`);
     if (!silent) showError(e.message || "Ошибка загрузки карточки");
   } finally {
@@ -1816,13 +1824,16 @@ function bindPageHandlers() {
     });
   }
 
-  el.closeErrorModalBtn.addEventListener("click", closeError);
   el.okErrorBtn.addEventListener("click", closeError);
   el.copyErrorBtn.addEventListener("click", async () => {
-    el.errorText.select();
     try {
-      await navigator.clipboard.writeText(el.errorText.value);
+      await navigator.clipboard.writeText(el.errorText.textContent);
     } catch {
+      const range = document.createRange();
+      range.selectNodeContents(el.errorText);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
       document.execCommand("copy");
     }
   });
@@ -1917,7 +1928,7 @@ function initPostSidebarState() {
 }
 
 function startPolling() {
-  if (pollTimer !== null) return;
+  if (pollTimer !== null || state.returnToListOnErrorClose) return;
   pollTimer = window.setInterval(() => {
     if (document.hidden) return;
     if (!el.clientModal.classList.contains("hidden")) return;

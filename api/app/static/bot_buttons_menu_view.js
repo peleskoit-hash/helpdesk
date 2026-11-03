@@ -190,31 +190,31 @@
       const free = Array.isArray(state.freeDestinationOptions) ? state.freeDestinationOptions : [];
       const destinationHtml = free.length
         ? free.map((value) => `
-            <label class="bot-create-menu-destination">
-              <input type="checkbox" value="${escapeHtml(value)}" />
+            <label class="bot-create-menu-option">
+              <input class="desk-toggle" type="checkbox" value="${escapeHtml(value)}" />
               <span>${escapeHtml(value)}</span>
             </label>
           `).join("")
-        : `<div class="bot-create-item-note">Свободных типов клиента сейчас нет. Меню можно создать без привязки и привязать тип позже.</div>`;
+        : `<div>Свободных типов клиента сейчас нет. Меню можно создать без привязки и привязать тип позже.</div>`;
       const wrapper = document.createElement("div");
       wrapper.innerHTML = `
-        <div class="modal-overlay">
-          <div class="modal-dialog bot-file-picker-dialog bot-create-item-dialog bot-create-menu-dialog">
-            <div class="modal-header"><h3>Создание меню</h3></div>
-            <div class="modal-body">
-              <div class="bot-create-item-section">
-                <div class="bot-create-item-label">Название меню</div>
-                <input id="botCreateMenuNameInput" class="input" type="text" maxlength="120" placeholder="Например: Администрация" />
+        <div class="modal-overlay bot-create-menu-overlay">
+          <div class="desk-dialog bot-create-menu-dialog" role="dialog" aria-modal="true" aria-labelledby="botCreateMenuTitle">
+            <h2 id="botCreateMenuTitle">Создание меню</h2>
+            <div class="bot-create-menu-fields">
+              <div>
+                <label for="botCreateMenuNameInput">Название меню</label>
+                <input id="botCreateMenuNameInput" class="desk-dialog-input" type="text" maxlength="120" placeholder="Например: Администрация" />
               </div>
-              <div class="bot-create-item-section">
-                <div class="bot-create-item-label">Привязанные типы клиентов</div>
-                <div class="bot-create-menu-destinations">${destinationHtml}</div>
+              <div>
+                <div id="botCreateMenuTypesLabel">Привязанные типы клиентов</div>
+                <div class="bot-create-menu-options" role="group" aria-labelledby="botCreateMenuTypesLabel">${destinationHtml}</div>
               </div>
-              <div id="botCreateMenuError" class="status bot-create-menu-error"></div>
+              <div id="botCreateMenuError" class="bot-create-menu-error" role="alert"></div>
             </div>
-            <div class="modal-footer">
-              <button type="button" id="cancelCreateMenuBtn" class="action">Отмена</button>
-              <button type="button" id="applyCreateMenuBtn" class="action action-primary">Создать</button>
+            <div class="desk-dialog-actions">
+              <button type="button" id="cancelCreateMenuBtn">Отмена</button>
+              <button type="button" id="applyCreateMenuBtn" data-dialog-accept>Создать</button>
             </div>
           </div>
         </div>`;
@@ -237,7 +237,7 @@
           nameInput?.focus();
           return;
         }
-        const destinations = Array.from(overlay.querySelectorAll(".bot-create-menu-destination input:checked"))
+        const destinations = Array.from(overlay.querySelectorAll(".bot-create-menu-option input:checked"))
           .map((input) => String(input.value || "").trim())
           .filter(Boolean);
         close({ display_name: displayName, destinations });
