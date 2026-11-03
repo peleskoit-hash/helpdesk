@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import BotButtonSetting, Client, Ticket, TicketAttachmentPreload, TicketMessage
 from ..routers import telegram
-from . import web_auth, telegram_upload_state as upload_state
+from . import web_auth, web_chat, telegram_upload_state as upload_state
 from .attachment_preload_owners import client_collecting_ticket, owned_client_preload
 from .telegram_outbound_delivery import claim_attachment_preload, _discard_preload
 from .ticket_attachments import _save_attachment_preload
@@ -63,6 +63,12 @@ def deadline(ticket):
     return datetime.fromisoformat(state(ticket)['expires_at'])
 
 
+def chat_event(db, ticket, event, body, *, client=False):
+    web_chat.record_message(db, ticket.client_id, message_type='client' if client else 'bot',
+        author='Вы' if client else 'Elite Sochi Support', text=body, created_at=web_auth.utcnow(),
+        event_key=f'web-task:{ticket.id}:{event}')
+
+
 def close_draft(db, ticket, reason):
     now = web_auth.utcnow()
     ticket.intake_state = 'cancelled'
@@ -72,6 +78,10 @@ def close_draft(db, ticket, reason):
     sync_work_interval_after_close(db, ticket, now=now)
     append_system_message(db, ticket, 'Создание задачи отменено: клиент не отправил текст вовремя'
                           if reason == 'expired' else 'Создание задачи отменено клиентом через WEB')
+    key = 'telegram.intake.task_timeout' if reason == 'expired' else 'telegram.ticket.close.unassigned.client'
+    if reason == 'cancelled':
+        chat_event(db, ticket, 'cancel-requested', 'Отменить создание задачи', client=True)
+    chat_event(db, ticket, reason, message_text(db, key, ticket))
 
 
 def expire(db, ticket):
@@ -116,6 +126,21 @@ def owned_task(db, owner: Client, task_id):
     return ticket
 
 
+def active_task(db, owner):
+    candidates = db.scalars(select(Ticket).where(
+        Ticket.client_id == owner.id, Ticket.company_id == owner.company_id,
+        Ticket.channel == 'web', Ticket.workflow_type == 'task', Ticket.task_kind == 'normal',
+        Ticket.intake_state == 'collecting', Ticket.status == 'unassigned', Ticket.assignee_id.is_(None)
+    ).order_by(Ticket.created_at.desc(), Ticket.id.desc())).all()
+    for ticket in candidates:
+        if not state(ticket):
+            continue
+        ticket = owned_task(db, owner, ticket.id)  # Persist expiration through the existing path.
+        if ticket.intake_state == 'collecting':
+            return {**response(db, ticket), 'button_id': state(ticket)['button_id']}
+    return None
+
+
 def available_button(db, owner, button_id):
     menu = read_client_menu(db, owner.id)
     def visible(rows):
@@ -140,6 +165,26 @@ def check_active(db, owner):
         fail(db, 'client_has_active_ticket', ticket=active, key='telegram.start.active_ticket.client')
 
 
+def confirm_task(db, owner, client, task_id):
+    ticket = owned_task(db, owner, task_id)
+    if ticket.intake_state != 'collecting':
+        response(db, ticket)  # Preserve the configured timeout error.
+        fail(db, 'web_task_already_created' if ticket.intake_state == 'ready' else 'web_task_cancelled')
+    available_button(db, owner, state(ticket)['button_id'])
+    if not state(ticket)['confirmed']:
+        check_active(db, owner)
+        ticket.quick_action_state_json = {**ticket.quick_action_state_json, STATE_KEY: {
+            **state(ticket), 'confirmed': True,
+            'expires_at': (web_auth.utcnow() + timedelta(minutes=telegram.TASK_DESCRIPTION_TIMEOUT_MINUTES)).isoformat()}}
+        web_auth.register_web_activity(db, client)
+        result = response(db, ticket)
+        chat_event(db, ticket, 'confirmed', 'Подтвердить', client=True)
+        chat_event(db, ticket, 'description-requested', result['text'])
+        db.commit()
+        return result
+    return response(db, ticket)
+
+
 def select_task(db, owner, client, button_id, request_id, confirmed=False):
     task_id = str(uuid5(REQUEST_NAMESPACE, f'{owner.company_id}:{owner.id}:{request_id}'))
     existing = db.get(Ticket, task_id)
@@ -148,14 +193,9 @@ def select_task(db, owner, client, button_id, request_id, confirmed=False):
         if state(ticket)['button_id'] != str(button_id):
             fail(db, 'web_task_request_conflict')
         if ticket.intake_state == 'collecting':
+            if confirmed:
+                return confirm_task(db, owner, client, task_id)
             available_button(db, owner, button_id)
-            if confirmed and not state(ticket)['confirmed']:
-                check_active(db, owner)
-                ticket.quick_action_state_json = {**ticket.quick_action_state_json, STATE_KEY: {
-                    **state(ticket), 'confirmed': True,
-                    'expires_at': (web_auth.utcnow() + timedelta(minutes=telegram.TASK_DESCRIPTION_TIMEOUT_MINUTES)).isoformat()}}
-                web_auth.register_web_activity(db, client)
-                db.commit()
         return response(db, ticket)
     row, button, menu_name = available_button(db, owner, button_id)
     check_active(db, owner)
@@ -173,8 +213,11 @@ def select_task(db, owner, client, button_id, request_id, confirmed=False):
         'confirmation_text': confirmation_text,
         'expires_at': (now + timedelta(minutes=telegram.TASK_DESCRIPTION_TIMEOUT_MINUTES)).isoformat()}}
     web_auth.register_web_activity(db, client)
+    result = response(db, ticket)
+    chat_event(db, ticket, 'selected', button.label, client=True)
+    chat_event(db, ticket, 'confirmation-requested' if confirmation else 'description-requested', result['text'])
     db.commit()
-    return response(db, ticket)
+    return result
 
 
 def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
@@ -227,10 +270,13 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
         telegram._ready_ticket_for_distribution(db, ticket, button)
         web_auth.register_web_activity(db, client)
         db.flush()
+        result = response(db, ticket)
+        chat_event(db, ticket, 'description', body, client=True)
+        chat_event(db, ticket, 'created', result['text'])
     # Retain files if the commit outcome is uncertain: a retry checks persisted
     # intake state and fingerprints before it can save or archive anything again.
     db.commit()
-    return response(db, ticket)
+    return result
 
 
 def cancel_task(db, owner, client, task_id):

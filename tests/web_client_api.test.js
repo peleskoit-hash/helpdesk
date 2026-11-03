@@ -32,6 +32,57 @@ test('API-client preloads: one file + stable UUID, WEB URL, credentials, no fabr
   }
 });
 
+test('API-client chat and active intake use authenticated read-only routes and validate responses', async t => {
+  const calls = [];
+  const row = { id: '9007199254740993', message_type: 'bot', text: '<script>literal</script>', created_at: '2026-11-03T10:00:00Z' };
+  let payload = { items: [row] };
+  t.mock.method(global, 'fetch', async (url, options) => { calls.push({ url, ...options }); return response(payload); });
+  assert.deepEqual(await api.getWebChat(signal()), [row]);
+  payload = null;
+  assert.equal(await api.getActiveWebTask(signal()), null);
+  payload = { task_id: task, button_id: 'button', state: 'confirmation_required', text: 'Confirm', expires_at: '2026-11-03T10:10:00Z' };
+  assert.deepEqual(await api.getActiveWebTask(signal()), payload);
+  assert.deepEqual(calls.map(call => call.url), ['/api/v1/web/chat', '/api/v1/web/tasks/active', '/api/v1/web/tasks/active']);
+  assert.ok(calls.every(call => !call.body && call.credentials === 'same-origin' && call.cache === 'no-store'));
+  for (payload of [{ items: [row, row] }, { items: [{ ...row, id: '<bad>' }] }, { items: Array(51).fill(row) }]) {
+    await assert.rejects(api.getWebChat(signal()), error => error.status === 502);
+  }
+  payload = { task_id: task, state: 'ready' };
+  await assert.rejects(api.getActiveWebTask(signal()), error => error.status === 502);
+});
+
+test('API-client 401 stops active requests and blocks further WEB calls until a new session', async t => {
+  t.after(() => api.resumeWebRequests());
+  const calls = [];
+  t.mock.method(global, 'fetch', async (url, options) => {
+    calls.push({ url, ...options });
+    return new Response('{}', { status: 401 });
+  });
+  await assert.rejects(api.getActiveWebTask(signal()), error => error.status === 401);
+  assert.equal(calls[0].signal.aborted, true);
+  for (const action of [() => api.getWebChat(signal()), () => api.getWebMenu(signal()),
+    () => api.deleteTaskPreload(task, id, signal()), () => api.sendTaskAction(task + '/cancel', undefined, signal()),
+    () => api.webAuth.logout()]) await assert.rejects(action(), error => error.status === 401);
+  assert.equal(calls.length, 1);
+  api.resumeWebRequests();
+  t.mock.method(global, 'fetch', async () => response({ items: [] }));
+  assert.deepEqual(await api.getWebChat(signal()), []);
+});
+
+test('API-client ignores late 401 from an aborted session request', async t => {
+  t.after(() => api.resumeWebRequests());
+  let release;
+  t.mock.method(global, 'fetch', () => new Promise(resolve => { release = resolve; }));
+  const controller = new AbortController();
+  const old = api.getActiveWebTask(controller.signal);
+  controller.abort();
+  api.resumeWebRequests();
+  release(new Response('{}', { status: 401 }));
+  await assert.rejects(old, error => error.status === 401);
+  t.mock.method(global, 'fetch', async () => response({ items: [] }));
+  assert.deepEqual(await api.getWebChat(signal()), []);
+});
+
 test('API-client preloads: GET status, explicit retry confirmation and DELETE use exact routes', async t => {
   const calls = [];
   t.mock.method(global, 'fetch', async (url, options) => {

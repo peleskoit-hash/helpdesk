@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -142,6 +142,24 @@ class Client(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"))
     display_name: Mapped[str] = mapped_column(String(200))
+
+
+class WebChatMessage(Base):
+    """Technical WEB chat only; independent of tickets and login sessions."""
+    __tablename__ = "web_chat_messages"
+    __table_args__ = (
+        UniqueConstraint("client_id", "event_key", name="uq_web_chat_messages_client_event"),
+        CheckConstraint("message_type IN ('client', 'bot', 'system')", name="ck_web_chat_messages_type"),
+        Index("ix_web_chat_messages_client_order", "client_id", "created_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    message_type: Mapped[str] = mapped_column(String(20))
+    author: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str] = mapped_column(Text)
+    event_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class ClientProfile(Base):

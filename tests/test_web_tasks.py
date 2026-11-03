@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from api.app.config import settings
 from api.app.db import get_db
 from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
-                            TelegramContact, TelegramNotificationAccount, TelegramUpdate, Ticket, TicketMessage, User, WebClientSession)
+                            TelegramContact, TelegramNotificationAccount, TelegramUpdate, Ticket, TicketMessage, User, WebChatMessage, WebClientSession)
 from api.app.routers.web_tasks import router
 from api.app.routers import telegram
 from api.app.services import assignment, employee_telegram_notifications as notices, telegram_bot, web_auth, web_tasks
@@ -93,6 +93,100 @@ def cancel(case, task_id):
     return case.http.post(f'{BASE}/{task_id}/cancel', headers=ORIGIN)
 
 
+def chat_log(case):
+    with Session(case.engine) as db:
+        rows = db.scalars(select(WebChatMessage).order_by(WebChatMessage.created_at, WebChatMessage.id)).all()
+        assert all(row.client_id == 'client' for row in rows)
+        assert len({row.event_key for row in rows}) == len(rows)
+        return [(row.message_type, row.author, row.text) for row in rows]
+
+
+def test_active_none_and_requires_web_auth(case):
+    response = case.http.get(BASE + '/active')
+    assert response.status_code == 200 and response.json() is None
+    assert response.headers['cache-control'] == 'no-store'
+    assert chat_log(case) == []
+    with Session(case.engine) as db:
+        assert not db.scalars(select(Ticket)).all()
+    case.http.cookies.clear()
+    assert case.http.get(BASE + '/active').status_code == 401
+
+
+@pytest.mark.parametrize('confirmation', [False, True])
+def test_active_restores_state_without_activity_or_duplicate_events(case, confirmation):
+    with Session(case.engine) as db:
+        row = db.get(BotButtonSetting, 'button')
+        row.confirmation_enabled, row.confirmation_text = confirmation, 'Confirm task'
+        db.commit()
+    selected = choose(case).json()
+    before = chat_log(case)
+    with Session(case.engine) as db:
+        activity = db.get(WebClientSession, web_auth.token_hash('token-client')).last_activity_at
+    case.clock[0] += timedelta(minutes=9, seconds=59)
+    # Fresh browser context: only the persisted authorization cookie is retained.
+    case.http.cookies.clear()
+    case.http.cookies.set('esdesk_web_session', 'token-client')
+    for _ in range(2):
+        response = case.http.get(BASE + '/active')
+        assert response.status_code == 200
+        assert response.json() == {**selected, 'button_id': 'button'}
+    assert response.json()['state'] == ('confirmation_required' if confirmation else 'collecting')
+    assert chat_log(case) == before
+    with Session(case.engine) as db:
+        assert db.get(WebClientSession, web_auth.token_hash('token-client')).last_activity_at == activity
+        assert len(db.scalars(select(Ticket)).all()) == 1
+
+
+@pytest.mark.parametrize('finish', ['create', 'cancel'])
+def test_active_none_after_creation_or_manual_cancel(case, finish):
+    selected = choose(case).json()
+    action = description if finish == 'create' else cancel
+    assert action(case, selected['task_id']).status_code == 200
+    before = chat_log(case)
+    assert case.http.get(BASE + '/active').json() is None
+    assert chat_log(case) == before
+
+
+def test_active_expires_once_through_existing_timeout_path(case):
+    selected = choose(case).json()
+    case.clock[0] += timedelta(minutes=10)
+    for _ in range(2):
+        response = case.http.get(BASE + '/active')
+        assert response.status_code == 200 and response.json() is None
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+        ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
+    with Session(case.engine) as db:
+        ticket = db.get(Ticket, selected['task_id'])
+        assert ticket.status == 'closed' and ticket.intake_state == 'cancelled'
+        assert web_tasks.cleanup_expired_web_tasks(db) == 0
+
+
+@pytest.mark.parametrize('other', ['peer', 'foreign'])
+def test_active_is_scoped_to_authorized_client(case, other):
+    selected = choose(case).json()
+    case.http.cookies.set('esdesk_web_session', f'token-{other}')
+    response = case.http.get(BASE + '/active?client_id=client&company_id=co')
+    assert response.status_code == 200 and response.json() is None
+    own = choose(case).json()
+    assert case.http.get(BASE + '/active').json()['task_id'] == own['task_id']
+    case.http.cookies.set('esdesk_web_session', 'token-client')
+    assert case.http.get(BASE + '/active').json()['task_id'] == selected['task_id']
+
+
+@pytest.mark.parametrize('changes', [dict(channel='telegram'), dict(workflow_type='ticket'),
+    dict(task_kind='group_child'), dict(status='closed'), dict(assignee_id='agent')])
+def test_active_excludes_other_workflows_and_noncollecting_tasks(case, changes):
+    selected = choose(case).json()
+    with Session(case.engine) as db:
+        ticket = db.get(Ticket, selected['task_id'])
+        for name, value in changes.items():
+            setattr(ticket, name, value)
+        db.commit()
+    before = chat_log(case)
+    assert case.http.get(BASE + '/active').json() is None
+    assert chat_log(case) == before
+
+
 def test_create_description_ready_and_real_staff_notification(case):
     request_id = uuid4()
     selected = choose(case, request_id)
@@ -101,6 +195,8 @@ def test_create_description_ready_and_real_staff_notification(case):
     assert payload['state'] == 'collecting' and payload['text'] == 'Describe Task subject within 10'
     assert choose(case, request_id).json() == payload
     assert choose(case).status_code == 409
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+                              ('bot', 'Elite Sochi Support', payload['text'])]
     assert case.staff.call_count == 0
     created = description(case, payload['task_id'])
     assert created.status_code == 200, created.text
@@ -110,6 +206,8 @@ def test_create_description_ready_and_real_staff_notification(case):
     assert choose(case, request_id).json() == created.json()
     assert description(case, payload['task_id'], 'Different description').status_code == 409
     assert cancel(case, payload['task_id']).status_code == 409
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'), ('bot', 'Elite Sochi Support', payload['text']),
+        ('client', 'Вы', 'One description'), ('bot', 'Elite Sochi Support', created.json()['text'])]
     with Session(case.engine) as db:
         ticket = db.get(Ticket, payload['task_id'])
         assert (ticket.channel, ticket.workflow_type, ticket.task_kind, ticket.intake_state, ticket.assignee_id) == ('web','task','normal','ready','agent')
@@ -137,8 +235,13 @@ def test_cancel_and_repeated_cancel_only_touch_web_draft(case):
     assert cancel(case, selected['task_id']).status_code == 200
     assert choose(case, request_id).json()['state'] == 'cancelled'
     assert description(case, selected['task_id']).status_code == 409
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+        ('bot', 'Elite Sochi Support', selected['text']),
+        ('client', 'Вы', 'Отменить создание задачи'), ('bot', 'Elite Sochi Support', 'Cancelled')]
     assert choose(case).json()['state'] == 'collecting'
     with Session(case.engine) as db:
+        assert db.scalar(select(WebChatMessage.text).where(
+            WebChatMessage.event_key == f"web-task:{selected['task_id']}:cancel-requested")) == 'Отменить создание задачи'
         assert db.get(Ticket, 'telegram-draft').intake_state == 'collecting'
         assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == 'telegram-draft')).all()
     assert case.staff.call_count == 0
@@ -155,20 +258,101 @@ def test_ten_minute_timeout_and_late_retries(case, background):
         db.commit()
     case.clock[0] += timedelta(minutes=10)
     if background:
+        case.http.cookies.clear()  # Cleanup must persist the timeout without a browser/session request.
         with Session(case.engine) as db:
             assert web_tasks.cleanup_expired_web_tasks(db) == 1
             assert web_tasks.cleanup_expired_web_tasks(db) == 0
+        assert chat_log(case)[-1] == ('bot', 'Elite Sochi Support', 'Expired after 10')
+        case.http.cookies.set('esdesk_web_session', 'token-client')
     expired = description(case, selected['task_id'])
     assert expired.status_code == 410, expired.text
     assert expired.json()['detail']['error']['message'] == 'Expired after 10'
     assert choose(case, request_id).status_code == 410
     assert cancel(case, selected['task_id']).status_code == 410
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+        ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
     with Session(case.engine) as db:
         task = db.get(Ticket, selected['task_id'])
         assert (task.status, task.intake_state) == ('closed', 'cancelled')
         assert db.get(Ticket,'telegram-pending').intake_state == 'collecting'
         assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == task.id, TicketMessage.message_type == 'client')).all()
     assert case.staff.call_count == 0
+
+
+@pytest.mark.parametrize('restore', [False, True])
+def test_confirm_by_task_id_and_retries_without_original_request_id(case, restore):
+    with Session(case.engine) as db:
+        db.get(BotButtonSetting, 'button').confirmation_enabled = True
+        db.commit()
+    request_id = uuid4()
+    selected = choose(case, request_id).json()
+    assert selected['state'] == 'confirmation_required'
+    case.clock[0] += timedelta(minutes=2)
+    if restore:
+        case.http.cookies.clear()
+        case.http.cookies.set('esdesk_web_session', 'token-client')
+        restored = case.http.get(BASE + '/active').json()
+        assert restored == {**selected, 'button_id': 'button'}
+        task_id = restored['task_id']
+    else:
+        task_id = selected['task_id']
+    result = case.http.post(f'{BASE}/{task_id}/confirm', headers=ORIGIN)
+    assert result.status_code == 200, result.text
+    assert result.json()['state'] == 'collecting'
+    assert datetime.fromisoformat(result.json()['expires_at'].replace('Z', '+00:00')) == case.clock[0] + timedelta(minutes=10)
+    expected = chat_log(case)
+    assert expected[-2:] == [('client', 'Вы', 'Подтвердить'),
+                             ('bot', 'Elite Sochi Support', result.json()['text'])]
+    assert len(expected) == 4
+    case.clock[0] += timedelta(minutes=1)
+    assert case.http.post(f'{BASE}/{task_id}/confirm', headers=ORIGIN).json() == result.json()
+    assert choose(case, request_id, confirmed=True).json() == result.json()
+    assert chat_log(case) == expected
+    with Session(case.engine) as db:
+        assert len(db.scalars(select(Ticket)).all()) == 1
+    assert description(case, task_id).json()['state'] == 'ready'
+
+
+@pytest.mark.parametrize('other', ['peer', 'foreign', None])
+def test_confirm_by_task_id_checks_owner_and_authorization(case, other):
+    with Session(case.engine) as db:
+        db.get(BotButtonSetting, 'button').confirmation_enabled = True
+        db.commit()
+    selected = choose(case).json()
+    before = chat_log(case)
+    case.http.cookies.clear()
+    if other:
+        case.http.cookies.set('esdesk_web_session', f'token-{other}')
+    response = case.http.post(f"{BASE}/{selected['task_id']}/confirm", headers=ORIGIN)
+    assert response.status_code == (404 if other else 401)
+    assert chat_log(case) == before
+    with Session(case.engine) as db:
+        assert web_tasks.state(db.get(Ticket, selected['task_id']))['confirmed'] is False
+
+
+def test_confirm_by_task_id_expires_once(case):
+    with Session(case.engine) as db:
+        db.get(BotButtonSetting, 'button').confirmation_enabled = True
+        db.commit()
+    selected = choose(case).json()
+    case.clock[0] += timedelta(minutes=10)
+    for _ in range(2):
+        response = case.http.post(f"{BASE}/{selected['task_id']}/confirm", headers=ORIGIN)
+        assert response.status_code == 410
+        assert response.json()['detail']['error']['code'] == 'web_task_expired'
+    events = chat_log(case)
+    assert len(events) == 3 and events[-1] == ('bot', 'Elite Sochi Support', 'Expired after 10')
+    assert case.http.get(BASE + '/active').json() is None
+
+
+@pytest.mark.parametrize('finish', ['create', 'cancel'])
+def test_confirm_by_task_id_rejects_finished_intake(case, finish):
+    selected = choose(case).json()
+    action = description if finish == 'create' else cancel
+    assert action(case, selected['task_id']).status_code == 200
+    before = chat_log(case)
+    assert case.http.post(f"{BASE}/{selected['task_id']}/confirm", headers=ORIGIN).status_code == 409
+    assert chat_log(case) == before
 
 
 def test_confirmation_and_button_client_text_rules(case):
@@ -181,10 +365,15 @@ def test_confirmation_and_button_client_text_rules(case):
     request_id = uuid4()
     selected = choose(case, request_id).json()
     assert selected['state'] == 'confirmation_required' and selected['text'] == 'Confirm task'
+    assert choose(case, request_id).json() == selected
     assert description(case, selected['task_id']).status_code == 409
     confirmed = choose(case, request_id, confirmed=True)
     assert confirmed.json()['state'] == 'collecting' and confirmed.json()['text'] == 'Button description prompt'
+    assert choose(case, request_id, confirmed=True).json() == confirmed.json()
+    assert chat_log(case) == [('client', 'Вы', 'Task subject'), ('bot', 'Elite Sochi Support', 'Confirm task'),
+        ('client', 'Вы', 'Подтвердить'), ('bot', 'Elite Sochi Support', 'Button description prompt')]
     assert description(case, selected['task_id']).json()['state'] == 'ready'
+    assert len(chat_log(case)) == 6
 
 
 @pytest.mark.parametrize('changes', [dict(workflow_type='group_task'),dict(workflow_type='auto'),dict(workflow_type='ticket'),
@@ -267,6 +456,54 @@ def test_concurrent_requests_do_not_duplicate_task_message_or_notifications(case
         messages = db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client')).all()
         assert len(messages) <= 1
         assert case.staff.call_count == len(messages)
+        events = db.scalars(select(WebChatMessage).order_by(WebChatMessage.id)).all()
+        assert len(events) == (4 if tasks[0].intake_state == 'ready' else
+                               4 if tasks[0].intake_state == 'cancelled' else 2)
+        assert len({event.event_key for event in events}) == len(events)
+
+
+@pytest.mark.parametrize('stage', ['selection', 'confirmation', 'confirm-by-id', 'description', 'cancel', 'timeout'])
+def test_chat_event_failure_rolls_back_task_transition(case, monkeypatch, stage):
+    request_id = uuid4()
+    if stage in {'confirmation', 'confirm-by-id'}:
+        with Session(case.engine) as db:
+            db.get(BotButtonSetting, 'button').confirmation_enabled = True
+            db.commit()
+    selected = choose(case, request_id).json() if stage != 'selection' else None
+    before = chat_log(case)
+    original = web_tasks.web_chat.record_message
+
+    def fail_after_record(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError('Synthetic chat write failure')
+
+    monkeypatch.setattr(web_tasks.web_chat, 'record_message', fail_after_record)
+    with pytest.raises(RuntimeError, match='Synthetic chat write failure'):
+        if stage == 'selection':
+            choose(case, request_id)
+        elif stage == 'confirmation':
+            choose(case, request_id, confirmed=True)
+        elif stage == 'confirm-by-id':
+            case.http.post(f"{BASE}/{selected['task_id']}/confirm", headers=ORIGIN)
+        elif stage == 'description':
+            description(case, selected['task_id'])
+        elif stage == 'cancel':
+            cancel(case, selected['task_id'])
+        else:
+            case.clock[0] += timedelta(minutes=10)
+            with Session(case.engine) as db:
+                web_tasks.cleanup_expired_web_tasks(db)
+    assert chat_log(case) == before
+    with Session(case.engine) as db:
+        if selected is None:
+            assert not db.scalars(select(Ticket)).all()
+        else:
+            ticket = db.get(Ticket, selected['task_id'])
+            assert ticket.intake_state == 'collecting' and ticket.status == 'unassigned'
+            assert not db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client')).all()
+            if stage in {'confirmation', 'confirm-by-id'}:
+                assert web_tasks.state(ticket)['confirmed'] is False
+    case.staff.assert_not_called()
 
 
 def test_fixed_assignment_and_freeze_use_existing_rules(case):

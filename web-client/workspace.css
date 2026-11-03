@@ -314,3 +314,14 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel .task-file-progress { height: 4px; margin-top: 4px; overflow: hidden; border-radius: 2px; background: var(--desk-soft); }
 #session-panel .task-file-progress::after { content: ''; display: block; width: 35%; height: 100%; background: var(--desk-accent); animation: task-file-loading 1.2s linear infinite; }
 @keyframes task-file-loading { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
+
+#session-panel #session-ended-dialog {
+  inset: 0; margin: auto; width: min(400px, calc(100% - 32px)); padding: 28px;
+  border: 1px solid var(--desk-border); border-radius: 16px;
+  background: var(--desk-surface); color: var(--desk-text); text-align: center;
+  box-shadow: 0 12px 36px #00000033; font: inherit;
+}
+#session-panel #session-ended-dialog::backdrop { background: #00000040; backdrop-filter: blur(4px); }
+#session-panel #session-ended-dialog h2 { font-size: 20px; }
+#session-panel #session-ended-dialog p { margin-top: 12px; color: var(--desk-muted); }
+#session-panel #session-ended-dialog button { margin-top: 20px; }

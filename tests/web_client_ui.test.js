@@ -88,6 +88,15 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
   const state = { me: 401, login: 200, logout: 204, retry: null, network: false, hold: null, loginCount: 0, logoutCount: 0, menuStatus: 200, menu: menuExample, menuHold: null, menuCount: 0, taskCalls: [], taskConfirmation: true, taskHold: null, taskNetwork: false, taskStatus: 200, taskError: { error: { code: 'test_error', message: 'Ошибка API' } }, preloadCalls: [], preloadRows: new Map(), preloadStatus: 'ready', preloadCreateHold: null, preloadStatusHold: null, preloadNetwork: false, preloadHttpStatus: 200, preloadUncertain: false };
+  Object.assign(state, { chat: [], activeTask: null, chatCount: 0, activeCount: 0, syncStatus: 200, chatHold: null, activeHold: null });
+  const events = new Set();
+  function chatEvent(key, message_type, text) {
+    if (events.has(key)) return;
+    events.add(key);
+    state.chat.push({ id: String(Math.max(0, ...state.chat.map(row => Number(row.id))) + 1), message_type, author: message_type === 'client' ? 'Вы' : 'Elite Sochi Support',
+      text, created_at: '2026-11-03T10:00:00Z' });
+    state.chat = state.chat.slice(-50);
+  }
   if (mocked) await page.route(`**${authPath}*`, async route => {
     const kind = new URL(route.request().url()).pathname.split('/').pop();
     if (state.network) return route.abort('failed');
@@ -107,8 +116,21 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     if (state.menuHold) await state.menuHold;
     await route.fulfill({ status: state.menuStatus, contentType: 'application/json', body: JSON.stringify(state.menu) });
   });
+  if (mocked) await page.route('**/api/v1/web/chat', async route => {
+    state.chatCount++;
+    const snapshot = structuredClone(state.chat);
+    state.chatStarted?.();
+    if (state.chatHold) await state.chatHold;
+    await route.fulfill({ status: state.syncStatus, json: { items: snapshot, total: snapshot.length, page: 1, page_size: 50 } });
+  });
   if (mocked) await page.route('**/api/v1/web/tasks/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/active')) {
+      state.activeCount++;
+      const snapshot = structuredClone(state.activeTask);
+      if (state.activeHold) await state.activeHold;
+      return route.fulfill({ status: state.syncStatus, json: snapshot });
+    }
     let body;
     const multipart = (route.request().headers()['content-type'] || '').startsWith('multipart/form-data');
     if (url.pathname.includes('/attachment-preloads')) {
@@ -151,10 +173,22 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     state.taskCalls.push({ path: url.pathname, body, method: route.request().method() });
     if (state.taskHold) await state.taskHold;
     if (state.taskNetwork) return route.abort('failed');
+    if (state.taskStatus === 410) state.activeTask = null;
     let result;
     if (url.pathname.endsWith('/select')) result = { state: state.taskConfirmation && !body.confirmed ? 'confirmation_required' : 'collecting', text: state.taskConfirmation && !body.confirmed ? 'Подтвердите создание (сервер)' : 'Опишите задачу (сервер)' };
+    else if (url.pathname.endsWith('/confirm')) result = { state: 'collecting', text: 'Опишите задачу (сервер)' };
     else if (url.pathname.endsWith('/description')) result = { state: 'ready', text: 'Задача создана (сервер)' };
     else result = { state: 'cancelled', text: 'Создание отменено (сервер)' };
+    if (state.taskStatus === 200) {
+      const event = url.pathname.endsWith('/select') ? body.request_id : url.pathname;
+      if (url.pathname.endsWith('/select')) chatEvent(event + ':client', 'client', 'Настройка');
+      if (url.pathname.endsWith('/confirm')) chatEvent(event + ':client', 'client', 'Подтвердить');
+      if (url.pathname.endsWith('/description')) chatEvent(event + ':client', 'client', body.text);
+      if (url.pathname.endsWith('/cancel')) chatEvent(event + ':client', 'client', 'Отменить создание задачи');
+      chatEvent(event + ':bot', 'bot', result.text);
+      state.activeTask = ['ready', 'cancelled'].includes(result.state) ? null
+        : { ...result, task_id: taskId, status: 'unassigned', expires_at: '2099-11-03T10:10:00Z', button_id: 'leaf' };
+    }
     await route.fulfill({ status: state.taskStatus, contentType: 'application/json', body: JSON.stringify(state.taskStatus === 200 ? { ...result, task_id: taskId, status: 'unassigned', expires_at: null } : { detail: state.taskError }) });
   });
   if (mocked) await page.route('**/api/v1/web/history?*', route => route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 15 } }));
@@ -205,6 +239,208 @@ test('empty fields are validated without API requests', async t => {
   assert.equal(state.loginCount, 0);
 });
 
+const chatRow = (id, text = `Event ${id}`, kind = 'bot') => ({ id: String(id), message_type: kind,
+  author: 'Legacy author', text, created_at: '2026-11-03T10:00:00Z' });
+const activeIntake = state => ({ task_id: taskId, button_id: 'leaf', state, status: 'unassigned',
+  text: 'Restore prompt', expires_at: '2099-11-03T10:10:00Z' });
+async function pollWorkspace(page) {
+  const response = page.waitForResponse(response => response.url().endsWith('/api/v1/web/chat'));
+  await page.clock.fastForward(5100);
+  await response;
+}
+
+test('persistent chat: restore blocks actions, confirms by task ID, and survives reload and relog', async t => {
+  const { page, state } = await pageFor(t);
+  state.menu = taskMenu;
+  state.activeTask = activeIntake('confirmation_required');
+  state.chat = [chatRow(1, '<img src=x onerror=alert(1)>', 'client'), chatRow(2, 'Restore prompt')];
+  let release;
+  state.activeHold = new Promise(resolve => { release = resolve; });
+  await submit(page);
+  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
+  await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isDisabled(), true);
+  state.activeHold = null;
+  release();
+  await page.locator('#task-confirm:not(:disabled)').waitFor();
+  assert.deepEqual(await page.locator('#chat-messages strong').allTextContents(), ['Вы', 'Elite Sochi Support']);
+  assert.equal(await page.locator('#chat-messages img').count(), 0);
+  assert.doesNotMatch(await page.locator('#session-panel').innerText(), /история не сохраняется|Чат временный/);
+  await page.locator('#task-confirm').click();
+  await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+  assert.equal(state.taskCalls[0].path, `/api/v1/web/tasks/${taskId}/confirm`);
+  assert.equal(state.taskCalls[0].body, undefined);
+  state.me = 200;
+  await page.reload();
+  await page.locator('#demo-text:not(:disabled)').waitFor();
+  assert.equal(await page.locator('#task-confirm').isHidden(), true);
+  assert.equal(await page.locator('#task-cancel').isVisible(), true);
+  const before = await page.locator('#chat-messages').innerText();
+  await page.locator('#logout-button').click();
+  await waitLogin(page);
+  await submit(page);
+  await page.locator('#task-cancel').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#chat-messages').innerText(), before);
+  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+});
+
+test('persistent chat: one poll, stable nodes and scrolling, 50-row eviction, timeout and session stop', async t => {
+  const { page, state } = await pageFor(t);
+  await page.clock.install();
+  state.activeTask = activeIntake('collecting');
+  state.chat = Array.from({ length: 50 }, (_, i) => chatRow(i + 1));
+  await submit(page);
+  await page.locator('#chat-messages article').last().waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length === 50);
+  await page.evaluate(() => {
+    const log = document.querySelector('#chat-messages');
+    log.scrollTop = 300;
+    window.chatNode = log.children[0];
+    window.chatScroll = log.scrollTop;
+  });
+  await pollWorkspace(page);
+  assert.equal(await page.evaluate(() => window.chatNode === document.querySelector('#chat-messages').children[0]), true);
+  assert.equal(await page.locator('#chat-messages').evaluate(log => log.scrollTop), await page.evaluate(() => window.chatScroll));
+  assert.equal(state.activeCount, 2);
+  assert.equal(state.chatCount, 2);
+  state.chat = Array.from({ length: 50 }, (_, i) => chatRow(i + 2));
+  state.chat[49] = chatRow(51, 'Timeout from background');
+  state.activeTask = null;
+  await pollWorkspace(page);
+  await page.getByText('Timeout from background', { exact: true }).waitFor();
+  assert.deepEqual(await page.locator('#chat-messages article').evaluateAll(nodes => nodes.map(node => node.dataset.messageId)),
+    Array.from({ length: 50 }, (_, i) => String(i + 2)));
+  assert.equal(await page.locator('#task-cancel').isHidden(), true);
+  assert.equal(await page.locator('#demo-send').isDisabled(), true);
+  await page.locator('#logout-button').click();
+  await waitLogin(page);
+  const stopped = state.activeCount;
+  await page.clock.fastForward(16000);
+  assert.equal(state.activeCount, stopped);
+  await submit(page);
+  await page.getByText('Timeout from background', { exact: true }).waitFor();
+  assert.equal(state.activeCount, stopped + 1);
+  state.syncStatus = 401;
+  await page.clock.fastForward(5100);
+  await page.locator('#session-ended-dialog').waitFor({ state: 'visible' });
+  const expired = state.activeCount;
+  await page.clock.fastForward(16000);
+  assert.equal(state.activeCount, expired);
+});
+
+test('persistent chat: a stale poll cannot overwrite a successful action or start another loop', async t => {
+  const { page, state } = await pageFor(t);
+  await page.clock.install();
+  state.menu = taskMenu;
+  state.taskConfirmation = false;
+  await submit(page);
+  await page.waitForFunction(() => !document.querySelector('#demo-text').disabled);
+  let release;
+  state.chatHold = new Promise(resolve => { release = resolve; });
+  const held = new Promise(resolve => { state.chatStarted = resolve; });
+  await page.clock.fastForward(5100);
+  await held;
+  const count = state.chatCount;
+  await page.clock.fastForward(6000);
+  assert.equal(state.chatCount, count); // No interval can create overlapping requests.
+  state.chatHold = null;
+  await openTask(page);
+  await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+  release();
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length === 2);
+  assert.deepEqual(await page.locator('#chat-messages p').allTextContents(), ['Настройка', 'Опишите задачу (сервер)']);
+  assert.equal(await page.locator('#task-cancel').isVisible(), true);
+});
+
+test('persistent chat: initial read failure blocks actions until polling restores the server state', async t => {
+  const { page, state } = await pageFor(t);
+  await page.clock.install();
+  state.menu = taskMenu;
+  state.syncStatus = 503;
+  await submit(page);
+  await page.locator('#task-error').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  state.syncStatus = 200;
+  state.activeTask = activeIntake('confirmation_required');
+  await pollWorkspace(page);
+  await page.locator('#task-confirm:not(:disabled)').waitFor();
+  assert.equal(await page.locator('#task-error').isHidden(), true);
+  assert.equal(state.taskCalls.length, 0);
+});
+
+for (const width of [1440, 390]) {
+  test(`session lock: polling 401 preserves history, blocks input and exits locally at ${width}px`, async t => {
+    const { page, state } = await pageFor(t, { width, colorScheme: width === 390 ? 'dark' : 'light' });
+    await page.clock.install();
+    state.menu = taskMenu;
+    state.activeTask = activeIntake('collecting');
+    state.chat = [chatRow(1, 'История прежнего клиента')];
+    state.preloadStatus = 'uploading';
+    await submit(page);
+    await page.getByText('История прежнего клиента', { exact: true }).waitFor();
+    await page.locator('#task-file-input').setInputFiles(uploadImage());
+    await page.locator('.task-selected-file').waitFor();
+    await page.locator('#demo-text').fill('Несохранённое описание');
+    const before = await page.locator('#chat-messages').textContent();
+    state.syncStatus = 401;
+    await page.clock.fastForward(5100);
+    const dialog = page.locator('#session-ended-dialog');
+    await dialog.waitFor({ state: 'visible' });
+    assert.match(await dialog.innerText(), /Сессия завершена\s+Для продолжения работы войдите снова\.\s+Выйти/);
+    assert.equal(await page.locator('#chat-messages').textContent(), before);
+    assert.equal(await dialog.evaluate(node => getComputedStyle(node, '::backdrop').backdropFilter), 'blur(4px)');
+    await assert.rejects(page.locator('#history-open').click({ timeout: 250 }));
+    await page.keyboard.press('Escape');
+    assert.equal(await dialog.isVisible(), true);
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('Tab');
+      assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('#session-ended-dialog'))
+        || document.activeElement === document.body), true);
+    }
+    await page.locator('#demo-text').evaluate(node => node.focus());
+    assert.equal(await page.locator('#demo-text').evaluate(node => node === document.activeElement), false);
+    const requests = [];
+    page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.method() + ' ' + request.url()); });
+    await page.clock.fastForward(16000);
+    assert.deepEqual(requests, []);
+    if (process.env.SESSION_LOCK_SCREENSHOT && width === 1440) await page.screenshot({ path: process.env.SESSION_LOCK_SCREENSHOT });
+    await dialog.getByRole('button', { name: 'Выйти', exact: true }).click();
+    await waitLogin(page);
+    assert.equal(await page.locator('#chat-messages').textContent(), '');
+    assert.equal(await page.locator('#demo-text').inputValue(), '');
+    assert.equal(await page.locator('.task-selected-file').count(), 0);
+    assert.equal(state.logoutCount, 0);
+    assert.deepEqual(requests, []);
+    assert.equal(state.preloadCalls.some(call => call.method === 'DELETE'), false);
+    state.syncStatus = 200;
+    state.chat = [chatRow(2, 'История следующего клиента')];
+    state.activeTask = activeIntake('confirmation_required');
+    await submit(page);
+    await page.getByText('История следующего клиента', { exact: true }).waitFor();
+    await page.locator('#task-confirm:not(:disabled)').waitFor();
+    assert.doesNotMatch(await page.locator('#chat-messages').textContent(), /прежнего клиента/);
+  });
+}
+
+test('session lock: a preload 401 stops sibling uploads without deleting remote files', async t => {
+  const { page, state } = await pageFor(t);
+  state.activeTask = activeIntake('collecting');
+  state.chat = [chatRow(1, 'Сохранённая история')];
+  await submit(page);
+  await page.getByText('Сохранённая история', { exact: true }).waitFor();
+  state.preloadHttpStatus = 401;
+  await page.locator('#task-file-input').setInputFiles([uploadImage(), uploadNote()]);
+  await page.locator('#session-ended-dialog').waitFor({ state: 'visible' });
+  const calls = state.preloadCalls.length;
+  await page.locator('#session-ended-dialog button').click();
+  await waitLogin(page);
+  assert.equal(state.preloadCalls.length, calls);
+  assert.equal(state.preloadCalls.some(call => call.method === 'DELETE'), false);
+  assert.equal(state.logoutCount, 0);
+});
+
 test('successful login clears fields and shows client workspace', async t => {
   const { page } = await pageFor(t);
   await submit(page);
@@ -244,15 +480,15 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).count(), 0);
     assert.equal(await page.locator('.columns-2 > div').count(), 2);
     await page.locator('#demo-text').fill('Не запускается рабочая программа');
-    await page.locator('#demo-send').click();
+    assert.equal(await page.locator('#demo-send').isDisabled(), true);
     assert.equal(await page.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 0);
-    assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).isVisible(), true);
+    assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).count(), 0);
     await page.locator('#demo-files').click();
     assert.ok((await page.locator('#composer-hint').innerText()).includes('только текстовое описание'));
     assert.equal(await page.locator('#close-conversation').isDisabled(), true);
     assert.equal(await page.locator('#demo-text').isEnabled(), true);
-    assert.equal(await page.locator('#demo-send').isEnabled(), true);
-    assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).isVisible(), true);
+    assert.equal(await page.locator('#demo-send').isDisabled(), true);
+    assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).count(), 0);
     await page.locator('#history-open').click();
     await page.getByText('Заявок пока нет.', { exact: true }).waitFor();
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-${width}-${colorScheme}.png`) });
@@ -280,11 +516,15 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
 }
 
 for (const sendByEnter of [false, true]) {
-  test(`client composer: Enter preference ${sendByEnter}, shared local send`, async t => {
-    const { page } = await pageFor(t);
+  test(`client composer: Enter preference ${sendByEnter}, shared server send`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu;
+    state.taskConfirmation = false;
     await submit(page);
     await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
     await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await openTask(page);
+    await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
     const requests = [];
     page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
     const toggle = page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true });
@@ -305,14 +545,14 @@ for (const sendByEnter of [false, true]) {
       assert.equal(await messages.locator('article').count(), before);
     }
     await input.press(sendByEnter ? 'Enter' : 'Control+Enter');
+    await messages.getByText('Первая строка\nx', { exact: true }).waitFor();
     assert.equal(await input.inputValue(), '');
     assert.equal(await messages.getByText('Первая строка\nx', { exact: true }).count(), 1);
     assert.equal(await messages.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 0);
     // Both button and keyboard use the same submit handler, without duplicates.
     await input.fill('Повторное сообщение');
-    await page.locator('#demo-send').click();
-    assert.equal(await input.inputValue(), '');
-    assert.equal(await messages.getByText('Повторное сообщение', { exact: true }).count(), 1);
+    assert.equal(await page.locator('#demo-send').isDisabled(), true);
+    assert.equal(await messages.getByText('Повторное сообщение', { exact: true }).count(), 0);
     assert.equal(await messages.getByText('Это пример ответа поддержки.', { exact: false }).count(), 0);
     const sent = await messages.locator('article').count();
     await input.fill('   ');
@@ -322,7 +562,7 @@ for (const sendByEnter of [false, true]) {
     const closed = await messages.locator('article').count();
     await input.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(await messages.locator('article').count(), closed);
-    assert.deepEqual(requests, []);
+    assert.equal(requests.filter(url => url.endsWith('/description')).length, 1);
     assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
   });
 }
@@ -370,13 +610,12 @@ for (const width of [1440, 390]) {
 }
 
 for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
-test(`WEB task: confirmation, one description via Enter, READY and temporary chat ${width}px ${colorScheme}`, async t => {
+test(`WEB task: confirmation, one description via Enter, READY and persisted chat ${width}px ${colorScheme}`, async t => {
   const { page, state } = await pageFor(t, { width, colorScheme });
   state.menu = taskMenu;
   await submit(page);
   await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
-  await page.locator('#demo-text').fill('Временная заметка');
-  await page.locator('#demo-send').click();
+  assert.equal(await page.locator('#demo-send').isDisabled(), true);
   let release;
   state.taskHold = new Promise(resolve => { release = resolve; });
   await openTask(page);
@@ -393,9 +632,9 @@ test(`WEB task: confirmation, one description via Enter, READY and temporary cha
   await page.locator('#task-confirm').evaluate(button => { button.click(); button.click(); });
   await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
   assert.equal(state.taskCalls.length, 2);
-  assert.equal(state.taskCalls[0].body.request_id, state.taskCalls[1].body.request_id);
+  assert.equal(state.taskCalls[1].path, `/api/v1/web/tasks/${taskId}/confirm`);
   assert.match(state.taskCalls[0].body.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  assert.equal(state.taskCalls[1].body.confirmed, true);
+  assert.equal(state.taskCalls[1].body, undefined);
   await page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true }).check();
   await page.locator('#demo-text').fill('Описание');
   await page.locator('#demo-text').press('Shift+Enter');
@@ -411,14 +650,13 @@ test(`WEB task: confirmation, one description via Enter, READY and temporary cha
   assert.equal(state.taskCalls.length, 3);
   assert.deepEqual(state.taskCalls[2].body, { text: 'Описание\nx', preload_ids: [] });
   assert.equal(await page.locator('#demo-text').inputValue(), '');
-  assert.equal(await page.getByText('Временная заметка', { exact: true }).isVisible(), true);
+  assert.equal(await page.getByText('Временная заметка', { exact: true }).count(), 0);
   assert.equal(await page.getByText('Описание\nx', { exact: true }).count(), 1);
   assert.equal(await page.locator('#conversation-label').innerText(), 'Технический WEB-чат');
   if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `task-ready-${width}-${colorScheme}.png`), fullPage: true });
   await page.locator('#demo-text').fill('После READY — временная заметка');
-  await page.locator('#demo-send').click();
+  assert.equal(await page.locator('#demo-send').isDisabled(), true);
   assert.equal(state.taskCalls.length, 3);
-  assert.ok((await page.locator('#composer-hint').innerText()).includes('не отправлено сотруднику'));
   assert.equal(await page.getByText('Это пример ответа поддержки.', { exact: false }).count(), 0);
   assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
 });
@@ -480,14 +718,19 @@ for (const [status, code] of [[401, 'web_unauthorized'], [403, 'web_csrf_failed'
     state.taskError = { error: { code, message: `Сообщение API ${status}` } };
     await page.locator('#demo-text').fill('Не потерять описание');
     await page.locator('#demo-send').click();
+    if (status === 401) {
+      await page.locator('#session-ended-dialog').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#demo-text').inputValue(), 'Не потерять описание');
+      await page.locator('#session-ended-dialog button').click();
+      await waitLogin(page);
+      assert.equal(state.logoutCount, 0);
+      return;
+    }
     await page.locator('#task-error').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#task-error').innerText(), `Сообщение API ${status}`);
     assert.equal(await page.locator('#demo-text').inputValue(), 'Не потерять описание');
     assert.equal(await page.getByText('Задача создана (сервер)', { exact: true }).count(), 0);
-    if (status === 401) {
-      await page.locator('#task-sign-in').click();
-      await waitLogin(page);
-    } else if (status === 503) {
+    if (status === 503) {
       state.taskStatus = 200;
       await page.locator('#task-retry').click();
       await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
@@ -498,7 +741,7 @@ for (const [status, code] of [[401, 'web_unauthorized'], [403, 'web_csrf_failed'
   });
 }
 
-test('WEB task: auth failure during a network retry preserves the original UUID', async t => {
+test('WEB task: retry keeps its UUID until 401 locks the session', async t => {
   const { page, state } = await pageFor(t);
   state.menu = taskMenu;
   state.taskConfirmation = false;
@@ -510,12 +753,12 @@ test('WEB task: auth failure during a network retry preserves the original UUID'
   state.taskNetwork = false;
   state.taskStatus = 401;
   await page.locator('#task-retry').click();
-  await page.locator('#task-sign-in').waitFor({ state: 'visible' });
-  state.taskStatus = 200; // Session renewed in another tab; this page retains its operation.
-  await page.locator('#task-retry').click();
-  await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
-  assert.equal(state.taskCalls.length, 3);
+  await page.locator('#session-ended-dialog').waitFor({ state: 'visible' });
+  assert.equal(state.taskCalls.length, 2);
   assert.ok(state.taskCalls.every(call => call.body.request_id === uuid));
+  await page.locator('#session-ended-dialog button').click();
+  await waitLogin(page);
+  assert.equal(state.logoutCount, 0);
 });
 
 test('WEB task: other terminal workflows never call select', async t => {
@@ -639,6 +882,7 @@ test('active session on reopen, expired session and revoked logout', async t => 
   await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
   state.logout = 401;
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
+  await page.locator('#session-ended-dialog button').click();
   await waitLogin(page);
   state.me = 401;
   await page.reload();
@@ -682,7 +926,7 @@ test('real task API through proxy: lost committed select, confirmation, descript
   assert.equal((await control('state')).tasks.length, 1);
   await page.locator('#task-retry').click();
   await page.locator('#task-confirm').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#task-feedback').innerText(), 'Synthetic confirmation');
+  await page.locator('#task-feedback').getByText('Synthetic confirmation', { exact: true }).waitFor();
   await page.locator('#task-confirm').click();
   await page.getByText('Synthetic description prompt', { exact: true }).waitFor();
   let descriptionLost = false;
@@ -699,19 +943,20 @@ test('real task API through proxy: lost committed select, confirmation, descript
   assert.deepEqual((await control('state')).client_messages, ['Real isolated task description']);
   await page.locator('#task-retry').click();
   await page.getByText('Synthetic task created', { exact: true }).waitFor();
+  await page.locator('#task-retry').waitFor({ state: 'hidden' });
   const server = await control('state');
   assert.equal(server.tasks.length, 1);
   assert.equal(server.tasks[0].channel, 'web');
   assert.equal(server.tasks[0].workflow_type, 'task');
   assert.equal(server.tasks[0].intake_state, 'ready');
   assert.deepEqual(server.client_messages, ['Real isolated task description']);
-  assert.equal(selections.length, 3);
+  assert.equal(selections.length, 2);
   assert.ok(selections.every(body => body.request_id === selections[0].request_id));
   assert.equal(server.requests.some(request => request.cookie_names.includes('esdesk_session')), false);
   const requests = [];
-  page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
-  await page.locator('#demo-text').fill('Temporary technical note');
-  await page.locator('#demo-send').click();
+  page.on('request', request => { if (request.url().includes('/api/') && request.method() !== 'GET') requests.push(request.url()); });
+  await page.locator('#demo-text').fill('Unsent note');
+  assert.equal(await page.locator('#demo-send').isDisabled(), true);
   assert.deepEqual(requests, []);
   assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
 });
@@ -969,6 +1214,12 @@ for (const action of ['list', 'detail', 'read', 'file']) {
       await openResults(page);
       if (action !== 'list') await selectResult(page);
       if (action === 'file') await page.getByRole('button', { name: 'Скачать: Ответ.txt', exact: true }).click();
+      if (failure === 401) {
+        await page.locator('#session-ended-dialog').waitFor({ state: 'visible' });
+        await page.locator('#session-ended-dialog button').click();
+        await waitLogin(page);
+        return;
+      }
       const container = page.locator(action === 'list' ? '#history-list' : '#history-detail');
       await container.getByRole('alert').waitFor();
       assert.doesNotMatch(await container.innerText(), /INTERNAL SECRET/);
@@ -977,7 +1228,6 @@ for (const action of ['list', 'detail', 'read', 'file']) {
         assert.match(await page.locator('[data-record]').getAttribute('title'), /Не прочитана/);
       }
       if (action === 'detail') assert.equal(state.calls.filter(call => call.action === 'read').length, 0);
-      if (failure === 401) assert.equal(await container.getByRole('button', { name: 'Войти снова', exact: true }).count(), 1);
       state.status[action] = 200;
       state.network[action] = false;
       delete state.invalid[action];
@@ -1474,7 +1724,7 @@ test('task files: unknown response locks files and retry preserves exact bytes',
   assert.deepEqual(posts[0].body, posts[1].body);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 1);
   assert.equal(await page.locator('#chat-messages .task-sent-file').count(), 2);
-  assert.equal(await page.locator('#chat-messages article.client').count(), 1);
+  assert.equal(await page.locator('#chat-messages article.client').count(), 2);
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await waitLogin(page);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
@@ -1512,7 +1762,11 @@ test('real task upload through proxy: lost committed response archives once and 
   await page.getByRole('button', { name: 'Synthetic menu', exact: true }).click();
   await page.locator('#task-confirm').click();
   await page.getByText('Synthetic description prompt', { exact: true }).waitFor();
-  await page.locator('#task-file-input').setInputFiles([uploadImage(), uploadNote()]);
+  // Finish preload setup before testing a lost description response.
+  await page.locator('#task-file-input').setInputFiles(uploadImage());
+  await filesReady(page);
+  await page.locator('#task-file-input').setInputFiles(uploadNote());
+  await filesReady(page);
   let lost = false;
   await page.route('**/api/v1/web/tasks/*/description', async route => {
     if (lost) return route.continue();
@@ -1535,10 +1789,11 @@ test('real task upload through proxy: lost committed response archives once and 
   assert.equal(summaries.length, 1, JSON.stringify({ active: state.active_summaries, sent: state.summary_calls, deleted: state.deleted_archive_ids }));
   assert.ok(summaries[0].includes('ordinary.webp') && summaries[0].includes('notes.txt'));
   assert.equal(state.summary_calls.length - state.deleted_archive_ids.filter(id => Number(id) >= 2000).length, 1);
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages .task-sent-file').length === 2);
   assert.equal(await page.locator('#chat-messages .task-sent-file').count(), 2);
   await page.locator('#history-open').click();
   await page.locator('[data-record]').click();
-  await page.getByText('Real upload request', { exact: true }).waitFor();
+  await page.locator('#history-detail').getByText('Real upload request', { exact: true }).waitFor();
   await page.locator('.history-image img').evaluate(img => img.decode());
   const waiting = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Скачать: notes.txt', exact: true }).click();
@@ -1648,7 +1903,7 @@ test('task preloads: removal during create deletes late ID and sends only the ot
   assert.ok(!deleted.path.endsWith(submitted.preload_ids[0]));
   assert.equal(submitted.files, undefined);
   assert.equal(await page.locator('#chat-messages .task-sent-file').count(), 1);
-  assert.match(await page.locator('#chat-messages article.client').innerText(), /notes.txt/);
+  assert.match(await page.locator('#chat-messages article.client').last().innerText(), /notes.txt/);
 });
 
 

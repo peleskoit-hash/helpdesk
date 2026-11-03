@@ -60,15 +60,19 @@ function loginError(error) {
 }
 
 async function checkSession() {
-  if (busy) return;
+  if (busy || workspace.isLocked()) return;
   busy = true;
-  showPanel('loading', false);
-  clearForm();
+  const inWorkspace = !byId('session-panel').hidden;
+  if (!inWorkspace) {
+    showPanel('loading', false);
+    clearForm();
+  }
   try {
     await webAuth.me();
     showPanel('session');
   } catch (error) {
-    showPanel(error instanceof AuthError && error.status === 401 ? 'login' : 'unavailable');
+    if (inWorkspace && error instanceof AuthError && error.status === 401) workspace.lockSession();
+    else showPanel(error instanceof AuthError && error.status === 401 ? 'login' : 'unavailable');
   } finally {
     busy = false;
     updateLoginButton();
@@ -124,8 +128,7 @@ logoutButton.addEventListener('click', async () => {
     showPanel('login');
   } catch (error) {
     if (error instanceof AuthError && error.status === 401) {
-      clearForm();
-      showPanel('login');
+      workspace.lockSession();
     } else {
       message('logout-error', error instanceof AuthError && error.status === 403
         ? loginError(error) : 'Не удалось выйти. Попробуйте ещё раз чуть позже.');
@@ -139,6 +142,9 @@ logoutButton.addEventListener('click', async () => {
 });
 
 byId('retry-button').addEventListener('click', checkSession);
-byId('session-panel').addEventListener('web-session-expired', checkSession);
+byId('session-panel').addEventListener('web-session-expired', () => {
+  clearForm();
+  showPanel('login');
+});
 window.addEventListener('pageshow', event => { if (event.persisted) checkSession(); });
 checkSession();

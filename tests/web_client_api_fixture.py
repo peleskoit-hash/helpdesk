@@ -15,12 +15,13 @@ from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
 from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
-                            TelegramContact, Ticket, TicketMessage, TicketAttachment, TicketAttachmentPreload, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile)
+                            TelegramContact, Ticket, TicketMessage, TicketAttachment, TicketAttachmentPreload, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile, WebChatMessage)
 from api.app.routers.web_auth import router
 from api.app.routers.web_menu import router as menu_router
 from api.app.routers.web_tasks import router as task_router
 from api.app.routers.web_task_results import router as results_router
 from api.app.routers.web_history import router as history_router
+from api.app.routers.web_chat import router as chat_router
 from api.app.services import web_auth
 from api.app.services import telegram_outbound_delivery, telegram_attachments
 
@@ -107,6 +108,7 @@ def run():
     app.include_router(task_router)
     app.include_router(results_router)
     app.include_router(history_router)
+    app.include_router(chat_router)
     requests = []
 
     def get_test_db():
@@ -125,6 +127,7 @@ def run():
 
     @app.post("/__test__/reset")
     def reset(db=Depends(get_db)):
+        db.execute(delete(WebChatMessage))
         db.execute(delete(WebTaskResultFile))
         db.execute(delete(WebTaskResult))
         db.execute(delete(TicketAttachmentPreload))

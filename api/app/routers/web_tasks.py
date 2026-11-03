@@ -37,11 +37,21 @@ class TaskOut(BaseModel):
     expires_at: datetime | None
 
 
+class ActiveTaskOut(TaskOut):
+    state: Literal['collecting', 'confirmation_required']
+    button_id: str
+
+
 def task_context(request: Request, client=Depends(web_auth.get_current_web_client), db: Session = Depends(get_db)):
     web_tasks.lock_client(db, client.id)
     # A request may have waited for another worker; recheck the session under the lock.
     client = web_auth.get_current_web_client(request, db)
     return db.get(Client, client.id), client
+
+
+@router.get('/active', response_model=ActiveTaskOut | None)
+def active(context=Depends(task_context), db: Session = Depends(get_db)):
+    return web_tasks.active_task(db, context[0])
 
 
 @router.post('/select', response_model=TaskOut)
@@ -75,6 +85,11 @@ async def description_payload(request: Request, client=Depends(web_auth.get_curr
 @router.post('/{task_id}/description', response_model=TaskOut)
 def describe(task_id: UUID, payload=Depends(description_payload), context=Depends(task_context), db: Session = Depends(get_db)):
     return web_tasks.describe_task(db, *context, task_id, *payload)
+
+
+@router.post('/{task_id}/confirm', response_model=TaskOut)
+def confirm(task_id: UUID, context=Depends(task_context), db: Session = Depends(get_db)):
+    return web_tasks.confirm_task(db, *context, task_id)
 
 
 @router.post('/{task_id}/cancel', response_model=TaskOut)

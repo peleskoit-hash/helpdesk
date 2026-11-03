@@ -98,6 +98,14 @@ def ensure_background_contours_table() -> None:
         BackgroundContour.__table__.create(bind=conn, checkfirst=True)
 
 
+def ensure_web_chat_messages_table() -> None:
+    """Explicit migration only: intentionally not called by API startup."""
+    from ..models import WebChatMessage
+
+    with engine.begin() as conn:
+        WebChatMessage.__table__.create(bind=conn, checkfirst=True)
+
+
 def ensure_web_task_results_tables() -> None:
     from ..models import WebTaskResult, WebTaskResultFile
 

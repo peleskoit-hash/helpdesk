@@ -51,6 +51,7 @@ from .routers.web_menu import router as web_menu_router
 from .routers.web_tasks import router as web_tasks_router
 from .routers.web_task_results import router as web_task_results_router
 from .routers.web_history import router as web_history_router
+from .routers.web_chat import router as web_chat_router
 from .services.web_tasks import web_task_cleanup_loop
 from .services import telegram_client_avatar_cleanup  # Register post-commit cleanup for every closing path.
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
@@ -115,6 +116,7 @@ app.include_router(web_menu_router)
 app.include_router(web_tasks_router)
 app.include_router(web_task_results_router)
 app.include_router(web_history_router)
+app.include_router(web_chat_router)
 app.include_router(settings_router)
 app.include_router(settings_automatic_messages_router)
 app.include_router(settings_bot_button_items_router)
@@ -152,7 +154,10 @@ async def on_startup():
     last_error = None
     for _ in range(20):
         try:
-            Base.metadata.create_all(bind=engine)
+            # Technical chat schema is applied explicitly, never on API startup.
+            Base.metadata.create_all(bind=engine, tables=[
+                table for table in Base.metadata.sorted_tables if table.name != "web_chat_messages"
+            ])
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()
             ensure_telegram_avatar_cleanup_state_table()

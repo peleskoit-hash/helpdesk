@@ -1,5 +1,20 @@
 // Client-only WEB endpoints; no administrative or Telegram API calls.
 const base = '/api/v1/web/auth';
+let sessionEnded = false;
+const sessionRequests = new Set();
+export function stopWebRequests() {
+  sessionEnded = true;
+  for (const controller of sessionRequests) controller.abort();
+}
+export function resumeWebRequests() { sessionEnded = false; }
+function requireWebSession() {
+  if (sessionEnded) throw new TaskError(401, 'Сессия завершена');
+}
+function checkWebSession(response, signal) {
+  if (response.status !== 401 || signal?.aborted) return;
+  stopWebRequests();
+  globalThis.dispatchEvent?.(new Event('web-session-unauthorized'));
+}
 
 export class AuthError extends Error {
   constructor(status, retryUntil = 0) {
@@ -10,6 +25,7 @@ export class AuthError extends Error {
 }
 
 async function request(path, method = 'GET', body) {
+  if (path === '/logout' && sessionEnded) throw new AuthError(401);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
@@ -19,6 +35,7 @@ async function request(path, method = 'GET', body) {
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     });
     if (!response.ok) {
+      if (path === '/logout') checkWebSession(response, controller.signal);
       const retry = response.headers.get('Retry-After');
       const seconds = retry !== null && /^\d+$/.test(retry.trim()) ? Number(retry) : NaN;
       const until = Number.isFinite(seconds) ? Date.now() + seconds * 1000 : Date.parse(retry);
@@ -40,9 +57,11 @@ export const webAuth = {
 };
 
 export async function getWebMenu(signal) {
+  requireWebSession();
   const response = await fetch('/api/v1/web/menu', {
     signal, credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error',
   });
+  checkWebSession(response, signal);
   if (!response.ok) throw new Error('WEB menu unavailable');
   const menu = await response.json();
   if (!Array.isArray(menu?.rows)) throw new Error('Invalid WEB menu');
@@ -51,7 +70,9 @@ export async function getWebMenu(signal) {
 
 // Use only WEB-session endpoints, including for binary downloads. Never follow a supplied URL.
 async function requestWebHistory(path, signal, method = 'GET', file = false) {
+  requireWebSession();
   const controller = new AbortController();
+  sessionRequests.add(controller);
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
@@ -61,16 +82,37 @@ async function requestWebHistory(path, signal, method = 'GET', file = false) {
       method, signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
       cache: 'no-store', redirect: 'error',
     });
+    checkWebSession(response, controller.signal);
     if (!response.ok) throw new TaskError(response.status, 'Не удалось загрузить результат заявки.');
     return await (file ? response.blob() : response.json());
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener('abort', abort);
+    sessionRequests.delete(controller);
   }
 }
 
 export const requestTaskResult = (path, signal, method, file) => requestWebHistory('/task-results' + path, signal, method, file);
 export const getWebHistory = (page, signal) => requestWebHistory('/history?page=' + page, signal);
+export async function getWebChat(signal) {
+  const result = await requestWebHistory('/chat', signal);
+  if (!Array.isArray(result?.items) || result.items.length > 50 || result.items.some(row =>
+    !row || typeof row.id !== 'string' || !/^\d+$/.test(row.id) || !['client', 'bot', 'system'].includes(row.message_type)
+    || typeof row.text !== 'string' || typeof row.created_at !== 'string' || !Number.isFinite(Date.parse(row.created_at)))
+    || new Set(result.items.map(row => row.id)).size !== result.items.length) {
+    throw new TaskError(502, 'Не удалось проверить историю чата.');
+  }
+  return result.items;
+}
+export async function getActiveWebTask(signal) {
+  const result = await taskRequest('active', 'GET', undefined, signal);
+  if (result !== null && (!uuid.test(result?.task_id) || typeof result.button_id !== 'string'
+    || !['collecting', 'confirmation_required'].includes(result.state) || typeof result.text !== 'string'
+    || typeof result.expires_at !== 'string' || !Number.isFinite(Date.parse(result.expires_at)))) {
+    throw new TaskError(502, 'Не удалось проверить состояние задачи.');
+  }
+  return result;
+}
 export const getHistoryMessages = (id, signal) => requestWebHistory('/history/' + encodeURIComponent(id) + '/messages', signal);
 export const getHistoryFile = (ticketId, file, signal) => file.source === 'web_result'
   ? requestTaskResult('/' + encodeURIComponent(ticketId) + '/files/' + encodeURIComponent(file.id), signal, 'GET', true)
@@ -85,7 +127,9 @@ export class TaskError extends Error {
 }
 
 async function taskRequest(path, method, body, signal, upload = false) {
+  requireWebSession();
   const controller = new AbortController();
+  sessionRequests.add(controller);
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
@@ -97,6 +141,7 @@ async function taskRequest(path, method, body, signal, upload = false) {
       headers: upload || body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: upload ? body : body === undefined ? undefined : JSON.stringify(body),
     });
+    checkWebSession(response, controller.signal);
     const result = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = result?.detail;
@@ -107,6 +152,7 @@ async function taskRequest(path, method, body, signal, upload = false) {
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener('abort', abort);
+    sessionRequests.delete(controller);
   }
 }
 

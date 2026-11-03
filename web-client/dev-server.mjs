@@ -22,6 +22,8 @@ const routes = new Map([
   ['/api/v1/web/task-results', 'GET'],
   ['/api/v1/web/history', 'GET'],
   ['/api/v1/web/menu', 'GET'],
+  ['/api/v1/web/chat', 'GET'],
+  ['/api/v1/web/tasks/active', 'GET'],
   ['/api/v1/web/tasks/select', 'POST'],
   ['/api/v1/web/auth/login', 'POST'],
   ['/api/v1/web/auth/logout', 'POST'],
@@ -63,7 +65,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     let path;
     try { path = new URL(req.url, 'http://127.0.0.1').pathname; }
     catch { res.writeHead(400).end(); return; }
-    const taskAction = /^\/api\/v1\/web\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(description|cancel)$/i.test(path);
+    const taskAction = /^\/api\/v1\/web\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(description|cancel|confirm)$/i.test(path);
     const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
     const resultRoute = new RegExp(`^/api/v1/web/task-results/${uuid}(/read|/files/${uuid})?$`, 'i').test(path);
     const historyRoute = new RegExp(`^/api/v1/web/history/${uuid}/(messages|attachments/${uuid}/download)$`, 'i').test(path);

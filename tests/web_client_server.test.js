@@ -121,7 +121,7 @@ test('Docker proxy keeps allowlist, cookie isolation, Origin and security header
   assert.equal(seen.length, 3);
 });
 
-test('menu proxy allows only exact GET with isolated WEB cookies', async t => {
+test('menu, chat and active intake proxy allow only exact GET with isolated WEB cookies', async t => {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     seen.push({ method: req.method, url: req.url, cookie: req.headers.cookie, authorization: req.headers.authorization });
@@ -131,18 +131,21 @@ test('menu proxy allows only exact GET with isolated WEB cookies', async t => {
   const upstreamPort = await listen(t, upstream);
   const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstreamPort}` }));
   const headers = { Cookie: 'esdesk_session=staff; esdesk_web_session=web', Authorization: 'Bearer staff', Origin: `http://127.0.0.1:${port}` };
-  const result = await request(port, '/api/v1/web/menu', headers);
-  assert.equal(result.status, 200);
-  assert.deepEqual(JSON.parse(result.body), { menu_type: 'Базовое', rows: [] });
-  assert.equal(result.headers['cache-control'], 'no-store');
-  assert.equal((await request(port, '/api/v1/web/menu', headers, 'POST')).status, 405);
-  assert.equal((await request(port, '/api/v1/web/menu', { ...headers, Origin: 'http://foreign.example' })).status, 403);
-  assert.equal((await request(port, '/api/v1/web/menu/extra', headers)).status, 404);
+  const paths = ['/api/v1/web/menu', '/api/v1/web/chat', '/api/v1/web/tasks/active'];
+  for (const path of paths) {
+    const result = await request(port, path, headers);
+    assert.equal(result.status, 200);
+    assert.deepEqual(JSON.parse(result.body), { menu_type: 'Базовое', rows: [] });
+    assert.equal(result.headers['cache-control'], 'no-store');
+    assert.equal((await request(port, path, headers, 'POST')).status, 405);
+    assert.equal((await request(port, path, { ...headers, Origin: 'http://foreign.example' })).status, 403);
+    assert.equal((await request(port, path + '/extra', headers)).status, 404);
+  }
   assert.equal((await request(port, '/api/v1/settings/bot-buttons', headers)).status, 404);
-  assert.deepEqual(seen, [{ method: 'GET', url: '/api/v1/web/menu', cookie: 'esdesk_web_session=web', authorization: undefined }]);
+  assert.deepEqual(seen, paths.map(url => ({ method: 'GET', url, cookie: 'esdesk_web_session=web', authorization: undefined })));
 });
 
-test('task proxy forwards only three task actions, WEB cookie, JSON and Origin', async t => {
+test('task proxy forwards exact task actions, WEB cookie, JSON and Origin', async t => {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     let body = '';
@@ -159,7 +162,7 @@ test('task proxy forwards only three task actions, WEB cookie, JSON and Origin',
   const origin = `http://127.0.0.1:${port}`;
   const headers = { Origin: origin, Cookie: 'esdesk_session=staff; esdesk_web_session=web', 'Content-Type': 'application/json', Authorization: 'Bearer staff' };
   const uuid = '11111111-1111-4111-8111-111111111111';
-  for (const path of ['/api/v1/web/tasks/select', `/api/v1/web/tasks/${uuid}/description`, `/api/v1/web/tasks/${uuid}/cancel`]) {
+  for (const path of ['/api/v1/web/tasks/select', `/api/v1/web/tasks/${uuid}/description`, `/api/v1/web/tasks/${uuid}/cancel`, `/api/v1/web/tasks/${uuid}/confirm`]) {
     assert.equal((await request(port, path, headers, 'POST', '{"text":"test"}')).status, 200);
     assert.equal((await request(port, path, headers)).status, 405);
     assert.equal((await request(port, path, { ...headers, Origin: 'http://foreign.example' }, 'POST')).status, 403);
@@ -168,7 +171,7 @@ test('task proxy forwards only three task actions, WEB cookie, JSON and Origin',
   for (const path of [`/api/v1/web/tasks/${uuid}/close`, '/api/v1/web/tasks/not-a-uuid/cancel', '/api/v1/web/tasks', '/api/v1/web/tasks/select/extra', '/api/v1/settings/bot-buttons']) {
     assert.equal((await request(port, path, headers, 'POST')).status, 404);
   }
-  assert.equal(seen.length, 3);
+  assert.equal(seen.length, 4);
   assert.ok(seen.every(item => item.method === 'POST' && item.origin === origin && item.cookie === 'esdesk_web_session=web'
     && item.authorization === undefined && item.body === '{"text":"test"}'));
 });

@@ -1,5 +1,5 @@
-// Ordinary tasks use WEB API. The technical chat stays temporary, in memory only.
-import { getWebMenu, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261102-web-preloads-v1';
+// Technical chat and ordinary task intake are restored from the WEB API.
+import { getWebMenu, getWebChat, getActiveWebTask, stopWebRequests, resumeWebRequests, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261102-web-preloads-v1';
 import { renderHistoryFile } from './history-media.js?v=20261102-web-preloads-v1';
 import { createTaskFiles } from './task-files.js?v=20261102-web-preloads-v1';
 export function mountWorkspace(root) {
@@ -18,7 +18,7 @@ export function mountWorkspace(root) {
         <h2 id="client-info-title">Информация о клиенте</h2><p class="demo-caption">Демонстрационные данные</p>
         <dl><div><dt>Клиент</dt><dd>Александр Смирнов</dd></div><div><dt>Организация</dt><dd>ООО «Пример»</dd></div><div><dt>Подразделение</dt><dd>Клиентский отдел</dd></div><div><dt>Электронная почта</dt><dd>client@example.com</dd></div></dl>
       </section>
-      <div class="client-bottom"><p class="demo-caption">Временный WEB-чат · история не сохраняется после обновления</p><p class="message" id="logout-error" role="alert" hidden></p><button id="logout-button">Выйти</button></div>
+      <div class="client-bottom"><p class="message" id="logout-error" role="alert" hidden></p><button id="logout-button">Выйти</button></div>
     </aside>
     <section class="client-chat" aria-label="Чат с поддержкой">
       <header class="chat-toolbar">
@@ -39,12 +39,29 @@ export function mountWorkspace(root) {
     <dialog id="appearanceMenu" class="appearance-menu" aria-labelledby="appearance-title"><div class="section-heading"><h2 id="appearance-title">Оформление</h2><button data-close-dialog aria-label="Закрыть оформление">×</button></div><p class="demo-caption">Настройки действуют до обновления страницы</p><div class="appearance-themes"><button data-appearance-theme="light" aria-pressed="true">Светлая</button><button data-appearance-theme="dark" aria-pressed="false">Тёмная</button></div><div class="appearance-controls"></div><button id="appearance-reset">Сбросить настройки</button></dialog>`;
 
   const byId = id => root.querySelector(`#${id}`);
+  const sessionDialog = document.createElement('dialog');
+  sessionDialog.id = 'session-ended-dialog';
+  sessionDialog.setAttribute('aria-labelledby', 'session-ended-title');
+  sessionDialog.setAttribute('aria-describedby', 'session-ended-description');
+  sessionDialog.innerHTML = '<h2 id="session-ended-title">Сессия завершена</h2><p id="session-ended-description">Для продолжения работы войдите снова.</p><button type="button" class="primary" autofocus>Выйти</button>';
+  root.append(sessionDialog);
+  sessionDialog.addEventListener('cancel', event => event.preventDefault());
+  sessionDialog.querySelector('button').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
+  let sessionLocked = false;
   const taskFiles = createTaskFiles(byId('task-file-input'), byId('task-selected-files'), byId('task-file-error'), updateTaskUI);
   let activeTask = null;
   let pendingAction = null;
   let taskBusy = false;
   let taskRequest;
   let generation = 0;
+  let restoring = true;
+  let syncRunning = false;
+  let syncTimer;
+  let syncRequest;
+  let syncVersion = 0;
+  let chatSignature = '';
+  let sentPreview = null;
+  let syncError = false;
   let records = [];
   let historyPage = 1;
   let selectedResult = null;
@@ -52,24 +69,122 @@ export function mountWorkspace(root) {
   let detailRequest;
   const downloads = new Set();
 
-  function message(container, kind, author, text) {
+  function message(kind, text, createdAt) {
     const article = document.createElement('article');
     article.className = `chat-message ${kind}`;
     const header = document.createElement('div');
     header.className = 'message-header';
     const name = document.createElement('strong');
-    name.textContent = author;
+    name.textContent = kind === 'client' ? 'Вы' : 'Elite Sochi Support';
     const time = document.createElement('span');
-    time.textContent = container.id === 'chat-messages' ? new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : 'Демо';
+    time.textContent = new Date(createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     header.append(name, time);
     const body = document.createElement('p');
     body.textContent = text;
     article.append(header, body);
-    container.append(article);
-    container.scrollTop = container.scrollHeight;
     return article;
   }
-  const add = (kind, author, text) => message(byId('chat-messages'), kind, author, text);
+  function renderChat(items) {
+    // Preserve the server's (created_at, id) order, including sub-millisecond times.
+    const container = byId('chat-messages');
+    const bottom = !container.children.length || container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+    const signature = JSON.stringify(items);
+    if (signature !== chatSignature) {
+      const anchor = [...container.children].find(node => node.getBoundingClientRect().bottom > container.getBoundingClientRect().top);
+      const top = anchor?.getBoundingClientRect().top;
+      const nodes = new Map([...container.children].map(node => [node.dataset.messageId, node]));
+      const ids = new Set(items.map(row => row.id));
+      for (const [id, node] of nodes) if (!ids.has(id)) node.remove();
+      items.forEach((row, index) => {
+        const node = nodes.get(row.id) || message(row.message_type, row.text, row.created_at);
+        node.dataset.messageId = row.id;
+        if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null);
+      });
+      chatSignature = signature;
+      if (bottom) container.scrollTop = container.scrollHeight;
+      else if (anchor?.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - top;
+    }
+    if (sentPreview) {
+      const row = items.findLast(row => row.message_type === 'client' && row.text === sentPreview.text);
+      if (row) {
+        container.querySelector(`[data-message-id="${row.id}"]`).append(...sentPreview.container.childNodes);
+        sentPreview = null;
+        if (bottom) container.scrollTop = container.scrollHeight;
+      }
+    }
+  }
+  function invalidateSync() {
+    clearTimeout(syncTimer);
+    syncRequest?.abort();
+    syncRequest = null;
+    syncVersion++;
+  }
+  function stopSync() {
+    syncRunning = false;
+    invalidateSync();
+  }
+  function lockSession() {
+    if (sessionLocked || root.hidden) return;
+    sessionLocked = true;
+    generation++;
+    restoring = true;
+    stopWebRequests();
+    stopSync();
+    taskRequest?.abort();
+    menuRequest?.abort();
+    menuRequest = null;
+    listRequest?.abort();
+    detailRequest?.abort();
+    for (const controller of downloads) controller.abort();
+    updateTaskUI();
+    sessionDialog.showModal();
+  }
+  window.addEventListener('web-session-unauthorized', lockSession);
+  function scheduleSync() {
+    clearTimeout(syncTimer);
+    if (syncRunning) syncTimer = setTimeout(() => {
+      if (taskBusy) scheduleSync();
+      else refreshWorkspace();
+    }, 5000);
+  }
+  async function refreshWorkspace() {
+    if (!syncRunning) return;
+    invalidateSync();
+    const version = syncVersion;
+    const current = generation;
+    const controller = new AbortController();
+    syncRequest = controller;
+    try {
+      // Reading active intake can persist a timeout; fetch its chat event afterwards.
+      const task = await getActiveWebTask(controller.signal);
+      const items = await getWebChat(controller.signal);
+      if (controller.signal.aborted || version !== syncVersion || current !== generation || !syncRunning) return;
+      renderChat(items);
+      if (!pendingAction && activeTask?.taskId && activeTask.taskId !== task?.task_id) taskFiles.clear({ serverCleanup: true });
+      activeTask = task ? { taskId: task.task_id, buttonId: task.button_id, state: task.state } : null;
+      if (task?.state === 'collecting') taskFiles.setTask(task.task_id);
+      if (!pendingAction) byId('task-feedback').textContent = task?.state === 'confirmation_required' ? task.text
+        : task ? 'Ожидаем описание задачи в чате' : '';
+      restoring = false;
+      if (syncError) { clearTaskError(); syncError = false; }
+    } catch (error) {
+      if (controller.signal.aborted || version !== syncVersion || current !== generation || !syncRunning) return;
+      if (!pendingAction || error.status === 401) {
+        syncError = true;
+        byId('task-error').hidden = false;
+        byId('task-error').textContent = error.status === 401 ? 'Сессия истекла. Войдите снова.' : 'Не удалось обновить чат. Повторим загрузку автоматически.';
+        byId('task-error').dataset.status = String(error.status || 0);
+      }
+      if (error.status === 401) { restoring = true; stopSync(); }
+    } finally {
+      if (current === generation && version === syncVersion) {
+        syncRequest = null;
+        updateTaskUI();
+        scheduleSync();
+      } else if (current === generation && !syncRunning) updateTaskUI();
+    }
+  }
+  window.addEventListener('pagehide', stopSync);
 
   let menuRequest;
   function menuStatus(text, waiting = false) {
@@ -120,6 +235,14 @@ export function mountWorkspace(root) {
     if (moveFocus) container.querySelector('button:not(:disabled)')?.focus();
   }
   async function loadMenu() {
+    if (sessionLocked) return;
+    resumeWebRequests();
+    if (!syncRunning) {
+      syncRunning = true;
+      restoring = true;
+      updateTaskUI();
+      refreshWorkspace();
+    }
     menuRequest?.abort();
     const controller = new AbortController();
     menuRequest = controller;
@@ -146,28 +269,29 @@ export function mountWorkspace(root) {
 
   function updateTaskUI() {
     const unresolved = Boolean(pendingAction);
+    const blocked = taskBusy || restoring;
     byId('demo-composer').setAttribute('aria-busy', String(taskBusy));
     byId('task-controls').hidden = !activeTask && byId('task-error').hidden;
     byId('task-confirm').hidden = activeTask?.state !== 'confirmation_required';
-    byId('task-confirm').disabled = taskBusy || unresolved;
+    byId('task-confirm').disabled = blocked || unresolved;
     byId('task-cancel').hidden = !activeTask?.taskId;
-    byId('task-cancel').disabled = taskBusy || unresolved;
+    byId('task-cancel').disabled = blocked || unresolved;
     byId('task-retry').hidden = taskBusy || !unresolved;
     byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
-    byId('demo-text').disabled = taskBusy || unresolved || activeTask?.state === 'confirmation_required';
-    byId('demo-send').disabled = byId('demo-text').disabled || (activeTask?.state === 'collecting' && !byId('demo-text').value.trim()) || !taskFiles.ready();
-    byId('demo-files').disabled = taskBusy || unresolved;
-    taskFiles.setDisabled(taskBusy || unresolved || activeTask?.state !== 'collecting');
+    byId('demo-text').disabled = blocked || unresolved || activeTask?.state === 'confirmation_required';
+    byId('demo-send').disabled = byId('demo-text').disabled || activeTask?.state !== 'collecting' || !byId('demo-text').value.trim() || !taskFiles.ready();
+    byId('demo-files').disabled = blocked || unresolved;
+    taskFiles.setDisabled(blocked || unresolved || activeTask?.state !== 'collecting');
     byId('close-conversation').disabled = true; // Ordinary requests are not connected.
     for (const button of root.querySelectorAll('[data-task-terminal]')) {
-      button.disabled = taskBusy || Boolean(activeTask);
+      button.disabled = blocked || Boolean(activeTask) || unresolved;
       button.setAttribute('aria-pressed', String(activeTask?.buttonId === button.dataset.taskTerminal));
     }
     byId('conversation-label').textContent = 'Технический WEB-чат';
-    byId('composer-hint').textContent = taskBusy ? 'Ожидаем ответ сервера…' : unresolved
+    byId('composer-hint').textContent = restoring ? 'Восстанавливаем чат и текущую задачу…' : taskBusy ? 'Ожидаем ответ сервера…' : unresolved
       ? 'Результат неизвестен. Повторите тот же запрос кнопкой слева.' : activeTask?.state === 'collecting'
         ? 'Отправьте одно текстовое описание задачи' : activeTask?.state === 'confirmation_required'
-          ? 'Подтвердите или отмените создание задачи' : 'Чат временный. Для создания задачи выберите кнопку меню.';
+          ? 'Подтвердите или отмените создание задачи' : 'Для создания задачи выберите кнопку меню.';
   }
   function clearTaskError() {
     byId('task-error').hidden = true;
@@ -176,6 +300,7 @@ export function mountWorkspace(root) {
   }
   async function runTaskAction(operation) {
     if (taskBusy) return;
+    invalidateSync();
     pendingAction = operation;
     taskBusy = true;
     clearTaskError();
@@ -187,13 +312,14 @@ export function mountWorkspace(root) {
     try {
       const result = await sendTaskAction(operation.path, operation.body, controller.signal);
       if (current !== generation) return;
+      if (!syncRunning) { syncRunning = true; restoring = true; }
       pendingAction = null;
       if (operation.kind === 'description' && result.state === 'ready') {
-        const sent = add('client', 'Вы', operation.body.text);
-        taskFiles.appendSent(sent);
+        const container = document.createElement('div');
+        taskFiles.appendSent(container);
+        sentPreview = { text: operation.body.text, container };
         byId('demo-text').value = '';
       }
-      add('bot', 'ES DESK+', result.text);
       if (['ready', 'cancelled'].includes(result.state)) {
         taskFiles.clear({ serverCleanup: true });
         activeTask = null;
@@ -211,6 +337,7 @@ export function mountWorkspace(root) {
         : 'Ответ сервера не получен. Повторите запрос: его ключ сохранён до обновления страницы.';
       byId('task-error').hidden = false;
       byId('task-error').dataset.status = String(error.status || 0);
+      if (error.status === 401) { restoring = true; stopSync(); }
       byId('task-feedback').textContent = uncertain ? 'Результат операции пока неизвестен' : '';
       if (!uncertain) {
         pendingAction = null;
@@ -226,17 +353,18 @@ export function mountWorkspace(root) {
         taskRequest = null;
         updateTaskUI();
         if (activeTask?.state === 'collecting' && !pendingAction) byId('demo-text').focus();
+        refreshWorkspace();
       }
     }
   }
   function beginTask(item) {
-    if (taskBusy || activeTask || pendingAction) return;
+    if (restoring || taskBusy || activeTask || pendingAction) return;
     activeTask = { buttonId: item.id, requestId: crypto.randomUUID(), taskId: null, state: 'selecting' };
     runTaskAction({ kind: 'select', path: 'select', body: { button_id: activeTask.buttonId, request_id: activeTask.requestId } });
   }
   byId('task-confirm').addEventListener('click', () => {
     if (activeTask?.state !== 'confirmation_required' || taskBusy || pendingAction) return;
-    runTaskAction({ kind: 'select', path: 'select', body: { button_id: activeTask.buttonId, request_id: activeTask.requestId, confirmed: true } });
+    runTaskAction({ kind: 'confirm', path: activeTask.taskId + '/confirm' });
   });
   byId('task-cancel').addEventListener('click', () => {
     if (!activeTask?.taskId || taskBusy || pendingAction) return;
@@ -245,18 +373,20 @@ export function mountWorkspace(root) {
   byId('task-retry').addEventListener('click', () => { if (pendingAction) runTaskAction(pendingAction); });
   byId('task-sign-in').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   function start() {
-    taskFiles.clear();
+    taskFiles.clear({ serverCleanup: sessionLocked });
     taskFiles.clearSent();
     activeTask = null;
     pendingAction = null;
     taskBusy = false;
+    restoring = true;
+    chatSignature = '';
+    sentPreview = null;
+    syncError = false;
     clearTaskError();
     byId('chat-messages').replaceChildren();
     byId('demo-text').value = '';
     byId('task-feedback').textContent = '';
     updateTaskUI();
-    add('system', 'ES DESK+', 'Временный WEB-чат · история не сохраняется после обновления');
-    add('bot', 'ES DESK+', 'Выберите обычную задачу в меню. После выбора отправьте одно описание.');
   }
   byId('new-conversation').addEventListener('click', () => {
     byId('composer-hint').textContent = activeTask ? 'Завершите или отмените создание текущей задачи' : 'Обычные заявки пока недоступны. Выберите кнопку задачи в меню.';
@@ -285,13 +415,9 @@ export function mountWorkspace(root) {
   byId('demo-composer').addEventListener('submit', event => {
     event.preventDefault();
     const text = byId('demo-text').value.trim();
-    if (!text || taskBusy || pendingAction || !taskFiles.ready() || activeTask?.state === 'confirmation_required') return;
+    if (!text || restoring || taskBusy || pendingAction || !taskFiles.ready() || activeTask?.state === 'confirmation_required') return;
     if (activeTask?.state === 'collecting') {
       runTaskAction({ kind: 'description', path: activeTask.taskId + '/description', body: { text, preload_ids: taskFiles.preloadIds() } });
-    } else if (!activeTask) {
-      add('client', 'Вы', text);
-      byId('demo-text').value = '';
-      byId('composer-hint').textContent = 'Сообщение осталось во временном чате и не отправлено сотруднику';
     }
   });
   byId('demo-files').addEventListener('click', () => {
@@ -577,7 +703,10 @@ export function mountWorkspace(root) {
   start();
   return {
     loadMenu,
+    lockSession,
+    isLocked: () => sessionLocked,
     reset() {
+      stopSync();
       generation++;
       taskRequest?.abort();
       taskRequest = null;
@@ -587,6 +716,8 @@ export function mountWorkspace(root) {
       menuStatus('Меню поддержки');
       clearHistory();
       start();
+      sessionDialog.close();
+      sessionLocked = false;
     },
   };
 }
