@@ -27,6 +27,7 @@ from ..models import (
     TicketWorkflowType,
     User,
 )
+from .ticket_numbering import ensure_ticket_number
 from .assignment import append_system_message, assign_ticket_by_admin, assign_ticket_to_agent, choose_online_agent
 
 INTERNAL_TASK_SYSTEM_CLIENT_NAME = "Система"
@@ -231,7 +232,7 @@ def materialize_internal_task(
             db.flush()
 
             db.add(ticket)
-            db.flush()
+            ensure_ticket_number(db, ticket)
             append_system_message(db, ticket, f"Внутренняя задача создана: {definition.title}", agent_visible=True)
             _append_initial_message(db, ticket, description, now=now)
 

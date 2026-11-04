@@ -66,7 +66,7 @@ def case(engine, monkeypatch):
                           ('telegram.task.created', 'Created {{ticket_id}}'),
                           ('telegram.intake.task_timeout', 'Expired after {{timeout_minutes}}'),
                           ('telegram.ticket.close.unassigned.client', 'Cancelled')]:
-            db.add(AutomaticMessageTemplate(id=key, key=key, body=body, is_overridden=True, html_enabled=False))
+            db.add(AutomaticMessageTemplate(id=str(uuid4()), key=key, body=body, is_overridden=True, html_enabled=False))
         db.commit()
     app = FastAPI()
     app.include_router(router)

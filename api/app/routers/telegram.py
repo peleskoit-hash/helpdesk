@@ -52,6 +52,7 @@ from ..services.assignment import resolve_forced_assignee
 from ..services.assignment import assign_ticket_to_forced_user
 from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
+from ..services.ticket_numbering import ensure_ticket_number
 from ..services.assignment import schedule_employee_assignment_notification
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.employee_telegram_notifications import schedule_new_message_notification
@@ -395,6 +396,7 @@ def _try_forced_assignment(db: Session, ticket: Ticket, button: ButtonSpec | Non
 
 def _ready_ticket_for_distribution(db: Session, ticket: Ticket, button: ButtonSpec | None = None) -> User | None:
     ticket.intake_state = TicketIntakeState.READY.value
+    ensure_ticket_number(db, ticket)
     apply_call_center_employee_snapshot_on_ticket_create(db, ticket)
 
     fixed_assignee = _apply_fixed_assignee_from_setting(db, ticket)
@@ -1306,7 +1308,7 @@ def _ensure_ticket_for_incoming(db: Session, company_id: str, client_id: str, me
         updated_at=datetime.utcnow(),
     )
     db.add(new_ticket)
-    db.flush()
+    ensure_ticket_number(db, new_ticket)
     apply_call_center_employee_snapshot_on_ticket_create(db, new_ticket)
     if assignee_id:
         sync_work_interval_after_assignment_change(db, new_ticket, old_assignee_id=None, new_assignee_id=assignee_id, now=new_ticket.created_at)
@@ -1921,6 +1923,7 @@ def _create_group_children_from_collecting(
     if existing_child_id is not None:
         return
 
+    ensure_ticket_number(db, parent)
     append_system_message(db, parent, "Созданы подзадачи групповой задачи")
     menu_name = _menu_name_for_ticket_client(db, parent)
 
@@ -1965,7 +1968,7 @@ def _create_group_children_from_collecting(
             updated_at=datetime.utcnow(),
         )
         db.add(child_ticket)
-        db.flush()
+        ensure_ticket_number(db, child_ticket)
         if child_ticket.assignee_id:
             sync_work_interval_after_assignment_change(db, child_ticket, old_assignee_id=None, new_assignee_id=child_ticket.assignee_id, now=child_ticket.created_at)
         _append_client_message(db, child_ticket, client_body or "(пустое сообщение)")

@@ -98,6 +98,23 @@ def ensure_background_contours_table() -> None:
         BackgroundContour.__table__.create(bind=conn, checkfirst=True)
 
 
+def ensure_ticket_number_counter() -> None:
+    """Explicit migration: preserve existing numbers and never reset an initialized counter."""
+    from ..models import TicketNumberCounter
+    from .ticket_numbering import TICKET_NUMBER_ALLOCATION_ADVISORY_LOCK_KEY
+
+    with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                         {"lock_key": TICKET_NUMBER_ALLOCATION_ADVISORY_LOCK_KEY})
+        TicketNumberCounter.__table__.create(bind=conn, checkfirst=True)
+        conn.execute(text("""
+            INSERT INTO ticket_number_counter (id, last_number)
+            SELECT 1, COALESCE(MAX(ticket_number), 0) FROM tickets WHERE 1 = 1
+            ON CONFLICT (id) DO NOTHING
+        """))
+
+
 def ensure_web_chat_messages_table() -> None:
     """Explicit migration only: intentionally not called by API startup."""
     from ..models import WebChatMessage

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
-from ..models import Ticket
+from ..models import Ticket, TicketNumberCounter
 
 
 TICKET_NUMBER_ALLOCATION_ADVISORY_LOCK_KEY = 5537870853908772136
@@ -29,7 +29,17 @@ def ensure_ticket_number(db: Session, ticket: Ticket) -> int:
     if ticket.ticket_number is not None:
         return ticket.ticket_number
     _lock_ticket_number_allocation(db)
-    max_number = db.execute(select(func.max(Ticket.ticket_number))).scalar_one() or 0
-    ticket.ticket_number = int(max_number) + 1
+    number = db.execute(
+        update(TicketNumberCounter)
+        .where(TicketNumberCounter.id == 1)
+        .values(last_number=TicketNumberCounter.last_number + 1)
+        .returning(TicketNumberCounter.last_number)
+    ).scalar_one_or_none()
+    if number is None:
+        # Bootstrap a metadata-created database once; the UPDATE above serializes SQLite writers.
+        max_number = db.execute(select(func.max(Ticket.ticket_number))).scalar_one() or 0
+        number = int(max_number) + 1
+        db.add(TicketNumberCounter(id=1, last_number=number))
+    ticket.ticket_number = number
     db.flush()
     return ticket.ticket_number

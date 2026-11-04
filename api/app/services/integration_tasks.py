@@ -8,6 +8,7 @@ from sqlalchemy import and_, desc, select, text
 from sqlalchemy.orm import Session
 
 from ..models import Client, Company, IntegrationLog, MessageType, Ticket, TicketIntakeState, TicketMessage, TicketStatus, TicketWorkflowType
+from .ticket_numbering import ensure_ticket_number
 from .assignment import append_system_message, assign_ticket_to_agent, choose_online_agent
 
 INTEGRATION_SOURCE_EXTERNAL_API = "external_api"
@@ -237,7 +238,7 @@ def _create_system_task(
         updated_at=datetime.utcnow(),
     )
     db.add(task)
-    db.flush()
+    ensure_ticket_number(db, task)
     append_system_message(db, task, f"Задача создана: {INTEGRATION_TASK_SUBJECT}")
     if assignee is not None:
         assign_ticket_to_agent(db, task, assignee, notify_client=False)

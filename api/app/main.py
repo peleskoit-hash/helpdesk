@@ -154,9 +154,9 @@ async def on_startup():
     last_error = None
     for _ in range(20):
         try:
-            # Technical chat schema is applied explicitly, never on API startup.
+            # Technical chat and persistent numbering schemas are applied explicitly.
             Base.metadata.create_all(bind=engine, tables=[
-                table for table in Base.metadata.sorted_tables if table.name != "web_chat_messages"
+                table for table in Base.metadata.sorted_tables if table.name not in {"web_chat_messages", "ticket_number_counter"}
             ])
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()

@@ -475,9 +475,10 @@ def list_tickets_paginated(
     internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
     profile_map = _client_profile_map(db, [ticket.client_id for ticket in tickets])
     for t in tickets:
-        if t.ticket_number is None:
+        ticket_number = t.ticket_number
+        if ticket_number is None and (t.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value and ensure_ticket_number_fn:
+            ticket_number = ensure_ticket_number_fn(db, t)
             has_new_numbers = True
-        ticket_number = ensure_ticket_number_fn(db, t) if ensure_ticket_number_fn else t.ticket_number
         last_reply_by, last_reply_at = last_reply_meta(db, t.id)
         seen = seen_by_agent(db, t.id, user)
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None
@@ -553,7 +554,7 @@ def list_special_tickets(
     internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
     profile_map = _client_profile_map(db, [ticket.client_id for ticket in tickets])
     for t in tickets:
-        if t.ticket_number is None:
+        if t.ticket_number is None and (t.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value:
             ensure_ticket_number_fn(db, t)
         last_reply_by, last_reply_at = last_reply_meta(db, t.id)
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None

@@ -148,7 +148,7 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
     ticket = db.execute(apply_group_parent_visibility_filter(stmt, user)).scalar_one_or_none()
     if not ticket:
         _error(404, "ticket_not_found", "Тикет не найден")
-    if ticket.ticket_number is None:
+    if ticket.ticket_number is None and (ticket.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value:
         ensure_ticket_number(db, ticket)
         db.commit()
     if is_support_user(user):
