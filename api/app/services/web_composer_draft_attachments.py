@@ -1,7 +1,7 @@
 """Client-owned file preparation independent of task intake and public numbering."""
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -9,9 +9,10 @@ from sqlalchemy import select
 from ..config import settings
 from ..models import TicketAttachmentPreload, WebClientDraft
 from . import telegram_upload_state as upload_state
-from .attachment_preload_owners import owned_draft_preload
+from .attachment_preload_owners import owned_draft_preload, owner_scope
 from .ticket_attachments import _ensure_local_attachment_file, _save_attachment_preload, _error
-from .telegram_outbound_delivery import _discard_preload, _safe_unlink
+from .telegram_outbound_delivery import (_discard_preload, _safe_unlink, claim_attachment_preload,
+    _actual_info_message_id, _pending_info_message_id)
 from .web_composer_draft import get_draft
 from .web_task_attachments import file_manifest
 
@@ -42,7 +43,12 @@ def create_preload(db, client, upload, upload_id):
         db.commit()
     else:
         try:
-            row = _save_attachment_preload(db, None, None, upload, archive_group_id=draft['id'],
+            current = db.scalar(select(TicketAttachmentPreload).where(
+                TicketAttachmentPreload.composer_draft_id == draft['id'], TicketAttachmentPreload.ticket_id.is_(None),
+                TicketAttachmentPreload.status != 'cancelled').order_by(
+                TicketAttachmentPreload.created_at, TicketAttachmentPreload.id).limit(1))
+            group_id = current.archive_group_id if current is not None else draft['id']
+            row = _save_attachment_preload(db, None, None, upload, archive_group_id=group_id,
                 preload_id=row_id, client_id=client.id, composer_draft_id=draft['id'])
         except OSError as exc:
             raise HTTPException(503, detail='Не удалось сохранить файл') from exc
@@ -84,6 +90,8 @@ def delete(db, client, preload_id):
     row = owned_draft_preload(db, preload_id, client.id)
     upload_state.lock_row(db, WebClientDraft, row.composer_draft_id)
     row = upload_state.lock_row(db, TicketAttachmentPreload, row.id)
+    # Transfer may have committed while this request waited for the draft lock.
+    owned_draft_preload(db, row.id, client.id)
     if row.final_attachment_id:
         _error(409, 'attachment_preload_already_claimed', 'Вложение уже связано с отправленным сообщением')
     _discard_preload(db, row, delete_row=True, unlink_local=True)
@@ -107,3 +115,53 @@ def content(db, client, preload_id):
     except Exception as exc:
         raise HTTPException(404, detail='Файл не найден') from exc
     return path, row.original_filename or 'file'
+
+
+def claim_description_preloads(db, client, ticket, preload_ids):
+    """Draft -> rows is the same lock order as create/delete. Validate the whole snapshot first."""
+    if not preload_ids:
+        return [], []
+    draft = db.scalar(select(WebClientDraft).where(WebClientDraft.client_id == client.id))
+    draft_rows = []
+    if draft is not None:
+        upload_state.lock_row(db, WebClientDraft, draft.id)
+        candidates = db.scalars(select(TicketAttachmentPreload).where(
+            TicketAttachmentPreload.composer_draft_id == draft.id,
+            TicketAttachmentPreload.ticket_id.is_(None), *owner_scope(client_id=client.id))
+            .order_by(TicketAttachmentPreload.created_at, TicketAttachmentPreload.id)).all()
+        draft_rows = [upload_state.lock_row(db, TicketAttachmentPreload, row.id) for row in candidates]
+    by_id = {row.id: row for row in draft_rows}
+    selected = []
+    for preload_id in preload_ids:
+        row = by_id.get(preload_id)
+        if row is None:
+            row = claim_attachment_preload(db, preload_id=preload_id, ticket_id=ticket.id, client_id=client.id)
+            if row is not None and row.composer_draft_id is not None:
+                _error(404, 'attachment_preload_not_found', 'Предзагруженный файл не найден')
+        if row is None or row.final_attachment_id:
+            _error(404, 'attachment_preload_not_found', 'Предзагруженный файл не найден')
+        if row.status != 'ready' or not (row.telegram_file_id or '').strip():
+            _error(409, 'attachment_preload_not_ready', 'Файл ещё не подготовлен')
+        selected.append(row)
+    sync_ids = {row.id for row in selected}
+    selected_ids = set(preload_ids)
+    for group_id in {row.archive_group_id for row in selected if row.composer_draft_id is not None}:
+        group = [row for row in draft_rows if row.archive_group_id == group_id and row.status != 'cancelled']
+        info_id = _actual_info_message_id(group)
+        if not info_id and _pending_info_message_id(group):
+            # Wait for the in-flight summary receipt rather than create a second summary.
+            _error(409, 'attachment_preload_not_ready', 'Подготовка сводки файлов ещё не завершена')
+        remaining_group = str(uuid4())
+        for row in group:
+            upload_state.patch(row, archive_reconcile_pending=True)
+            sync_ids.add(row.id)
+            if row.id in selected_ids:
+                row.ticket_id, row.composer_draft_id = ticket.id, None
+                row.telegram_staging_info_message_id = info_id
+            else:
+                # Rotate the batch identity too: in-flight staging must detect the split.
+                row.archive_group_id = remaining_group
+                row.telegram_staging_info_message_id = None
+    for row in selected:
+        upload_state.patch(row, archive_reconcile_pending=True)
+    return selected, sorted(sync_ids)

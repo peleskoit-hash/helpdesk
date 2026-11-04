@@ -19,7 +19,7 @@ from ..models import BotButtonSetting, Client, Ticket, TicketAttachmentPreload, 
 from ..routers import telegram
 from . import web_auth, web_chat, telegram_upload_state as upload_state
 from .attachment_preload_owners import client_collecting_ticket, owned_client_preload
-from .telegram_outbound_delivery import claim_attachment_preload, _discard_preload
+from .telegram_outbound_delivery import _discard_preload, synchronize_web_preload_archives
 from .ticket_attachments import _save_attachment_preload
 from .ticket_messages import _attachment_from_preload
 from .assignment import append_system_message
@@ -27,6 +27,7 @@ from .automatic_messages import get_automatic_message_row, render_automatic_mess
 from .statistics_lifecycle import sync_work_interval_after_close
 from .web_menu import read_client_menu
 from .web_task_attachments import attach_client_files, file_manifest
+from .web_composer_draft_attachments import claim_description_preloads
 
 STATE_KEY = 'web_task_intake'
 REQUEST_NAMESPACE = UUID('9f1eb726-545d-4f8d-8cbc-a20eb97113f1')
@@ -234,7 +235,11 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
         if (original != body or state(ticket).get('description_files', []) != files
                 or state(ticket).get('description_preload_ids', []) != preload_ids):
             fail(db, 'web_task_description_already_sent')
-        return response(db, ticket)
+        result = response(db, ticket)
+        sync_ids = state(ticket).get('description_archive_sync_ids', preload_ids)
+        db.commit()
+        synchronize_web_preload_archives(db, sync_ids)
+        return result
     if ticket.intake_state != 'collecting':
         response(db, ticket)  # Preserve the configured timeout response.
         fail(db, 'web_task_cancelled')
@@ -244,14 +249,7 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
         fail(db, 'web_task_confirmation_required', ticket=ticket, key='telegram.task.request_text')
     if not body:
         fail(db, 'web_task_description_required', 422, ticket, 'telegram.task.request_text')
-    preloads = []
-    for preload_id in preload_ids:
-        row = claim_attachment_preload(db, preload_id=preload_id, ticket_id=ticket.id, client_id=owner.id)
-        if row is None:
-            fail(db, 'attachment_preload_not_found', 404)
-        if row.status != 'ready' or not (row.telegram_file_id or '').strip():
-            fail(db, 'attachment_preload_not_ready')
-        preloads.append(row)
+    preloads, sync_ids = claim_description_preloads(db, owner, ticket, preload_ids)
     message = telegram._append_client_message(db, ticket, body)
     for row in preloads:
         attachment = _attachment_from_preload(db=db, ticket=ticket, message=message, preload=row, delivery_status='ready')
@@ -260,7 +258,8 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
         attachment.telegram_archive_info_message_id = row.telegram_staging_info_message_id
     if preload_ids:
         ticket.quick_action_state_json = {**ticket.quick_action_state_json,
-            STATE_KEY: {**state(ticket), 'description_preload_ids': preload_ids}}
+            STATE_KEY: {**state(ticket), 'description_preload_ids': preload_ids,
+                        'description_archive_sync_ids': sync_ids}}
     with attach_client_files(db, ticket, message, uploads):
         if files:
             ticket.quick_action_state_json = {**ticket.quick_action_state_json,
@@ -275,6 +274,7 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
     # Retain files if the commit outcome is uncertain: a retry checks persisted
     # intake state and fingerprints before it can save or archive anything again.
     db.commit()
+    synchronize_web_preload_archives(db, sync_ids)
     return result
 
 

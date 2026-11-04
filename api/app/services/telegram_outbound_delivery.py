@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, object_session
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Client, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType, User
+from ..models import Client, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketWorkflowType, User, WebClientDraft
 from .telegram_bot import TelegramApiError, delete_message, edit_message_text, send_document, send_document_by_file_id, send_message
 from .telegram_text_format import prepare_telegram_html_message, strip_telegram_html, telegram_html_code, telegram_html_link, telegram_html_text
 from .ticket_links import public_ticket_url
@@ -239,7 +239,11 @@ def _archive_info_text(
     lines.extend(f"• {telegram_html_code(filename)}" for filename in filenames)
     if event_label and event_at is not None:
         lines.append(f"{event_label}: {_format_project_dt(event_at)}")
-    lines.append(f"Статус: {status_text}")
+    created_web_task = (is_client and ticket is not None and ticket.channel == "web"
+        and ticket.workflow_type == TicketWorkflowType.TASK.value and ticket.task_kind == "normal"
+        and ticket.intake_state == "ready" and ticket.ticket_number is not None and public_ticket_url(ticket))
+    if not created_web_task:
+        lines.append(f"Статус: {status_text}")
     return "\n".join(lines)
 
 
@@ -572,6 +576,60 @@ def _send_staging_document_from_path(
 
 
 
+def _lock_web_preload_draft(db, preload):
+    if preload.client_id is not None:
+        draft = db.scalar(select(WebClientDraft).where(WebClientDraft.client_id == preload.client_id))
+        if draft is not None:
+            upload_state.lock_row(db, WebClientDraft, draft.id)
+            db.refresh(preload)
+
+
+def synchronize_web_preload_archives(db, preload_ids):
+    """Post-commit, retryable metadata reconciliation; never uploads binary data."""
+    seen = set()
+    for preload_id in preload_ids:
+        try:
+            db.commit()
+            row = db.get(TicketAttachmentPreload, preload_id)
+            if row is None or row.status == 'cancelled' or row.client_id is None:
+                continue
+            _ensure_group_archive_info_message(preload_id=row.id)
+            db.rollback()  # Discard snapshots taken before the archive coordination transaction.
+            row = db.get(TicketAttachmentPreload, preload_id)
+            if row is None:
+                continue
+            _lock_web_preload_draft(db, row)
+            if row.status == 'cancelled':
+                db.commit()
+                continue
+            key = _group_key_from_preload(row)
+            if key in seen:
+                db.commit()
+                continue
+            rows = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
+                user_id=row.user_id, client_id=row.client_id, archive_group_id=_archive_group_id(row)))
+            info_id = _actual_info_message_id(rows)
+            if not info_id:
+                db.commit()
+                continue  # A concurrent split requires a fresh coordination attempt.
+            ticket = db.get(Ticket, row.ticket_id) if row.ticket_id is not None else None
+            success = _best_effort_edit_group_archive_message(group_rows=rows, ticket=ticket,
+                user=archive_owner(db, row), status_text=_group_status_text(rows), force=True)
+            for member in rows:
+                member.telegram_staging_info_message_id = info_id
+                upload_state.patch(member, archive_reconcile_pending=not success)
+                if member.final_attachment_id:
+                    attachment = db.get(TicketAttachment, member.final_attachment_id)
+                    if attachment is not None:
+                        attachment.telegram_archive_info_message_id = info_id
+            db.commit()
+            seen.add(key)
+        except Exception as exc:
+            db.rollback()
+            # The original transfer committed with this marker; leave it retryable.
+            logger.warning('preload=%s archive reconciliation pending=%s', preload_id, type(exc).__name__)
+
+
 def _ensure_group_archive_info_message(*, preload_id: str) -> str:
     for _attempt in range(ARCHIVE_INFO_WAIT_ATTEMPTS):
         db = SessionLocal()
@@ -579,6 +637,9 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
             preload = db.get(TicketAttachmentPreload, preload_id)
             if preload is None:
                 return ""
+            _lock_web_preload_draft(db, preload)
+            if preload.status == 'cancelled':
+                return ''
             if not client_preload_allowed(db, preload):
                 raise RuntimeError('Client preload owner or collecting task is unavailable')
             _ensure_archive_group_id(db, preload)
@@ -651,6 +712,7 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
             db.close()
 
         if snapshot_rows:
+            sent_group_key = (ticket_id, user_id, client_id, archive_group_id)
             created_message_id = _send_preload_archive_info(
                 ticket=ticket,
                 user=user,
@@ -664,6 +726,11 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                 if preload is None:
                     _delete_archive_message_by_id(created_message_id)
                     return ""
+                _lock_web_preload_draft(finalize_db, preload)
+                if _group_key_from_preload(preload) != sent_group_key or preload.status == 'cancelled':
+                    finalize_db.rollback()
+                    _delete_archive_message_by_id(created_message_id)
+                    continue
                 _ensure_archive_group_id(finalize_db, preload)
                 ticket_id, user_id, client_id, archive_group_id = _group_key_from_preload(preload)
                 group_rows = _load_group_preloads(
@@ -693,6 +760,9 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                         _delete_archive_message_by_id(created_message_id)
                         continue
                     leader_row.telegram_staging_info_message_id = created_message_id
+                if preload.client_id is not None:
+                    for member in group_rows:
+                        member.telegram_staging_info_message_id = created_message_id
                 finalize_db.commit()
                 return created_message_id
             finally:
@@ -1323,7 +1393,9 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                     if ticket is not None and ticket.status == "closed":
                         cleanup_failed_attachment_preloads(db, ticket.id)
                         return
-                    if ticket is not None or row.composer_draft_id is not None:
+                    if row.client_id is not None:
+                        synchronize_web_preload_archives(db, [row.id])
+                    elif ticket is not None:
                         group = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
                             user_id=row.user_id, client_id=row.client_id, archive_group_id=_archive_group_id(row), for_update=False))
                         _best_effort_edit_group_archive_message(group_rows=group, ticket=ticket,
@@ -1366,8 +1438,12 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
 
         if not str(preload.telegram_staging_info_message_id or "").strip() or _is_pending_archive_message_id(preload.telegram_staging_info_message_id):
             try:
-                preload.telegram_staging_info_message_id = _ensure_group_archive_info_message(preload_id=preload.id)
-                db.commit()
+                info_id = _ensure_group_archive_info_message(preload_id=preload.id)
+                if preload.client_id is None:
+                    preload.telegram_staging_info_message_id = info_id
+                    db.commit()
+                else:
+                    db.rollback()  # Coordination may have raced with a draft batch split.
                 db.refresh(preload)
             except (RuntimeError, TelegramApiError) as exc:
                 db.rollback()
@@ -1458,7 +1534,9 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
             preload.status = "ready"
             finalize_db.commit()
             _release_prepared_source(preload, cleanup_path)
-            if ticket is not None or preload.composer_draft_id is not None:
+            if preload.client_id is not None:
+                synchronize_web_preload_archives(finalize_db, [preload.id])
+            elif ticket is not None:
                 group_rows = _archive_rows_for_display(
                     _load_group_preloads(
                         finalize_db,
