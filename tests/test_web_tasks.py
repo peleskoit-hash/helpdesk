@@ -153,7 +153,7 @@ def test_active_expires_once_through_existing_timeout_path(case):
     for _ in range(2):
         response = case.http.get(BASE + '/active')
         assert response.status_code == 200 and response.json() is None
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'),
         ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
     with Session(case.engine) as db:
         ticket = db.get(Ticket, selected['task_id'])
@@ -195,7 +195,7 @@ def test_create_description_ready_and_real_staff_notification(case):
     assert payload['state'] == 'collecting' and payload['text'] == 'Describe Task subject within 10'
     assert choose(case, request_id).json() == payload
     assert choose(case).status_code == 409
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'),
                               ('bot', 'Elite Sochi Support', payload['text'])]
     assert case.staff.call_count == 0
     created = description(case, payload['task_id'])
@@ -206,7 +206,7 @@ def test_create_description_ready_and_real_staff_notification(case):
     assert choose(case, request_id).json() == created.json()
     assert description(case, payload['task_id'], 'Different description').status_code == 409
     assert cancel(case, payload['task_id']).status_code == 409
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'), ('bot', 'Elite Sochi Support', payload['text']),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'), ('bot', 'Elite Sochi Support', payload['text']),
         ('client', 'Вы', 'One description'), ('bot', 'Elite Sochi Support', created.json()['text'])]
     with Session(case.engine) as db:
         ticket = db.get(Ticket, payload['task_id'])
@@ -224,6 +224,23 @@ def test_create_description_ready_and_real_staff_notification(case):
     assert case.staff.call_args.args[0] == 'staff-only'
 
 
+def test_selection_system_event_keeps_its_key_and_preserves_legacy_messages(case):
+    with Session(case.engine) as db:
+        db.add(WebChatMessage(client_id='client', message_type='client', author='Вы', text='Old selection',
+            created_at=case.clock[0] - timedelta(seconds=1), event_key='legacy-selection'))
+        db.get(BotButtonSetting, 'button').label_override = 'Проверка «Сети»'
+        db.commit()
+    request_id = uuid4()
+    selected = choose(case, request_id).json()
+    assert choose(case, request_id).json() == selected
+    with Session(case.engine) as db:
+        rows = db.scalars(select(WebChatMessage).order_by(WebChatMessage.id)).all()
+        assert len(rows) == 3
+        assert (rows[0].message_type, rows[0].author, rows[0].text) == ('client', 'Вы', 'Old selection')
+        assert (rows[1].message_type, rows[1].text, rows[1].event_key) == (
+            'system', 'Выбран пункт «Проверка «Сети»»', f"web-task:{selected['task_id']}:selected")
+
+
 def test_cancel_and_repeated_cancel_only_touch_web_draft(case):
     with Session(case.engine) as db:
         db.add(Ticket(id='telegram-draft', company_id='co', client_id='client', subject='Telegram', channel='telegram',
@@ -235,7 +252,7 @@ def test_cancel_and_repeated_cancel_only_touch_web_draft(case):
     assert cancel(case, selected['task_id']).status_code == 200
     assert choose(case, request_id).json()['state'] == 'cancelled'
     assert description(case, selected['task_id']).status_code == 409
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'),
         ('bot', 'Elite Sochi Support', selected['text']),
         ('client', 'Вы', 'Отменить создание задачи'), ('bot', 'Elite Sochi Support', 'Cancelled')]
     assert choose(case).json()['state'] == 'collecting'
@@ -269,7 +286,7 @@ def test_ten_minute_timeout_and_late_retries(case, background):
     assert expired.json()['detail']['error']['message'] == 'Expired after 10'
     assert choose(case, request_id).status_code == 410
     assert cancel(case, selected['task_id']).status_code == 410
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'),
         ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
     with Session(case.engine) as db:
         task = db.get(Ticket, selected['task_id'])
@@ -370,7 +387,7 @@ def test_confirmation_and_button_client_text_rules(case):
     confirmed = choose(case, request_id, confirmed=True)
     assert confirmed.json()['state'] == 'collecting' and confirmed.json()['text'] == 'Button description prompt'
     assert choose(case, request_id, confirmed=True).json() == confirmed.json()
-    assert chat_log(case) == [('client', 'Вы', 'Task subject'), ('bot', 'Elite Sochi Support', 'Confirm task'),
+    assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'), ('bot', 'Elite Sochi Support', 'Confirm task'),
         ('client', 'Вы', 'Подтвердить'), ('bot', 'Elite Sochi Support', 'Button description prompt')]
     assert description(case, selected['task_id']).json()['state'] == 'ready'
     assert len(chat_log(case)) == 6

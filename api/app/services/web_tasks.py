@@ -63,8 +63,8 @@ def deadline(ticket):
     return datetime.fromisoformat(state(ticket)['expires_at'])
 
 
-def chat_event(db, ticket, event, body, *, client=False):
-    web_chat.record_message(db, ticket.client_id, message_type='client' if client else 'bot',
+def chat_event(db, ticket, event, body, *, client=False, system=False):
+    web_chat.record_message(db, ticket.client_id, message_type='system' if system else 'client' if client else 'bot',
         author='Вы' if client else 'Elite Sochi Support', text=body, created_at=web_auth.utcnow(),
         event_key=f'web-task:{ticket.id}:{event}')
 
@@ -214,7 +214,7 @@ def select_task(db, owner, client, button_id, request_id, confirmed=False):
         'expires_at': (now + timedelta(minutes=telegram.TASK_DESCRIPTION_TIMEOUT_MINUTES)).isoformat()}}
     web_auth.register_web_activity(db, client)
     result = response(db, ticket)
-    chat_event(db, ticket, 'selected', button.label, client=True)
+    chat_event(db, ticket, 'selected', f'Выбран пункт «{button.label}»', system=True)
     chat_event(db, ticket, 'confirmation-requested' if confirmation else 'description-requested', result['text'])
     db.commit()
     return result

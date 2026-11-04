@@ -62,6 +62,8 @@ export function mountWorkspace(root) {
   let chatSignature = '';
   let sentPreview = null;
   let syncError = false;
+  let menuHidden = false;
+  let menuRestored = false;
   let records = [];
   let historyPage = 1;
   let selectedResult = null;
@@ -72,6 +74,12 @@ export function mountWorkspace(root) {
   function message(kind, text, createdAt) {
     const article = document.createElement('article');
     article.className = `chat-message ${kind}`;
+    if (kind === 'system') {
+      const body = document.createElement('p');
+      body.textContent = text;
+      article.append(body);
+      return article;
+    }
     const header = document.createElement('div');
     header.className = 'message-header';
     const name = document.createElement('strong');
@@ -160,6 +168,9 @@ export function mountWorkspace(root) {
       const items = await getWebChat(controller.signal);
       if (controller.signal.aborted || version !== syncVersion || current !== generation || !syncRunning) return;
       renderChat(items);
+      // This history contains TASK lifecycle events, even if its selection was evicted by the 50-message limit.
+      if (task || !menuRestored && items.length) menuHidden = true;
+      menuRestored = true;
       if (!pendingAction && activeTask?.taskId && activeTask.taskId !== task?.task_id) taskFiles.clear({ serverCleanup: true });
       activeTask = task ? { taskId: task.task_id, buttonId: task.button_id, state: task.state } : null;
       if (task?.state === 'collecting') taskFiles.setTask(task.task_id);
@@ -268,6 +279,8 @@ export function mountWorkspace(root) {
   }
 
   function updateTaskUI() {
+    byId('bot-buttons').hidden = menuHidden || !menuRestored;
+    byId('bot-hint').hidden = menuHidden;
     const unresolved = Boolean(pendingAction);
     const blocked = taskBusy || restoring;
     byId('demo-composer').setAttribute('aria-busy', String(taskBusy));
@@ -314,6 +327,7 @@ export function mountWorkspace(root) {
       if (current !== generation) return;
       if (!syncRunning) { syncRunning = true; restoring = true; }
       pendingAction = null;
+      if (operation.kind === 'select') menuHidden = true;
       if (operation.kind === 'description' && result.state === 'ready') {
         const container = document.createElement('div');
         taskFiles.appendSent(container);
@@ -382,6 +396,8 @@ export function mountWorkspace(root) {
     chatSignature = '';
     sentPreview = null;
     syncError = false;
+    menuHidden = false;
+    menuRestored = false;
     clearTaskError();
     byId('chat-messages').replaceChildren();
     byId('demo-text').value = '';
@@ -389,6 +405,10 @@ export function mountWorkspace(root) {
     updateTaskUI();
   }
   byId('new-conversation').addEventListener('click', () => {
+    if (!activeTask && !taskBusy && !pendingAction && !restoring) {
+      menuHidden = false;
+      updateTaskUI();
+    }
     byId('composer-hint').textContent = activeTask ? 'Завершите или отмените создание текущей задачи' : 'Обычные заявки пока недоступны. Выберите кнопку задачи в меню.';
   });
   // Same shortcuts as agent ticket_composer.js; preference stays local to this UI.

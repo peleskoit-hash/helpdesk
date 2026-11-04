@@ -181,7 +181,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     else result = { state: 'cancelled', text: 'Создание отменено (сервер)' };
     if (state.taskStatus === 200) {
       const event = url.pathname.endsWith('/select') ? body.request_id : url.pathname;
-      if (url.pathname.endsWith('/select')) chatEvent(event + ':client', 'client', 'Настройка');
+      if (url.pathname.endsWith('/select')) chatEvent(event + ':client', 'system', 'Выбран пункт «Настройка»');
       if (url.pathname.endsWith('/confirm')) chatEvent(event + ':client', 'client', 'Подтвердить');
       if (url.pathname.endsWith('/description')) chatEvent(event + ':client', 'client', body.text);
       if (url.pathname.endsWith('/cancel')) chatEvent(event + ':client', 'client', 'Отменить создание задачи');
@@ -249,6 +249,70 @@ async function pollWorkspace(page) {
   await response;
 }
 
+for (const [finish, width] of [['create', 1440], ['cancel', 390], ['timeout', 1440]]) {
+  test(`TASK selection: system separator, hidden navigation and restoration after ${finish}`, async t => {
+    const { page, state } = await pageFor(t, { width, colorScheme: width === 390 ? 'dark' : 'light' });
+    await page.clock.install();
+    state.menu = taskMenu;
+    await submit(page);
+    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
+    await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
+    await page.getByRole('button', { name: '⬅ Назад', exact: true }).click();
+    await page.getByRole('button', { name: '⬅ Назад', exact: true }).click();
+    assert.equal(state.chat.length, 0);
+    assert.equal(state.taskCalls.length, 0);
+    await openTask(page);
+    const separator = page.locator('#chat-messages article.system');
+    await separator.waitFor();
+    assert.equal(await separator.innerText(), 'Выбран пункт «Настройка»');
+    assert.equal(await separator.locator('.message-header, strong, span').count(), 0);
+    assert.deepEqual(await separator.evaluate(node => ({ align: getComputedStyle(node).alignSelf,
+      border: getComputedStyle(node).borderTopWidth, background: getComputedStyle(node).backgroundColor })),
+      { align: 'center', border: '0px', background: 'rgba(0, 0, 0, 0)' });
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    await page.locator('#new-conversation').click();
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    assert.equal(state.taskCalls.length, 1); // The active TASK handler must not cancel or replace it.
+    if (process.env.SCENARIO_SCREENSHOT && finish === 'create') await page.screenshot({ path: process.env.SCENARIO_SCREENSHOT });
+    if (finish === 'create') {
+      await page.locator('#task-confirm').click();
+      await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
+      await page.locator('#demo-text').fill('Описание задачи');
+      await page.locator('#demo-send').click();
+      await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+      assert.match(await page.locator('#chat-messages article.client').last().innerText(), /Описание задачи/);
+      assert.equal(await page.locator('#chat-messages article.client').last().evaluate(node => getComputedStyle(node).alignSelf), 'flex-end');
+    } else if (finish === 'cancel') {
+      await page.locator('#task-cancel').click();
+      await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
+    } else {
+      state.activeTask = null;
+      state.chat.push(chatRow(3, 'Timeout from background'));
+      await pollWorkspace(page);
+      await page.getByText('Timeout from background', { exact: true }).waitFor();
+    }
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    await page.locator('#new-conversation').click();
+    assert.equal(await page.locator('#bot-buttons').isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: '⬅ Назад', exact: true }).isVisible(), true);
+    await pollWorkspace(page);
+    assert.equal(await page.locator('#bot-buttons').isVisible(), true);
+    const history = await page.locator('#chat-messages').innerText();
+    state.me = 200;
+    await page.reload();
+    await separator.waitFor();
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    assert.equal(await page.locator('#chat-messages').innerText(), history);
+    await page.locator('#logout-button').click();
+    await waitLogin(page);
+    await submit(page);
+    await separator.waitFor();
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    assert.equal(await page.locator('#chat-messages').innerText(), history);
+  });
+}
+
 test('persistent chat: restore blocks actions, confirms by task ID, and survives reload and relog', async t => {
   const { page, state } = await pageFor(t);
   state.menu = taskMenu;
@@ -259,12 +323,11 @@ test('persistent chat: restore blocks actions, confirms by task ID, and survives
   await submit(page);
   await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
   assert.equal(await page.locator('#demo-text').isDisabled(), true);
-  await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
-  await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isDisabled(), true);
+  assert.equal(await page.locator('#bot-buttons').isHidden(), true);
   state.activeHold = null;
   release();
   await page.locator('#task-confirm:not(:disabled)').waitFor();
+  assert.equal(await page.locator('#bot-buttons').isHidden(), true);
   assert.deepEqual(await page.locator('#chat-messages strong').allTextContents(), ['Вы', 'Elite Sochi Support']);
   assert.equal(await page.locator('#chat-messages img').count(), 0);
   assert.doesNotMatch(await page.locator('#session-panel').innerText(), /история не сохраняется|Чат временный/);
@@ -350,7 +413,7 @@ test('persistent chat: a stale poll cannot overwrite a successful action or star
   await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
   release();
   await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length === 2);
-  assert.deepEqual(await page.locator('#chat-messages p').allTextContents(), ['Настройка', 'Опишите задачу (сервер)']);
+  assert.deepEqual(await page.locator('#chat-messages p').allTextContents(), ['Выбран пункт «Настройка»', 'Опишите задачу (сервер)']);
   assert.equal(await page.locator('#task-cancel').isVisible(), true);
 });
 
@@ -674,7 +737,7 @@ for (const confirmation of [false, true]) {
     await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
     assert.equal(state.taskCalls.length, 2);
     assert.equal(state.taskCalls[1].path, `/api/v1/web/tasks/${taskId}/cancel`);
-    assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isEnabled(), true);
+    assert.equal(await page.locator('#bot-buttons').isHidden(), true);
     assert.equal(await page.locator('#task-controls').isHidden(), true);
   });
 }
@@ -736,7 +799,7 @@ for (const [status, code] of [[401, 'web_unauthorized'], [403, 'web_csrf_failed'
       await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
     } else if (status === 410) {
       assert.equal(await page.locator('#task-cancel').isHidden(), true);
-      assert.equal(await page.getByRole('button', { name: 'Настройка', exact: true }).isEnabled(), true);
+      assert.equal(await page.locator('#bot-buttons').isHidden(), true);
     }
   });
 }
@@ -1724,7 +1787,7 @@ test('task files: unknown response locks files and retry preserves exact bytes',
   assert.deepEqual(posts[0].body, posts[1].body);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 1);
   assert.equal(await page.locator('#chat-messages .task-sent-file').count(), 2);
-  assert.equal(await page.locator('#chat-messages article.client').count(), 2);
+  assert.equal(await page.locator('#chat-messages article.client').count(), 1);
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await waitLogin(page);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
