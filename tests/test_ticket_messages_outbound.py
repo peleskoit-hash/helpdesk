@@ -420,6 +420,11 @@ def test_channel_file_archiving_reply_and_task_completion(monkeypatch, tmp_path,
     monkeypatch.setattr(tickets_router, "remove_inline_keyboard", lambda *args, **kwargs: calls.append(("keyboard", args[0])))
     monkeypatch.setattr(ticket_attachments, "send_document", send_document)
     monkeypatch.setattr(ticket_attachments, "send_document_by_file_id", send_file_id)
+    # WEB task completion restores the archived source after preload cleanup.
+    monkeypatch.setattr(ticket_attachments, "get_file", lambda *a, **kw:
+                        {"result": {"file_path": "synthetic-archive-file"}})
+    monkeypatch.setattr(ticket_attachments, "download_file", lambda remote, path, **kw:
+                        Path(path).write_bytes(b"original bytes"))
     if channel == "web":
         monkeypatch.setattr(tickets_router, "_telegram_contact_for_client", lambda *args:
                             pytest.fail("WEB must not look up the client's Telegram contact"))

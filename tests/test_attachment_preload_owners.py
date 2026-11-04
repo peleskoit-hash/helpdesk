@@ -215,6 +215,8 @@ def test_explicit_owner_migration_preserves_legacy_staff_data_and_is_idempotent(
         conn.execute(text('CREATE INDEX legacy_preload_status ON ticket_attachment_preloads(status)'))
     schema_evolution.ensure_ticket_attachment_preload_owners()
     schema_evolution.ensure_ticket_attachment_preload_owners()
+    # The current ORM also requires the separately applied draft extension.
+    schema_evolution.ensure_composer_draft_attachment_preloads()
     with Session(case.engine) as db:
         row = db.get(TicketAttachmentPreload, 'legacy')
         assert row.user_id == 'same' and row.client_id is None and row.local_path == 'old-path'

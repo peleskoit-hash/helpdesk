@@ -230,8 +230,11 @@ def retry_preload(db, row, confirm_uncertain=False, *, client_id=None):
         db.rollback()
         raise HTTPException(404, detail={"error": {"code": "attachment_preload_not_found", "message": "Предзагруженный файл не найден"}})
     if row.client_id is not None or client_id is not None:
-        from .attachment_preload_owners import owned_client_preload
-        owned_client_preload(db, row.id, row.ticket_id, client_id, allow_bound=True)
+        from .attachment_preload_owners import owned_client_preload, owned_draft_preload
+        if row.composer_draft_id is not None:
+            owned_draft_preload(db, row.id, client_id)
+        else:
+            owned_client_preload(db, row.id, row.ticket_id, client_id, allow_bound=True)
     refreshed = expire_attempt(db, row)
     row = lock_row(db, type(row), row.id) if refreshed is not None else None
     if row is None:
@@ -267,13 +270,14 @@ def retry_preload(db, row, confirm_uncertain=False, *, client_id=None):
 
 
 def source_references(db, path, excluded_ticket_ids=()):
-    from ..models import Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage
+    from ..models import TicketAttachment, TicketAttachmentPreload, TicketMessage
 
     attachments = db.scalars(select(TicketAttachment).join(TicketMessage, TicketAttachment.message_id == TicketMessage.id).where(
         TicketAttachment.local_path == path, TicketAttachment.ticket_id.not_in(excluded_ticket_ids),
         (TicketMessage.message_status.is_(None)) | (TicketMessage.message_status != "deleted"))).all()
-    preloads = db.scalars(select(TicketAttachmentPreload).join(Ticket, TicketAttachmentPreload.ticket_id == Ticket.id).where(
-        TicketAttachmentPreload.local_path == path, TicketAttachmentPreload.ticket_id.not_in(excluded_ticket_ids),
+    preloads = db.scalars(select(TicketAttachmentPreload).where(
+        TicketAttachmentPreload.local_path == path,
+        (TicketAttachmentPreload.ticket_id.is_(None)) | (TicketAttachmentPreload.ticket_id.not_in(excluded_ticket_ids)),
         TicketAttachmentPreload.status != "cancelled")).all()
     return [*attachments, *preloads]
 

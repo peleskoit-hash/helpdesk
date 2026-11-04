@@ -22,7 +22,6 @@ from .attachment_preload_owners import client_collecting_ticket, owned_client_pr
 from .telegram_outbound_delivery import claim_attachment_preload, _discard_preload
 from .ticket_attachments import _save_attachment_preload
 from .ticket_messages import _attachment_from_preload
-from .ticket_numbering import ensure_ticket_number
 from .assignment import append_system_message
 from .automatic_messages import get_automatic_message_row, render_automatic_message_text
 from .statistics_lifecycle import sync_work_interval_after_close
@@ -344,7 +343,6 @@ def create_preload(db, owner, task_id, upload, upload_id):
             fail(db, 'attachment_preload_deleted', 409)
         db.commit()
     else:
-        ensure_ticket_number(db, ticket)
         try:
             row = _save_attachment_preload(db, ticket, None, upload, archive_group_id=ticket.id,
                 preload_id=row_id, client_id=owner.id)

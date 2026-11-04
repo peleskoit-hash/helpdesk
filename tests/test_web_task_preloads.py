@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.app.config import settings
-from api.app.models import Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, WebClientSession
+from api.app.models import Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketNumberCounter, WebClientSession
 from api.app.routers import web_tasks as routes
 from api.app.routers.web_history import router as history_router
 from api.app.services import telegram_outbound_delivery as pipeline, telegram_upload_state as state
@@ -76,11 +76,14 @@ def test_create_status_and_stable_upload_id_do_not_rearchive_or_change_task(case
     assert again.json()['status'] == 'ready'
     calls, _, _ = preloads
     assert [kind for kind, _ in calls] == ['info', 'file']
-    assert 'Клиент: client' in calls[0][1] and 'Заявка №1' in calls[0][1]
+    assert 'Клиент: client' in calls[0][1] and 'WEB-черновик' in calls[0][1]
+    assert '№' not in calls[0][1] and '<a ' not in calls[0][1]
     with Session(case.engine) as db:
         row = db.get(TicketAttachmentPreload, row_id)
         assert row.client_id == 'client' and row.user_id is None
         assert db.get(Ticket, task).intake_state == 'collecting'
+        assert db.get(Ticket, task).ticket_number is None
+        assert not list(db.scalars(select(TicketNumberCounter)))
         assert len(list(db.scalars(select(Ticket.id)))) == 1
         assert not list(db.scalars(select(TicketAttachment.id)))
         assert not list(db.scalars(select(TicketMessage.id).where(TicketMessage.message_type == 'client')))

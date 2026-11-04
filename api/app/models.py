@@ -488,7 +488,8 @@ class TicketAttachmentPreload(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"))
+    ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"), nullable=True)
+    composer_draft_id: Mapped[str | None] = mapped_column(ForeignKey("web_client_drafts.id"), nullable=True)
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     client_id: Mapped[str | None] = mapped_column(ForeignKey("clients.id"), nullable=True)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)

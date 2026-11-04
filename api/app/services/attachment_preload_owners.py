@@ -2,7 +2,22 @@
 from fastapi import HTTPException
 from sqlalchemy import false, or_, select
 
-from ..models import Client, InternalTaskOccurrence, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, User
+from ..models import Client, InternalTaskOccurrence, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, User, WebClientDraft
+
+
+def client_draft(db, draft_id, client_id):
+    return db.scalar(select(WebClientDraft).where(WebClientDraft.id == draft_id,
+                                                WebClientDraft.client_id == client_id))
+
+
+def owned_draft_preload(db, preload_id, client_id):
+    row = db.scalar(select(TicketAttachmentPreload).join(WebClientDraft,
+        TicketAttachmentPreload.composer_draft_id == WebClientDraft.id).where(
+        TicketAttachmentPreload.id == str(preload_id), TicketAttachmentPreload.ticket_id.is_(None),
+        WebClientDraft.client_id == client_id, *owner_scope(client_id=client_id)))
+    if row is None:
+        raise HTTPException(404, detail='Предзагруженный файл не найден')
+    return row
 
 
 def owner_scope(*, user_id=None, client_id=None):
@@ -32,6 +47,8 @@ def owned_client_preload(db, preload_id, ticket_id, client_id, *, allow_bound=Fa
 def archive_owner(db, preload):
     if preload.client_id is not None and preload.user_id is None:
         client = db.get(Client, preload.client_id)
+        if preload.composer_draft_id is not None:
+            return client if preload.ticket_id is None and client_draft(db, preload.composer_draft_id, preload.client_id) is not None else None
         ticket = db.get(Ticket, preload.ticket_id)
         if client and ticket and ticket.client_id == client.id and ticket.company_id == client.company_id:
             return client
@@ -57,6 +74,9 @@ def client_bound_attachment(db, preload):
 
 
 def client_preload_allowed(db, preload):
+    if preload.composer_draft_id is not None:
+        return (preload.ticket_id is None and preload.user_id is None and preload.client_id is not None
+                and client_draft(db, preload.composer_draft_id, preload.client_id) is not None)
     # Completion may continue after intake accepted the already-bound initial message.
     return (preload.client_id is None or client_bound_attachment(db, preload) is not None
             or (preload.user_id is None and client_collecting_ticket(db, preload.ticket_id, preload.client_id) is not None))

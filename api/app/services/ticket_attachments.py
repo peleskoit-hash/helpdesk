@@ -117,24 +117,29 @@ def _stream_sha256(stream):
 
 def _save_attachment_preload(
     db: Session,
-    ticket: Ticket,
+    ticket: Ticket | None,
     user_id: str | None,
     upload: UploadFile,
     archive_group_id: str | None = None,
     preload_id: str | None = None,
     *,
     client_id: str | None = None,
+    composer_draft_id: str | None = None,
 ) -> TicketAttachmentPreload:
-    from .attachment_preload_owners import client_collecting_ticket
+    from .attachment_preload_owners import client_collecting_ticket, client_draft
 
     if ((user_id is None) == (client_id is None)
-            or (client_id is not None and client_collecting_ticket(db, ticket.id, client_id) is None)):
+            or (composer_draft_id is not None and (ticket is not None or user_id is not None
+                or client_draft(db, composer_draft_id, client_id) is None))
+            or (composer_draft_id is None and (ticket is None or
+                (client_id is not None and client_collecting_ticket(db, ticket.id, client_id) is None)))):
         _error(404, 'attachment_preload_not_found', 'Предзагруженный файл не найден')
     file_path, content_size, safe_filename, mime_type = _store_upload_file(upload)
     normalized_archive_group_id = archive_group_id.strip() if isinstance(archive_group_id, str) else None
     preload = TicketAttachmentPreload(
         id=preload_id or str(uuid.uuid4()),
-        ticket_id=ticket.id,
+        ticket_id=ticket.id if ticket is not None else None,
+        composer_draft_id=composer_draft_id,
         user_id=user_id,
         client_id=client_id,
         original_filename=safe_filename,

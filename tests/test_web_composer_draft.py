@@ -10,7 +10,7 @@ from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.app.models import (Client, ClientProfile, Company, TelegramContact, Ticket, TicketNumberCounter,
+from api.app.models import (Client, ClientProfile, Company, TelegramContact, Ticket, TicketAttachmentPreload, TicketNumberCounter,
                             WebClientDraft, WebClientSession)
 from api.app.routers.web_composer_draft import router
 from api.app.services import schema_evolution, web_auth, web_composer_draft
@@ -188,6 +188,8 @@ def test_explicit_migration_is_idempotent_and_preserves_other_tables(draft, monk
         db.add(TicketNumberCounter(id=1, last_number=99))
         db.commit()
     before = {column['name']: str(column['type']) for column in inspect(draft.engine).get_columns('tickets')}
+    # Simulate the schema before drafts existed, including their new dependent FK.
+    TicketAttachmentPreload.__table__.drop(draft.engine)
     WebClientDraft.__table__.drop(draft.engine)
     monkeypatch.setattr(schema_evolution, 'engine', draft.engine)
     schema_evolution.ensure_web_client_drafts_table()

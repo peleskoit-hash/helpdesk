@@ -2085,6 +2085,59 @@ def ensure_ticket_attachment_preload_owners() -> None:
         conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_ticket_attachment_preloads_ticket_client ON {table}(ticket_id, client_id)'))
 
 
+def ensure_composer_draft_attachment_preloads() -> None:
+    """Explicit upgrade only. Never invoked by API startup; preserves existing rows."""
+    import re
+    from ..models import TicketAttachmentPreload
+
+    table = 'ticket_attachment_preloads'
+    with engine.begin() as conn:
+        sqlite = conn.dialect.name == 'sqlite'
+        if sqlite:
+            conn.exec_driver_sql('BEGIN IMMEDIATE')
+        if not inspect(conn).has_table(table):
+            TicketAttachmentPreload.__table__.create(conn)
+            return
+        columns = {column['name']: column for column in inspect(conn).get_columns(table)}
+        if 'composer_draft_id' not in columns:
+            conn.execute(text(f'ALTER TABLE {table} ADD COLUMN composer_draft_id VARCHAR(36) REFERENCES web_client_drafts(id)'))
+        draft_fk = any(fk['constrained_columns'] == ['composer_draft_id'] and fk['referred_table'] == 'web_client_drafts'
+                       and fk['referred_columns'] == ['id'] for fk in inspect(conn).get_foreign_keys(table))
+        if sqlite and (not columns['ticket_id']['nullable'] or not draft_fk):
+            if any(fk['referred_table'] == table for name in inspect(conn).get_table_names() if name != table
+                   for fk in inspect(conn).get_foreign_keys(name)):
+                raise RuntimeError('Draft preload migration requires review of dependent foreign keys')
+            ddl = conn.scalar(text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"), {'name': table})
+            if not columns['ticket_id']['nullable']:
+                ddl, changed = re.subn(r'(?i)((?:^|[,(])\s*(?:"ticket_id"|`ticket_id`|\[ticket_id\]|ticket_id)\s+'
+                    r'(?:VARCHAR|CHAR|TEXT)(?:\s*\(\s*\d+\s*\))?\s+)NOT\s+NULL\b', r'\1', ddl, count=1)
+                if changed != 1:
+                    raise RuntimeError('Unsupported preload ticket_id declaration; migration was rolled back')
+            if not draft_fk:
+                end = ddl.rfind(')')
+                ddl = ddl[:end] + ', FOREIGN KEY(composer_draft_id) REFERENCES web_client_drafts(id)' + ddl[end:]
+            ddl, changed = re.subn(r'(?i)^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"ticket_attachment_preloads"|'
+                r'`ticket_attachment_preloads`|\[ticket_attachment_preloads\]|ticket_attachment_preloads)',
+                'CREATE TABLE ticket_attachment_preloads_draft_upgrade', ddl, count=1)
+            if changed != 1:
+                raise RuntimeError('Unsupported preload table declaration')
+            extras = conn.scalars(text("SELECT sql FROM sqlite_master WHERE tbl_name=:name "
+                "AND type IN ('index', 'trigger') AND sql IS NOT NULL"), {'name': table}).all()
+            names = [column['name'] for column in inspect(conn).get_columns(table)]
+            quoted = ', '.join(conn.dialect.identifier_preparer.quote(name) for name in names)
+            conn.execute(text(ddl))
+            conn.execute(text(f'INSERT INTO ticket_attachment_preloads_draft_upgrade ({quoted}) SELECT {quoted} FROM {table}'))
+            conn.execute(text(f'DROP TABLE {table}'))
+            conn.execute(text(f'ALTER TABLE ticket_attachment_preloads_draft_upgrade RENAME TO {table}'))
+            for statement in extras:
+                conn.execute(text(statement))
+        elif not sqlite:
+            conn.execute(text(f'ALTER TABLE {table} ALTER COLUMN ticket_id DROP NOT NULL'))
+            if not draft_fk:
+                conn.execute(text(f'ALTER TABLE {table} ADD CONSTRAINT fk_attachment_preload_composer_draft '
+                                  'FOREIGN KEY(composer_draft_id) REFERENCES web_client_drafts(id)'))
+
+
 def ensure_quick_reply_tables() -> None:
     with engine.begin() as conn:
         dialect = conn.dialect.name
