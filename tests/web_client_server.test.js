@@ -297,22 +297,27 @@ test('initial task multipart upload forwards original bytes and only the WEB coo
   assert.equal(received.headers.authorization, undefined);
 });
 
-test('WEB task upload resources use matching versions in direct and module entrypoints', async t => {
+test('WEB resource versions match the direct page, updated workspace and unchanged dependencies', async t => {
   const { readFile } = require('node:fs/promises');
   const version = '20261102-web-preloads-v1';
-  const smokeVersion = '20261102-web-preloads-v1';
+  const workspaceVersion = '20261104-web-task-close-v1';
   const index = await readFile('web-client/index.html', 'utf8');
-  assert.ok(index.includes('/app.js?v=' + smokeVersion) && index.includes('/workspace.css?v=' + version));
+  assert.ok(index.includes('/app.js?v=' + workspaceVersion) && index.includes('/workspace.css?v=' + version));
   const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js'] };
   for (const [file, imports] of Object.entries(expected)) {
     const source = await readFile('web-client/' + file, 'utf8');
     for (const dependency of imports) {
-      const expectedVersion = ['workspace.js', 'task-files.js'].includes(dependency) ? smokeVersion : version;
+      const expectedVersion = dependency === 'workspace.js' ? workspaceVersion : version;
       assert.ok(source.includes(`./${dependency}?v=${expectedVersion}`), file + ': ' + dependency);
     }
   }
   const port = await listen(t, createDevServer());
-  assert.equal((await request(port, '/task-files.js?v=' + smokeVersion)).status, 200);
+  for (const file of ['app.js', 'workspace.js']) {
+    const response = await request(port, '/' + file + '?v=' + workspaceVersion);
+    assert.equal(response.status, 200);
+    assert.equal(response.body, await readFile('web-client/' + file, 'utf8'));
+  }
+  assert.equal((await request(port, '/task-files.js?v=' + version)).status, 200);
   assert.ok((await readFile('web-client/Dockerfile', 'utf8')).includes('task-files.js'));
   assert.ok((await readFile('web-client/.dockerignore', 'utf8')).includes('!task-files.js'));
 });

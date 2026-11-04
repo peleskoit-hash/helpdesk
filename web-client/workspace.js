@@ -306,7 +306,7 @@ export function mountWorkspace(root) {
     byId('task-controls').hidden = !activeTask && byId('task-error').hidden;
     byId('task-confirm').hidden = activeTask?.state !== 'confirmation_required';
     byId('task-confirm').disabled = blocked || unresolved;
-    byId('task-cancel').hidden = !activeTask?.taskId;
+    byId('task-cancel').hidden = true;
     byId('task-cancel').disabled = blocked || unresolved;
     byId('task-retry').hidden = taskBusy || !unresolved;
     byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
@@ -314,7 +314,7 @@ export function mountWorkspace(root) {
     byId('demo-send').disabled = byId('demo-text').disabled || activeTask?.state !== 'collecting' || !byId('demo-text').value.trim() || !taskFiles.ready();
     byId('demo-files').disabled = blocked || unresolved;
     taskFiles.setDisabled(blocked || unresolved || activeTask?.state !== 'collecting');
-    byId('close-conversation').disabled = true; // Ordinary requests are not connected.
+    byId('close-conversation').disabled = blocked || unresolved || !activeTask?.taskId;
     for (const button of root.querySelectorAll('[data-task-terminal]')) {
       button.disabled = blocked || Boolean(activeTask) || unresolved;
       button.setAttribute('aria-pressed', String(activeTask?.buttonId === button.dataset.taskTerminal));
@@ -395,7 +395,7 @@ export function mountWorkspace(root) {
     if (activeTask?.state !== 'confirmation_required' || taskBusy || pendingAction) return;
     runTaskAction({ kind: 'confirm', path: activeTask.taskId + '/confirm' });
   });
-  byId('task-cancel').addEventListener('click', () => {
+  byId('close-conversation').addEventListener('click', () => {
     if (!activeTask?.taskId || taskBusy || pendingAction) return;
     runTaskAction({ kind: 'cancel', path: activeTask.taskId + '/cancel' });
   });

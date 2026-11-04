@@ -543,7 +543,7 @@ for (const [finish, width] of [['create', 1440], ['cancel', 390], ['timeout', 14
       assert.match(await page.locator('#chat-messages article.client').last().innerText(), /Описание задачи/);
       assert.equal(await page.locator('#chat-messages article.client').last().evaluate(node => getComputedStyle(node).alignSelf), 'flex-end');
     } else if (finish === 'cancel') {
-      await page.locator('#task-cancel').click();
+      await page.locator('#close-conversation').click();
       await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
     } else {
       state.activeTask = null;
@@ -600,12 +600,13 @@ test('persistent chat: restore blocks actions, confirms by task ID, and survives
   await page.reload();
   await page.locator('#demo-text:not(:disabled)').waitFor();
   assert.equal(await page.locator('#task-confirm').isHidden(), true);
-  assert.equal(await page.locator('#task-cancel').isVisible(), true);
+  assert.equal(await page.locator('#close-conversation').isEnabled(), true);
+  assert.equal(await page.locator('#task-cancel').isHidden(), true);
   const before = await page.locator('#chat-messages').innerText();
   await page.locator('#logout-button').click();
   await waitLogin(page);
   await submit(page);
-  await page.locator('#task-cancel').waitFor({ state: 'visible' });
+  await page.locator('#close-conversation:not(:disabled)').waitFor();
   assert.equal(await page.locator('#chat-messages').innerText(), before);
   assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
 });
@@ -675,7 +676,8 @@ test('persistent chat: a stale poll cannot overwrite a successful action or star
   release();
   await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length === 2);
   assert.deepEqual(await page.locator('#chat-messages p').allTextContents(), ['Выбран пункт «Настройка»', 'Опишите задачу (сервер)']);
-  assert.equal(await page.locator('#task-cancel').isVisible(), true);
+  assert.equal(await page.locator('#close-conversation').isEnabled(), true);
+  assert.equal(await page.locator('#task-cancel').isHidden(), true);
 });
 
 test('persistent chat: initial read failure blocks actions until polling restores the server state', async t => {
@@ -806,7 +808,7 @@ for (const [width, height] of [[1440, 1000], [1024, 600], [390, 700], [667, 320]
     await page.reload();
     await page.locator('#scenario-status').getByText('Ожидаем описание задачи', { exact: true }).waitFor();
     await stable();
-    await page.locator('#task-cancel').click();
+    await page.locator('#close-conversation').click();
     await page.locator('#scenario-status').getByText('Нажмите „Новое обращение“', { exact: true }).waitFor();
     await stable();
     await page.locator('#new-conversation').click();
@@ -1069,15 +1071,49 @@ for (const confirmation of [false, true]) {
     state.taskConfirmation = confirmation;
     await submit(page);
     await openTask(page);
-    await page.locator('#task-cancel').waitFor({ state: 'visible' });
-    await page.locator('#task-cancel').evaluate(button => { button.click(); button.click(); });
+    await page.locator('#close-conversation:not(:disabled)').waitFor();
+    assert.equal(await page.locator('#task-cancel').isHidden(), true);
+    state.me = 200;
+    await page.reload();
+    await page.locator('#close-conversation:not(:disabled)').waitFor();
+    assert.equal(await page.locator('#task-confirm').isVisible(), confirmation);
+    let release;
+    state.taskHold = new Promise(resolve => { release = resolve; });
+    t.after(() => release());
+    const request = page.waitForRequest(`**/tasks/${taskId}/cancel`);
+    await page.locator('#close-conversation').evaluate(button => { button.click(); button.click(); });
+    await request;
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
+    assert.equal(state.taskCalls.length, 2);
+    state.taskHold = null;
+    release();
     await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
     assert.equal(state.taskCalls.length, 2);
     assert.equal(state.taskCalls[1].path, `/api/v1/web/tasks/${taskId}/cancel`);
     assert.equal(await page.locator('#bot-buttons').isHidden(), true);
     assert.equal(await page.locator('#task-controls').isHidden(), true);
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
   });
 }
+
+test('WEB task: close preserves an intake after a known cancellation error', async t => {
+  const { page, state } = await pageFor(t);
+  state.menu = taskMenu;
+  state.taskConfirmation = false;
+  await submit(page);
+  await openTask(page);
+  await page.locator('#close-conversation:not(:disabled)').waitFor();
+  state.taskStatus = 400;
+  await page.locator('#close-conversation').click();
+  await page.locator('#task-error').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#close-conversation').isEnabled(), true);
+  assert.equal(await page.locator('#task-cancel').isHidden(), true);
+  state.taskStatus = 200;
+  await page.locator('#close-conversation').click();
+  await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
+  assert.equal(state.taskCalls.filter(call => call.path.endsWith('/cancel')).length, 2);
+  assert.equal(await page.locator('#close-conversation').isDisabled(), true);
+});
 
 for (const operation of ['select', 'description', 'cancel']) {
   test(`WEB task: lost ${operation} response retries the exact same operation`, async t => {
@@ -1093,10 +1129,11 @@ for (const operation of ['select', 'description', 'cancel']) {
       if (operation === 'description') {
         await page.locator('#demo-text').fill('Описание для повтора');
         await page.locator('#demo-send').click();
-      } else await page.locator('#task-cancel').click();
+      } else await page.locator('#close-conversation').click();
     }
     await page.locator('#task-retry').waitFor({ state: 'visible' });
     const first = structuredClone(state.taskCalls.at(-1));
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
     assert.equal(await page.locator('#demo-text').isDisabled(), true);
     state.taskNetwork = false;
     await page.locator('#task-retry').evaluate(button => { button.click(); button.click(); });
@@ -1370,7 +1407,7 @@ for (const action of ['cancel', 'timeout']) {
     await page.getByRole('button', { name: 'Synthetic menu', exact: true }).click();
     await page.locator('#task-confirm').waitFor({ state: 'visible' });
     if (action === 'cancel') {
-      await page.locator('#task-cancel').click();
+      await page.locator('#close-conversation').click();
       await page.getByText('Synthetic task cancelled', { exact: true }).waitFor();
     } else {
       await page.locator('#task-confirm').click();
@@ -2273,7 +2310,7 @@ test('task files: known rollback keeps selection editable; cancel frees preview'
   await page.getByRole('button', { name: 'Удалить файл: notes.txt', exact: true }).click();
   assert.equal(await page.locator('.task-selected-file').count(), 1);
   state.taskStatus = 200;
-  await page.locator('#task-cancel').click();
+  await page.locator('#close-conversation').click();
   await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
   assert.equal(await page.locator('#task-selected-files').isVisible(), false);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
@@ -2460,7 +2497,7 @@ test('task preloads: cancel clears loading rows and URLs without creating anothe
   state.preloadStatus = 'uploading';
   await page.locator('#task-file-input').setInputFiles(uploadImage());
   await page.locator('.task-file-progress').waitFor();
-  await page.locator('#task-cancel').click();
+  await page.locator('#close-conversation').click();
   await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
   assert.equal(await page.locator('#task-selected-files').isHidden(), true);
   assert.equal(await page.locator('.task-file-progress').count(), 0);
