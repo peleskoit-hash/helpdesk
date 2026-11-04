@@ -69,7 +69,7 @@ export async function getWebMenu(signal) {
 }
 
 // Use only WEB-session endpoints, including for binary downloads. Never follow a supplied URL.
-async function requestWebHistory(path, signal, method = 'GET', file = false) {
+async function requestWebHistory(path, signal, method = 'GET', file = false, body) {
   requireWebSession();
   const controller = new AbortController();
   sessionRequests.add(controller);
@@ -81,6 +81,7 @@ async function requestWebHistory(path, signal, method = 'GET', file = false) {
     const response = await fetch('/api/v1/web' + path, {
       method, signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
       cache: 'no-store', redirect: 'error',
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     });
     checkWebSession(response, controller.signal);
     if (!response.ok) throw new TaskError(response.status, 'Не удалось загрузить результат заявки.');
@@ -187,3 +188,14 @@ export async function deleteTaskPreload(taskId, id, signal) {
   const result = await taskRequest(preloadPath(taskId, id), 'DELETE', undefined, signal);
   if (result?.ok !== true) throw new TaskError(502, 'Не удалось подтвердить удаление файла.');
 }
+
+async function composerDraft(method, body, signal) {
+  const result = await requestWebHistory('/composer-draft', signal, method, false, body);
+  if (!uuid.test(result?.id) || typeof result.text !== 'string' || [...result.text].length > 10000
+      || !Number.isSafeInteger(result.version) || result.version < 0) {
+    throw new TaskError(502, 'Не удалось проверить черновик.');
+  }
+  return result;
+}
+export const getComposerDraft = signal => composerDraft('GET', undefined, signal);
+export const putComposerDraft = (text, version, signal) => composerDraft('PUT', { text, version }, signal);

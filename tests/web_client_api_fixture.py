@@ -15,7 +15,8 @@ from api.app.auth import hash_password
 from api.app.config import settings
 from api.app.db import Base, get_db
 from api.app.models import (AutomaticMessageTemplate, BotButtonSetting, Client, ClientProfile, Company,
-                            TelegramContact, Ticket, TicketMessage, TicketAttachment, TicketAttachmentPreload, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile, WebChatMessage)
+                            TelegramContact, Ticket, TicketMessage, TicketAttachment, TicketAttachmentPreload, WebClientSession, WebLoginLimit, WebTaskResult, WebTaskResultFile, WebChatMessage, WebClientDraft)
+from api.app.routers.web_composer_draft import router as composer_draft_router
 from api.app.routers.web_auth import router
 from api.app.routers.web_menu import router as menu_router
 from api.app.routers.web_tasks import router as task_router
@@ -101,6 +102,7 @@ def run():
             db.add(AutomaticMessageTemplate(id=key, key=key, body=body, is_overridden=True))
         db.commit()
     app = FastAPI()
+    app.include_router(composer_draft_router)
     app.mount('/static', StaticFiles(directory='api/app/static'), name='static')
     app.add_middleware(SessionMiddleware, secret_key="synthetic-test-only", session_cookie="esdesk_session")
     app.include_router(router)
@@ -127,6 +129,7 @@ def run():
 
     @app.post("/__test__/reset")
     def reset(db=Depends(get_db)):
+        db.execute(delete(WebClientDraft))
         db.execute(delete(WebChatMessage))
         db.execute(delete(WebTaskResultFile))
         db.execute(delete(WebTaskResult))
@@ -180,6 +183,7 @@ def run():
     @app.get("/__test__/state")
     def state(db=Depends(get_db)):
         return {"requests": requests, "app_public_base_url": settings.app_public_base_url,
+                "drafts": [{"id": row.id, "text": row.text, "version": row.version} for row in db.scalars(select(WebClientDraft))],
                 'tasks': [{'id': row.id, 'channel': row.channel, 'intake_state': row.intake_state,
                            'workflow_type': row.workflow_type} for row in db.scalars(select(Ticket))],
                 'client_messages': [row.body for row in db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client'))],

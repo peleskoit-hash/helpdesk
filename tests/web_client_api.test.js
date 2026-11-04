@@ -60,7 +60,7 @@ test('API-client 401 stops active requests and blocks further WEB calls until a 
   });
   await assert.rejects(api.getActiveWebTask(signal()), error => error.status === 401);
   assert.equal(calls[0].signal.aborted, true);
-  for (const action of [() => api.getWebChat(signal()), () => api.getWebMenu(signal()),
+  for (const action of [() => api.getComposerDraft(signal()), () => api.putComposerDraft('', 0, signal()), () => api.getWebChat(signal()), () => api.getWebMenu(signal()),
     () => api.deleteTaskPreload(task, id, signal()), () => api.sendTaskAction(task + '/cancel', undefined, signal()),
     () => api.webAuth.logout()]) await assert.rejects(action(), error => error.status === 401);
   assert.equal(calls.length, 1);
@@ -137,4 +137,26 @@ test('API-client preloads: caller abort cancels the active request', async t => 
   const pending = api.getTaskPreload(task, id, controller.signal);
   controller.abort();
   await assert.rejects(pending, error => error.name === 'AbortError');
+});
+
+test('API-client composer draft: exact text, expected version, same-session PUT and validation', async t => {
+  api.resumeWebRequests();
+  const calls = [];
+  let value = { id, text: '  Text\n ', version: 4 };
+  t.mock.method(global, 'fetch', async (url, options) => { calls.push({ url, ...options }); return response(value); });
+  assert.deepEqual(await api.getComposerDraft(signal()), value);
+  assert.deepEqual(await api.putComposerDraft(value.text, 3, signal()), value);
+  assert.deepEqual(calls.map(call => [call.url, call.method]), [
+    ['/api/v1/web/composer-draft', 'GET'], ['/api/v1/web/composer-draft', 'PUT'],
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].body), { text: value.text, version: 3 });
+  assert.equal(calls[1].headers['Content-Type'], 'application/json');
+  assert.equal(calls[1].credentials, 'same-origin');
+  assert.equal(calls[1].cache, 'no-store');
+  for (value of [{ id: 'bad', text: '', version: 0 }, { id, text: null, version: 0 },
+                 { id, text: '', version: -1 }, { id, text: '', version: 1.5 }]) {
+    await assert.rejects(api.getComposerDraft(signal()), error => error.status === 502);
+  }
+  t.mock.method(global, 'fetch', async () => new Response('{}', { status: 409 }));
+  await assert.rejects(api.putComposerDraft('Keep', 2, signal()), error => error.status === 409);
 });

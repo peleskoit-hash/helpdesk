@@ -1,5 +1,5 @@
-import { AuthError, webAuth } from './api.js?v=20261102-web-preloads-v1';
-import { mountWorkspace } from './workspace.js?v=20261104-web-task-close-v1';
+import { AuthError, webAuth } from './api.js?v=20261104-web-composer-draft-v1';
+import { mountWorkspace } from './workspace.js?v=20261104-web-composer-draft-v1';
 import { setupAppearance } from './appearance.js';
 
 const workspace = mountWorkspace(document.getElementById('session-panel'));
@@ -15,13 +15,13 @@ let busy = false;
 let retryUntil = 0;
 let retryTimer;
 
-function showPanel(name, focus = true) {
+function showPanel(name, focus = true, clientId) {
   if (name !== 'session') {
     if (!document.getElementById('session-panel').hidden) workspace.reset();
     for (const dialog of document.querySelectorAll('#session-panel dialog[open]')) dialog.close();
   }
   for (const panel of document.querySelectorAll('.card')) panel.hidden = panel.id !== `${name}-panel`;
-  if (name === 'session') workspace.loadMenu();
+  if (name === 'session') workspace.loadMenu(clientId);
   if (focus) byId(`${name}-panel`).querySelector('h1')?.focus();
 }
 
@@ -68,8 +68,8 @@ async function checkSession() {
     clearForm();
   }
   try {
-    await webAuth.me();
-    showPanel('session');
+    const client = await webAuth.me();
+    showPanel('session', true, client.client_id);
   } catch (error) {
     if (inWorkspace && error instanceof AuthError && error.status === 401) workspace.lockSession();
     else showPanel(error instanceof AuthError && error.status === 401 ? 'login' : 'unavailable');
@@ -99,11 +99,11 @@ form.addEventListener('submit', async event => {
   try {
     const pending = webAuth.login(login.value.trim(), password.value);
     password.value = '';
-    await pending;
+    const client = await pending;
     clearForm();
     retryUntil = 0;
     message('logout-error');
-    showPanel('session');
+    showPanel('session', true, client.client_id);
   } catch (error) {
     message('login-error', loginError(error));
     if (error instanceof AuthError && [401, 429].includes(error.status)) retryUntil = error.retryUntil;

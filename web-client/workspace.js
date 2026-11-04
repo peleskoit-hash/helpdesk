@@ -1,7 +1,8 @@
 // Technical chat and ordinary task intake are restored from the WEB API.
-import { getWebMenu, getWebChat, getActiveWebTask, stopWebRequests, resumeWebRequests, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261102-web-preloads-v1';
-import { renderHistoryFile } from './history-media.js?v=20261102-web-preloads-v1';
-import { createTaskFiles } from './task-files.js?v=20261102-web-preloads-v1';
+import { getWebMenu, getWebChat, getActiveWebTask, stopWebRequests, resumeWebRequests, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261104-web-composer-draft-v1';
+import { renderHistoryFile } from './history-media.js?v=20261104-web-composer-draft-v1';
+import { createComposerDraft } from './composer-draft.js?v=20261104-web-composer-draft-v1';
+import { createTaskFiles } from './task-files.js?v=20261104-web-composer-draft-v1';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
@@ -30,7 +31,7 @@ export function mountWorkspace(root) {
       </header>
       <div id="chat-messages" class="chat-messages" role="log" aria-label="Сообщения" aria-live="polite"></div>
       <form id="demo-composer" class="demo-composer">
-        <div class="composer-editor"><label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="2000" placeholder="Напишите сообщение…"></textarea></div>
+        <div class="composer-editor"><label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="10000" placeholder="Напишите сообщение…"></textarea></div>
         <input id="task-file-input" type="file" multiple hidden aria-label="Файлы первоначального описания задачи">
         <div id="task-selected-files" hidden></div><p id="task-file-error" role="alert" hidden></p>
         <div class="composer-actions"><div class="composer-options"><label class="composer-enter-toggle" for="sendByEnterCheckbox"><input id="sendByEnterCheckbox" type="checkbox"><span>Отправка по Ctrl+Enter</span></label><span id="sendHotkeyHint" class="composer-hotkey-hint">Новая строка Enter</span></div><div class="composer-file-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><button type="submit" id="demo-send" class="primary">Отправить <span aria-hidden="true">↑</span></button></div></div>
@@ -72,6 +73,8 @@ export function mountWorkspace(root) {
   let listRequest;
   let detailRequest;
   const downloads = new Set();
+  let currentClientId = null;
+  const composer = createComposerDraft(byId('demo-text'), updateTaskUI);
 
   function message(kind, text, createdAt) {
     const article = document.createElement('article');
@@ -136,6 +139,7 @@ export function mountWorkspace(root) {
   function lockSession() {
     if (sessionLocked || root.hidden) return;
     sessionLocked = true;
+    composer.stop();
     generation++;
     restoring = true;
     stopWebRequests();
@@ -247,9 +251,11 @@ export function mountWorkspace(root) {
     updateTaskUI();
     if (moveFocus) container.querySelector('button:not(:disabled)')?.focus();
   }
-  async function loadMenu() {
+  async function loadMenu(clientId) {
     if (sessionLocked) return;
     resumeWebRequests();
+    if (typeof clientId === 'string') currentClientId = clientId;
+    if (currentClientId) composer.start(currentClientId);
     if (!syncRunning) {
       syncRunning = true;
       restoring = true;
@@ -310,8 +316,8 @@ export function mountWorkspace(root) {
     byId('task-cancel').disabled = blocked || unresolved;
     byId('task-retry').hidden = taskBusy || !unresolved;
     byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
-    byId('demo-text').disabled = blocked || unresolved || activeTask?.state === 'confirmation_required';
-    byId('demo-send').disabled = byId('demo-text').disabled || activeTask?.state !== 'collecting' || !byId('demo-text').value.trim() || !taskFiles.ready();
+    byId('demo-text').disabled = sessionLocked || !currentClientId;
+    byId('demo-send').disabled = blocked || unresolved || byId('demo-text').disabled || activeTask?.state !== 'collecting' || !byId('demo-text').value.trim() || !taskFiles.ready();
     byId('demo-files').disabled = blocked || unresolved;
     taskFiles.setDisabled(blocked || unresolved || activeTask?.state !== 'collecting');
     byId('close-conversation').disabled = blocked || unresolved || !activeTask?.taskId;
@@ -332,6 +338,7 @@ export function mountWorkspace(root) {
   }
   async function runTaskAction(operation) {
     if (taskBusy) return;
+    if (operation.kind === 'description' && !operation.composer) operation.composer = composer.snapshot();
     invalidateSync();
     pendingAction = operation;
     taskBusy = true;
@@ -350,7 +357,7 @@ export function mountWorkspace(root) {
         const container = document.createElement('div');
         taskFiles.appendSent(container);
         sentPreview = { text: operation.body.text, container };
-        byId('demo-text').value = '';
+        composer.sent(operation.composer);
       }
       if (['ready', 'cancelled'].includes(result.state)) {
         taskFiles.clear({ serverCleanup: true });
@@ -415,7 +422,6 @@ export function mountWorkspace(root) {
     menuRestored = false;
     clearTaskError();
     byId('chat-messages').replaceChildren();
-    byId('demo-text').value = '';
     updateTaskUI();
   }
   byId('new-conversation').addEventListener('click', () => {
@@ -745,6 +751,8 @@ export function mountWorkspace(root) {
     lockSession,
     isLocked: () => sessionLocked,
     reset() {
+      composer.stop(true);
+      currentClientId = null;
       stopSync();
       generation++;
       taskRequest?.abort();

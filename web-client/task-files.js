@@ -1,4 +1,4 @@
-import { createTaskPreload, getTaskPreload, retryTaskPreload, deleteTaskPreload } from './api.js?v=20261102-web-preloads-v1';
+import { createTaskPreload, getTaskPreload, retryTaskPreload, deleteTaskPreload } from './api.js?v=20261104-web-composer-draft-v1';
 
 // One selection owns one stable upload ID; the server owns archiving and cleanup.
 export function createTaskFiles(input, list, error, onChange = () => {}) {

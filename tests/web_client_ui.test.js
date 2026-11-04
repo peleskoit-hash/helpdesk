@@ -267,6 +267,276 @@ for (const colorScheme of ['light', 'dark']) {
   });
 }
 
+async function draftSaved(page) {
+  await page.waitForFunction(() => document.querySelector('#demo-text').dataset.draftState === 'saved');
+}
+const serverDraft = state => state.drafts.get(state.clientId);
+const localDrafts = page => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('esdesk.composer.')).map(key => JSON.parse(localStorage.getItem(key))));
+
+test('composer draft: exact input before scenario, reload and relog', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  await draftSaved(page);
+  const text = '  Draft before a scenario\n\n  Second line  ';
+  await page.locator('#demo-text').fill(text);
+  await draftSaved(page);
+  assert.equal(serverDraft(state).text, text);
+  assert.equal(state.taskCalls.length, 0);
+  assert.equal(await page.locator('#demo-send').isDisabled(), true);
+  state.me = 200;
+  await page.reload();
+  await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), text);
+  await page.locator('#logout-button').click();
+  await waitLogin(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), '');
+  await submit(page);
+  await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), text);
+  await page.locator('#demo-text').fill('');
+  await draftSaved(page);
+  assert.equal(serverDraft(state).text, '');
+});
+
+for (const finish of ['cancel', 'timeout']) {
+  test(`composer draft: ${finish} preserves the universal text`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu; state.taskConfirmation = false;
+    await submit(page);
+    await draftSaved(page);
+    await page.locator('#demo-text').fill('Keep across ' + finish);
+    await draftSaved(page);
+    await openTask(page);
+    await page.locator('#close-conversation:not(:disabled)').waitFor();
+    if (finish === 'cancel') await page.locator('#close-conversation').click();
+    else {
+      state.activeTask = null;
+      await page.clock.install();
+      await pollWorkspace(page);
+    }
+    await page.waitForFunction(() => document.querySelector('#close-conversation').disabled);
+    assert.equal(await page.locator('#demo-text').inputValue(), 'Keep across ' + finish);
+    assert.equal(await page.locator('#demo-text').isEnabled(), true);
+    assert.equal(serverDraft(state).text, 'Keep across ' + finish);
+  });
+}
+
+test('composer draft: delayed initial GET never replaces early input', async t => {
+  const { page, state } = await pageFor(t);
+  let release;
+  state.draftGetHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  state.drafts.set(state.clientId, { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', text: 'Old server snapshot', version: 3 });
+  await submit(page);
+  await page.locator('#demo-text').fill('Typed while GET waits');
+  assert.equal((await localDrafts(page))[0].text, 'Typed while GET waits');
+  state.draftGetHold = null; release();
+  await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Typed while GET waits');
+  assert.equal(serverDraft(state).text, 'Typed while GET waits');
+  assert.equal(serverDraft(state).version, 4);
+});
+
+test('composer draft: sequential PUTs retain input during a delayed response', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  let release;
+  state.draftPutHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const request = page.waitForRequest(request => request.url().endsWith('/composer-draft') && request.method() === 'PUT');
+  await page.locator('#demo-text').fill('First value');
+  await request;
+  await page.locator('#demo-text').fill('Newer value');
+  await page.waitForTimeout(650);
+  assert.equal(state.draftCalls.filter(call => call.method === 'PUT').length, 1);
+  state.draftPutHold = null; release();
+  await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Newer value');
+  assert.equal(serverDraft(state).text, 'Newer value');
+  assert.deepEqual(state.draftCalls.filter(call => call.method === 'PUT').map(call => call.body.version), [0, 1]);
+});
+
+test('composer draft: 409 preserves local text and the next edit uses the refreshed version', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  let release;
+  state.draftPutHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const request = page.waitForRequest(request => request.url().endsWith('/composer-draft') && request.method() === 'PUT');
+  await page.locator('#demo-text').fill('Old attempt'); await request;
+  await page.locator('#demo-text').fill('Latest unsynchronized input');
+  state.drafts.set(state.clientId, { ...serverDraft(state), text: 'Other tab', version: 5 });
+  state.draftPutHold = null; release();
+  await page.waitForFunction(() => document.querySelector('#demo-text').dataset.draftState === 'conflict');
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Latest unsynchronized input');
+  assert.equal(serverDraft(state).text, 'Other tab');
+  assert.equal((await localDrafts(page))[0].text, 'Latest unsynchronized input');
+  await page.locator('#demo-text').fill('Explicit newer edit'); await draftSaved(page);
+  assert.equal(serverDraft(state).text, 'Explicit newer edit');
+  assert.equal(state.draftCalls.filter(call => call.method === 'PUT').at(-1).body.version, 5);
+});
+
+test('composer draft: offline backup survives reload, relog and account switching', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  state.draftNetwork = true;
+  await page.locator('#demo-text').fill('Private offline owner input');
+  const backup = (await localDrafts(page))[0];
+  assert.equal(backup.clientId, state.clientId);
+  assert.equal(backup.draftId, serverDraft(state).id);
+  state.me = 200;
+  await page.reload();
+  await page.locator('#demo-text').waitFor();
+  await page.waitForFunction(() => document.querySelector('#demo-text').value === 'Private offline owner input');
+  await page.locator('#logout-button').click(); await waitLogin(page);
+  state.clientId = 'peer-client'; state.draftNetwork = false;
+  await submit(page); await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), '');
+  await page.locator('#demo-text').fill('Peer private text'); await draftSaved(page);
+  await page.locator('#logout-button').click(); await waitLogin(page);
+  state.clientId = 'synthetic-client';
+  await submit(page); await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Private offline owner input');
+  assert.equal(serverDraft(state).text, 'Private offline owner input');
+  assert.equal((await localDrafts(page)).length, 0);
+});
+
+test('composer draft: a lost committed PUT response is reconciled without another PUT', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  state.draftLostReply = true;
+  await page.locator('#demo-text').fill('Committed without reply');
+  await draftSaved(page);
+  assert.equal(serverDraft(state).text, 'Committed without reply');
+  assert.equal(state.draftCalls.filter(call => call.method === 'PUT').length, 1);
+});
+
+for (const later of [false, true]) {
+  test(`composer draft: successful send clears only the sent input, later edit ${later}`, async t => {
+    const { page, state } = await pageFor(t);
+    state.menu = taskMenu; state.taskConfirmation = false;
+    await submit(page); await draftSaved(page); await openTask(page);
+    await page.locator('#close-conversation:not(:disabled)').waitFor();
+    await page.locator('#demo-text').fill('  Sent text  '); await draftSaved(page);
+    let release;
+    state.taskHold = new Promise(resolve => { release = resolve; });
+    t.after(() => release());
+    await page.locator('#demo-send').click();
+    assert.equal(await page.locator('#demo-text').isEnabled(), true);
+    if (later) await page.locator('#demo-text').fill('Later edits');
+    state.taskHold = null; release();
+    await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+    await draftSaved(page);
+    assert.equal(await page.locator('#demo-text').inputValue(), later ? 'Later edits' : '');
+    assert.equal(serverDraft(state).text, later ? 'Later edits' : '');
+    assert.equal(state.taskCalls.find(call => call.path.endsWith('/description')).body.text, 'Sent text');
+  });
+}
+
+test('composer draft: uncertain TASK delivery retains input and retry cannot clear later edits', async t => {
+  const { page, state } = await pageFor(t);
+  state.menu = taskMenu; state.taskConfirmation = false;
+  await submit(page); await draftSaved(page); await openTask(page);
+  await page.locator('#close-conversation:not(:disabled)').waitFor();
+  await page.locator('#demo-text').fill('Original send'); await draftSaved(page);
+  state.taskNetwork = true;
+  await page.locator('#demo-send').click();
+  await page.locator('#task-retry').waitFor();
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Original send');
+  await page.locator('#demo-text').fill('Continue after the error'); await draftSaved(page);
+  state.taskNetwork = false;
+  await page.locator('#task-retry').click();
+  await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Continue after the error');
+  assert.equal(serverDraft(state).text, 'Continue after the error');
+});
+
+test('composer draft: successful TASK send does not clear another tab update', async t => {
+  const { page, context, state } = await pageFor(t);
+  state.menu = taskMenu; state.taskConfirmation = false;
+  await submit(page); await draftSaved(page); await openTask(page);
+  await page.locator('#close-conversation:not(:disabled)').waitFor();
+  await page.locator('#demo-text').fill('Sent in first tab'); await draftSaved(page);
+  let release;
+  state.taskHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  await page.locator('#demo-send').click();
+  const other = await context.newPage();
+  await other.route('**/api/v1/web/auth/me', route => route.fulfill({ json: { client_id: state.clientId } }));
+  await other.route('**/api/v1/web/menu', route => route.fulfill({ json: { rows: [] } }));
+  await other.route('**/api/v1/web/tasks/active', route => route.fulfill({ json: null }));
+  await other.route('**/api/v1/web/chat', route => route.fulfill({ json: { items: [] } }));
+  await other.route('**/api/v1/web/composer-draft', state.handleDraft);
+  await other.goto(origin); await draftSaved(other);
+  await other.locator('#demo-text').fill('Fresh text in second tab'); await draftSaved(other);
+  state.taskHold = null; release();
+  await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+  await draftSaved(page);
+  assert.equal(serverDraft(state).text, 'Fresh text in second tab');
+  assert.equal(await other.locator('#demo-text').inputValue(), 'Fresh text in second tab');
+});
+
+test('composer draft: BFCache pause retains input before session restoration finishes', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.locator('#demo-text').fill('Typed while resuming');
+  assert.equal((await localDrafts(page))[0].text, 'Typed while resuming');
+  state.me = 200;
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Typed while resuming');
+  assert.equal(serverDraft(state).text, 'Typed while resuming');
+});
+
+test('composer draft: backup works without the secure-context randomUUID API', async t => {
+  const { page, state } = await pageFor(t);
+  await page.addInitScript(() => Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined }));
+  state.me = 200;
+  await page.reload(); await draftSaved(page);
+  await page.locator('#demo-text').fill('HTTP-compatible draft backup');
+  assert.equal((await localDrafts(page))[0].text, 'HTTP-compatible draft backup');
+  await draftSaved(page);
+  assert.equal(serverDraft(state).text, 'HTTP-compatible draft backup');
+});
+
+test('composer draft: 401 locks the session and stops saves without deleting the backup', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page); await draftSaved(page);
+  state.draftStatus = 401;
+  await page.locator('#demo-text').fill('Keep after 401');
+  await page.locator('#session-ended-dialog').waitFor();
+  assert.equal(await page.locator('#demo-text').inputValue(), 'Keep after 401');
+  const count = state.draftCalls.length;
+  await page.clock.install(); await page.clock.fastForward(10000);
+  assert.equal(state.draftCalls.length, count);
+  assert.equal((await localDrafts(page))[0].text, 'Keep after 401');
+  await page.locator('#session-ended-dialog button').click(); await waitLogin(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), '');
+  assert.equal(state.logoutCount, 0);
+});
+
+test('composer draft: real authenticated API through proxy survives reload and relog without a Ticket', async t => {
+  await control('reset'); await control('origin', { origin });
+  const { page } = await pageFor(t, { mocked: false });
+  await submit(page); await draftSaved(page);
+  const text = '  Real persisted draft\n  Second line  ';
+  await page.locator('#demo-text').fill(text); await draftSaved(page);
+  let server = await control('state');
+  assert.equal(server.drafts.length, 1);
+  assert.equal(server.drafts[0].text, text);
+  assert.equal(server.tasks.length, 0);
+  const id = server.drafts[0].id;
+  await page.reload(); await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), text);
+  await page.locator('#logout-button').click(); await waitLogin(page);
+  await submit(page); await draftSaved(page);
+  assert.equal(await page.locator('#demo-text').inputValue(), text);
+  server = await control('state');
+  assert.equal(server.drafts[0].id, id);
+  assert.equal(server.tasks.length, 0);
+});
+
 async function openTask(page) {
   await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
   await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
@@ -338,7 +608,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const state = { me: 401, login: 200, logout: 204, retry: null, network: false, hold: null, loginCount: 0, logoutCount: 0, menuStatus: 200, menu: menuExample, menuHold: null, menuCount: 0, taskCalls: [], taskConfirmation: true, taskHold: null, taskNetwork: false, taskStatus: 200, taskError: { error: { code: 'test_error', message: 'Ошибка API' } }, preloadCalls: [], preloadRows: new Map(), preloadStatus: 'ready', preloadCreateHold: null, preloadStatusHold: null, preloadNetwork: false, preloadHttpStatus: 200, preloadUncertain: false };
+  const state = { clientId: 'synthetic-client', me: 401, login: 200, logout: 204, retry: null, network: false, hold: null, loginCount: 0, logoutCount: 0, menuStatus: 200, menu: menuExample, menuHold: null, menuCount: 0, taskCalls: [], taskConfirmation: true, taskHold: null, taskNetwork: false, taskStatus: 200, taskError: { error: { code: 'test_error', message: 'Ошибка API' } }, preloadCalls: [], preloadRows: new Map(), preloadStatus: 'ready', preloadCreateHold: null, preloadStatusHold: null, preloadNetwork: false, preloadHttpStatus: 200, preloadUncertain: false };
   Object.assign(state, { chat: [], activeTask: null, chatCount: 0, activeCount: 0, syncStatus: 200, chatHold: null, activeHold: null });
   const events = new Set();
   function chatEvent(key, message_type, text) {
@@ -359,9 +629,33 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     const status = state[kind];
     const headers = state.retry ? { 'Retry-After': state.retry } : {};
     await route.fulfill({ status, headers, contentType: 'application/json', body: status === 204 ? ''
-      : JSON.stringify(status === 200 ? { client_id: 'synthetic-client' }
+      : JSON.stringify(status === 200 ? { client_id: state.clientId }
         : { detail: 'INTERNAL TRACEBACK AND SERVER SECRET MUST NEVER APPEAR' }) });
   });
+  state.drafts = new Map();
+  state.draftCalls = [];
+  state.handleDraft = async route => {
+    const method = route.request().method();
+    const owner = state.clientId;
+    if (!state.drafts.has(owner)) state.drafts.set(owner, {
+      id: owner === 'synthetic-client' ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' : 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', text: '', version: 0,
+    });
+    const body = method === 'PUT' ? route.request().postDataJSON() : undefined;
+    state.draftCalls.push({ method, body });
+    const snapshot = structuredClone(state.drafts.get(owner));
+    if (method === 'GET' && state.draftGetHold) await state.draftGetHold;
+    if (method === 'PUT' && state.draftPutHold) await state.draftPutHold;
+    if (state.draftNetwork) return route.abort('failed');
+    if (state.draftStatus) return route.fulfill({ status: state.draftStatus, json: {} });
+    if (method === 'GET') return route.fulfill({ json: snapshot });
+    const current = state.drafts.get(owner);
+    if (body.version !== current.version) return route.fulfill({ status: 409, json: {} });
+    const saved = { ...current, text: body.text, version: current.version + 1 };
+    state.drafts.set(owner, saved);
+    if (state.draftLostReply) { state.draftLostReply = false; return route.abort('failed'); }
+    return route.fulfill({ json: saved });
+  };
+  if (mocked) await page.route('**/api/v1/web/composer-draft', state.handleDraft);
   if (mocked) await page.route('**/api/v1/web/menu', async route => {
     state.menuCount++;
     if (state.menuHold) await state.menuHold;
@@ -583,7 +877,7 @@ test('persistent chat: restore blocks actions, confirms by task ID, and survives
   state.activeHold = new Promise(resolve => { release = resolve; });
   await submit(page);
   await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
-  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  assert.equal(await page.locator('#demo-text').isDisabled(), false);
   assert.equal(await page.locator('#bot-buttons').isHidden(), true);
   state.activeHold = null;
   release();
@@ -608,7 +902,7 @@ test('persistent chat: restore blocks actions, confirms by task ID, and survives
   await submit(page);
   await page.locator('#close-conversation:not(:disabled)').waitFor();
   assert.equal(await page.locator('#chat-messages').innerText(), before);
-  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+  assert.deepEqual(await page.evaluate(() => ({ local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('esdesk.composer.'))), session: { ...sessionStorage } })), { local: {}, session: {} });
 });
 
 test('persistent chat: one poll, stable nodes and scrolling, 50-row eviction, timeout and session stop', async t => {
@@ -687,7 +981,7 @@ test('persistent chat: initial read failure blocks actions until polling restore
   state.syncStatus = 503;
   await submit(page);
   await page.locator('#task-error').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  assert.equal(await page.locator('#demo-text').isDisabled(), false);
   state.syncStatus = 200;
   state.activeTask = activeIntake('confirmation_required');
   await pollWorkspace(page);
@@ -912,8 +1206,10 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.locator('#bot-buttons button').count(), 3);
     assert.equal(await page.locator('.bot-panel').evaluate(el => el.classList.contains('waiting')), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    assert.equal(requests.length, 1);
-    assert.ok(requests[0].includes('/api/v1/web/history?page=1'));
+    const scenarioRequests = requests.filter(url => !url.includes('/api/v1/web/composer-draft'));
+    assert.equal(scenarioRequests.length, 1);
+    assert.ok(scenarioRequests[0].includes('/api/v1/web/history?page=1'));
+    assert.equal(await page.locator('#demo-text').inputValue(), 'Не запускается рабочая программа');
   });
 }
 
@@ -965,7 +1261,7 @@ for (const sendByEnter of [false, true]) {
     await input.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(await messages.locator('article').count(), closed);
     assert.equal(requests.filter(url => url.endsWith('/description')).length, 1);
-    assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+    assert.deepEqual(await page.evaluate(() => ({ local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('esdesk.composer.'))), session: { ...sessionStorage } })), { local: {}, session: {} });
   });
 }
 
@@ -1027,7 +1323,7 @@ test(`WEB task: confirmation, one description via Enter, READY and persisted cha
   state.taskHold = null;
   release();
   await page.locator('#task-confirm').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  assert.equal(await page.locator('#demo-text').isDisabled(), false);
   assert.equal(await page.locator('#scenario-status').innerText(), 'Ожидаем подтверждение');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `task-confirm-${width}-${colorScheme}.png`), fullPage: true });
@@ -1045,7 +1341,7 @@ test(`WEB task: confirmation, one description via Enter, READY and persisted cha
   state.taskHold = new Promise(resolve => { release = resolve; });
   await page.locator('#demo-text').press('Enter');
   await page.locator('#demo-composer').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
-  assert.equal(await page.locator('#demo-text').isDisabled(), true);
+  assert.equal(await page.locator('#demo-text').isDisabled(), false);
   state.taskHold = null;
   release();
   await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
@@ -1060,7 +1356,7 @@ test(`WEB task: confirmation, one description via Enter, READY and persisted cha
   assert.equal(await page.locator('#demo-send').isDisabled(), true);
   assert.equal(state.taskCalls.length, 3);
   assert.equal(await page.getByText('Это пример ответа поддержки.', { exact: false }).count(), 0);
-  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+  assert.deepEqual(await page.evaluate(() => ({ local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('esdesk.composer.'))), session: { ...sessionStorage } })), { local: {}, session: {} });
 });
 }
 
@@ -1134,7 +1430,7 @@ for (const operation of ['select', 'description', 'cancel']) {
     await page.locator('#task-retry').waitFor({ state: 'visible' });
     const first = structuredClone(state.taskCalls.at(-1));
     assert.equal(await page.locator('#close-conversation').isDisabled(), true);
-    assert.equal(await page.locator('#demo-text').isDisabled(), true);
+    assert.equal(await page.locator('#demo-text').isDisabled(), false);
     state.taskNetwork = false;
     await page.locator('#task-retry').evaluate(button => { button.click(); button.click(); });
     await page.getByText(operation === 'select' ? 'Опишите задачу (сервер)' : operation === 'description' ? 'Задача создана (сервер)' : 'Создание отменено (сервер)', { exact: true }).waitFor();
@@ -1395,7 +1691,7 @@ test('real task API through proxy: lost committed select, confirmation, descript
   await page.locator('#demo-text').fill('Unsent note');
   assert.equal(await page.locator('#demo-send').isDisabled(), true);
   assert.deepEqual(requests, []);
-  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+  assert.deepEqual(await page.evaluate(() => ({ local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('esdesk.composer.'))), session: { ...sessionStorage } })), { local: {}, session: {} });
 });
 
 for (const action of ['cancel', 'timeout']) {
@@ -1450,7 +1746,7 @@ test('real API through proxy: cookie, Origin, reload, idle, expiry, logout and e
   assert.equal(after.requests.some(request => request.cookie_names.includes('esdesk_session')), false);
   assert.equal(after.requests.some(request => request.forwarded_for !== null), false);
   assert.ok(after.requests.some(request => request.cookie_names.includes('esdesk_web_session')));
-  assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+  assert.deepEqual(await page.evaluate(() => ({ local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('esdesk.composer.'))), session: { ...sessionStorage } })), { local: {}, session: {} });
   assert.equal(new URL(page.url()).search, '');
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await waitLogin(page);

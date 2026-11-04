@@ -7,6 +7,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/composer-draft.js', ['composer-draft.js', 'text/javascript; charset=utf-8']],
   ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
   ['/history-media.js', ['history-media.js', 'text/javascript; charset=utf-8']],
   ['/task-files.js', ['task-files.js', 'text/javascript; charset=utf-8']],
@@ -24,6 +25,7 @@ const routes = new Map([
   ['/api/v1/web/history', 'GET'],
   ['/api/v1/web/menu', 'GET'],
   ['/api/v1/web/chat', 'GET'],
+  ['/api/v1/web/composer-draft', 'GET, PUT'],
   ['/api/v1/web/tasks/active', 'GET'],
   ['/api/v1/web/tasks/select', 'POST'],
   ['/api/v1/web/auth/login', 'POST'],
@@ -59,7 +61,7 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
       return;
     }
     if ((req.headers.origin !== undefined && req.headers.origin !== expectedOrigin)
-        || (['POST', 'DELETE'].includes(req.method) && req.headers.origin === undefined)) {
+        || (['POST', 'PUT', 'DELETE'].includes(req.method) && req.headers.origin === undefined)) {
       res.writeHead(403).end();
       return;
     }

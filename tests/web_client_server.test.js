@@ -300,25 +300,27 @@ test('initial task multipart upload forwards original bytes and only the WEB coo
 test('WEB resource versions match the direct page, updated workspace and unchanged dependencies', async t => {
   const { readFile } = require('node:fs/promises');
   const version = '20261102-web-preloads-v1';
-  const workspaceVersion = '20261104-web-task-close-v1';
+  const workspaceVersion = '20261104-web-composer-draft-v1';
   const index = await readFile('web-client/index.html', 'utf8');
   assert.ok(index.includes('/app.js?v=' + workspaceVersion) && index.includes('/workspace.css?v=' + version));
-  const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js'] };
+  const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js', 'composer-draft.js'], 'composer-draft.js': ['api.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js'] };
   for (const [file, imports] of Object.entries(expected)) {
     const source = await readFile('web-client/' + file, 'utf8');
     for (const dependency of imports) {
-      const expectedVersion = dependency === 'workspace.js' ? workspaceVersion : version;
+      const expectedVersion = workspaceVersion;
       assert.ok(source.includes(`./${dependency}?v=${expectedVersion}`), file + ': ' + dependency);
     }
   }
   const port = await listen(t, createDevServer());
-  for (const file of ['app.js', 'workspace.js']) {
+  for (const file of ['app.js', 'workspace.js', 'composer-draft.js']) {
     const response = await request(port, '/' + file + '?v=' + workspaceVersion);
     assert.equal(response.status, 200);
     assert.equal(response.body, await readFile('web-client/' + file, 'utf8'));
   }
-  assert.equal((await request(port, '/task-files.js?v=' + version)).status, 200);
+  assert.equal((await request(port, '/task-files.js?v=' + workspaceVersion)).status, 200);
   assert.ok((await readFile('web-client/Dockerfile', 'utf8')).includes('task-files.js'));
+  assert.ok((await readFile('web-client/Dockerfile', 'utf8')).includes('composer-draft.js'));
+  assert.ok((await readFile('web-client/.dockerignore', 'utf8')).includes('!composer-draft.js'));
   assert.ok((await readFile('web-client/.dockerignore', 'utf8')).includes('!task-files.js'));
 });
 
@@ -352,4 +354,25 @@ test('preload proxy forwards only exact WEB routes, methods, original upload and
     assert.equal((await request(port, path, headers)).status, 404);
   }
   assert.equal(received.length, 4);
+});
+
+test('composer proxy: only GET/PUT, exact JSON, required Origin and isolated WEB cookie', async t => {
+  const seen = [];
+  const upstream = await listen(t, http.createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    seen.push({ method: req.method, path: req.url, headers: req.headers, body });
+    res.writeHead(req.method === 'PUT' ? 409 : 200, { 'Content-Type': 'application/json' }).end('{}');
+  }));
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstream}` }));
+  const path = '/api/v1/web/composer-draft';
+  const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: 'esdesk_session=staff; esdesk_web_session=client', Authorization: 'Bearer staff', 'Content-Type': 'application/json' };
+  const body = JSON.stringify({ text: '  Exact text\n ', version: 7 });
+  assert.equal((await request(port, path, headers)).status, 200);
+  assert.equal((await request(port, path, headers, 'PUT', body)).status, 409);
+  assert.equal((await request(port, path, {}, 'PUT', body)).status, 403);
+  for (const method of ['POST', 'DELETE', 'HEAD']) assert.equal((await request(port, path, headers, method)).status, 405);
+  assert.equal((await request(port, path + '/other', headers)).status, 404);
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].body, body);
+  assert.ok(seen.every(call => call.path === path && call.headers.cookie === 'esdesk_web_session=client' && !call.headers.authorization));
 });
