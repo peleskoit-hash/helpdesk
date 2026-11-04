@@ -263,6 +263,17 @@ test('source icons: client Telegram matches the staff contour and WEB copies mat
   assert.deepEqual(await readFile('api/app/static/icons/web-source.webp'), await readFile('web-client/assets/web-source.webp'));
 });
 
+test('WEB logo serves the exact original ESHelpdeskLogo font', async t => {
+  const { readFile } = require('node:fs/promises');
+  const original = await readFile('api/app/static/fonts/17575.ttf');
+  assert.deepEqual(await readFile('web-client/assets/17575.ttf'), original);
+  const port = await listen(t, createDevServer());
+  const response = await fetch(`http://127.0.0.1:${port}/assets/17575.ttf`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'font/ttf');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), original);
+});
+
 test('initial task multipart upload forwards original bytes and only the WEB cookie', async t => {
   let received;
   const upstreamPort = await listen(t, http.createServer(async (req, res) => {

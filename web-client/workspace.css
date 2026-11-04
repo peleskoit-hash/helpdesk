@@ -1,4 +1,5 @@
 /* Palette, controls and chat styling ported from agent desk-v2.css. Scoped to the client workspace. */
+@font-face { font-family: ESHelpdeskLogo; src: url('/assets/17575.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
 body:has(#session-panel:not([hidden])) { background: var(--bg); }
 .shell:has(#session-panel:not([hidden])) { width: 100%; padding: 0; height: 100svh; min-height: 0; }
 .shell:has(#session-panel:not([hidden])) > :is(.brand, footer) { display: none; }
@@ -16,39 +17,49 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel button.primary:hover:not(:disabled) { filter: brightness(.94); }
 #session-panel button.danger { color: var(--desk-danger); background: var(--desk-danger-bg); border-color: color-mix(in srgb, var(--desk-danger) 35%, var(--desk-border)); }
 #session-panel .client-sidebar { padding: 24px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid var(--desk-border); background-color: var(--desk-surface); overflow-y: auto; scrollbar-width: thin; }
-#session-panel .client-brand { padding: 0 6px 8px; font: 800 30px/1.2 var(--desk-font); letter-spacing: -1px; }
-#session-panel .client-brand > span { color: var(--desk-accent); }
-#session-panel .client-brand small { display: block; font: 500 12px/1.5 var(--desk-font); color: var(--desk-muted); letter-spacing: 0; margin-top: 6px; }
+#session-panel .client-brand { --brand-size: calc(clamp(22px, 2.5vw, 34px) + 4px); text-align: center; flex: none; padding: 0 6px; margin-top: -24px; }
+/* The original font's rope glyphs extend above the line box; clip them at the site's top edge. */
+#session-panel .client-brand-name { display: block; padding-top: .25em; white-space: nowrap; font: 400 var(--brand-size)/1 ESHelpdeskLogo; letter-spacing: .5px; }
+#session-panel .client-brand small { display: flex; align-items: center; justify-content: center; height: calc(var(--brand-size) * 1.25); font: 500 14px/1.5 var(--desk-font); color: var(--desk-muted); }
+#session-panel .client-sidebar > .chat-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+#session-panel .client-sidebar > .chat-actions button { flex: 1 1 180px; min-height: 44px; padding: 10px 18px; font-size: 19.5px; }
 #session-panel .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 #session-panel .section-heading > button { min-width: 42px; font-size: 22px; padding: 2px 9px; }
 #session-panel .demo-caption { color: var(--desk-muted); font-size: 12px; margin: 6px 0 12px; }
 #session-panel .counter { padding: 3px 8px; border-radius: 999px; background: var(--desk-tint); color: var(--desk-on-tint); }
-#session-panel #notifications-toggle, #session-panel #history-open { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 14px; border-radius: 16px; }
-#session-panel #notifications-toggle > span, #session-panel #history-open > span { margin-left: auto; }
+#session-panel #history-open { height: 48.2px; flex-shrink: 0; font-size: 18px; font-weight: 800; background: var(--desk-history-bg); color: var(--desk-history-text); border-color: var(--desk-history-border); display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 14px; border-radius: 16px; }
+#session-panel #history-open:hover:not(:disabled) { background: color-mix(in srgb, var(--desk-history-text) 12%, var(--desk-history-bg)); }
+#session-panel #history-open > span { margin-left: auto; }
+#session-panel .scenario-stack { --scenario-radius: 16px; flex: none; }
+#session-panel .scenario-stack > :is(#scenario-status, .bot-panel) { position: relative; border: 1px solid var(--desk-border); border-radius: var(--scenario-radius); background: var(--desk-soft); box-shadow: none; }
+#session-panel #scenario-status { display: flex; align-items: center; height: 104px; padding: 8px 16px 40px; font-size: 18px; line-height: 1.25; font-weight: 800; overflow-wrap: anywhere; }
 #session-panel .notification-panel { position: fixed; z-index: 5; left: calc((100vw - 1px) / 3); top: 110px; width: min(400px, calc(100vw - 24px)); max-height: 70svh; overflow-y: auto; background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 18px; padding: 18px; box-shadow: 0 12px 36px #0003; }
 #session-panel .notification-item { width: 100%; margin-top: 8px; text-align: left; display: grid; gap: 8px; }
 #session-panel .notification-item small { color: var(--desk-muted); font-weight: 500; }
 #session-panel :is(.bot-panel, .client-info) { border: 1px solid var(--desk-border); border-radius: 16px; padding: 16px; background: var(--desk-soft); }
+#session-panel .bot-panel { display: flex; flex-direction: column; height: 44svh; min-height: 0; margin-top: calc(var(--scenario-radius) * -2); z-index: 1; }
+#session-panel .bot-panel > :is(.section-heading, #bot-hint) { flex-shrink: 0; }
 #session-panel .bot-panel.waiting { border-color: var(--desk-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--desk-accent) 20%, transparent); }
 #session-panel #bot-hint { color: var(--desk-muted); font-size: 12px; margin: 8px 0 14px; }
 #session-panel .online-dot { width: 7px; height: 7px; flex-shrink: 0; background: var(--desk-success); border-radius: 50%; }
-#session-panel .bot-buttons { display: grid; gap: 8px; }
-#session-panel #task-controls { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--desk-border); }
-#session-panel :is(#task-feedback, #task-error) { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#session-panel .bot-buttons { display: grid; align-content: start; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
+#session-panel #task-controls { flex: 1; min-height: 0; overflow-y: auto; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--desk-border); }
+#session-panel #task-error { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #session-panel #task-error { color: var(--desk-danger); margin-top: 8px; }
 #session-panel .task-actions { display: grid; gap: 8px; margin-top: 10px; }
-#session-panel .bot-button { width: 100%; text-align: left; padding: 13px 12px; border-radius: 10px; animation: menu-appear .18s ease-out; }
-#session-panel .bot-button.blue { color: var(--desk-blue-text); background: var(--desk-blue-bg); }
-#session-panel .bot-button.purple { color: var(--desk-on-tint); background: var(--desk-tint); }
-#session-panel .bot-button.green { color: var(--desk-success); background: var(--desk-success-bg); }
-#session-panel .bot-button.orange { color: var(--desk-task-text); background: var(--desk-task-bg); }
-#session-panel .bot-button.red { color: var(--desk-danger); background: var(--desk-danger-bg); }
+#session-panel .bot-button { width: 100%; text-align: left; padding: 11.5px 12px; border-radius: 10px; font-size: 15px; font-weight: 800; background: var(--desk-tint); color: var(--desk-text); }
+#session-panel :is(.bot-button, #new-conversation, #close-conversation) { background-image: linear-gradient(180deg, #ffffff20, #0000000c); box-shadow: inset 0 1px 0 #ffffff66, inset 0 -1px 0 #00000018, 0 3px 0 #00000024, 0 5px 9px #00000020; touch-action: manipulation; }
+#session-panel :is(.bot-button, #new-conversation, #close-conversation):hover:not(:disabled) { background-image: linear-gradient(180deg, #ffffff30, #00000005); box-shadow: inset 0 1px 0 #ffffff88, 0 4px 0 #00000028, 0 7px 12px #00000028; }
+#session-panel .bot-button:hover:not(:disabled) { background-color: var(--desk-tint); }
+#session-panel :is(.bot-button, #new-conversation, #close-conversation):active:not(:disabled) { transform: translateY(2px); background-image: linear-gradient(180deg, #00000016, #ffffff10); box-shadow: inset 0 2px 3px #00000030, 0 1px 0 #00000020; }
+#session-panel :is(.bot-button, #new-conversation, #close-conversation):focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 3px; }
+#session-panel :is(.bot-button, #new-conversation, #close-conversation):disabled { background-image: none; box-shadow: none; transform: none; }
 #session-panel .bot-button[aria-pressed="true"] { outline: 2px solid var(--desk-focus); outline-offset: -2px; }
 #session-panel .menu-row { display: grid; gap: 8px; }
 #session-panel .menu-row.columns-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #session-panel .menu-row.columns-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 #session-panel .bot-button { overflow-wrap: anywhere; }
-#session-panel .bot-button:hover { border-color: var(--desk-focus); }
+#session-panel .bot-button:hover:not(:disabled) { border-color: var(--desk-focus); }
 #session-panel dl { margin: 8px 0 0; }
 #session-panel dl > div { padding: 9px 0; border-bottom: 1px solid var(--desk-border); }
 #session-panel dl > div:last-child { border-bottom: 0; }
@@ -58,7 +69,7 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel .client-bottom > button { width: 100%; }
 #session-panel #logout-error { margin-bottom: 8px; }
 #session-panel .client-chat { display: flex; flex-direction: column; min-height: 0; }
-#session-panel .chat-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 20px; background-color: var(--desk-surface); border-bottom: 1px solid var(--desk-border); }
+#session-panel .chat-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 4px 20px; background-color: var(--desk-surface); border-bottom: 1px solid var(--desk-border); }
 #session-panel #conversation-label { color: var(--desk-muted); font-size: 12px; margin-top: 4px; }
 #session-panel .chat-actions { display: flex; gap: 8px; }
 #session-panel #appearance-open { justify-self: end; }
@@ -69,16 +80,19 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 /* Client-facing alignment: own messages on the right, support on the left. */
 #session-panel .chat-message.client { align-self: flex-end; border-bottom-right-radius: 6px; }
 #session-panel .chat-message.bot { align-self: flex-start; background: var(--desk-agent-bg); color: #302c40; border-color: transparent; border-bottom-left-radius: 6px; }
-#session-panel .chat-message.system { align-self: center; max-width: 90%; background: transparent; color: var(--desk-muted); border: 0; border-radius: 0; font-size: 13px; padding: 0; text-align: center; }
+#session-panel .chat-message.system { align-self: center; max-width: 90%; background: var(--desk-warning-bg); color: var(--desk-warning-text); border: 1px solid var(--desk-warning-text); border-radius: 12px; font-size: 19px; padding: 12px 16px; text-align: center; }
 #session-panel .message-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 14px; margin-bottom: 6px; }
 #session-panel .message-header span { opacity: .8; }
 #session-panel .chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
-#session-panel .demo-composer { margin: 0; padding: 16px 20px; border-top: 1px solid var(--desk-border); background: var(--desk-surface); }
-#session-panel .demo-composer label { font-size: 12px; color: var(--desk-muted); }
-#session-panel .composer-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; }
-#session-panel .demo-composer .composer-enter-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--desk-muted); white-space: nowrap; cursor: pointer; }
-#session-panel .composer-enter-toggle input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--desk-accent); }
-#session-panel .composer-hotkey-hint { font-size: 12px; color: var(--desk-muted); white-space: nowrap; }
+/* Retain the previous composer footprint; file previews still add their own natural height. */
+#session-panel .demo-composer { --composer-height: calc(144.5px + clamp(96px, 28svh, 97.5px)); --composer-footer-height: 42px; margin: 0; padding: 8px 20px 16px; border-top: 1px solid var(--desk-border); background: var(--desk-surface); flex: none; }
+#session-panel .composer-editor { height: calc(var(--composer-height) - 33px - var(--composer-footer-height)); display: flex; flex-direction: column; }
+#session-panel .composer-editor > label { flex: none; margin-bottom: 4px; font-size: 12px; color: var(--desk-muted); }
+/* Same compact two-row control as staff ticket-card .composer-enter-settings. */
+#session-panel .composer-options { display: grid; grid-template-columns: auto auto; align-items: center; gap: 0 8px; padding: 5px 10px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); line-height: 1.2; justify-self: center; }
+#session-panel .demo-composer .composer-enter-toggle { display: contents; margin: 0; font-size: 13px; color: var(--desk-muted); white-space: nowrap; cursor: pointer; }
+#session-panel .composer-enter-toggle input { grid-row: span 2; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--desk-accent); }
+#session-panel .composer-hotkey-hint { grid-column: 2; font-size: 12px; color: var(--desk-muted); white-space: nowrap; }
 #session-panel #task-selected-files { max-height: 180px; overflow-y: auto; }
 #session-panel .task-selected-file { display: flex; align-items: center; gap: 8px; padding: 6px 0; overflow-wrap: anywhere; font-size: 12px; }
 #session-panel .task-selected-file img { width: 54px; height: 54px; object-fit: contain; }
@@ -88,21 +102,29 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel textarea { resize: vertical; display: block; width: 100%; min-height: 96px; max-height: 28svh; padding: 14px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-surface); color: var(--desk-text); font: 15px/1.5 var(--desk-font); }
 #session-panel textarea::placeholder { color: var(--desk-muted); }
 #session-panel textarea:disabled { background: var(--desk-soft); opacity: .65; }
-#session-panel .composer-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+#session-panel .composer-editor > textarea { flex: 1; min-height: 0; max-height: none; }
+#session-panel .composer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr); align-items: center; gap: 4px 8px; height: var(--composer-footer-height); margin-top: 8px; }
+#session-panel .composer-actions > .composer-options { grid-column: 2; }
+#session-panel .composer-file-actions { grid-column: 3; display: flex; justify-content: flex-end; gap: 8px; }
 #session-panel #composer-hint { color: var(--desk-muted); font-size: 11px; flex: 1; }
 #session-panel dialog { width: min(900px, calc(100vw - 24px)); max-height: calc(100svh - 32px); overflow-y: auto; padding: 24px; border: 1px solid var(--desk-border); border-radius: 18px; background: var(--desk-surface); color: var(--desk-text); font: 14px/1.5 var(--desk-font); box-shadow: 0 12px 36px #0003; }
 #session-panel dialog::backdrop { background: #171b2880; }
-#session-panel #history-dialog { width: 1420px; max-width: calc(100vw - 40px); height: 760px; max-height: calc(100svh - 40px); }
+#session-panel #history-dialog { padding-top: 12px; width: calc(100vw - 100px); max-width: calc(100vw - 100px); height: calc(100svh - 100px); max-height: calc(100svh - 100px); }
 #session-panel #history-dialog[open] { display: flex; flex-direction: column; }
 #session-panel #history-dialog > .section-heading { flex-shrink: 0; }
-#session-panel #history-title { flex: 1; }
+#session-panel #history-title { flex: 1; font-size: 21px; }
 #session-panel #history-back { display: none; font-size: 13px; }
-#session-panel .history-layout { display: grid; grid-template-columns: minmax(0, 52fr) minmax(0, 48fr); flex: 1; min-height: 0; gap: 16px; margin-top: 12px; }
-#session-panel #history-list { align-self: start; }
-#session-panel .history-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+#session-panel .history-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1; min-height: 0; gap: 16px; margin-top: 12px; }
+#session-panel .history-pane { display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 12px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-surface); }
+#session-panel .history-pane > h3 { flex-shrink: 0; font-size: 16px; }
+#session-panel #history-list { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#session-panel .history-table-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+#session-panel .history-table { width: 100%; min-width: 520px; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+#session-panel .history-table:has(tbody > tr:nth-child(15)) { height: 100%; }
+#session-panel .history-table thead { height: 24px; }
 #session-panel .history-source-column { width: 60px; }
-#session-panel .history-date-column { width: 132px; }
-#session-panel .history-status-column { width: 70px; }
+#session-panel .history-date-column { width: 190px; }
+#session-panel .history-status-column { width: 110px; }
 #session-panel .history-file { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 12px; }
 #session-panel .history-file small, #session-panel #history-detail time { display: block; font-size: 11px; color: var(--desk-muted); }
 #session-panel :is(.history-image, .history-sticker) :is(img, video), #session-panel .history-sticker svg { display: block; max-width: 100%; width: 180px; max-height: 180px; object-fit: contain; }
@@ -112,55 +134,54 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel .history-image-dialog img { display: block; max-width: 100%; height: auto; margin: 12px auto 0; }
 #session-panel .history-table :is(th, td) { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--desk-border); }
 #session-panel .history-table th { color: var(--desk-muted); font-size: 11px; }
-#session-panel .history-table td { height: 32px; }
-#session-panel .history-table button { width: 100%; min-height: 26px; padding: 3px 6px; border-radius: 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; }
+#session-panel .history-table td { height: 38px; }
+#session-panel .history-table td:nth-child(n+3) { font-size: 19px; white-space: nowrap; }
+#session-panel .history-table button { width: 100%; min-height: 26px; padding: 3px 6px; border-radius: 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 19px; font-weight: 500; }
 #session-panel .history-table button[data-read="false"] { font-weight: 800; }
 #session-panel .history-table button[aria-pressed="true"], #session-panel .history-pagination [aria-current="page"] { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-focus); }
 #session-panel .history-source { display: block; width: 26px; height: 26px; object-fit: contain; }
-#session-panel .history-pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
+#session-panel .history-pagination { flex-shrink: 0; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
 #session-panel .history-pagination button { min-height: 30px; padding: 3px 8px; border-radius: 6px; }
-#session-panel #history-detail { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--desk-soft); }
+#session-panel #history-detail { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--desk-soft); }
 #session-panel #history-detail button { max-width: 100%; overflow-wrap: anywhere; }
 #session-panel #history-detail > * { flex-shrink: 0; }
-#session-panel #history-detail .chat-message { max-width: 95%; font-size: 15px; line-height: 1.6; }
+#session-panel #history-detail .chat-message { max-width: 95%; }
+#session-panel #history-detail .chat-message:not(.system) { width: 60%; }
 #session-panel .history-message-text { user-select: text; -webkit-user-select: text; }
 #session-panel .history-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 12px; }
 #session-panel #history-detail .history-copy { min-height: 28px; padding: 3px 8px; font-size: 12px; font-weight: 500; color: inherit; background: transparent; border-color: currentColor; opacity: .8; }
 #session-panel #appearanceMenu { inset: 0; margin: auto; }
 #session-panel #appearance-reset { margin-top: 20px; }
 @keyframes menu-appear { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 1150px) { #session-panel .chat-toolbar { grid-template-columns: 1fr auto; } #session-panel .chat-actions { grid-row: 2; grid-column: 1 / -1; justify-content: center; } }
+
 @media (max-width: 700px) {
   .shell:has(#session-panel:not([hidden])) { height: auto; min-height: 100svh; }
   #session-panel.client-workspace { display: flex; flex-direction: column; height: auto; }
   #session-panel .client-sidebar { padding: 16px; gap: 12px; overflow: visible; border-right: 0; }
-  #session-panel .client-brand { font-size: 24px; }
+  #session-panel .client-brand { margin-top: -16px; }
+  #session-panel .bot-panel { height: min(324px, 44svh); }
   #session-panel .client-info { padding: 12px 16px; }
   #session-panel dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   #session-panel .client-bottom { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   #session-panel .client-bottom > button { width: auto; margin-left: auto; }
   #session-panel .client-bottom .demo-caption { flex: 1; margin: 0; }
   #session-panel .client-chat { min-height: 76svh; }
-  #session-panel .chat-toolbar { padding: 16px; gap: 14px 8px; }
-  #session-panel .chat-actions { width: 100%; }
-  #session-panel .chat-actions > button { flex: 1; }
+  #session-panel .chat-toolbar { padding: 4px 16px; gap: 8px; }
   #session-panel .chat-messages { min-height: 320px; max-height: 65svh; padding: 20px 16px; }
   #session-panel .chat-message { max-width: 94%; padding: 12px 14px; font-size: 14px; }
-  #session-panel .demo-composer { padding: 16px; }
-  #session-panel .composer-actions { flex-wrap: wrap; gap: 10px; }
-  #session-panel #composer-hint { order: 3; flex-basis: 100%; }
-  #session-panel #demo-send { margin-left: auto; }
+  #session-panel .chat-message.system { font-size: 15px; }
+  #session-panel .demo-composer { --composer-height: calc(171px + clamp(96px, 28svh, 97.5px)); padding: 8px 16px 16px; }
   #session-panel .notification-panel { top: 120px; left: 12px; }
-  #session-panel #history-dialog { max-width: calc(100vw - 32px); max-height: calc(100svh - 32px); }
-  #session-panel .history-layout { display: block; overflow-y: auto; }
+  #session-panel #history-dialog { padding-top: 12px; width: calc(100vw - 32px); max-width: calc(100vw - 32px); height: calc(100svh - 32px); max-height: calc(100svh - 32px); }
+  #session-panel .history-layout { display: block; overflow: hidden; }
+  #session-panel .history-pane { height: 100%; }
   #session-panel #history-detail { height: 100%; }
-  #session-panel #history-dialog[data-view="list"] #history-detail,
-  #session-panel #history-dialog[data-view="detail"] #history-list { display: none; }
+  #session-panel #history-detail .chat-message:not(.system) { width: 95%; }
+  #session-panel #history-dialog[data-view="list"] #history-preview-pane,
+  #session-panel #history-dialog[data-view="detail"] #history-list-pane { display: none; }
   #session-panel #history-dialog[data-view="detail"] #history-back { display: inline-flex; }
   #session-panel #history-dialog > .section-heading > #history-back { padding: 8px; }
   #session-panel .history-source-column { width: 60px; }
-  #session-panel .history-date-column { width: 76px; }
-  #session-panel .history-status-column { width: 54px; }
   #session-panel .history-table :is(th, td) { padding: 3px; }
   #session-panel .history-table td { height: 38px; }
   #session-panel dialog { padding: 16px; }
@@ -186,6 +207,9 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
   --desk-danger: #b13f59;
   --desk-success: #35765d;
   --desk-success-bg: #eaf4ef;
+  --desk-history-bg: #e4f3e8;
+  --desk-history-text: #286044;
+  --desk-history-border: #96bfa4;
   --desk-danger-bg: #faeaf0;
   --desk-warning-bg: #f9f1e3;
   --desk-warning-text: #87652b;
@@ -220,6 +244,9 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
   --desk-danger: #f39bb1;
   --desk-success: #9dd3ba;
   --desk-success-bg: #253c38;
+  --desk-history-bg: #24573e;
+  --desk-history-text: #d8f5e2;
+  --desk-history-border: #65a77f;
   --desk-danger-bg: #462e40;
   --desk-warning-bg: #40382e;
   --desk-warning-text: #e7c694;
@@ -325,3 +352,10 @@ body:has(#session-panel:not([hidden])) { background: var(--bg); }
 #session-panel #session-ended-dialog h2 { font-size: 20px; }
 #session-panel #session-ended-dialog p { margin-top: 12px; color: var(--desk-muted); }
 #session-panel #session-ended-dialog button { margin-top: 20px; }
+
+@media (max-width: 520px), (min-width: 701px) and (max-width: 900px) {
+  #session-panel .demo-composer { --composer-footer-height: 88px; }
+  #session-panel .composer-actions { grid-template-rows: 42px 42px; }
+  #session-panel .composer-actions > .composer-options { grid-column: 1 / -1; grid-row: 1; }
+  #session-panel .composer-file-actions { grid-column: 1 / -1; grid-row: 2; }
+}

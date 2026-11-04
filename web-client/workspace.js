@@ -5,15 +5,18 @@ import { createTaskFiles } from './task-files.js?v=20261102-web-preloads-v1';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
-      <div class="client-brand">ES DESK<span>+</span><small>Клиентская поддержка</small></div>
-      <button id="notifications-toggle" disabled>Уведомления пока недоступны</button>
+      <div class="client-brand"><span class="client-brand-name">ELITE SOCHI SUPPORT</span><small>Клиентская поддержка</small></div>
+      <div class="chat-actions"><button id="new-conversation" class="primary">Новое обращение</button><button id="close-conversation" class="danger" disabled>Закрыть обращение</button></div>
+      <div class="scenario-stack">
+      <p id="scenario-status" role="status" aria-live="polite">Загружаем состояние…</p>
       <section class="bot-panel waiting" aria-labelledby="bot-title">
-        <div class="section-heading"><h2 id="bot-title">Помощник ES DESK+</h2><span class="online-dot" aria-hidden="true"></span></div>
+        <div class="section-heading"><h2 id="bot-title">Меню выбора кнопок</h2><span class="online-dot" aria-hidden="true"></span></div>
         <p id="bot-hint">Выберите, с чем нужна помощь</p>
         <div id="bot-buttons" class="bot-buttons"></div>
-        <section id="task-controls" hidden><p id="task-feedback" role="status"></p><p id="task-error" role="alert" hidden></p><div class="task-actions"><button id="task-confirm" type="button" class="primary" hidden>Подтвердить</button><button id="task-cancel" type="button" hidden>Отменить создание задачи</button><button id="task-retry" type="button" hidden>Повторить запрос</button><button id="task-sign-in" type="button" hidden>Войти снова</button></div></section>
+        <section id="task-controls" hidden><p id="task-error" role="alert" hidden></p><div class="task-actions"><button id="task-confirm" type="button" class="primary" hidden>Подтвердить</button><button id="task-cancel" type="button" hidden>Отменить создание задачи</button><button id="task-retry" type="button" hidden>Повторить запрос</button><button id="task-sign-in" type="button" hidden>Войти снова</button></div></section>
       </section>
-      <button id="history-open">История заявок <span aria-hidden="true">↗</span></button>
+      </div>
+      <button id="history-open">История обращений <span aria-hidden="true">↗</span></button>
       <section class="client-info" aria-labelledby="client-info-title">
         <h2 id="client-info-title">Информация о клиенте</h2><p class="demo-caption">Демонстрационные данные</p>
         <dl><div><dt>Клиент</dt><dd>Александр Смирнов</dd></div><div><dt>Организация</dt><dd>ООО «Пример»</dd></div><div><dt>Подразделение</dt><dd>Клиентский отдел</dd></div><div><dt>Электронная почта</dt><dd>client@example.com</dd></div></dl>
@@ -22,20 +25,19 @@ export function mountWorkspace(root) {
     </aside>
     <section class="client-chat" aria-label="Чат с поддержкой">
       <header class="chat-toolbar">
-        <div><h1 id="session-title" tabindex="-1">Поддержка ES DESK+</h1><p id="conversation-label">Поможем решить ваш вопрос</p></div>
-        <div class="chat-actions"><button id="new-conversation" class="primary">Новое обращение</button><button id="close-conversation" class="danger" disabled>Закрыть обращение</button></div>
+        <div><h1 id="session-title" tabindex="-1">Техническая поддержка Элитного Сочи</h1><p id="conversation-label" hidden>Поможем решить ваш вопрос</p></div>
         <button id="appearance-open">Оформление</button>
       </header>
       <div id="chat-messages" class="chat-messages" role="log" aria-label="Сообщения" aria-live="polite"></div>
       <form id="demo-composer" class="demo-composer">
-        <label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="2000" placeholder="Напишите сообщение…"></textarea>
+        <div class="composer-editor"><label for="demo-text">Сообщение</label><textarea id="demo-text" rows="3" maxlength="2000" placeholder="Напишите сообщение…"></textarea></div>
         <input id="task-file-input" type="file" multiple hidden aria-label="Файлы первоначального описания задачи">
         <div id="task-selected-files" hidden></div><p id="task-file-error" role="alert" hidden></p>
-        <div class="composer-options"><label class="composer-enter-toggle" for="sendByEnterCheckbox"><input id="sendByEnterCheckbox" type="checkbox"><span>Отправлять по Enter</span></label><span id="sendHotkeyHint" class="composer-hotkey-hint">Отправка: Ctrl+Enter</span></div>
-        <div class="composer-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><small id="composer-hint" role="status">Выберите задачу в меню, чтобы отправить описание</small><button type="submit" id="demo-send" class="primary">Отправить <span aria-hidden="true">↑</span></button></div>
+        <div class="composer-actions"><div class="composer-options"><label class="composer-enter-toggle" for="sendByEnterCheckbox"><input id="sendByEnterCheckbox" type="checkbox"><span>Отправка по Ctrl+Enter</span></label><span id="sendHotkeyHint" class="composer-hotkey-hint">Новая строка Enter</span></div><div class="composer-file-actions"><button type="button" id="demo-files">＋ Добавить файлы</button><button type="submit" id="demo-send" class="primary">Отправить <span aria-hidden="true">↑</span></button></div></div>
+        <small id="composer-hint" hidden></small>
       </form>
     </section>
-    <dialog id="history-dialog" data-view="list" aria-labelledby="history-title"><div class="section-heading"><button id="history-back" type="button" aria-label="Назад к списку заявок">← Назад</button><h2 id="history-title">История заявок</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><div class="history-layout"><div id="history-list" aria-live="polite"></div><section id="history-detail" tabindex="-1" aria-label="История выбранной записи" aria-live="polite"></section></div></dialog>
+    <dialog id="history-dialog" data-view="list" aria-labelledby="history-title"><div class="section-heading"><button id="history-back" type="button" aria-label="Назад к списку заявок">← Назад</button><h2 id="history-title">История обращений</h2><button data-close-dialog aria-label="Закрыть историю">×</button></div><div class="history-layout"><section id="history-list-pane" class="history-pane" aria-labelledby="history-list-title"><h3 id="history-list-title">Список заявок</h3><div id="history-list" aria-live="polite"></div></section><section id="history-preview-pane" class="history-pane" aria-labelledby="history-preview-title"><h3 id="history-preview-title">Предпросмотр</h3><section id="history-detail" tabindex="-1" aria-label="История выбранной записи" aria-live="polite"></section></section></div></dialog>
     <dialog id="appearanceMenu" class="appearance-menu" aria-labelledby="appearance-title"><div class="section-heading"><h2 id="appearance-title">Оформление</h2><button data-close-dialog aria-label="Закрыть оформление">×</button></div><p class="demo-caption">Настройки действуют до обновления страницы</p><div class="appearance-themes"><button data-appearance-theme="light" aria-pressed="true">Светлая</button><button data-appearance-theme="dark" aria-pressed="false">Тёмная</button></div><div class="appearance-controls"></div><button id="appearance-reset">Сбросить настройки</button></dialog>`;
 
   const byId = id => root.querySelector(`#${id}`);
@@ -174,8 +176,6 @@ export function mountWorkspace(root) {
       if (!pendingAction && activeTask?.taskId && activeTask.taskId !== task?.task_id) taskFiles.clear({ serverCleanup: true });
       activeTask = task ? { taskId: task.task_id, buttonId: task.button_id, state: task.state } : null;
       if (task?.state === 'collecting') taskFiles.setTask(task.task_id);
-      if (!pendingAction) byId('task-feedback').textContent = task?.state === 'confirmation_required' ? task.text
-        : task ? 'Ожидаем описание задачи в чате' : '';
       restoring = false;
       if (syncError) { clearTaskError(); syncError = false; }
     } catch (error) {
@@ -198,6 +198,7 @@ export function mountWorkspace(root) {
   window.addEventListener('pagehide', stopSync);
 
   let menuRequest;
+  let menuUnavailable = false;
   function menuStatus(text, waiting = false) {
     byId('bot-buttons').replaceChildren();
     byId('bot-hint').textContent = text;
@@ -212,7 +213,7 @@ export function mountWorkspace(root) {
         const group = document.createElement('div');
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = `bot-button ${{ primary: 'blue', success: 'green', danger: 'red' }[item.style] || 'plain'}`;
+        button.className = 'bot-button';
         button.textContent = item.label;
         const hasChildren = Array.isArray(item.children) && item.children.length > 0;
         button.title = hasChildren ? 'Открыть подменю' : item.workflow_type === 'task' ? 'Создать обычную задачу' : 'Этот тип кнопки пока недоступен';
@@ -227,6 +228,7 @@ export function mountWorkspace(root) {
             container.querySelectorAll('[aria-pressed]').forEach(other => other.setAttribute('aria-pressed', 'false'));
             button.setAttribute('aria-pressed', 'true');
             byId('bot-hint').textContent = `«${item.label}» · действие пока недоступно`;
+            byId('bot-hint').hidden = false;
           }
         });
         group.append(button);
@@ -237,7 +239,7 @@ export function mountWorkspace(root) {
     if (parents.length) {
       const back = document.createElement('button');
       back.type = 'button';
-      back.className = 'bot-button plain';
+      back.className = 'bot-button';
       back.textContent = '⬅ Назад';
       back.addEventListener('click', () => renderMenu(parents.at(-1), container, parents.slice(0, -1), true));
       container.append(back);
@@ -258,6 +260,7 @@ export function mountWorkspace(root) {
     const controller = new AbortController();
     menuRequest = controller;
     const timeout = setTimeout(() => controller.abort(), 15000);
+    menuUnavailable = false;
     menuStatus('Загружаем меню…');
     root.querySelector('.bot-panel').setAttribute('aria-busy', 'true');
     try {
@@ -266,6 +269,7 @@ export function mountWorkspace(root) {
       renderMenu(menu.rows, byId('bot-buttons'));
     } catch {
       if (menuRequest !== controller) return;
+      menuUnavailable = true;
       menuStatus('Не удалось загрузить меню. Попробуйте ещё раз.');
       const retry = document.createElement('button');
       retry.type = 'button';
@@ -274,15 +278,30 @@ export function mountWorkspace(root) {
       byId('bot-buttons').append(retry);
     } finally {
       clearTimeout(timeout);
-      if (menuRequest === controller) root.querySelector('.bot-panel').removeAttribute('aria-busy');
+      if (menuRequest === controller) {
+        root.querySelector('.bot-panel').removeAttribute('aria-busy');
+        updateTaskUI();
+      }
     }
   }
 
   function updateTaskUI() {
+    updateSendMode();
     byId('bot-buttons').hidden = menuHidden || !menuRestored;
-    byId('bot-hint').hidden = menuHidden;
+    byId('bot-hint').hidden = menuHidden || byId('bot-hint').textContent === 'Выберите тему в меню';
     const unresolved = Boolean(pendingAction);
     const blocked = taskBusy || restoring;
+    byId('scenario-status').textContent = sessionLocked ? 'Сессия завершена'
+      : syncError ? 'Не удалось обновить состояние'
+      : restoring ? 'Загружаем состояние…'
+      : taskBusy ? 'Выполняем запрос…'
+      : unresolved ? 'Результат запроса неизвестен'
+      : activeTask?.state === 'confirmation_required' ? 'Ожидаем подтверждение'
+      : activeTask?.state === 'collecting' ? 'Ожидаем описание задачи'
+      : !menuHidden && root.querySelector('.bot-panel').hasAttribute('aria-busy') ? 'Загружаем меню…'
+      : !menuHidden && menuUnavailable ? 'Не удалось загрузить меню'
+      : !menuHidden ? 'Выберите тему обращения'
+      : 'Нажмите „Новое обращение“';
     byId('demo-composer').setAttribute('aria-busy', String(taskBusy));
     byId('task-controls').hidden = !activeTask && byId('task-error').hidden;
     byId('task-confirm').hidden = activeTask?.state !== 'confirmation_required';
@@ -320,7 +339,6 @@ export function mountWorkspace(root) {
     const current = generation;
     const controller = new AbortController();
     taskRequest = controller;
-    byId('task-feedback').textContent = 'Ожидаем ответ сервера…';
     updateTaskUI();
     try {
       const result = await sendTaskAction(operation.path, operation.body, controller.signal);
@@ -337,11 +355,9 @@ export function mountWorkspace(root) {
       if (['ready', 'cancelled'].includes(result.state)) {
         taskFiles.clear({ serverCleanup: true });
         activeTask = null;
-        byId('task-feedback').textContent = '';
       } else {
         activeTask = { ...activeTask, taskId: result.task_id, state: result.state };
         if (result.state === 'collecting') taskFiles.setTask(result.task_id);
-        byId('task-feedback').textContent = result.state === 'confirmation_required' ? result.text : 'Ожидаем описание задачи в чате';
       }
     } catch (error) {
       if (current !== generation) return;
@@ -352,7 +368,6 @@ export function mountWorkspace(root) {
       byId('task-error').hidden = false;
       byId('task-error').dataset.status = String(error.status || 0);
       if (error.status === 401) { restoring = true; stopSync(); }
-      byId('task-feedback').textContent = uncertain ? 'Результат операции пока неизвестен' : '';
       if (!uncertain) {
         pendingAction = null;
         if ((operation.kind === 'select' && !activeTask?.taskId) || error.status === 410 || error.status === 404
@@ -401,7 +416,6 @@ export function mountWorkspace(root) {
     clearTaskError();
     byId('chat-messages').replaceChildren();
     byId('demo-text').value = '';
-    byId('task-feedback').textContent = '';
     updateTaskUI();
   }
   byId('new-conversation').addEventListener('click', () => {
@@ -412,10 +426,12 @@ export function mountWorkspace(root) {
     byId('composer-hint').textContent = activeTask ? 'Завершите или отмените создание текущей задачи' : 'Обычные заявки пока недоступны. Выберите кнопку задачи в меню.';
   });
   // Same shortcuts as agent ticket_composer.js; preference stays local to this UI.
-  byId('sendByEnterCheckbox').addEventListener('change', () => {
-    byId('sendHotkeyHint').textContent = byId('sendByEnterCheckbox').checked
-      ? 'Новая строка: Shift+Enter' : 'Отправка: Ctrl+Enter';
-  });
+  function updateSendMode() {
+    const byEnter = byId('sendByEnterCheckbox').checked;
+    root.querySelector('.composer-enter-toggle span').textContent = byEnter ? 'Отправлять по Enter' : 'Отправка по Ctrl+Enter';
+    byId('sendHotkeyHint').textContent = byEnter ? 'Новая строка Shift+Enter' : 'Новая строка Enter';
+  }
+  byId('sendByEnterCheckbox').addEventListener('change', updateSendMode);
   byId('demo-text').addEventListener('input', updateTaskUI);
   byId('demo-text').addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.isComposing || byId('demo-send').disabled) return;
@@ -471,7 +487,7 @@ export function mountWorkspace(root) {
     list.replaceChildren();
     const table = document.createElement('table');
     table.className = 'history-table';
-    table.setAttribute('aria-label', 'История заявок');
+    table.setAttribute('aria-label', 'История обращений');
     table.innerHTML = '<colgroup><col class="history-source-column"><col><col class="history-date-column"><col class="history-status-column"></colgroup><thead><tr><th scope="col">Источник</th><th scope="col">Тема</th><th scope="col">Дата и время</th><th scope="col">Статус</th></tr></thead>';
     const body = document.createElement('tbody');
     for (const record of records) {
@@ -495,9 +511,12 @@ export function mountWorkspace(root) {
       body.append(row);
     }
     table.append(body);
-    list.append(table);
+    const scroll = document.createElement('div');
+    scroll.className = 'history-table-scroll';
+    scroll.append(table);
+    list.append(scroll);
     updateHistoryRows();
-    if (!records.length) historyText(list, 'Заявок пока нет.');
+    if (!records.length) historyText(scroll, 'Заявок пока нет.');
     const pages = Math.max(1, Math.ceil(total / 15));
     const pagination = document.createElement('nav');
     pagination.className = 'history-pagination';

@@ -15,6 +15,7 @@ const assets = new Map([
   ['/Manrope-Variable.ttf', ['Manrope-Variable.ttf', 'font/ttf']],
   ['/api.js', ['api.js', 'text/javascript; charset=utf-8']],
   ['/assets/web-source.webp', ['assets/web-source.webp', 'image/webp']],
+  ['/assets/17575.ttf', ['assets/17575.ttf', 'font/ttf']],
   ['/assets/telegram-source.svg', ['assets/telegram-source.svg', 'image/svg+xml']],
 ]);
 const routes = new Map([

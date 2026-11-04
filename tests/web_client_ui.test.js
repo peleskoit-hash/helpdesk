@@ -16,6 +16,257 @@ const menuExample = { menu_type: 'Базовое', rows: [
 const taskMenu = structuredClone(menuExample);
 taskMenu.rows[0][0].children[0][0].children[0][0].workflow_type = 'task';
 const taskId = '11111111-1111-4111-8111-111111111111';
+test('Enter captions match both checkbox states and are restored without changing the control layout', async t => {
+  const { page } = await pageFor(t);
+  await submit(page);
+  await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+  const control = page.locator('.composer-options');
+  const checkbox = page.locator('#sendByEnterCheckbox');
+  const captions = async checked => {
+    assert.equal(await checkbox.isChecked(), checked);
+    assert.deepEqual(await control.locator('label > span, #sendHotkeyHint').allTextContents(), checked
+      ? ['Отправлять по Enter', 'Новая строка Shift+Enter']
+      : ['Отправка по Ctrl+Enter', 'Новая строка Enter']);
+  };
+  await captions(false);
+  const before = await control.boundingBox();
+  await checkbox.check();
+  await captions(true);
+  const after = await control.boundingBox();
+  assert.ok(Math.abs(after.height - 41.984375) < 1);
+  assert.ok(Math.abs(before.height - after.height) < 1);
+  assert.ok(before.width <= 191 && after.width <= 191); // The existing control's maximum width was 190 px.
+  assert.ok(Math.abs(before.x + before.width / 2 - after.x - after.width / 2) < 1);
+  await page.locator('#logout-button').click();
+  await waitLogin(page);
+  await submit(page);
+  await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+  await captions(true);
+  await checkbox.uncheck();
+  await captions(false);
+  await page.reload();
+  await waitLogin(page);
+  await submit(page);
+  await captions(false);
+});
+
+for (const [mode, expected] of [
+  ['menu', 'Выберите тему обращения'], ['confirmation', 'Ожидаем подтверждение'],
+  ['description', 'Ожидаем описание задачи'], ['busy', 'Выполняем запрос…'],
+  ['finished', 'Нажмите „Новое обращение“'], ['restore', 'Загружаем состояние…'],
+  ['menu-loading', 'Загружаем меню…'], ['state-error', 'Не удалось обновить состояние'],
+  ['menu-error', 'Не удалось загрузить меню'], ['unknown', 'Результат запроса неизвестен'],
+  ['locked', 'Сессия завершена'],
+]) {
+  for (const width of mode === 'state-error' ? [1440, 320] : [1440]) {
+  test(`compact status: ${mode} fits above the overlapping menu at ${width}px`, async t => {
+    const { page, state } = await pageFor(t, { width, height: 900 });
+    state.menu = taskMenu;
+    let release;
+    const hold = () => new Promise(resolve => { release = resolve; });
+    t.after(() => release?.());
+    if (mode === 'restore') state.activeHold = hold();
+    if (mode === 'menu-loading') state.menuHold = hold();
+    if (mode === 'state-error') state.syncStatus = 503;
+    if (mode === 'menu-error') state.menuStatus = 503;
+    if (mode === 'locked') state.syncStatus = 401;
+    if (mode === 'confirmation' || mode === 'description') state.activeTask = activeIntake(mode === 'confirmation' ? 'confirmation_required' : 'collecting');
+    if (mode === 'finished') state.chat = [chatRow(1, 'Completed scenario')];
+    await submit(page);
+    if (mode === 'busy' || mode === 'unknown') {
+      await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+      if (mode === 'busy') state.taskHold = hold();
+      else state.taskNetwork = true;
+      await openTask(page);
+    }
+    await page.locator('#scenario-status').getByText(expected, { exact: true }).waitFor();
+    const layout = await page.locator('#scenario-status').evaluate(node => {
+      const s = getComputedStyle(node), rect = node.getBoundingClientRect();
+      const menu = document.querySelector('.bot-panel'), m = getComputedStyle(menu), menuRect = menu.getBoundingClientRect();
+      const range = document.createRange(); range.selectNodeContents(node);
+      const button = document.querySelector('#new-conversation'), b = getComputedStyle(button);
+      return { height: rect.height, font: s.fontSize, weight: s.fontWeight, lines: range.getClientRects().length,
+        topGap: range.getBoundingClientRect().top - rect.top, bottomGap: menuRect.top - range.getBoundingClientRect().bottom,
+        bottom: range.getBoundingClientRect().bottom, menuTop: menuRect.top, overlap: rect.bottom - menuRect.top,
+        frame: [s.borderColor, s.borderWidth, s.borderRadius], menuFrame: [m.borderColor, m.borderWidth, m.borderRadius],
+        menuHeight: menuRect.height, overflow: s.overflowX, ellipsis: s.textOverflow,
+        buttonHeight: button.getBoundingClientRect().height, buttonMin: b.minHeight, buttonFont: b.fontSize,
+        buttonPadding: [b.paddingTop, b.paddingRight, b.paddingBottom, b.paddingLeft] };
+    });
+    assert.equal(layout.height, 104);
+    assert.ok(layout.height < 176);
+    assert.equal(layout.font, '18px');
+    assert.equal(layout.weight, '800');
+    assert.ok(layout.lines >= 1 && layout.lines <= (width > 700 ? 1 : 2), expected);
+    assert.ok(layout.bottom < layout.menuTop, JSON.stringify(layout));
+    assert.equal(layout.overlap, 32);
+    assert.ok(Math.abs(layout.topGap - layout.bottomGap) < 2, JSON.stringify(layout));
+    assert.deepEqual(layout.frame, layout.menuFrame);
+    assert.ok(Math.abs(layout.menuHeight - (width > 700 ? 900 * .44 : 324)) < 1);
+    assert.equal(layout.overflow, 'visible');
+    assert.notEqual(layout.ellipsis, 'ellipsis');
+    assert.ok(layout.buttonHeight >= 44 && layout.buttonHeight < 84);
+    assert.equal(layout.buttonMin, '44px');
+    assert.equal(layout.buttonFont, '19.5px');
+    assert.deepEqual(layout.buttonPadding, ['10px', '18px', '10px', '18px']);
+    if (process.env.COMPACT_STATUS_SCREENSHOT && mode === 'state-error' && width === 1440) {
+      await page.locator('.client-sidebar').evaluate(node => { node.scrollTop = 0; });
+      await page.screenshot({ path: process.env.COMPACT_STATUS_SCREENSHOT });
+    }
+  });
+  }
+}
+
+for (const [width, height, composerHeight] of [[1440, 900, 242], [1024, 900, 242], [390, 900, 268.5], [667, 320, 267]]) {
+  test(`WEB visual layout: original logo, overlapping frames and composer at ${width}x${height}`, async t => {
+    const { page, state } = await pageFor(t, { width, height });
+    state.menu = taskMenu;
+    await submit(page);
+    await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    const result = await page.evaluate(() => {
+      const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+      const frame = selector => { const s = getComputedStyle(document.querySelector(selector));
+        return [s.borderTopWidth, s.borderTopStyle, s.borderTopColor, s.borderTopLeftRadius, s.borderBottomLeftRadius]; };
+      const name = document.querySelector('.client-brand-name');
+      const title = getComputedStyle(document.querySelector('#session-title'));
+      return { brand: rect('.client-brand'), name: rect('.client-brand-name'), caption: rect('.client-brand small'),
+        actions: rect('.client-sidebar > .chat-actions'), status: rect('#scenario-status'), menu: rect('.bot-panel'),
+        statusFrame: frame('#scenario-status'), menuFrame: frame('.bot-panel'),
+        logoSize: parseFloat(getComputedStyle(name).fontSize), logoAlign: getComputedStyle(name).textAlign, captionAlign: getComputedStyle(document.querySelector('.client-brand small')).justifyContent,
+        font: getComputedStyle(name).fontFamily, loaded: document.fonts.check('34px ESHelpdeskLogo'),
+        titleFont: title.fontFamily, titleWeight: title.fontWeight, titleSize: title.fontSize,
+        composer: rect('#demo-composer'), textarea: rect('#demo-text'), toolbar: rect('.chat-toolbar'),
+        files: rect('#demo-files'), send: rect('#demo-send'), enter: rect('.composer-options'),
+        appearance: rect('#appearance-open'), menuZ: getComputedStyle(document.querySelector('.bot-panel')).zIndex,
+        scrollY, overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    assert.match(result.font, /ESHelpdeskLogo/);
+    assert.equal(result.logoSize, Math.min(34, Math.max(22, width * .025)) + 4);
+    assert.equal(result.logoAlign, 'center');
+    assert.equal(result.captionAlign, 'center');
+    assert.equal(result.loaded, true);
+    assert.ok(Math.abs(result.name.top + result.scrollY) < 1);
+    assert.ok(result.actions.top >= result.caption.bottom);
+    assert.ok(result.status.top >= result.actions.bottom);
+    assert.deepEqual(result.statusFrame, result.menuFrame);
+    assert.ok(result.menu.top < result.status.bottom && result.menu.top > result.status.top);
+    assert.equal(result.menuZ, '1');
+    if (width > 700) assert.ok(result.menu.height >= height * .43 && result.menu.height <= height * .45);
+    assert.equal(await page.locator('.chat-toolbar .chat-actions').count(), 0);
+    assert.equal(await page.locator('#bot-title').innerText(), 'Меню выбора кнопок');
+    assert.equal(await page.locator('#conversation-label').isHidden(), true);
+    assert.equal(result.titleSize, '17px');
+    assert.equal(result.titleWeight, '800');
+    assert.match(result.titleFont, /Manrope/);
+    assert.ok(result.toolbar.height <= 60);
+    assert.ok(result.appearance.right <= width);
+    assert.ok(Math.abs(result.composer.height - composerHeight) < 1, JSON.stringify(result));
+    assert.ok(result.textarea.height > 97.5);
+    assert.ok(Math.abs(result.files.top - result.send.top) < 1);
+    assert.ok(result.send.left - result.files.right <= 9);
+    assert.ok(Math.abs(result.send.right - result.composer.right) <= 21);
+    assert.equal(await page.locator('#composer-hint').isHidden(), true);
+    assert.equal(result.overflow, false);
+    await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).waitFor();
+    if (process.env.VISUAL_SCREENSHOT_DIR) {
+      await page.locator('.client-sidebar').evaluate(node => { node.scrollTop = 0; });
+      await page.screenshot({ path: path.join(process.env.VISUAL_SCREENSHOT_DIR, `web-layout-${width}.png`), fullPage: true });
+    }
+    await page.locator('#appearance-open').click();
+    await page.locator('#appearanceMenu').waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#close-conversation').isDisabled(), true);
+  });
+}
+for (const colorScheme of ['light', 'dark']) {
+  test(`WEB panel styling: independent menu palette, raised controls and history button ${colorScheme}`, async t => {
+    const { page, state } = await pageFor(t, { colorScheme });
+    state.menu = structuredClone(menuExample);
+    await submit(page);
+    const menu = page.locator('#bot-buttons');
+    await menu.locator('.bot-button').first().waitFor();
+    const styles = () => menu.locator('button').evaluateAll(nodes => nodes.map(node => {
+      const s = getComputedStyle(node);
+      return [s.backgroundColor, s.color, s.fontSize, s.fontWeight, s.paddingTop, s.boxShadow, s.backgroundImage];
+    }));
+    const initial = await styles();
+    assert.ok(initial.every(style => JSON.stringify(style) === JSON.stringify(initial[0])));
+    assert.deepEqual(initial[0].slice(2, 5), ['15px', '800', '11.5px']);
+    assert.notEqual(initial[0][5], 'none');
+    assert.match(initial[0][6], /linear-gradient/);
+    for (const row of state.menu.rows) for (const item of row) item.style = item.style === 'danger' ? 'success' : 'danger';
+    state.me = 200;
+    await page.reload();
+    await menu.locator('.bot-button').first().waitFor();
+    assert.deepEqual(await styles(), initial); // Server button styles cannot select WEB colors.
+    const styleOf = button => button.evaluate(node => { const s = getComputedStyle(node); return {
+      shadow: s.boxShadow, surface: s.backgroundImage, transform: s.transform, font: s.fontSize,
+      weight: s.fontWeight, padding: [s.paddingTop, s.paddingRight], color: s.color, background: s.backgroundColor,
+      height: node.getBoundingClientRect().height, touch: s.touchAction,
+    }; });
+    for (const button of [menu.locator('button').first(), page.locator('#new-conversation')]) {
+      await page.mouse.move(0, 0);
+      const idle = await styleOf(button);
+      assert.equal(idle.touch, 'manipulation');
+      if (await button.getAttribute('id') === 'new-conversation') {
+        assert.equal(idle.font, '19.5px');
+        assert.equal(idle.weight, '700');
+        assert.deepEqual(idle.padding, ['10px', '18px']);
+      } else assert.ok(Math.abs(idle.height - 46.2) < 1);
+      await button.hover();
+      const hover = await styleOf(button);
+      const rgb = text => text.match(/[\d.]+/g).slice(0, 3).map(Number);
+      const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+        .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      for (const [style, alpha] of [[idle, 32 / 255], [hover, 48 / 255]]) {
+        const foreground = luminance(rgb(style.color));
+        const surface = luminance(rgb(style.background).map(v => v * (1 - alpha) + 255 * alpha));
+        assert.ok((Math.max(foreground, surface) + .05) / (Math.min(foreground, surface) + .05) >= 4.5);
+      }
+      assert.notEqual(hover.shadow, idle.shadow);
+      assert.notEqual(hover.surface, idle.surface);
+      await page.mouse.down();
+      const pressed = await styleOf(button);
+      assert.equal(pressed.transform, 'matrix(1, 0, 0, 1, 0, 2)');
+      assert.notEqual(pressed.shadow, hover.shadow);
+      await page.mouse.move(0, 0);
+      await page.mouse.up(); // Release outside, so this check does not trigger navigation.
+      assert.equal((await styleOf(button)).transform, 'none');
+      await button.focus();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await button.evaluate(node => node.matches(':focus-visible') && getComputedStyle(node).outlineWidth === '2px'), true);
+    }
+    const close = page.locator('#close-conversation');
+    assert.equal(await close.isDisabled(), true);
+    const disabled = await styleOf(close);
+    assert.equal(disabled.shadow, 'none');
+    assert.equal(disabled.transform, 'none');
+    assert.equal(disabled.font, '19.5px');
+    assert.deepEqual(disabled.padding, ['10px', '18px']);
+    const history = page.locator('#history-open');
+    const historyStyle = await history.evaluate(node => { const s = getComputedStyle(node); return {
+      background: s.backgroundColor, color: s.color, border: s.borderColor,
+      font: s.fontSize, weight: s.fontWeight, height: node.getBoundingClientRect().height,
+    }; });
+    assert.equal(historyStyle.background, colorScheme === 'light' ? 'rgb(228, 243, 232)' : 'rgb(36, 87, 62)');
+    assert.notEqual(historyStyle.background, historyStyle.color);
+    assert.notEqual(historyStyle.background, historyStyle.border);
+    assert.equal(historyStyle.font, '18px');
+    assert.equal(historyStyle.weight, '800');
+    assert.ok(Math.abs(historyStyle.height - 48.2) < 1);
+    await history.click();
+    await page.locator('#history-dialog').waitFor({ state: 'visible' });
+    assert.equal(state.taskCalls.length, 0);
+    if (process.env.PANEL_SCREENSHOT_DIR) {
+      await page.getByRole('button', { name: 'Закрыть историю', exact: true }).click();
+      await page.locator('.client-sidebar').evaluate(node => { node.scrollTop = 0; });
+      await page.screenshot({ path: path.join(process.env.PANEL_SCREENSHOT_DIR, `panel-${colorScheme}.png`) });
+    }
+  });
+}
+
 async function openTask(page) {
   await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
   await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
@@ -255,7 +506,7 @@ for (const [finish, width] of [['create', 1440], ['cancel', 390], ['timeout', 14
     await page.clock.install();
     state.menu = taskMenu;
     await submit(page);
-    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
     await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
     await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
     await page.getByRole('button', { name: '⬅ Назад', exact: true }).click();
@@ -267,9 +518,17 @@ for (const [finish, width] of [['create', 1440], ['cancel', 390], ['timeout', 14
     await separator.waitFor();
     assert.equal(await separator.innerText(), 'Выбран пункт «Настройка»');
     assert.equal(await separator.locator('.message-header, strong, span').count(), 0);
-    assert.deepEqual(await separator.evaluate(node => ({ align: getComputedStyle(node).alignSelf,
-      border: getComputedStyle(node).borderTopWidth, background: getComputedStyle(node).backgroundColor })),
-      { align: 'center', border: '0px', background: 'rgba(0, 0, 0, 0)' });
+    const systemStyle = await separator.evaluate(node => {
+      const style = getComputedStyle(node), ordinary = getComputedStyle(document.querySelector('#chat-messages article.bot'));
+      return { align: style.alignSelf, border: style.borderTopWidth, background: style.backgroundColor,
+        ordinaryBackground: ordinary.backgroundColor,
+        fontDifference: parseFloat(style.fontSize) - parseFloat(ordinary.fontSize) };
+    });
+    assert.equal(systemStyle.align, 'center');
+    assert.equal(systemStyle.border, '1px');
+    assert.notEqual(systemStyle.background, 'rgba(0, 0, 0, 0)');
+    assert.notEqual(systemStyle.background, systemStyle.ordinaryBackground);
+    assert.equal(systemStyle.fontDifference, 1);
     assert.equal(await page.locator('#bot-buttons').isHidden(), true);
     await page.locator('#new-conversation').click();
     assert.equal(await page.locator('#bot-buttons').isHidden(), true);
@@ -293,8 +552,10 @@ for (const [finish, width] of [['create', 1440], ['cancel', 390], ['timeout', 14
       await page.getByText('Timeout from background', { exact: true }).waitFor();
     }
     assert.equal(await page.locator('#bot-buttons').isHidden(), true);
+    assert.equal(await page.locator('#scenario-status').innerText(), 'Нажмите „Новое обращение“');
     await page.locator('#new-conversation').click();
     assert.equal(await page.locator('#bot-buttons').isVisible(), true);
+    assert.equal(await page.locator('#scenario-status').innerText(), 'Выберите тему обращения');
     assert.equal(await page.getByRole('button', { name: '⬅ Назад', exact: true }).isVisible(), true);
     await pollWorkspace(page);
     assert.equal(await page.locator('#bot-buttons').isVisible(), true);
@@ -321,7 +582,7 @@ test('persistent chat: restore blocks actions, confirms by task ID, and survives
   let release;
   state.activeHold = new Promise(resolve => { release = resolve; });
   await submit(page);
-  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
   assert.equal(await page.locator('#demo-text').isDisabled(), true);
   assert.equal(await page.locator('#bot-buttons').isHidden(), true);
   state.activeHold = null;
@@ -504,10 +765,86 @@ test('session lock: a preload 401 stops sibling uploads without deleting remote 
   assert.equal(state.logoutCount, 0);
 });
 
+for (const [width, height] of [[1440, 1000], [1024, 600], [390, 700], [667, 320]]) {
+  test(`sidebar: stable assistant and readable scenario status at ${width}x${height}`, async t => {
+    const { page, state } = await pageFor(t, { width, height });
+    state.menu = structuredClone(taskMenu);
+    state.menu.rows.push(...Array.from({ length: 24 }, (_, i) => [{
+      id: `extra-${i}`, label: `Дополнительная тема ${i}`, workflow_type: 'ticket', children: null,
+    }]));
+    await submit(page);
+    await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+    const geometry = () => page.locator('.client-sidebar').evaluate(sidebar => {
+      const panel = sidebar.querySelector('.bot-panel').getBoundingClientRect();
+      return { height: panel.height,
+        history: sidebar.querySelector('#history-open').getBoundingClientRect().top - panel.top,
+        info: sidebar.querySelector('.client-info').getBoundingClientRect().top - panel.top };
+    });
+    const baseline = await geometry();
+    const stable = async () => {
+      const actual = await geometry();
+      for (const key of Object.keys(baseline)) assert.ok(Math.abs(actual[key] - baseline[key]) < 1, `${key}: ${JSON.stringify(actual)}`);
+    };
+    assert.equal(await page.locator('#bot-buttons').evaluate(node => node.scrollHeight > node.clientHeight), true);
+    assert.ok(baseline.height <= height);
+    await page.getByRole('button', { name: 'Дополнительная тема 23', exact: true }).scrollIntoViewIfNeeded();
+    await page.getByRole('button', { name: 'Дополнительная тема 23', exact: true }).click();
+    await stable();
+    await page.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
+    await stable();
+    await page.getByRole('button', { name: 'Компьютер и программы', exact: true }).click();
+    await stable();
+    await page.getByRole('button', { name: 'Настройка', exact: true }).click();
+    await page.locator('#scenario-status').getByText('Ожидаем подтверждение', { exact: true }).waitFor();
+    assert.equal(await page.locator('#task-feedback').count(), 0);
+    await stable();
+    if (process.env.SIDEBAR_SCREENSHOT && width === 1440) await page.screenshot({ path: process.env.SIDEBAR_SCREENSHOT });
+    await page.locator('#task-confirm').click();
+    await page.locator('#scenario-status').getByText('Ожидаем описание задачи', { exact: true }).waitFor();
+    await stable();
+    state.me = 200;
+    await page.reload();
+    await page.locator('#scenario-status').getByText('Ожидаем описание задачи', { exact: true }).waitFor();
+    await stable();
+    await page.locator('#task-cancel').click();
+    await page.locator('#scenario-status').getByText('Нажмите „Новое обращение“', { exact: true }).waitFor();
+    await stable();
+    await page.locator('#new-conversation').click();
+    await page.locator('#scenario-status').getByText('Выберите тему обращения', { exact: true }).waitFor();
+    await stable();
+    assert.match(await page.locator('#history-open').innerText(), /^История обращений\s+↗$/);
+    await page.locator('#history-open').click();
+    await page.getByRole('heading', { name: 'История обращений', exact: true }).waitFor();
+    assert.equal(await page.locator('#session-panel').getByText('История заявок', { exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  });
+}
+
+test('sidebar status: loading and failed state reads do not report an active scenario', async t => {
+  const { page, state } = await pageFor(t);
+  await page.clock.install();
+  let release;
+  state.activeHold = new Promise(resolve => { release = resolve; });
+  await submit(page);
+  await page.locator('#scenario-status').getByText('Загружаем состояние…', { exact: true }).waitFor();
+  state.activeHold = null;
+  state.syncStatus = 503;
+  release();
+  await page.locator('#scenario-status').getByText('Не удалось обновить состояние', { exact: true }).waitFor();
+  state.syncStatus = 200;
+  state.activeTask = activeIntake('confirmation_required');
+  await pollWorkspace(page);
+  await page.locator('#scenario-status').getByText('Ожидаем подтверждение', { exact: true }).waitFor();
+  await page.locator('#logout-button').click();
+  await waitLogin(page);
+  await submit(page);
+  await page.locator('#scenario-status').getByText('Ожидаем подтверждение', { exact: true }).waitFor();
+});
+
 test('successful login clears fields and shows client workspace', async t => {
   const { page } = await pageFor(t);
   await submit(page);
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Новое обращение', exact: true }).isVisible(), true);
   assert.equal(await page.locator('#password').inputValue(), '');
   assert.equal(await page.locator('#login').inputValue(), '');
@@ -517,8 +854,8 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
   test(`client prototype: local scenarios, ${width}px, ${colorScheme}`, async t => {
     const { page } = await pageFor(t, { width, colorScheme });
     await submit(page);
-    await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
-    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
+    await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
     const requests = [];
     page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
     const workspace = page.locator('#session-panel');
@@ -533,8 +870,8 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.ok(layout.font.includes('Manrope'));
     if (width > 700) assert.ok(Math.abs(layout.chat / layout.sidebar - 2) < .1);
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `workspace-${width}-${colorScheme}.png`), fullPage: true });
-    assert.equal(await page.locator('#notifications-toggle').isDisabled(), true);
-    assert.equal(await page.locator('#notifications-toggle .counter').count(), 0);
+    assert.equal(await page.locator('#scenario-status').innerText(), 'Выберите тему обращения');
+    assert.equal(await page.locator('#notifications-toggle').count(), 0);
     assert.equal(await page.locator('#bot-buttons button').count(), 3);
     for (const button of await page.locator('#bot-buttons button').all()) assert.equal(await button.isEnabled(), true);
     const beforeMenu = await page.locator('#chat-messages').innerText();
@@ -584,18 +921,18 @@ for (const sendByEnter of [false, true]) {
     state.menu = taskMenu;
     state.taskConfirmation = false;
     await submit(page);
-    await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
-    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
+    await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
     await openTask(page);
     await page.getByText('Опишите задачу (сервер)', { exact: true }).waitFor();
     const requests = [];
     page.on('request', request => { if (request.url().includes('/api/')) requests.push(request.url()); });
-    const toggle = page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true });
+    const toggle = page.locator('#sendByEnterCheckbox');
     const input = page.locator('#demo-text');
     const messages = page.locator('#chat-messages');
     assert.equal(await toggle.isChecked(), false);
     await toggle.setChecked(sendByEnter);
-    assert.equal(await page.locator('#sendHotkeyHint').innerText(), sendByEnter ? 'Новая строка: Shift+Enter' : 'Отправка: Ctrl+Enter');
+    assert.equal(await page.locator('#sendHotkeyHint').innerText(), sendByEnter ? 'Новая строка Shift+Enter' : 'Новая строка Enter');
     const before = await messages.locator('article').count();
     await input.fill('Первая строка');
     await input.press(sendByEnter ? 'Shift+Enter' : 'Enter');
@@ -634,7 +971,7 @@ for (const width of [1440, 390]) {
   test(`client menu: nested navigation, back and visual-only terminal buttons at ${width}px`, async t => {
     const { page, state } = await pageFor(t, { width, colorScheme: width === 390 ? 'dark' : 'light' });
     await submit(page);
-    await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+    await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
     const menu = page.locator('#bot-buttons');
     const rows = () => menu.locator('.menu-row').evaluateAll(lines => lines.map(line => [...line.querySelectorAll('button')].map(button => ({ label: button.textContent, color: button.className }))));
     const original = await rows();
@@ -646,11 +983,11 @@ for (const width of [1440, 390]) {
     page.on('request', request => requests.push(request.method() + ' ' + request.url()));
     await menu.getByRole('button', { name: 'Техническая поддержка', exact: true }).click();
     assert.deepEqual(await menu.locator('button').allTextContents(), ['Компьютер и программы', 'Справка', '⬅ Назад']);
-    assert.equal(await menu.locator('.bot-button.green').innerText(), 'Компьютер и программы');
+    assert.equal(await menu.getByRole('button', { name: 'Компьютер и программы', exact: true }).innerText(), 'Компьютер и программы');
     await menu.getByRole('button', { name: 'Компьютер и программы', exact: true }).press('Enter');
     assert.deepEqual(await menu.locator('button').allTextContents(), ['Настройка', 'Диагностика', '⬅ Назад']);
-    assert.equal(await menu.locator('.bot-button.red').innerText(), 'Настройка');
-    assert.equal(await menu.locator('.bot-button.blue').innerText(), 'Диагностика');
+    assert.equal(await menu.getByRole('button', { name: 'Настройка', exact: true }).innerText(), 'Настройка');
+    assert.equal(await menu.getByRole('button', { name: 'Диагностика', exact: true }).innerText(), 'Диагностика');
     await menu.getByRole('button', { name: 'Настройка', exact: true }).click();
     assert.equal(await menu.getByRole('button', { name: 'Настройка', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.ok((await page.locator('#bot-hint').innerText()).includes('действие пока недоступно'));
@@ -677,19 +1014,19 @@ test(`WEB task: confirmation, one description via Enter, READY and persisted cha
   const { page, state } = await pageFor(t, { width, colorScheme });
   state.menu = taskMenu;
   await submit(page);
-  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
   assert.equal(await page.locator('#demo-send').isDisabled(), true);
   let release;
   state.taskHold = new Promise(resolve => { release = resolve; });
   await openTask(page);
-  await page.locator('#task-feedback').getByText('Ожидаем ответ сервера…', { exact: true }).waitFor();
+  await page.locator('#scenario-status').getByText('Выполняем запрос…', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Настройка', exact: true }).evaluate(button => button.click());
   assert.equal(state.taskCalls.length, 1);
   state.taskHold = null;
   release();
   await page.locator('#task-confirm').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#demo-text').isDisabled(), true);
-  assert.equal(await page.locator('#task-feedback').innerText(), 'Подтвердите создание (сервер)');
+  assert.equal(await page.locator('#scenario-status').innerText(), 'Ожидаем подтверждение');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `task-confirm-${width}-${colorScheme}.png`), fullPage: true });
   await page.locator('#task-confirm').evaluate(button => { button.click(); button.click(); });
@@ -698,7 +1035,7 @@ test(`WEB task: confirmation, one description via Enter, READY and persisted cha
   assert.equal(state.taskCalls[1].path, `/api/v1/web/tasks/${taskId}/confirm`);
   assert.match(state.taskCalls[0].body.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.equal(state.taskCalls[1].body, undefined);
-  await page.getByRole('checkbox', { name: 'Отправлять по Enter', exact: true }).check();
+  await page.locator('#sendByEnterCheckbox').check();
   await page.locator('#demo-text').fill('Описание');
   await page.locator('#demo-text').press('Shift+Enter');
   await page.locator('#demo-text').press('x');
@@ -830,7 +1167,7 @@ test('WEB task: other terminal workflows never call select', async t => {
     { id: `unsupported-${i}`, label: `Тип ${i}`, workflow_type, style: 'danger', children: null },
   ]) };
   await submit(page);
-  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
+  await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
   const before = await page.locator('#chat-messages').innerText();
   for (let i = 0; i < 5; i++) await page.getByRole('button', { name: `Тип ${i}`, exact: true }).click();
   assert.deepEqual(state.taskCalls, []);
@@ -858,10 +1195,10 @@ test('client menu: loading, safe error, retry, empty state and read-only colors'
   state.menu = menuExample;
   state.me = 200;
   await page.reload();
-  await page.getByText('Выберите тему в меню', { exact: true }).waitFor();
-  assert.equal(await page.locator('.bot-button.blue').innerText(), 'Техническая поддержка');
-  assert.equal(await page.locator('.bot-button.green').count(), 0);
-  assert.equal(await page.locator('.bot-button.red').innerText(), 'Доступы и учётная запись');
+  await page.locator('#bot-buttons .bot-button').first().waitFor({ state: 'attached' });
+  assert.equal(await page.locator('#bot-buttons').getByRole('button', { name: 'Техническая поддержка', exact: true }).innerText(), 'Техническая поддержка');
+  assert.equal(await page.locator('#bot-buttons .blue, #bot-buttons .green, #bot-buttons .red').count(), 0);
+  assert.equal(await page.locator('#bot-buttons').getByRole('button', { name: 'Доступы и учётная запись', exact: true }).innerText(), 'Доступы и учётная запись');
   const requests = [];
   page.on('request', request => requests.push(request.method() + ' ' + request.url()));
   const chat = await page.locator('#chat-messages').innerText();
@@ -911,7 +1248,7 @@ test('in-flight requests disable duplicate form submissions and clear password i
   await page.locator('#login-form').evaluate(form => form.dispatchEvent(new Event('submit', { cancelable: true })));
   assert.equal(state.loginCount, 1);
   release();
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
 });
 
 test('network errors are safe and checking session can be retried', async t => {
@@ -942,7 +1279,7 @@ test('active session on reopen, expired session and revoked logout', async t => 
   const { page, state } = await pageFor(t);
   state.me = 200;
   await page.reload();
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   state.logout = 401;
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await page.locator('#session-ended-dialog button').click();
@@ -955,7 +1292,7 @@ test('active session on reopen, expired session and revoked logout', async t => 
 test('failed logout preserves the signed-in view and allows retry', async t => {
   const { page, state } = await pageFor(t);
   await submit(page);
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   state.logout = 503;
   await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await page.locator('#logout-error').waitFor({ state: 'visible' });
@@ -989,7 +1326,7 @@ test('real task API through proxy: lost committed select, confirmation, descript
   assert.equal((await control('state')).tasks.length, 1);
   await page.locator('#task-retry').click();
   await page.locator('#task-confirm').waitFor({ state: 'visible' });
-  await page.locator('#task-feedback').getByText('Synthetic confirmation', { exact: true }).waitFor();
+  await page.locator('#scenario-status').getByText('Ожидаем подтверждение', { exact: true }).waitFor();
   await page.locator('#task-confirm').click();
   await page.getByText('Synthetic description prompt', { exact: true }).waitFor();
   let descriptionLost = false;
@@ -1056,7 +1393,7 @@ test('real API through proxy: cookie, Origin, reload, idle, expiry, logout and e
   await waitLogin(page);
   await context.addCookies([{ name: 'esdesk_session', value: 'synthetic-staff-cookie', url: origin, httpOnly: true }]);
   await submit(page);
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   const cookie = (await context.cookies()).find(cookie => cookie.name === 'esdesk_web_session');
   assert.ok(cookie && cookie.httpOnly && cookie.sameSite === 'Strict' && cookie.path === '/api/v1/web');
   assert.equal(await page.evaluate(() => document.cookie.includes('esdesk_web_session')), false);
@@ -1064,7 +1401,7 @@ test('real API through proxy: cookie, Origin, reload, idle, expiry, logout and e
   assert.equal(await page.getByRole('button', { name: 'Synthetic menu', exact: true }).isEnabled(), true);
   const before = await control('state');
   await page.reload();
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   await page.getByRole('button', { name: 'Synthetic menu', exact: true }).waitFor();
   const after = await control('state');
   assert.ok(after.requests.some(request => request.path === '/api/v1/web/menu'));
@@ -1085,7 +1422,7 @@ test('real API through proxy: cookie, Origin, reload, idle, expiry, logout and e
   await page.reload();
   await waitLogin(page);
   await submit(page);
-  await page.getByRole('heading', { name: 'Поддержка ES DESK+' }).waitFor();
+  await page.getByRole('heading', { name: 'Техническая поддержка Элитного Сочи' }).waitFor();
   await control('expire');
   await page.reload();
   await waitLogin(page);
@@ -1461,7 +1798,8 @@ async function stubHistoryClipboard(page) {
 
 for (const [width, height] of [[1600, 900], [1366, 768]]) for (const colorScheme of ['light', 'dark']) {
   test(`history modal: desktop geometry, scroll, selection and copy ${width} ${colorScheme}`, async t => {
-    const { page } = await pageFor(t, { width, height, colorScheme });
+    const { page, state: workspaceState } = await pageFor(t, { width, height, colorScheme });
+    workspaceState.chat = [chatRow(1, 'Сообщение клиента', 'client')];
     const state = await mockResults(page);
     state.items = Array.from({ length: 15 }, (_, i) => historyEntry(i === 0 ? taskId : `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
     state.total = 15;
@@ -1474,13 +1812,16 @@ for (const [width, height] of [[1600, 900], [1366, 768]]) for (const colorScheme
       return { width: box.width, height: box.height, x: box.x, y: box.y,
         ratio: list.getBoundingClientRect().width / detail.getBoundingClientRect().width,
         listHeight: list.clientHeight, listScroll: list.scrollHeight, dialogHeight: el.clientHeight, dialogScroll: el.scrollHeight,
-        paginationBottom: el.querySelector('.history-pagination').getBoundingClientRect().bottom, bottom: box.bottom };
+        paginationBottom: el.querySelector('.history-pagination').getBoundingClientRect().bottom, bottom: box.bottom, radius: getComputedStyle(el).borderTopLeftRadius };
     });
-    assert.equal(dimensions.width, Math.min(1420, width - 40));
-    assert.equal(dimensions.height, Math.min(760, height - 40));
-    assert.ok(dimensions.x >= 20 && dimensions.y >= 20);
-    assert.ok(Math.abs(dimensions.ratio - 52 / 48) < .01);
-    assert.equal(dimensions.listHeight, dimensions.listScroll);
+    assert.equal(dimensions.width, width - 100);
+    assert.equal(dimensions.height, height - 100);
+    assert.equal(dimensions.x, 50);
+    assert.equal(dimensions.y, 50);
+    assert.equal(dimensions.radius, '18px');
+    assert.ok(Math.abs(dimensions.ratio - 1) < .01);
+    assert.ok(dimensions.listHeight <= dimensions.listScroll);
+    await page.locator('.history-table-scroll').evaluate(el => { el.scrollTop = 0; });
     assert.ok(dimensions.dialogScroll <= dimensions.dialogHeight + 1);
     assert.ok(dimensions.paginationBottom <= dimensions.bottom - 20);
     assert.equal(await page.locator('.history-table tbody tr').count(), 15);
@@ -1498,13 +1839,89 @@ for (const [width, height] of [[1600, 900], [1366, 768]]) for (const colorScheme
     });
     assert.equal(selection.text, state.detail.text.trimEnd()); // Browser selection omits the final unpainted newline.
     assert.equal(selection.userSelect, 'text');
-    assert.equal(selection.fontSize, '15px');
+    assert.equal(selection.fontSize, '18px');
+    assert.deepEqual(await page.locator('.history-message-text').evaluate(el => {
+      const preview = getComputedStyle(el), chat = getComputedStyle(document.querySelector('#chat-messages article'));
+      return [preview.fontFamily === chat.fontFamily, preview.fontSize === chat.fontSize, preview.lineHeight === chat.lineHeight];
+    }), [true, true, true]);
+    assert.equal(await page.locator('.history-table button').first().evaluate(el => getComputedStyle(el).fontSize), '19px');
     await page.getByRole('button', { name: 'Копировать текст ответа', exact: true }).click();
     await page.getByText('Скопировано', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.historyCopiedText), state.detail.text);
     assert.equal(await page.locator('.history-table tbody tr').count(), 15);
     assert.equal(await page.locator('#history-dialog').evaluate(el => el.scrollHeight <= el.clientHeight + 1), true);
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `history-modal-${width}-${colorScheme}.png`) });
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`history panels: pinned pagination, fixed API pages and resize preserve selection at ${width}px`, async t => {
+    const { page } = await pageFor(t, { width, height: 900 });
+    const state = await mockResults(page);
+    state.total = width > 700 ? 16 : 17;
+    state.items = Array.from({ length: state.total }, (_, i) => historyEntry(i === 0 ? taskId : `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+    await openResults(page);
+    await page.locator('[data-record]').first().waitFor();
+    await page.getByRole('heading', { name: 'Список заявок', exact: true }).waitFor();
+    const pinned = async () => {
+      const sizes = await page.locator('#history-list').evaluate(node => {
+        const scroll = node.querySelector('.history-table-scroll'), table = scroll.getBoundingClientRect();
+        const rows = [...node.querySelectorAll('tbody tr')].map(row => row.getBoundingClientRect());
+        const pagination = node.querySelector('.history-pagination').getBoundingClientRect();
+        const pane = document.querySelector('#history-list-pane');
+        return { gap: node.getBoundingClientRect().bottom - pagination.bottom, tableBottom: table.bottom,
+          rowHeights: rows.map(row => row.height), lastBottom: rows.at(-1).bottom,
+          scrollHeight: scroll.scrollHeight, clientHeight: scroll.clientHeight,
+          tableHeight: scroll.querySelector('table').getBoundingClientRect().height,
+          paginationTop: pagination.top, border: getComputedStyle(pane).borderTopWidth,
+          overflow: document.querySelector('#history-dialog').scrollWidth > document.querySelector('#history-dialog').clientWidth };
+      });
+      assert.ok(Math.abs(sizes.gap) < 1, JSON.stringify(sizes));
+      assert.ok(sizes.tableBottom <= sizes.paginationTop);
+      assert.equal(sizes.border, '1px');
+      assert.equal(sizes.overflow, false);
+      if (sizes.rowHeights.length === 15) {
+        assert.ok(sizes.tableHeight >= sizes.clientHeight - 2, JSON.stringify(sizes));
+        assert.ok(Math.max(...sizes.rowHeights) - Math.min(...sizes.rowHeights) < 1);
+        if (sizes.scrollHeight <= sizes.clientHeight + 1) assert.ok(sizes.paginationTop - sizes.lastBottom <= 16, JSON.stringify(sizes));
+      } else assert.ok(sizes.rowHeights.every(height => height >= 38 && height <= 50), JSON.stringify(sizes));
+    };
+    await pinned();
+    assert.equal(await page.locator('[data-record]').count(), 15);
+    assert.equal(await page.locator('#history-title').evaluate(node => getComputedStyle(node).fontSize), '21px');
+    assert.deepEqual(await page.locator('.history-table tbody tr').first().locator('td').evaluateAll(nodes => nodes.slice(2).map(node => getComputedStyle(node).fontSize)), ['19px', '19px']);
+    const noOverlap = await page.locator('.history-table tbody tr').first().evaluate(row => [...row.cells].slice(2).every(cell => {
+      const range = document.createRange(); range.selectNodeContents(cell);
+      const text = range.getBoundingClientRect(), box = cell.getBoundingClientRect();
+      return text.left >= box.left && text.right <= box.right;
+    }));
+    assert.equal(noOverlap, true);
+    await selectResult(page);
+    await page.locator('.history-message-text').waitFor();
+    await page.getByRole('heading', { name: 'Предпросмотр', exact: true }).waitFor();
+    if (width > 700) {
+      await page.setViewportSize({ width, height: 1400 });
+      await pinned();
+      await page.setViewportSize({ width, height: 600 });
+      await pinned();
+      assert.equal(await page.locator('.history-table-scroll').evaluate(node => node.scrollHeight > node.clientHeight), true);
+    }
+    const calls = state.calls.length;
+    await page.setViewportSize({ width, height: 600 });
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(await page.locator(`[data-record="${taskId}"]`).getAttribute('aria-pressed'), 'true');
+    assert.equal(state.calls.length, calls); // Fixed page_size=15; resize needs no additional requests.
+    if (width <= 700) await page.locator('#history-back').click();
+    await pinned();
+    await page.getByRole('button', { name: 'Страница 2', exact: true }).click();
+    await page.locator(`[data-record="${state.items[15].id}"]`).waitFor();
+    assert.equal(await page.locator('[data-record]').count(), state.total - 15);
+    await pinned();
+    assert.equal(await page.getByRole('button', { name: 'Вперёд', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Страница 1', exact: true }).click();
+    await page.locator(`[data-record="${taskId}"]`).waitFor();
+    assert.equal(await page.locator('[data-record]').count(), 15);
+    await pinned();
   });
 }
 
@@ -1525,6 +1942,11 @@ for (const width of [390, 320]) for (const colorScheme of ['light', 'dark']) {
     assert.equal(await page.locator('#history-list').isVisible(), false);
     assert.equal(await page.locator('#history-detail').isVisible(), true);
     assert.equal(await page.locator('#history-back').isVisible(), true);
+    assert.equal(await page.locator('.history-message-text').evaluate(el => getComputedStyle(el).fontSize), '14px');
+    const box = await page.locator('#history-dialog').boundingBox();
+    assert.equal(box.x, 16);
+    assert.equal(box.y, 16);
+    assert.equal(box.width, width - 32);
     await page.getByRole('button', { name: 'Копировать текст ответа', exact: true }).click();
     await page.getByText('Скопировано', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.historyCopiedText), state.detail.text);
@@ -1582,8 +2004,9 @@ async function trackHistoryUrls(page) {
   });
 }
 
-test('history conversation: API order, client text, empty response, no duplicate publication', async t => {
-  const { page } = await pageFor(t);
+for (const width of [1440, 390, 320]) {
+test(`history conversation: message widths, alignment and API order at ${width}px`, async t => {
+  const { page } = await pageFor(t, { width });
   const state = await mockResults(page);
   state.messages = [historyMessage('Итог из API', [], 'agent', '2026-10-30T10:00:00Z'), historyMessage('Исходный запрос')];
   await openResults(page);
@@ -1591,19 +2014,50 @@ test('history conversation: API order, client text, empty response, no duplicate
   await page.waitForFunction(() => document.querySelectorAll('#history-detail article').length === 2);
   assert.deepEqual(await page.locator('.history-message-text').allTextContents(), ['Исходный запрос', 'Итог из API']);
   assert.equal(await page.getByText('Итог из API', { exact: true }).count(), 1);
+  const geometry = await page.locator('#history-detail').evaluate(node => {
+    const style = getComputedStyle(node), box = node.getBoundingClientRect();
+    const left = box.left + parseFloat(style.paddingLeft), right = box.right - parseFloat(style.paddingRight);
+    const innerWidth = node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    return [...node.querySelectorAll('article')].map(message => {
+      const rect = message.getBoundingClientRect();
+      return { ratio: rect.width / innerWidth, alignmentGap: message.classList.contains('client') ? right - rect.right : rect.left - left };
+    });
+  });
+  for (const message of geometry) {
+    assert.ok(Math.abs(message.ratio - (width > 700 ? .6 : .95)) < .01, JSON.stringify(geometry));
+    assert.ok(Math.abs(message.alignmentGap) < 1, JSON.stringify(geometry));
+  }
+  // Visual fixture: system blocks must not inherit ordinary preview bubble widths.
+  const system = await page.locator('#history-detail').evaluate(node => {
+    const message = document.createElement('article');
+    message.className = 'chat-message system'; message.textContent = 'Событие'; node.append(message);
+    const style = getComputedStyle(message), ratio = message.getBoundingClientRect().width / node.clientWidth;
+    const result = { ratio, align: style.alignSelf, border: style.borderTopWidth, fill: style.backgroundColor };
+    message.remove();
+    return result;
+  });
+  assert.ok(system.ratio < .5);
+  assert.equal(system.align, 'center');
+  assert.equal(system.border, '1px');
+  assert.notEqual(system.fill, 'rgba(0, 0, 0, 0)');
   assert.deepEqual(state.calls.filter(call => call.action === 'detail').map(call => call.path), [`${historyBase}/${taskId}/messages`]);
   state.messages = [];
+  if (width <= 700) await page.locator('#history-back').click();
   await selectResult(page);
   await page.getByText('Доступных сообщений пока нет.', { exact: true }).waitFor();
 });
 
-test('history media: authorized blobs, four image types, enlargement and download-only ordinary files', async t => {
-  const { page } = await pageFor(t);
+}
+
+for (const width of [1440, 320]) {
+test(`history media: authorized blobs and contained previews at ${width}px`, async t => {
+  const { page } = await pageFor(t, { width });
   const state = await mockResults(page);
   state.items[0].has_web_result = false;
   const files = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/webm', 'audio/ogg']
     .map((mime, index) => historyFile(index, 'document', mime));
-  state.messages = [historyMessage('Мои файлы', files)];
+  files[4].filename = 'ДлинноеИмя'.repeat(10) + '.pdf';
+  state.messages = [historyMessage('Мои файлы ' + 'ДлинноеСлово'.repeat(80), files)];
   const png = require('node:fs').readFileSync('api/app/static/icons/image-open-original.png');
   state.filePayloads = Object.fromEntries(files.map(file => [file.id, file.mime_type === 'image/webp'
     ? require('node:fs').readFileSync('web-client/assets/web-source.webp') : png]));
@@ -1613,6 +2067,8 @@ test('history media: authorized blobs, four image types, enlargement and downloa
   await openResults(page);
   await selectResult(page);
   await page.waitForFunction(() => document.querySelectorAll('.history-image img').length === 4);
+  assert.equal(await page.locator('#history-detail article').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  assert.equal(await page.locator('#history-dialog').evaluate(node => node.scrollWidth <= node.clientWidth), true);
   assert.equal(await page.locator('.history-sticker').count(), 0);
   assert.equal(await page.locator('#history-detail video').count(), 0);
   assert.equal(await page.locator('.history-file small').first().innerText(), '2.0 КБ');
@@ -1631,8 +2087,11 @@ test('history media: authorized blobs, four image types, enlargement and downloa
   assert.deepEqual(unexpected, []);
 });
 
-test('history stickers: shared WEBP/WEBM/TGS players destroy resources on switching', async t => {
-  const { page } = await pageFor(t);
+}
+
+for (const width of [1440, 320]) {
+test(`history stickers: contained WEBP/WEBM/TGS and resource cleanup at ${width}px`, async t => {
+  const { page } = await pageFor(t, { width });
   const state = await mockResults(page);
   state.items.push(historyEntry(secondTaskId));
   state.total = 2;
@@ -1651,16 +2110,20 @@ test('history stickers: shared WEBP/WEBM/TGS players destroy resources on switch
   await selectResult(page);
   await page.locator('.history-sticker svg').waitFor();
   assert.equal(await page.evaluate(() => window.tgsDecoded), true);
+  assert.equal(await page.locator('#history-detail article').evaluate(node => node.scrollWidth <= node.clientWidth), true);
   assert.equal(await page.locator('.history-sticker img').count(), 1);
   await page.locator('.history-sticker video').evaluate(video => { window.previousStickerVideo = video; });
   assert.deepEqual(await page.locator('.history-sticker video').evaluate(video => [video.muted, video.loop, video.autoplay, video.playsInline]), [true, true, true, true]);
   state.messages = [];
+  if (width <= 700) await page.locator('#history-back').click();
   await selectResult(page, secondTaskId);
   await page.getByText('Доступных сообщений пока нет.', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.tgsDestroyed), true);
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
   assert.equal(await page.evaluate(() => window.previousStickerVideo.getAttribute('src')), null);
 });
+
+}
 
 test('history preview: switching aborts pending file fetch and discards late blobs', async t => {
   const { page } = await pageFor(t);
@@ -1727,7 +2190,7 @@ test('task files: immediate preloads, image preview, remove and JSON description
   assert.equal(await page.locator('#demo-send').innerText(), 'Отправить ↑');
   assert.equal(await page.locator('#demo-composer').getAttribute('aria-busy'), 'true');
   assert.match(await page.locator('#composer-hint').innerText(), /Ожидаем ответ/);
-  assert.doesNotMatch(await page.locator('#task-feedback').innerText(), /\d+%/);
+  assert.doesNotMatch(await page.locator('#scenario-status').innerText(), /\d+%/);
   release();
   await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
   const posted = state.taskCalls.filter(call => call.path.endsWith('/description'));
