@@ -115,6 +115,14 @@ def ensure_ticket_number_counter() -> None:
         """))
 
 
+def ensure_web_client_drafts_table() -> None:
+    """Explicit migration only: intentionally not called by API startup."""
+    from ..models import WebClientDraft
+
+    with engine.begin() as conn:
+        WebClientDraft.__table__.create(bind=conn, checkfirst=True)
+
+
 def ensure_web_chat_messages_table() -> None:
     """Explicit migration only: intentionally not called by API startup."""
     from ..models import WebChatMessage

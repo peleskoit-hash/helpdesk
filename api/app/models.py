@@ -197,6 +197,18 @@ class ClientProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class WebClientDraft(Base):
+    __tablename__ = "web_client_drafts"
+    __table_args__ = (CheckConstraint("version >= 0", name="ck_web_client_drafts_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("clients.id"), unique=True, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class WebClientSession(Base):
     __tablename__ = "web_client_sessions"
 
