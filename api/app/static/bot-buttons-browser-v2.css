@@ -64,14 +64,26 @@ body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v
   }
 }
 
-/* Concrete button editor only; automatic-message editors keep their existing styles. */
-body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-editor) {
+/* Shared V2 surfaces for concrete button and system-event editors. */
+body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-editor, [data-system-editor]) {
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
   & .bot-buttons-panel { box-sizing: border-box; height: 100%; padding: 20px; overflow: auto; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); }
   & .bot-buttons-breadcrumb { position: relative; top: 1px; }
-  & .bot-instruction-editor { padding: 0; border: 0; background: transparent; box-shadow: none; font: 16.8px/1.5 var(--desk-font); }
+  & :is(.bot-instruction-editor, [data-system-editor]) { padding: 0; border: 0; background: transparent; box-shadow: none; font: 16.8px/1.5 var(--desk-font); }
+  & [data-system-editor] { display: grid; gap: 12px; min-width: 0; }
+  & [data-system-editor] .bot-editor-title { font-size: 21px; font-weight: 700; overflow-wrap: anywhere; }
+  & [data-system-editor] .bot-info-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  & [data-system-editor] .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none; }
+  & [data-system-editor] .action:hover { background: var(--desk-hover); }
+  & [data-system-editor] .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
+  & [data-system-editor] .action-primary:hover { filter: brightness(1.05); }
+  & [data-system-editor] .action:disabled { opacity: .6; cursor: not-allowed; }
+  & [data-system-editor] .bot-button-style-option { border-color: var(--desk-border); box-shadow: none; }
+  & [data-system-editor] .bot-button-style-base { background: var(--desk-surface); }
+  & [data-system-editor] .bot-button-style-option:hover { filter: brightness(1.08); }
+  & [data-system-editor] .bot-button-style-option.is-selected { outline: 2px solid var(--desk-accent); outline-offset: 2px; }
   & .bot-editor-section { background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); padding: 16px; border-radius: 16px; }
-  & .bot-instruction-editor :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
+  & :is(.bot-instruction-editor, [data-system-editor]) :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
   & :is(input:not([type="checkbox"]), select) { padding: 8px 10px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); box-sizing: border-box; }
   & .checkbox-label { display: flex; align-items: center; gap: 10px; width: fit-content; cursor: pointer; }
   & input[type="checkbox"]:not(.desk-toggle) { width: 18px; height: 18px; accent-color: var(--desk-accent); }

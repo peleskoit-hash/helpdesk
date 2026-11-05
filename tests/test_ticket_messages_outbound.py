@@ -1422,7 +1422,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_attachments_shell_version = "20261031-web-history-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
     ticket_page_version = "20261029-ticket-history-v1"
-    ticket_styles_version = "20261105-table-header-surface-v2"
+    ticket_styles_version = "20261106-system-editors-v2"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
