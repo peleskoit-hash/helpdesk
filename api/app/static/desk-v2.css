@@ -436,11 +436,10 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & select.bulk-assign-btn { width: 300px; appearance: auto; cursor: pointer; }
   & .bulk-admin-actions { padding: 5px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); }
   & select.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
-  & .table-scroll { padding: 8px 12px 0; container-type: inline-size; }
+  & .table-scroll { padding: 8px 12px 0; }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
   & th { padding: 0 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
-  & #ticketsTable thead { position: relative; isolation: isolate; background: var(--desk-surface); }
-  & #ticketsTable thead::after { content: ""; position: absolute; inset: -14px auto 0 -12px; width: max(calc(100% + 24px), calc(100cqw + 24px)); background: var(--desk-surface); border-bottom: 1px solid var(--desk-border); border-radius: 23px 23px 0 0; z-index: -1; pointer-events: none; }
+  & #ticketsTable thead { background: var(--desk-surface); }
   & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); }
   & button.mini-check-btn { display: inline-grid; place-items: center; padding: 0; line-height: 1; vertical-align: middle; }
   & td { font-size: 16px; padding: 8px 12px; line-height: 1.5; color: var(--desk-text); }

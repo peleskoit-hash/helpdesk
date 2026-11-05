@@ -110,7 +110,7 @@ for (const theme of ['light', 'dark']) {
         assert.equal(await page.locator('#reviewDateFrom').isEnabled(), true);
       }
       assert.ok(assets.includes('/static/reviews.css?v=20261105-employee-column-width-v1'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261102-status-selection-v1'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261105-table-header-overflow-v1'));
       makeEmpty();
       await page.locator('#reviewDateFrom').fill('2026-10-02');
       await page.waitForFunction(() => document.querySelector('#reviewStatus').textContent.includes('отзывов нет'));

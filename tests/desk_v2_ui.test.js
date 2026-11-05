@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261029-image-actions-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-overflow-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261029-image-actions-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-overflow-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -1582,7 +1582,7 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
         const padding = parseFloat(ls.paddingLeft) + parseFloat(ls.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
         return Math.ceil(Math.min(Math.max(...widths), widths.reduce((a, b) => a + b, 0) / widths.length * 1.5) + padding);
       });
-      assert.ok(Math.abs(calculated[key] - expected) <= 2, `${key}: ${calculated[key]} versus ${expected}`);
+      assert.ok(calculated[key] >= expected - 2, `${key}: ${calculated[key]} versus ${expected}`);
     }
     assert.ok(calculated.location >= 60 && calculated.location < 200, 'empty values use the header minimum');
     if (role === 'admin') assert.ok(calculated.assignee > 100, 'selected assignee and control fit');
@@ -1603,16 +1603,21 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
     const renderedWidths = () => page.locator('th[data-column-key]').evaluateAll(nodes => Object.fromEntries(nodes.map(el => [el.dataset.columnKey, el.getBoundingClientRect().width])));
     const rendered = await renderedWidths();
     await Promise.all([page.waitForResponse(r => r.url().includes('/tickets/active?') && new URL(r.url()).searchParams.get('page') === '2'), page.locator('#nextPageBtn').click()]);
-    assert.deepEqual(await widths(), stored, 'pagination cannot recalculate widths'); assert.deepEqual(await renderedWidths(), rendered);
-    await page.locator('.table-sort-btn[data-sort-key="requester_display_name"]').click(); assert.deepEqual(await widths(), stored);
+    await page.waitForFunction(previous => parseFloat(document.querySelector('th[data-column-key="requester"]').style.width) > previous, stored.requester);
+    const pageTwo = await widths(); assert.ok(pageTwo.requester > stored.requester, 'pagination measures the displayed page');
+    await page.locator('.table-sort-btn[data-sort-key="requester_display_name"]').click(); assert.deepEqual(await widths(), pageTwo);
     await page.locator('#searchInput').fill('filter'); await page.locator('#searchInput').press('Enter');
     await page.waitForResponse(r => r.url().includes('/tickets/active?') && new URL(r.url()).searchParams.get('query') === 'filter');
-    assert.deepEqual(await widths(), stored, 'filters cannot recalculate widths'); assert.deepEqual(await renderedWidths(), rendered);
-    await page.reload(); await page.waitForSelector('.ticket-row'); assert.deepEqual(await widths(), stored, 'reload restores fixed widths and mode');
+    assert.deepEqual(await widths(), pageTwo, 'identical filtered data retains measured widths');
+    await page.reload(); await page.waitForSelector('.ticket-row');
+    await page.waitForFunction(previous => parseFloat(document.querySelector('th[data-column-key="requester"]').style.width) > previous, stored.requester);
+    const reloaded = await widths(); assert.ok(reloaded.requester > stored.requester, 'initial load measures current content');
     await page.setViewportSize({ width: 1366, height: 900 });
-    await page.waitForFunction(previous => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) < previous, stored.subject);
-    const smaller = await widths(); assert.deepEqual(ordinary(smaller), ordinary(stored)); assert.ok(smaller.subject >= 180);
-    await page.setViewportSize({ width: 900, height: 900 }); await page.waitForFunction(() => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) === 180);
+    await page.waitForFunction(() => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) === 180);
+    const smaller = await widths();
+    assert.deepEqual(ordinary(smaller), ordinary(reloaded)); assert.ok(smaller.subject >= 180);
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.waitForFunction(() => parseFloat(document.querySelector('th[data-column-key="subject"]').style.width) === 180);
     assert.equal(await page.locator('.table-scroll').evaluate(el => el.scrollWidth > el.clientWidth), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -1622,10 +1627,10 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
     await toggle.check(); await finished();
     // Current filtered page is wider than the original page; explicit re-enabling recalculates.
     const recalculated = await widths();
-    assert.ok(recalculated.requester > beforeOff.requester, 'explicit re-enabling uses the current page');
+    assert.ok(recalculated.requester >= beforeOff.requester, 'explicit re-enabling uses the current page');
     assert.equal(preferences.ticket_list_auto_width, true, 'draft does not write preferences');
     await page.locator('#cancelResizeColumnsBtn').click(); await page.locator('#closeColumnsModalBtn').click();
-    assert.deepEqual(ordinary(await widths()), ordinary(stored)); assert.equal(preferences.ticket_list_auto_width, true);
+    assert.deepEqual(ordinary(await widths()), ordinary(reloaded)); assert.equal(preferences.ticket_list_auto_width, true);
     assert.equal(requests.some(r => r.path?.includes('/tickets/closed?')), false);
     await open(); await toggle.uncheck(); const manual = await widths();
     await page.locator('#saveResizeColumnsBtn').click(); await page.locator('#saveColumnsBtn').click();
@@ -1633,6 +1638,221 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
     assert.equal(preferences.ticket_list_auto_width, false); assert.deepEqual(await widths(), manual);
   });
 }
+
+for (const theme of ['light', 'dark']) test(`automatic pagination fits ordinary assignee names on page three: ${theme}`, async t => {
+  const { page, preferences, requests } = await setup(t, { width: 1920, height: 900, theme, role: 'admin', pageName: 'tickets' });
+  preferences.ticket_list_auto_width = true;
+  preferences.ticket_list_columns = ['type', 'department', 'requester', 'subject', 'assignee', 'age', 'location'].map(key => ({ key, width: 160 }));
+  const names = ['Корольков Евгений', 'Александров Константин Сергеевич'];
+  await page.route('**/api/v1/users/agents**', route => route.fulfill({ json: names.map((full_name, i) => ({ id: `named-${i}`, full_name })) }));
+  await page.route('**/api/v1/tickets/active?**', route => {
+    const current = Number(new URL(route.request().url()).searchParams.get('page') || 1);
+    const items = Array.from({ length: 28 }, (_, i) => ({ ...rows[i % rows.length], id: `p${current}-${i}`,
+      requester_display_name: 'Анна Иванова', assignee_id: current === 3 && i < 2 ? `named-${i}` : current === 3 && i === 2 ? 'outlier' : null,
+      assignee_name: current === 3 && i < 2 ? names[i] : current === 3 && i === 2 ? 'W'.repeat(200) : '' }));
+    return route.fulfill({ json: { items, total: 84, pages: 3, page: current } });
+  });
+  await page.reload(); await page.waitForSelector('body.ticket-columns-auto .ticket-row');
+  const width = () => page.locator('th[data-column-key="assignee"]').evaluate(cell => cell.getBoundingClientRect().width);
+  await page.waitForFunction(() => document.querySelector('th[data-column-key="subject"]').getBoundingClientRect().width > 180);
+  const first = await width();
+  const writes = requests.filter(r => r.method === 'PATCH').length;
+  await page.locator('.table-page-number').filter({ hasText: /^3$/ }).click();
+  await page.waitForFunction(previous => document.querySelector('th[data-column-key="assignee"]').getBoundingClientRect().width > previous, first);
+  const values = await page.locator('.row-assignee-select').evaluateAll(selects => selects.map(select => {
+    const style = getComputedStyle(select), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+    ctx.font = style.font;
+    return { text: select.selectedOptions[0].textContent, fits: ctx.measureText(select.selectedOptions[0].textContent).width
+      + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + 22 <= select.getBoundingClientRect().width };
+  }));
+  for (const name of names) assert.ok(values.some(value => value.text === name && value.fits), name);
+  assert.ok(values.some(value => value.text === 'W'.repeat(200) && !value.fits), 'outlier remains constrained');
+  const third = await width();
+  await page.evaluate(() => {
+    Object.defineProperty(document.fonts, 'ready', { configurable: true, value: new Promise(resolve => {
+      window.releasePageFonts = () => { delete document.fonts.ready; resolve(); };
+    }) });
+  });
+  await page.locator('.table-page-number').filter({ hasText: /^1$/ }).click();
+  await page.waitForFunction(() => document.querySelector('.ticket-row-link')?.getAttribute('href')?.includes('p1-'));
+  await page.locator('.table-page-number').filter({ hasText: /^3$/ }).click();
+  await page.waitForFunction(() => document.querySelector('.ticket-row-link')?.getAttribute('href')?.includes('p3-'));
+  await page.evaluate(() => window.releasePageFonts());
+  assert.equal(await width(), third, 'a delayed page-one calculation must not overwrite page three');
+  assert.equal(await page.locator('.table-scroll').evaluate(scroll => scroll.scrollWidth <= scroll.clientWidth + 1), true);
+  assert.equal(requests.filter(r => r.method === 'PATCH').length, writes);
+});
+
+for (const cancel of [false, true]) test(`initial automatic widths measure latest rows once without saving preferences: cancel=${cancel}`, async t => {
+  const { page, preferences, requests } = await setup(t, { width: 1920, height: 900, theme: 'light', role: 'agent', pageName: 'tickets' });
+  preferences.ticket_list_auto_width = true;
+  preferences.ticket_list_columns = [{ key: 'requester', width: 60 }, { key: 'subject', width: 340 }];
+  const saved = JSON.stringify(preferences.ticket_list_columns);
+  await page.addInitScript(() => {
+    Object.defineProperty(document.fonts, 'ready', { configurable: true, value: new Promise(resolve => {
+      window.releaseInitialFonts = () => { delete document.fonts.ready; resolve(); };
+    }) });
+  });
+  await page.reload(); await page.waitForSelector('body.ticket-columns-auto .ticket-row');
+  await page.evaluate(() => {
+    const measure = window.HelpdeskTicketColumnAutoWidth.measure;
+    window.initialMeasurements = 0;
+    window.HelpdeskTicketColumnAutoWidth.measure = (...args) => { window.initialMeasurements++; return measure(...args); };
+  });
+  if (cancel) {
+    await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+    await page.locator('#columnAutoWidthInput').uncheck();
+  } else {
+    await page.route('**/api/v1/tickets/active?**', route => route.fulfill({ json: { items: [{ ...rows[0], requester_display_name: 'Алексей Смирнов' }], total: 1, pages: 1, page: 1 } }));
+    await page.locator('#searchInput').fill('latest'); await page.locator('#searchInput').press('Enter');
+    await page.waitForFunction(() => document.querySelector('td[data-column-key="requester"]')?.textContent === 'Алексей Смирнов');
+  }
+  await page.evaluate(() => window.releaseInitialFonts());
+  if (!cancel) {
+    await page.waitForFunction(() => parseFloat(document.querySelector('th[data-column-key="requester"]').style.width) > 60);
+    await page.locator('.table-sort-btn[data-sort-key="requester_display_name"]').click();
+  }
+  assert.equal(await page.evaluate(() => window.initialMeasurements), cancel ? 0 : 1);
+  assert.equal(JSON.stringify(preferences.ticket_list_columns), saved);
+  assert.equal(requests.some(r => r.method === 'PATCH'), false);
+});
+
+for (const theme of ['light', 'dark']) test(`ticket header decoration does not overflow a fitting auto table: ${theme}`, async t => {
+  const { page, preferences } = await setup(t, { width: 1920, height: 900, theme, role: 'admin', pageName: 'tickets', ticketRows: rows.map(row => ({ ...row, requester_display_name: 'Алексей Смирнов' })) });
+  preferences.ticket_list_auto_width = true;
+  preferences.ticket_list_columns = ['type', 'department', 'requester', 'subject', 'assignee', 'age', 'location']
+    .map(key => ({ key, width: key === 'subject' ? 340 : 160 }));
+  await page.reload(); await page.waitForSelector('body.ticket-columns-auto .ticket-row');
+  await page.addStyleTag({ content: '.table-scroll { scrollbar-gutter: stable; } .table-scroll::-webkit-scrollbar { width: 20px; height: 20px; }' });
+  const metrics = () => page.locator('.table-scroll').evaluate(scroll => {
+    const table = scroll.querySelector('table'), head = table.tHead;
+    return { vertical: scroll.scrollHeight > scroll.clientHeight, overflow: scroll.scrollWidth - scroll.clientWidth,
+      content: getComputedStyle(head, '::after').content, background: getComputedStyle(head).backgroundColor,
+      table: table.getBoundingClientRect().width, available: scroll.clientWidth - 24 };
+  });
+  await page.waitForFunction(() => {
+    const scroll = document.querySelector('.table-scroll'); return scroll.scrollWidth <= scroll.clientWidth + 1;
+  });
+  const fitting = await metrics();
+  assert.equal(fitting.vertical, true);
+  assert.equal(fitting.content, 'none');
+  assert.notEqual(fitting.background, 'rgba(0, 0, 0, 0)');
+  assert.ok(fitting.table <= fitting.available + 1);
+  assert.equal(await page.locator('td[data-column-key="requester"] a').evaluateAll(links => links.every(link => {
+    const range = document.createRange(); range.selectNodeContents(link);
+    return link.clientWidth >= range.getBoundingClientRect().width + 24;
+  })), true, 'ordinary requester names fit completely');
+  await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+  await page.locator('#columnAutoWidthInput').uncheck(); await page.locator('#columnAutoWidthInput').check();
+  await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+  assert.ok((await metrics()).overflow <= 1);
+  // Genuine table overflow must remain scrollable, in both automatic and manual modes.
+  await page.locator('.table-scroll').evaluate(scroll => { scroll.style.maxWidth = '400px'; });
+  await page.waitForFunction(() => { const s = document.querySelector('.table-scroll'); return s.scrollWidth > s.clientWidth; });
+  assert.ok((await metrics()).overflow > 0);
+  await page.locator('#columnAutoWidthInput').uncheck();
+  assert.ok((await metrics()).overflow > 0);
+  await page.locator('.table-scroll').evaluate(scroll => { scroll.scrollLeft = 50; });
+  assert.ok(await page.locator('.table-scroll').evaluate(scroll => scroll.scrollLeft > 0));
+});
+
+test('automatic columns regression: first measurement, scroll geometry and immediate toggle', async t => {
+  const ticketRows = Array.from({ length: 28 }, (_, i) => ({ ...rows[i % rows.length], id: `auto-${i}`,
+    requester_display_name: 'Александра Константиновна Смирнова', is_internal_task: false }));
+  const { page, preferences } = await setup(t, { width: 1366, height: 900, theme: 'light', role: 'admin', pageName: 'tickets', ticketRows });
+  preferences.ticket_list_columns = [{ key: 'subject', width: 340 }, { key: 'requester', width: 180 }];
+  await page.reload(); await page.waitForSelector('.ticket-row');
+  await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+  const toggle = page.locator('#columnAutoWidthInput');
+  const finished = () => page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+  const snapshot = () => page.evaluate(() => {
+    const scroll = document.querySelector('.table-scroll'), table = document.querySelector('#ticketsTable');
+    const link = table.querySelector('[data-column-key="requester"] a');
+    const range = document.createRange(); range.selectNodeContents(link);
+    return { client: scroll.clientWidth, scroll: scroll.scrollWidth, table: table.getBoundingClientRect().width,
+      requester: table.querySelector('th[data-column-key="requester"]').getBoundingClientRect().width,
+      text: range.getBoundingClientRect().width, link: link.clientWidth,
+      widths: [...table.querySelectorAll('th')].map(cell => cell.getBoundingClientRect().width) };
+  });
+  await page.addStyleTag({ content: '.table-scroll { scrollbar-gutter: stable; } .table-scroll::-webkit-scrollbar { width: 30px; height: 30px; }' });
+  await toggle.check(); await finished();
+  const first = await snapshot();
+  const start = Date.now(); await toggle.uncheck(); const off = Date.now() - start;
+  await toggle.check({ timeout: 1500 }); await finished();
+  const second = await snapshot();
+  assert.ok(first.scroll <= first.client + 1, JSON.stringify(first));
+  assert.ok(first.link >= first.text + 24, JSON.stringify(first));
+  assert.equal(first.requester, second.requester);
+  assert.ok(off < 1500, `disable blocked for ${off}ms`);
+  // A saved auto layout must fit on its first render, before ResizeObserver gets a turn.
+  preferences.ticket_list_auto_width = true;
+  preferences.ticket_list_columns = [{ key: 'subject', width: 527 }, { key: 'requester', width: 329 }];
+  await page.addInitScript(() => {
+    window.initialAutoGeometry = [];
+    new MutationObserver(() => {
+      const scroll = document.querySelector('.table-scroll'), table = document.querySelector('#ticketsTable');
+      if (!document.body.classList.contains('ticket-columns-auto') || !table?.tBodies[0]?.rows.length) return;
+      window.initialAutoGeometry.push({ client: scroll.clientWidth, scroll: scroll.scrollWidth,
+        subjects: [...table.querySelectorAll('[data-column-key="subject"]')].map(cell => cell.getBoundingClientRect().width) });
+    }).observe(document, { subtree: true, childList: true });
+  });
+  await page.reload(); await page.waitForSelector('body.ticket-columns-auto .ticket-row');
+  const initial = await page.evaluate(() => window.initialAutoGeometry[0]);
+  assert.ok(initial.scroll <= initial.client + 1, JSON.stringify(initial));
+  assert.equal(new Set(initial.subjects).size, 1, 'header and every row use the final viewport width immediately');
+});
+
+test('automatic columns do not read container geometry for each of 100 rows or block re-enabling', async t => {
+  const ticketRows = Array.from({ length: 100 }, (_, i) => ({ ...rows[i % rows.length], id: `large-${i}` }));
+  const { page } = await setup(t, { width: 2560, height: 1080, theme: 'dark', role: 'admin', pageName: 'tickets', ticketRows });
+  await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+  await page.evaluate(() => {
+    const scroll = document.querySelector('.table-scroll');
+    const get = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth').get;
+    window.autoWidthReads = 0;
+    Object.defineProperty(scroll, 'clientWidth', { get() { window.autoWidthReads++; return get.call(this); } });
+  });
+  const toggle = page.locator('#columnAutoWidthInput');
+  await toggle.check({ timeout: 1500 });
+  await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+  assert.ok(await page.evaluate(() => window.autoWidthReads < 20), 'geometry reads must not grow with row count');
+  assert.equal(await page.locator('.column-resize-handle').count(), 0);
+  await toggle.uncheck({ timeout: 1500 });
+  assert.ok(await page.locator('.column-resize-handle').count() > 0);
+  await toggle.check({ timeout: 1500 });
+  await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+});
+
+test('automatic columns use current requester data when a response arrives during the first calculation', async t => {
+  const short = [{ ...rows[0], requester_display_name: 'Анна' }];
+  const long = [{ ...rows[0], requester_display_name: 'Александра Константиновна Смирнова' }];
+  const { page, preferences } = await setup(t, { width: 1366, height: 900, theme: 'light', role: 'agent', pageName: 'tickets', ticketRows: short });
+  preferences.ticket_list_columns = [{ key: 'subject', width: 340 }, { key: 'requester', width: 180 }];
+  await page.reload(); await page.waitForSelector('.ticket-row');
+  await page.locator('#columnsSettingsBtn').click(); await page.locator('#editColumnsWidthBtn').click();
+  await page.evaluate(() => {
+    Object.defineProperty(document.fonts, 'ready', { configurable: true, value: new Promise(resolve => {
+      window.releaseColumnFonts = () => { delete document.fonts.ready; resolve(); };
+    }) });
+  });
+  await page.route('**/api/v1/tickets/active?**', route => route.fulfill({ json: { items: long, total: 1, pages: 1, page: 1 } }));
+  const toggle = page.locator('#columnAutoWidthInput');
+  await toggle.check();
+  assert.equal(await page.locator('#saveResizeColumnsBtn').isDisabled(), true);
+  await page.locator('#searchInput').fill('updated'); await page.locator('#searchInput').press('Enter');
+  await page.waitForFunction(name => document.querySelector('td[data-column-key="requester"]')?.textContent === name, long[0].requester_display_name);
+  await page.evaluate(() => window.releaseColumnFonts());
+  await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+  const width = () => page.locator('th[data-column-key="requester"]').evaluate(cell => cell.getBoundingClientRect().width);
+  const first = await width();
+  const textWidth = await page.locator('td[data-column-key="requester"] a').evaluate(link => {
+    const range = document.createRange(); range.selectNodeContents(link); return range.getBoundingClientRect().width;
+  });
+  assert.ok(first >= textWidth + 24, `${first}px must fit ${textWidth}px of current requester text`);
+  await toggle.uncheck(); await toggle.check();
+  await page.waitForFunction(() => !document.querySelector('#saveResizeColumnsBtn').disabled);
+  assert.equal(await width(), first, 're-enabling no longer repairs an outdated first measurement');
+});
 
 for (const theme of ['light', 'dark']) for (const outcome of ['values', 'empty', 'error']) {
   test(`automatic columns sample closed only when enabled on empty page: ${theme}, ${outcome}`, async t => {

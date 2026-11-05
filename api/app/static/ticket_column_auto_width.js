@@ -6,7 +6,8 @@
   }
 
   function measure(table, columns, samples) {
-    const probe = table.cloneNode(true);
+    const probe = table.cloneNode(false);
+    probe.append(table.tHead.cloneNode(true), table.tBodies[0].cloneNode(false));
     probe.removeAttribute("id");
     probe.style.cssText = "position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;width:max-content!important;min-width:0!important;table-layout:auto!important";
     probe.setAttribute("aria-hidden", "true");
@@ -17,6 +18,22 @@
     });
     table.parentElement.appendChild(probe);
     try {
+      // Prepare every cell before measuring: interleaved writes/reads relayout the whole table.
+      probe.querySelectorAll(".table-sort-btn, .ticket-row-link").forEach((content) => {
+        content.style.setProperty("width", "max-content", "important");
+        content.style.setProperty("max-width", "none", "important");
+        content.style.setProperty("display", "inline-block", "important");
+        content.style.setProperty("white-space", "nowrap", "important");
+      });
+      const selectSamples = new Map([...probe.querySelectorAll("select")].map((select) => {
+        const span = document.createElement("span");
+        const style = getComputedStyle(select);
+        span.style.font = style.font;
+        span.style.letterSpacing = style.letterSpacing;
+        span.textContent = select.selectedOptions[0]?.textContent?.trim() || "";
+        return [select, span];
+      }));
+      selectSamples.forEach((span, select) => select.parentElement.appendChild(span));
       const pixels = (node, property) => parseFloat(getComputedStyle(node)[property]) || 0;
       const padding = (node) => pixels(node, "paddingLeft") + pixels(node, "paddingRight")
         + pixels(node, "borderLeftWidth") + pixels(node, "borderRightWidth");
@@ -26,20 +43,8 @@
         const text = (select ? content.selectedOptions[0]?.textContent : content.textContent)?.trim() || "";
         if (!text || /^[—–-]$/.test(text)) return 0;
         if (select) {
-          const span = document.createElement("span");
-          const style = getComputedStyle(content);
-          span.style.font = style.font;
-          span.style.letterSpacing = style.letterSpacing;
-          span.textContent = text;
-          cell.appendChild(span);
-          const width = span.getBoundingClientRect().width + (dataOnly ? 0 : padding(content) + 20 + padding(cell));
-          span.remove();
-          return width;
+          return selectSamples.get(content).getBoundingClientRect().width + (dataOnly ? 0 : padding(content) + 20 + padding(cell));
         }
-        content.style.setProperty("width", "max-content", "important");
-        content.style.setProperty("max-width", "none", "important");
-        content.style.setProperty("display", "inline-block", "important");
-        content.style.setProperty("white-space", "nowrap", "important");
         if (content === cell) {
           const range = document.createRange();
           range.selectNodeContents(cell);
@@ -47,7 +52,7 @@
         }
         return content.getBoundingClientRect().width + (dataOnly ? -padding(content) : padding(cell));
       };
-      return columns.map((column) => {
+      const measured = columns.map((column) => {
         if (column.key === "subject") return { key: column.key, width: 180 };
         const selector = `[data-column-key="${CSS.escape(column.key)}"]`;
         const header = probe.tHead.querySelector(selector);
@@ -57,8 +62,23 @@
           return { width, extra: contentWidth(cell) - width };
         }).filter((value) => value.width > 0);
         const target = values.length ? Math.min(Math.max(...values.map((value) => value.width)), values.reduce((sum, value) => sum + value.width, 0) / values.length * 1.5) + Math.max(...values.map((value) => value.extra)) : 0;
-        return { key: column.key, width: Math.ceil(Math.max(minimum, target)) };
+        return { key: column.key, width: Math.ceil(Math.max(minimum, target)), fullWidth: Math.ceil(Math.max(minimum, ...values.map(value => value.width + value.extra))) };
       });
+      // The 1.5 cap is the baseline. Use only spare subject space for uncapped content,
+      // fitting small deficits first so an outlier cannot crowd out ordinary names.
+      const scroll = table.closest(".table-scroll");
+      const style = getComputedStyle(scroll);
+      const systemWidth = [...table.tHead.rows[0].cells].filter(cell => !cell.dataset.columnKey)
+        .reduce((sum, cell) => sum + cell.getBoundingClientRect().width, 0);
+      let spare = Math.max(0, Math.floor(scroll.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        - systemWidth - measured.reduce((sum, column) => sum + column.width, 0)));
+      measured.filter(column => column.fullWidth > column.width)
+        .sort((a, b) => (a.fullWidth - a.width) - (b.fullWidth - b.width)).forEach(column => {
+          const extra = Math.min(spare, column.fullWidth - column.width);
+          column.width += extra;
+          spare -= extra;
+        });
+      return measured.map(({ key, width }) => ({ key, width }));
     } finally {
       probe.remove();
     }

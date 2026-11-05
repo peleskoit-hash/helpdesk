@@ -45,6 +45,8 @@ let pendingLoadOptions = null;
 let pageEventController = null;
 let colorLegendHideTimer = null;
 let columnAutoResizeObserver = null;
+let measuredAutoPage = null;
+let initialAutoWidthGeneration = 0;
 const state = {
   tab: urlState.tab || localStorage.getItem("hd_tab") || DEFAULT_TAB,
   appliedSearchQuery: urlState.q,
@@ -732,11 +734,27 @@ function activeTicketColumns() {
 function refreshAutoColumnLayout() {
   if (!activeTicketAutoWidth() || state.columnReorderDrag || !el.ticketsTable) return;
   const columns = activeTicketColumns();
-  const subject = columns.find((column) => column.key === "subject");
   el.ticketsTable.style.width = `${columns.reduce((sum, column) => sum + column.width, 54 + (state.role === "admin" ? 34 : 0))}px`;
-  el.ticketsTable.querySelectorAll('[data-column-key="subject"]').forEach((cell) => {
-    cell.style.cssText = columnStyle(subject.width);
+  el.ticketsTable.querySelectorAll('[data-column-key]').forEach((cell) => {
+    const column = columns.find((item) => item.key === cell.dataset.columnKey);
+    if (column) cell.style.cssText = columnStyle(column.width);
   });
+}
+
+async function measureLoadedAutoColumns() {
+  if (!state.ticketListAutoWidth || !state.tickets.length
+      || state.columnResizeActive || state.columnDraftPreviewActive) return;
+  const signature = JSON.stringify([state.tab, state.page, state.ticketListColumns.map(column => column.key), state.tickets]);
+  if (signature === measuredAutoPage) return;
+  const generation = ++initialAutoWidthGeneration;
+  const tickets = state.tickets;
+  await document.fonts.ready;
+  if (generation !== initialAutoWidthGeneration || tickets !== state.tickets || !state.ticketListAutoWidth
+      || state.columnResizeActive || state.columnDraftPreviewActive) return;
+  state.ticketListColumns = window.HelpdeskTicketColumnAutoWidth.measure(el.ticketsTable,
+    normalizeTicketColumns(state.ticketListColumns), [...el.ticketsTableBody.rows]);
+  measuredAutoPage = signature;
+  renderTable();
 }
 
 function fixedTableWidth(columns) {
@@ -1017,6 +1035,7 @@ function measureRenderedColumnWidths() {
 }
 
 function enterColumnResizeMode() {
+  initialAutoWidthGeneration++;
   state.columnResizePreviousDraft = cloneColumns(normalizeTicketColumns(state.draftTicketListColumns || state.ticketListColumns));
   state.columnResizeColumns = cloneColumns(state.columnResizePreviousDraft);
   state.columnResizeAutoWidth = state.draftTicketListAutoWidth;
@@ -1092,7 +1111,6 @@ function stopColumnResizeDrag() {
 async function toggleAutoColumnWidth() {
   if (!state.columnResizeActive) return;
   const columns = cloneColumns(activeTicketColumns());
-  const samples = [...el.ticketsTableBody.rows].map((row) => row.cloneNode(true));
   state.columnResizeColumns = columns;
   state.columnResizeAutoWidth = el.columnAutoWidthInput.checked;
   state.columnAutoCalculation = null;
@@ -1103,7 +1121,8 @@ async function toggleAutoColumnWidth() {
   state.columnAutoCalculation = calculation;
   el.saveResizeColumnsBtn.disabled = true;
   try {
-    if (!samples.length) {
+    const samples = [];
+    if (!el.ticketsTableBody.rows.length) {
       try {
         const payload = await api(`${endpointMap.closed}?sort=created_at&order=desc&page=1&limit=${state.limit}`);
         const linkedCell = (className, text, width, isHtml = false) =>
@@ -1120,7 +1139,10 @@ async function toggleAutoColumnWidth() {
     }
     await document.fonts.ready;
     if (state.columnAutoCalculation !== calculation) return;
-    const measured = window.HelpdeskTicketColumnAutoWidth.measure(el.ticketsTable, columns, samples);
+    // A list response can arrive while fonts or the closed-page fallback are pending.
+    const currentSamples = [...el.ticketsTableBody.rows];
+    const measured = window.HelpdeskTicketColumnAutoWidth.measure(el.ticketsTable, columns, currentSamples.length ? currentSamples : samples);
+    measuredAutoPage = JSON.stringify([state.tab, state.page, state.ticketListColumns.map(column => column.key), state.tickets]);
     state.columnResizeColumns = state.columnResizeColumns.map((column) => ({ ...column, width: measured.find((item) => item.key === column.key).width }));
     renderTable();
   } finally {
@@ -1381,7 +1403,7 @@ function renderTable() {
       ? `<td class="ticket-check-cell"><input class="ticket-check" data-ticket-id="${escapeHtml(t.id)}" type="checkbox" ${state.selectedTicketIds.has(t.id) ? "checked" : ""} /></td>`
       : "";
     const channelCell = `<td class="ticket-channel-col">${renderChannelIcon(t)}</td>`;
-    const dataCells = activeTicketColumns()
+    const dataCells = activeColumns
       .map((column) => ticketCellHtml(column, t, ticketHref, linkedCell))
       .join("");
     tr.innerHTML = `
@@ -1441,6 +1463,8 @@ function renderTable() {
   });
   updateBulkAssignUi();
   renderPagination();
+  // Rows and the auto-width control can change the vertical scrollbar after the initial read.
+  refreshAutoColumnLayout();
 }
 
 function buildPaginationModel(totalPages, currentPage) {
@@ -1655,12 +1679,15 @@ async function updateAvailabilityStatus(status) {
 }
 
 async function loadTickets(options = {}) {
+  initialAutoWidthGeneration++;
   const normalizedOptions = normalizeLoadOptions(options);
   if (state.isLoading) {
     pendingLoadOptions = mergePendingLoadOptions(pendingLoadOptions, normalizedOptions);
     return;
   }
   state.isLoading = true;
+  const requestedPage = state.page;
+  const requestedTab = state.tab;
   const silent = normalizedOptions.silent;
   const historyMode = normalizedOptions.historyMode;
   if (!silent) setStatus("Загружаю список...");
@@ -1688,6 +1715,7 @@ async function loadTickets(options = {}) {
       fetchTaskPanelItems({ silent: true }),
     ]);
 
+    if (state.page !== requestedPage || state.tab !== requestedTab) return;
     state.tickets = payload.items || [];
     state.total = payload.total || 0;
     state.pages = payload.pages || 1;
@@ -1698,6 +1726,7 @@ async function loadTickets(options = {}) {
 
     renderTaskPanel();
     renderTable();
+    measureLoadedAutoColumns();
     setStatus("Готово");
   } catch (e) {
     if (!silent) showError(`Не удалось загрузить список заявок.\n\n${e.message || "Неизвестная ошибка"}`);
@@ -1987,6 +2016,7 @@ runTicketsListPage().catch((error) => {
 
 return {
   destroy() {
+    initialAutoWidthGeneration++;
     columnAutoResizeObserver?.disconnect();
     state.columnAutoCalculation = null;
     stopColumnReorderDrag();
