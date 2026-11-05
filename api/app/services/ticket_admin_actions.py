@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import StatsCompletion, StatsWorkInterval, Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
+from ..models import IntegrationLog, TicketFeedback, TicketFeedbackInput, TicketReview, TicketReviewCycle, StatsCompletion, StatsWorkInterval, Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
 from .button_config import resolve_button_row
 from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
 
@@ -55,6 +55,18 @@ def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
         attachment_ticket_ids.extend(child_ids)
     from .telegram_outbound_delivery import schedule_ticket_upload_delete
     schedule_ticket_upload_delete(db, attachment_ticket_ids, warnings)
+
+    # Review cycles and reviews reference each other; break the cycle first.
+    db.execute(TicketReviewCycle.__table__.update().where(
+        TicketReviewCycle.ticket_id.in_(attachment_ticket_ids),
+    ).values(review_id=None))
+    for model in (TicketReview, TicketReviewCycle, TicketFeedbackInput, TicketFeedback):
+        db.execute(model.__table__.delete().where(model.ticket_id.in_(attachment_ticket_ids)))
+    # Legacy PostgreSQL databases retain a FK absent from the current ORM model.
+    # Keep integration history, but detach it from the deleted correspondence.
+    db.execute(IntegrationLog.__table__.update().where(
+        IntegrationLog.task_id.in_(attachment_ticket_ids),
+    ).values(task_id=None))
 
     # Publications have no FK to mutable correspondence. Delete blobs before their result,
     # for both the selected ticket and children, in the caller's existing transaction.

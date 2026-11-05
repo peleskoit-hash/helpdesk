@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+from functools import partial
 import logging
 from pathlib import Path
 import re
@@ -11,6 +12,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, asc, desc, func, or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
@@ -903,85 +905,93 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
     found_ids = {ticket.id for ticket in tickets}
     not_found = [ticket_id for ticket_id in payload.ticket_ids if ticket_id not in found_ids]
 
+    notifications = []
+
+    def defer_notification(sender, db_session, ticket, content, **kwargs):
+        if ticket.channel == "web":
+            return {}
+        # Transient column snapshots survive deletion and commit expiration. They
+        # are never added to the session; delivery cannot recreate correspondence.
+        ticket_snapshot = Ticket(**{column.key: getattr(ticket, column.key) for column in Ticket.__table__.columns})
+        if isinstance(content, TicketAttachment):
+            content = TicketAttachment(**{column.key: getattr(content, column.key) for column in TicketAttachment.__table__.columns})
+        notifications.append((sender, ticket_snapshot, content, kwargs))
+        return {}  # Accepted for delivery after commit; do not record a failure now.
+
     warning_batches: list[list[str]] = []
     deleted = 0
     deleted_ids: set[str] = set()
-    for ticket in tickets:
-        try:
-            ticket_id = ticket.id
-            ticket_parent_id = ticket.parent_ticket_id
-            ticket_task_kind = ticket.task_kind
-            workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
-            ticket_status = ticket.status
-        except ObjectDeletedError:
-            # Ticket row was hard-deleted earlier in this batch (for example by parent delete).
-            continue
-
-        if ticket_id in deleted_ids:
-            continue
-        # If parent was already deleted in this batch, its children are already hard-deleted too.
-        if ticket_parent_id and ticket_parent_id in deleted_ids:
-            deleted_ids.add(ticket_id)
-            continue
-        # Skip stale ORM rows that may already be removed by previous parent delete.
-        still_exists = db.execute(select(Ticket.id).where(Ticket.id == ticket_id)).scalar_one_or_none()
-        if still_exists is None:
-            deleted_ids.add(ticket_id)
-            continue
-
-        parent_ticket_id = ticket_parent_id if ticket_task_kind == TicketTaskKind.GROUP_CHILD.value else None
-        if not payload.skip_client_notification and workflow_type == TicketWorkflowType.TICKET.value:
-            # For admin hard-delete of a regular ticket, notify client with the same text as normal close.
+    try:
+        for ticket in tickets:
             try:
-                _send_to_telegram_client(
-                    db,
-                    ticket,
-                    _ticket_closed_client_text(db, ticket),
-                    required=False,
-                    remove_keyboard=True,
-                )
-            except Exception:
-                # Deletion must not be blocked by Telegram delivery issues.
-                pass
-        elif not payload.skip_client_notification and workflow_type == TicketWorkflowType.TASK.value:
-            try:
-                # For group children we avoid client spam; parent close/restore flow handles parent state.
-                if ticket_task_kind != TicketTaskKind.GROUP_CHILD.value:
-                    client_message = _first_client_message(db, ticket)
-                    _send_to_telegram_client(
-                        db,
-                        ticket,
-                        format_task_closed_without_answer_text(db, ticket, client_message),
-                        required=False,
-                        remove_keyboard=True,
-                    )
-            except Exception:
-                # Deletion must not be blocked by Telegram delivery issues.
-                pass
-        warning_batches.append(_delete_ticket_hard(db, ticket))
-        deleted_ids.add(ticket_id)
-        if parent_ticket_id:
-            # Parent is being deleted in the same bulk action:
-            # do not finalize it via child path (avoids duplicate client notice and
-            # avoids creating parent system messages that can conflict with hard-delete flush).
-            if parent_ticket_id in selected_ids:
+                ticket_id = ticket.id
+                ticket_parent_id = ticket.parent_ticket_id
+                ticket_task_kind = ticket.task_kind
+                workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
+                ticket_status = ticket.status
+            except ObjectDeletedError:
+                # Ticket row was hard-deleted earlier in this batch (for example by parent delete).
                 continue
-            parent = db.get(Ticket, parent_ticket_id)
-            if parent is not None:
-                finalize_group_parent_if_ready(
-                    db,
-                    parent,
-                    closed_by_user_id=user.id,
-                    skip_client_notification=payload.skip_client_notification,
-                    system_note="Групповая задача завершена системой (возможен неполный ответ)",
-                    first_client_message_fn=_first_client_message,
-                    send_to_telegram_client_fn=_send_to_telegram_client,
-                    send_attachment_to_telegram_client_fn=_send_attachment_to_telegram_client,
-                    add_message_fn=_add_message,
-                    resolve_group_parent_client_text_fn=_group_parent_client_text_override,
-                )
-        deleted += 1
-    db.commit()
+
+            if ticket_id in deleted_ids:
+                continue
+            # If parent was already deleted in this batch, its children are already hard-deleted too.
+            if ticket_parent_id and ticket_parent_id in deleted_ids:
+                deleted_ids.add(ticket_id)
+                continue
+            # Skip stale ORM rows that may already be removed by previous parent delete.
+            still_exists = db.execute(select(Ticket.id).where(Ticket.id == ticket_id)).scalar_one_or_none()
+            if still_exists is None:
+                deleted_ids.add(ticket_id)
+                continue
+
+            parent_ticket_id = ticket_parent_id if ticket_task_kind == TicketTaskKind.GROUP_CHILD.value else None
+            if ticket_status != TicketStatus.CLOSED.value and not payload.skip_client_notification:
+                try:
+                    if workflow_type == TicketWorkflowType.TICKET.value:
+                        defer_notification(_send_to_telegram_client, db, ticket,
+                            _ticket_closed_client_text(db, ticket), required=False, remove_keyboard=True)
+                    elif workflow_type == TicketWorkflowType.TASK.value and ticket_task_kind != TicketTaskKind.GROUP_CHILD.value:
+                        client_message = _first_client_message(db, ticket)
+                        defer_notification(_send_to_telegram_client, db, ticket,
+                            format_task_closed_without_answer_text(db, ticket, client_message),
+                            required=False, remove_keyboard=True)
+                except SQLAlchemyError:
+                    raise
+                except Exception:
+                    logger.exception("Client notification preparation for admin deletion failed ticket=%s", ticket_id)
+            warning_batches.append(_delete_ticket_hard(db, ticket))
+            deleted_ids.add(ticket_id)
+            deleted += 1
+            if parent_ticket_id:
+                # Parent is being deleted in the same bulk action:
+                # do not finalize it via child path (avoids duplicate client notice and
+                # avoids creating parent system messages that can conflict with hard-delete flush).
+                if parent_ticket_id in selected_ids:
+                    continue
+                parent = db.get(Ticket, parent_ticket_id)
+                if parent is not None:
+                    finalize_group_parent_if_ready(
+                        db,
+                        parent,
+                        closed_by_user_id=user.id,
+                        skip_client_notification=payload.skip_client_notification or ticket_status == TicketStatus.CLOSED.value,
+                        system_note="Групповая задача завершена системой (возможен неполный ответ)",
+                        first_client_message_fn=_first_client_message,
+                        send_to_telegram_client_fn=partial(defer_notification, _send_to_telegram_client),
+                        send_attachment_to_telegram_client_fn=partial(defer_notification, _send_attachment_to_telegram_client),
+                        add_message_fn=_add_message,
+                        resolve_group_parent_client_text_fn=_group_parent_client_text_override,
+                    )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for sender, ticket_snapshot, content, kwargs in notifications:
+        try:
+            sender(db, ticket_snapshot, content, **kwargs)
+        except Exception:
+            logger.exception("Client notification after admin deletion failed ticket=%s", ticket_snapshot.id)
     return AdminDeleteResult(
         ok=True,
         deleted=deleted,
