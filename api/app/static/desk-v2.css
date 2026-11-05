@@ -366,7 +366,7 @@ body #appContent.main[data-shell-page="ticket-card"] {
   & .message-menu-item.danger { color: var(--desk-danger); }
   & .card-actions { background: var(--desk-surface); border-color: var(--desk-border); padding: 16px 18px; box-shadow: none; backdrop-filter: none; gap: 12px; }
   & textarea { font-size: 15px; min-height: 96px; max-height: 28vh; border-radius: 16px; padding: 14px; }
-  & textarea.comment-mode { background: var(--desk-warning-bg); border-color: var(--desk-warning-text); }
+  & #ticketMessageBody.comment-mode { background: var(--desk-warning-bg); border-color: var(--desk-warning-text); }
   & .btn-row { gap: 8px; }
   & .composer-enter-toggle { font-size: 13px; color: var(--desk-muted); }
   & .composer-hotkey-hint { font-size: 12px; }
