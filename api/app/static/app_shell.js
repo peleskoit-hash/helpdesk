@@ -104,16 +104,16 @@
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261025-stats-final-v2", "/static/statuses.js?v=20261025-status-log-v2"] }],
-    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261013b"] }],
+    ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261105-field-config"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/quick_replies.js?v=20261027-message-dialogs-v2"] }],
     ["/management", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/management/users", {
       page: "management-users",
       scripts: [
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
+        "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
-        "/static/management_users.js?v=20261027-dialogs-complete-v3",
+        "/static/management_users.js?v=20261105-field-config",
       ],
     }],
     ["/management/integrations", {
@@ -131,11 +131,11 @@
         "/static/ticket_api.js?v=20261102-error-status-v1",
         "/static/ticket_attachments.js?v=20261031-web-history-v1",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
-        "/static/ticket_client_card.js?v=20261027-dialogs-complete-v3",
+        "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/ticket_composer.js?v=20261029-staging-recovery-v1",
         "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_message_view.js?v=20261027-dialogs-complete-v3",
-        "/static/ticket.js?v=20261102-ticket-dialogs-v1",
+        "/static/ticket.js?v=20261105-field-config",
       ],
     },
   ];

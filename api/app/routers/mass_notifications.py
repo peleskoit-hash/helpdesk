@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from sqlalchemy import distinct, select
@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import Client, ClientProfile, TelegramContact
+from ..models import Client, ClientProfile, TelegramContact, ClientCardFieldConfig
+from ..services.client_card import _field_options_out
 from ..schemas import (
     MassNotificationPayload,
     MassNotificationRecipientOut,
@@ -123,6 +124,9 @@ def list_filter_options(
     field = ALLOWED_FILTER_FIELDS.get(filter_field)
     if not field:
         _error(400, "invalid_filter_field", "Неизвестное поле фильтра")
+    config = db.execute(select(ClientCardFieldConfig).where(ClientCardFieldConfig.key == filter_field)).scalar_one_or_none()
+    if config is None or config.field_type == "select":
+        return {"field": filter_field, "values": (_field_options_out(config) or []) if config is not None else []}
     stmt = (
         select(distinct(field))
         .select_from(TelegramContact)

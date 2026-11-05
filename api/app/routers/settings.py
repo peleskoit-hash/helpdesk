@@ -58,29 +58,6 @@ CONDITIONAL_FIELD_TYPE_BY_CARD: dict[str, str] = {
     "date": "text",
 }
 
-CONDITIONAL_SELECT_PRESETS: dict[str, list[str]] = {
-    "sand_owner": [
-        "песок Власова",
-        "песок Шабурова",
-        "песок Сайдаралиева",
-        "песок Макаренко",
-        "песок Шахалиевой",
-        "песок Кочуры",
-        "песок Москвиченко",
-    ],
-    "sales_group": [
-        "группа Власова",
-        "группа Шабурова",
-        "группа Сайдаралиева",
-        "группа Макаренко",
-        "группа Шахалиевой",
-        "группа Кочуры",
-        "группа Москвиченко",
-    ],
-    "location_type": ["Офисный", "Удалённый"],
-    "employee_type": ["Стажёр", "Сотрудник"],
-}
-
 TEXT_OPERATORS = {"eq", "ne", "contains", "not_contains", "empty", "not_empty"}
 SELECT_OPERATORS = {"eq", "ne", "empty", "not_empty"}
 NUMBER_OPERATORS = {"eq", "ne", "gt", "lt", "gte", "lte", "empty", "not_empty"}

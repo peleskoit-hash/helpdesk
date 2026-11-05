@@ -632,7 +632,8 @@
         const baseReadonly = control.dataset.clientCardBaseReadonly === "1";
         setControlReadonly(control, baseReadonly);
         if (wrap) wrap.classList.toggle("client-card-field-readonly-rule", baseReadonly);
-        control.required = false;
+        control.required = Boolean(findClientCardField(ctx.state.clientCardViewConfig, key)?.is_required);
+        if (control.required) state.required.add(key);
       }
     }
     const blockEls = ctx.el.clientModal?.querySelectorAll("[data-client-card-generated-section][data-client-card-block-key]")
@@ -764,6 +765,8 @@
 
   function isRuntimeFieldHidden(ctx, key) {
     const state = ensureRuleState(ctx);
+    const field = findClientCardField(ctx.state.clientCardViewConfig, key);
+    if (field && !fieldShownInEditorOrRuleTarget(field, activeEditorRuleFieldTargets(ctx.state.clientCardViewConfig))) return true;
     const blockKey = fieldBlockKey(ctx, key);
     return state.hidden.has(key) || (blockKey ? state.hiddenBlocks.has(blockKey) : false);
   }
@@ -775,7 +778,7 @@
   function validateClientCardRuleRequirements(ctx) {
     const required = ensureRuleState(ctx).required;
     for (const key of required) {
-      if (isRuntimeFieldHidden(ctx, key)) continue;
+      if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) continue;
       const value = fieldEditorValue(ctx, key);
       if (typeof value === "boolean") continue;
       if (normalizeRuleValue(value) === "") {
@@ -1257,6 +1260,7 @@
     const anydesk = el.fAnydesk.value.trim() || null;
 
     const custom_fields = {};
+    const system_fields = {};
     let clearWebPassword = false;
     if (el.clientModal || el.customFieldsContainer) {
       const customInputs = (el.clientModal || el.customFieldsContainer).querySelectorAll("[data-custom-field-key]");
@@ -1265,11 +1269,14 @@
         if (key === "custom_web_password" && input.dataset.webPasswordDirty !== "1") return;
         if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) return;
         const fieldType = input.dataset.customFieldType || "text";
+        const field = findClientCardField(ctx.state.clientCardViewConfig, key);
+        if (fieldType === "select" && input.value === String(fieldValueForEditor(ctx.state.currentClientProfile, field) ?? "")) return;
         let rawValue = null;
         if (input.type === "checkbox") rawValue = input.checked;
         else rawValue = input.value;
         if (key === "custom_web_password") clearWebPassword = !global.ClientWebCredentials.passwordValue(ctx);
-        custom_fields[key] = key === "custom_web_password" ? (global.ClientWebCredentials.passwordValue(ctx) || null) : parseCustomFieldValueForPayload(fieldType, rawValue);
+        const target = field?.is_system ? system_fields : custom_fields;
+        target[key] = key === "custom_web_password" ? (global.ClientWebCredentials.passwordValue(ctx) || null) : parseCustomFieldValueForPayload(fieldType, rawValue);
       });
     }
 
@@ -1287,12 +1294,15 @@
       bitrix_login: el.fBitrixLogin.value.trim() || null,
       bitrix_id: el.fBitrixId.value.trim() || null,
       custom_fields,
+      ...system_fields,
     };
     if (bitrixPasswordState(ctx).dirty) {
       payload.bitrix_password = bitrixPasswordState(ctx).draftValue.trim() || null;
     }
     for (const key of Object.keys(payload)) {
-      if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)) {
+      const field = findClientCardField(ctx.state.clientCardViewConfig, key);
+      if (isRuntimeFieldHidden(ctx, key) || isRuntimeFieldReadonly(ctx, key)
+          || (field?.field_type === "select" && payload[key] === fieldValueForEditor(ctx.state.currentClientProfile, field))) {
         delete payload[key];
       }
     }
@@ -1310,8 +1320,13 @@
     }
     try {
       ctx.setStatus("Загружаю текущий профиль клиента...");
-      const profile = await ctx.api(`/api/v1/tickets/${ctx.state.ticketId}/client-profile`);
+      const [profile, config] = await Promise.all([
+        ctx.api(`/api/v1/tickets/${ctx.state.ticketId}/client-profile`, { cache: "no-store" }),
+        ctx.api(`/api/v1/tickets/${ctx.state.ticketId}/client-card-view-config`, { cache: "no-store" }),
+      ]);
       if (editor && (ctx.isDestroyed() || editor.revision !== revision)) return;
+      if (!config || !Array.isArray(config.blocks)) throw new Error("Не удалось загрузить настройки карточки клиента");
+      ctx.state.clientCardViewConfig = config;
       ctx.state.currentClientProfile = profile || {};
       fillModal(ctx, ctx.state.currentClientProfile);
       ctx.el.clientModal.classList.remove("hidden");
@@ -1498,6 +1513,28 @@
     return wrap;
   }
 
+  function populateClientSelect(ctx, control, field, currentValue) {
+    control.replaceChildren();
+    const options = Array.isArray(field.options) ? field.options : [];
+    const adminOnlyValues = new Set(field.admin_only_values || []);
+    for (const value of ["", ...options]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value || "Не выбрано";
+      option.disabled = !isAdminRole(ctx) && adminOnlyValues.has(value);
+      control.appendChild(option);
+    }
+    const current = String(currentValue ?? "");
+    if (current && !options.includes(current)) {
+      const legacy = document.createElement("option");
+      legacy.value = current;
+      legacy.textContent = `${current} (устаревшее значение)`;
+      legacy.disabled = true;
+      control.appendChild(legacy);
+    }
+    control.value = current;
+  }
+
   function renderEditableCustomField(ctx, field, currentValue) {
     const wrap = document.createElement("label");
     wrap.className = "custom-field-editor";
@@ -1519,21 +1556,7 @@
       inputEl.value = currentValue ?? "";
     } else if (fieldType === "select") {
       inputEl = document.createElement("select");
-      const emptyOption = document.createElement("option");
-      emptyOption.value = "";
-      emptyOption.textContent = "\u041d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e";
-      inputEl.appendChild(emptyOption);
-      const options = Array.isArray(field.options) ? field.options : [];
-      const adminOnlyValues = new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []);
-      for (const optionValue of options) {
-        const option = document.createElement("option");
-        option.value = optionValue;
-        option.textContent = optionValue;
-        if (!isAdminRole(ctx) && adminOnlyValues.has(optionValue)) option.disabled = true;
-        inputEl.appendChild(option);
-      }
-      inputEl.value = currentValue ?? "";
-      if (!isAdminRole(ctx) && adminOnlyValues.has(inputEl.value)) inputEl.disabled = true;
+      populateClientSelect(ctx, inputEl, field, currentValue);
     } else if (fieldType === "checkbox") {
       inputEl = document.createElement("input");
       inputEl.type = "checkbox";
@@ -1566,7 +1589,8 @@
 
   function renderConfiguredSystemEditorField(ctx, field, currentValue) {
     const { control } = fieldEditorNodes(ctx, field.key);
-    if (!control) return renderReadonlyEditorField(field, currentValue, ctx);
+    if (!control) return field.is_editable === true && field.field_type !== "readonly"
+      ? renderEditableCustomField(ctx, field, currentValue) : renderReadonlyEditorField(field, currentValue, ctx);
     const wrap = document.createElement("label");
     wrap.className = "custom-field-editor";
     wrap.dataset.clientCardFieldKey = field.key;
@@ -1577,9 +1601,7 @@
     const fieldType = String(field.field_type || "text").toLowerCase();
     const adminOnlyValues = new Set(Array.isArray(field.admin_only_values) ? field.admin_only_values : []);
     if (control.tagName === "SELECT") {
-      Array.from(control.options || []).forEach((option) => {
-        option.disabled = !isAdminRole(ctx) && adminOnlyValues.has(option.value);
-      });
+      populateClientSelect(ctx, control, field, currentValue);
     }
     const adminOnlySelectCurrent = !isAdminRole(ctx) && fieldType === "select" && adminOnlyValues.has(String(currentValue ?? control.value ?? ""));
     control.dataset.clientCardBaseReadonly = field.is_editable === false || (!isAdminRole(ctx) && field.admin_only_edit) || adminOnlySelectCurrent

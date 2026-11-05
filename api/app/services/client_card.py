@@ -105,9 +105,9 @@ def _field_options_out(field: ClientCardFieldConfig) -> list[str] | None:
         except Exception:
             parsed = None
         raw_options = parsed
-    if isinstance(raw_options, list) and raw_options:
+    if isinstance(raw_options, list) and (raw_options or not field.is_system):
         return raw_options
-    if bool(field.is_system):
+    if field.is_system:
         return list(SYSTEM_SELECT_FIELD_OPTIONS.get(field.key, [])) or None
     return None
 
@@ -312,7 +312,7 @@ def _normalize_custom_field_value(field: ClientCardFieldConfig, value):
         _error(422, "invalid_custom_field_value", f"Поле '{field.label}' должно быть строкой даты YYYY-MM-DD")
     if field_type == "select":
         value_str = str(value).strip()
-        options = field.options_json or []
+        options = _field_options_out(field) or []
         if options and value_str not in options:
             _error(422, "invalid_custom_field_value", f"Поле '{field.label}' содержит недопустимое значение")
         return value_str or None

@@ -27,6 +27,7 @@ from ..services.button_automation_types import (
     normalize_workflow_type,
 )
 from ..services.button_config import BUTTON_CONFIG_DIR, resolve_button_row
+from ..services.client_card import _field_options_out
 from ..services.bot_button_keys import change_button_workflow_key, lock_button_keys, check_button_key_collisions
 from ..services.telegram_automation import get_automation_registry
 from ..services import telegram_group_registry
@@ -99,29 +100,6 @@ CONDITIONAL_FIELD_TYPE_BY_CARD: dict[str, str] = {
     "select": "select",
     "checkbox": "bool",
     "date": "text",
-}
-
-CONDITIONAL_SELECT_PRESETS: dict[str, list[str]] = {
-    "sand_owner": [
-        "песок Власова",
-        "песок Шабурова",
-        "песок Сайдаралиева",
-        "песок Макаренко",
-        "песок Шахалиевой",
-        "песок Кочуры",
-        "песок Москвиченко",
-    ],
-    "sales_group": [
-        "группа Власова",
-        "группа Шабурова",
-        "группа Сайдаралиева",
-        "группа Макаренко",
-        "группа Шахалиевой",
-        "группа Кочуры",
-        "группа Москвиченко",
-    ],
-    "location_type": ["Офисный", "Удалённый"],
-    "employee_type": ["Стажёр", "Сотрудник"],
 }
 
 TEXT_OPERATORS = {"eq", "ne", "contains", "not_contains", "empty", "not_empty"}
@@ -439,42 +417,6 @@ def _normalize_conditional_rules(raw_rules: list[dict], available_files: set[str
     return normalized_rules
 
 
-def _distinct_profile_values(db: Session, field_name: str) -> list[str]:
-    if field_name.startswith("custom_fields."):
-        custom_key = field_name.split(".", 1)[1]
-        from ..models import ClientProfile
-
-        rows = db.execute(select(ClientProfile.custom_fields)).scalars().all()
-        values: set[str] = set()
-        for payload in rows:
-            if not isinstance(payload, dict):
-                continue
-            value = payload.get(custom_key)
-            text = str(value or "").strip()
-            if text:
-                values.add(text)
-        return sorted(values, key=lambda x: x.lower())
-    from ..models import ClientProfile
-
-    column = getattr(ClientProfile, field_name, None)
-    if column is None:
-        return []
-    rows = db.execute(select(column).distinct()).scalars().all()
-    values = {str(v).strip() for v in rows if str(v or "").strip()}
-    return sorted(values, key=lambda x: x.lower())
-
-
-def _field_options(db: Session, field: ClientCardFieldConfig) -> list[str]:
-    options = field.options_json if isinstance(field.options_json, list) else []
-    normalized: list[str] = []
-    for value in options:
-        text = str(value or "").strip()
-        if text and text not in normalized:
-            normalized.append(text)
-    merged = normalized + [v for v in _distinct_profile_values(db, field.key or "") if v not in normalized]
-    return merged
-
-
 def _build_conditional_field_catalog(db: Session, menu_type: str | None = None) -> dict[str, dict]:
     catalog: dict[str, dict] = {}
     allow_map = {
@@ -501,9 +443,7 @@ def _build_conditional_field_catalog(db: Session, menu_type: str | None = None) 
             "is_custom": False,
         }
         if field_type == "select":
-            preset = CONDITIONAL_SELECT_PRESETS.get(key) or []
-            options = list(dict.fromkeys([*preset, *_field_options(db, field)]))
-            entry["values"] = options
+            entry["values"] = _field_options_out(field) or []
         catalog[key] = entry
 
     for field in fields:
@@ -521,7 +461,7 @@ def _build_conditional_field_catalog(db: Session, menu_type: str | None = None) 
             "custom_key": key,
         }
         if field_type == "select":
-            entry["values"] = _field_options(db, field)
+            entry["values"] = _field_options_out(field) or []
         catalog[entry["field"]] = entry
 
     catalog["telegram_username"] = {

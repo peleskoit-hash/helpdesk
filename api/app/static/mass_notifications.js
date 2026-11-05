@@ -7,11 +7,18 @@ const state = {
   branchField: "",
 };
 
-const BRANCH_OPTIONS_BY_DESTINATION = {
-  "Песок": ["песок Власова", "песок Шабурова", "песок Сайдаралиева", "песок Макаренко", "песок Шахалиевой", "песок Кочуры", "песок Москвиченко"],
-  "Отдел Продаж": ["группа Власова", "группа Шабурова", "группа Сайдаралиева", "группа Макаренко", "группа Шахалиевой", "группа Кочуры", "группа Москвиченко"],
-};
-const LOCATION_OPTIONS = ["Офисный", "Удалённый"];
+const BRANCH_FIELD_BY_DESTINATION = { "Песок": "sand_owner", "Отдел Продаж": "sales_group" };
+const fieldOptions = {};
+
+async function loadFieldOptions() {
+  await Promise.all(["destination", "sand_owner", "sales_group", "location_type"].map(async (key) => {
+    const result = await api(`/api/v1/mass-notifications/filter-options?filter_field=${key}`, { cache: "no-store" });
+    fieldOptions[key] = result.values || [];
+  }));
+  el.filterFieldSelect.innerHTML = `<option value="">Не выбрано</option><option value="__all__">Все</option>`
+    + fieldOptions.destination.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+  setLocationOptions();
+}
 
 const el = {
   filterFieldSelect: document.getElementById("filterFieldSelect"),
@@ -97,22 +104,24 @@ function renderFiles() {
 }
 
 function setBranchOptions(destination) {
-  const options = BRANCH_OPTIONS_BY_DESTINATION[destination] || [];
+  const options = fieldOptions[BRANCH_FIELD_BY_DESTINATION[destination]] || [];
   el.filterValueSelect.innerHTML = `<option value="" selected>Не выбрано</option>` + options.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
   el.filterValueSelect.disabled = !options.length;
 }
 
 function setLocationOptions() {
-  el.locationTypeSelect.innerHTML = `<option value="" selected>Не выбрано</option>` + LOCATION_OPTIONS.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+  el.locationTypeSelect.innerHTML = `<option value="" selected>Не выбрано</option>` + (fieldOptions.location_type || []).map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
 }
 
 function buildRecipientQuery() {
   const query = new URLSearchParams();
   if (state.filterField && state.filterField !== "__all__") {
-    query.set("destination", state.filterField);
+    query.set("filter_field", "destination");
+    query.set("filter_value", state.filterField);
   }
   if (state.branchField) {
-    query.set("branch", state.branchField);
+    query.set("branch_field", BRANCH_FIELD_BY_DESTINATION[state.filterField]);
+    query.set("branch_value", state.branchField);
   }
   const location = el.locationTypeSelect.value;
   if (location) {
@@ -138,8 +147,10 @@ async function sendBroadcast() {
     setStatus("Отправка оповещения...");
     const formData = new FormData();
     formData.append("text", text);
-    formData.append("destination", state.filterField || "");
-    formData.append("branch", state.branchField || "");
+    formData.append("filter_field", state.filterField && state.filterField !== "__all__" ? "destination" : "");
+    formData.append("filter_value", state.filterField !== "__all__" ? state.filterField : "");
+    formData.append("branch_field", BRANCH_FIELD_BY_DESTINATION[state.filterField] || "");
+    formData.append("branch_value", state.branchField || "");
     formData.append("location_type", el.locationTypeSelect.value || "");
     state.selectedFiles.forEach((file) => formData.append("files", file));
 
@@ -162,7 +173,6 @@ async function sendBroadcast() {
 }
 
 (function init() {
-  setLocationOptions();
   el.filterFieldSelect.addEventListener("change", async () => {
     state.filterField = el.filterFieldSelect.value;
     state.branchField = "";
@@ -200,6 +210,7 @@ async function sendBroadcast() {
     catch { document.execCommand("copy"); }
   });
   window.HelpdeskSidebar.init({ onError: (e) => showError(e.message) })
+    .then(() => loadFieldOptions())
     .then(() => loadRecipients())
     .catch((error) => {
       if (error?.status !== 401) showError(error.message);

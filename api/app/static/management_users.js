@@ -302,7 +302,12 @@
     state.selectedClientBlocked = Boolean(item?.is_blocked || item?.blocked);
     syncClientBlockControls(root);
     setStatus(root, "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438...");
-    const profile = await api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`);
+    const [profile, config] = await Promise.all([
+      api(`/api/v1/management/users/${encodeURIComponent(clientId)}/profile`, { cache: "no-store" }),
+      api("/api/v1/management/users/client-card-view-config", { cache: "no-store" }),
+    ]);
+    if (!config || !Array.isArray(config.blocks)) throw new Error("Не удалось загрузить настройки карточки клиента");
+    state.clientCardViewConfig = config;
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
     syncClientModalToggles(root);
     window.TicketClientCard.trackModalChanges(clientCardCtx(root));

@@ -1471,7 +1471,7 @@ async function loadCard(options = {}) {
   try {
     const [card, cardConfig] = await Promise.all([
       api(`/api/v1/tickets/${state.ticketId}`),
-      api(`/api/v1/tickets/${state.ticketId}/client-card-view-config`).catch(() => null),
+      api(`/api/v1/tickets/${state.ticketId}/client-card-view-config`, { cache: "no-store" }).catch(() => null),
     ]);
     if (!card || typeof card !== "object") {
       throw new Error("API вернул пустую карточку заявки");

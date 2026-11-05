@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
-from ..models import ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig
+from ..models import BotButtonSetting, ClientProfile, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig
 from ..schemas import (
     ClientCardBlockConfigOut,
     ClientCardBlockCreate,
@@ -271,10 +271,46 @@ def _cascade_rule_option_rename(db: Session, field: ClientCardFieldConfig, old_v
                     next_mapping[new_value] = next_mapping.pop(old_value)
                     next_action["map"] = next_mapping
                     changed = True
+            if next_action.get("value_type") == "map" and next_action.get("target_key") == field.key:
+                mapping = next_action.get("map")
+                if isinstance(mapping, dict) and old_value in mapping.values():
+                    next_action["map"] = {key: new_value if value == old_value else value for key, value in mapping.items()}
+                    changed = True
             actions.append(next_action)
         if changed:
             rule.actions_json = actions
             rule.updated_at = datetime.utcnow()
+
+    condition_key = field.key if field.is_system else f"custom_fields.{field.key}"
+    for button in db.execute(select(BotButtonSetting)).scalars():
+        rules = button.conditional_files_json or []
+        if any(condition.get("field") == condition_key and condition.get("value") == old_value
+               for rule in rules for condition in rule.get("conditions", [])):
+            button.conditional_files_json = [
+                {**rule, "conditions": [
+                    {**condition, "value": new_value} if condition.get("field") == condition_key and condition.get("value") == old_value else condition
+                    for condition in rule.get("conditions", [])
+                ]} for rule in rules
+            ]
+
+
+def _option_used_by_rules(db: Session, field: ClientCardFieldConfig, value: str) -> bool:
+    for rule in db.execute(select(ClientCardRuleConfig)).scalars():
+        if rule.condition_field_key == field.key and rule.condition_value == value:
+            return True
+        for action in rule.actions_json or []:
+            if action.get("target_key") == field.key and action.get("value_type") == "literal" and action.get("value") == value:
+                return True
+            mapping = action.get("map")
+            if action.get("value_type") == "map" and isinstance(mapping, dict):
+                if action.get("source_key") == field.key and value in mapping:
+                    return True
+                if action.get("target_key") == field.key and value in mapping.values():
+                    return True
+    condition_key = field.key if field.is_system else f"custom_fields.{field.key}"
+    return any(condition.get("field") == condition_key and condition.get("value") == value
+               for button in db.execute(select(BotButtonSetting)).scalars()
+               for rule in button.conditional_files_json or [] for condition in rule.get("conditions", []))
 
 
 def _apply_select_option_changes(
@@ -302,6 +338,8 @@ def _apply_select_option_changes(
         used_count = _count_profiles_using_option(db, field, value)
         if used_count:
             _error(409, "select_option_in_use", f"Вариант '{value}' используется у клиентов: {used_count}")
+        if _option_used_by_rules(db, field, value):
+            _error(409, "select_option_in_use", f"Вариант '{value}' используется в правилах")
     for old_value, new_value in option_renames.items():
         if old_value == new_value:
             continue
