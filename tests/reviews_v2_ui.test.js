@@ -35,7 +35,7 @@ async function setup(t, theme, role = 'agent', width = 1440) {
     else if (p === '/api/v1/reviews/employees') result = [{ employee_id: me.id, display_name: me.full_name, is_active: true }];
     else if (p === '/api/v1/reviews') {
       queries.push(Object.fromEntries(url.searchParams));
-      const item = { review_id: 'review-1', ticket_id: 'ticket-1', rated_at: '2026-10-23T12:00:00Z',
+      const item = { agent_full_name: '<b>Иван Петров</b>', review_id: 'review-1', ticket_id: 'ticket-1', rated_at: '2026-10-23T12:00:00Z',
         client_name_snapshot: 'Мария Смирнова', ticket_subject_snapshot: 'Настройка доступа', rating: 5,
         review_text: 'Спасибо за помощь!\n'.repeat(14), version_number: 1, has_history: false };
       result = { items: empty ? [] : [item], total_count: empty ? 0 : 31, average_rating: empty ? null : 5,
@@ -47,7 +47,6 @@ async function setup(t, theme, role = 'agent', width = 1440) {
   await page.waitForFunction(theme => document.body.dataset.sidebarReady === '1' && document.body.dataset.theme === theme, theme);
   if (role === 'admin') {
     await page.locator('#reviewEmployee:not(:disabled)').waitFor();
-    await page.locator('#reviewEmployee').selectOption('agent-1');
   }
   await page.waitForSelector('#reviewTableBody tr');
   await page.evaluate(() => document.fonts.ready);
@@ -82,6 +81,12 @@ for (const theme of ['light', 'dark']) {
       });
       assert.equal(panel.background, panel.expected);
       await contrast(page, ['.reviews-filters label', '#reviewDateFrom', '#reviewStats', '.reviews-table th', '.reviews-table td', '.reviews-table a', '.reviews-text-action']);
+      assert.equal(await page.locator('.reviews-table thead th:visible').count(), role === 'admin' ? 6 : 5);
+      if (role === 'admin') {
+        assert.equal(await page.locator('.reviews-table thead th:visible').first().textContent(), 'ФИО сотрудника');
+        assert.equal(await page.locator('#reviewTableBody tr').first().locator('td').first().textContent(), '<b>Иван Петров</b>');
+        assert.equal(await page.locator('#reviewTableBody b').count(), 0);
+      }
       assert.equal(await page.locator('#reviewCount').textContent(), '31');
       assert.equal(await page.locator('#reviewAverage').textContent(), '5,00');
       const text = page.locator('.reviews-text-action').first();
@@ -89,9 +94,23 @@ for (const theme of ['light', 'dark']) {
       await text.click(); assert.equal(await text.getAttribute('aria-expanded'), 'false');
       await Promise.all([page.waitForResponse(r => r.url().includes('/api/v1/reviews?') && r.url().includes('page=2')), page.locator('#reviewNext').click()]);
       assert.equal(queries.at(-1).page, '2');
-      if (role === 'admin') assert.equal(queries.at(-1).employee_id, 'agent-1');
-      assert.ok(assets.includes('/static/reviews.css?v=20261024-reviews-v2'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261027-active-status-v1'));
+      assert.equal(queries.at(-1).employee_id, undefined);
+      if (role === 'admin') {
+        assert.equal(await page.locator('#reviewEmployee').inputValue(), '');
+        assert.equal(await page.locator('#reviewEmployee option').first().textContent(), 'Все сотрудники');
+        assert.equal(await page.locator('#reviewDateFrom').isEnabled(), true);
+        assert.equal(await page.locator('#reviewDateTo').isEnabled(), true);
+        await Promise.all([page.waitForResponse(r => r.url().includes('employee_id=agent-1')),
+          page.locator('#reviewEmployee').selectOption('agent-1')]);
+        assert.equal(queries.at(-1).employee_id, 'agent-1');
+        assert.equal(queries.at(-1).page, '1');
+        await Promise.all([page.waitForResponse(r => r.url().includes('/api/v1/reviews?') && !r.url().includes('employee_id=')),
+          page.locator('#reviewEmployee').selectOption('')]);
+        assert.equal(queries.at(-1).employee_id, undefined);
+        assert.equal(await page.locator('#reviewDateFrom').isEnabled(), true);
+      }
+      assert.ok(assets.includes('/static/reviews.css?v=20261105-employee-column-width-v1'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261102-status-selection-v1'));
       makeEmpty();
       await page.locator('#reviewDateFrom').fill('2026-10-02');
       await page.waitForFunction(() => document.querySelector('#reviewStatus').textContent.includes('отзывов нет'));
@@ -131,4 +150,38 @@ for (const theme of ['light', 'dark']) {
       assert.equal((await measure()).width, 246, 'agent width stays unchanged');
     });
   }
+}
+
+for (const role of ['admin', 'agent', 'trainee']) {
+  test(`employee column intrinsic width and narrow scrolling: ${role}`, async t => {
+    const { page } = await setup(t, 'light', role);
+    const measure = () => page.locator('.reviews-table').evaluate(table => {
+      const header = table.querySelector('#reviewEmployeeHeader');
+      const cell = table.querySelector('tbody tr > td');
+      const style = getComputedStyle(cell);
+      const wrap = table.parentElement;
+      return { headerHidden: getComputedStyle(header).display === 'none',
+        width: cell.getBoundingClientRect().width, nowrap: style.whiteSpace,
+        fits: cell.scrollWidth <= cell.clientWidth + 1,
+        scroll: wrap.scrollWidth > wrap.clientWidth, overflow: getComputedStyle(wrap).overflowX };
+    });
+    const initial = await measure();
+    assert.equal(initial.headerHidden, role !== 'admin');
+    if (role === 'admin') {
+      await page.locator('#reviewTableBody tr > td').first().evaluate(cell => {
+        cell.textContent = 'Александра Константиновна Рождественская-Долгорукова';
+      });
+      const long = await measure();
+      assert.ok(long.width > initial.width);
+      assert.equal(long.nowrap, 'nowrap');
+      assert.equal(long.fits, true);
+    } else {
+      assert.equal(initial.nowrap, 'normal');
+    }
+    await page.setViewportSize({ width: 600, height: 900 });
+    const narrow = await measure();
+    assert.equal(narrow.scroll, true);
+    assert.equal(narrow.overflow, 'auto');
+    assert.equal(narrow.fits, true);
+  });
 }

@@ -59,15 +59,21 @@
   border-spacing: 0;
 }
 
-.reviews-table th:nth-child(1) { width: 155px; }
-.reviews-table th:nth-child(2) { width: 11%; }
-.reviews-table th:nth-child(3) { width: 16%; }
-.reviews-table th:nth-child(4) { width: 80px; }
+.reviews-table th.reviews-date-column { width: 155px; }
+.reviews-table th.reviews-client-column { width: 11%; }
+.reviews-table th.reviews-subject-column { width: 16%; }
+.reviews-table th.reviews-rating-column { width: 80px; }
 
 .reviews-table td {
   vertical-align: top;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.reviews-table:has(#reviewEmployeeHeader:not([hidden])) :is(#reviewEmployeeHeader, tbody tr > td:first-child:not([colspan])) {
+  width: 1%;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .reviews-table a,

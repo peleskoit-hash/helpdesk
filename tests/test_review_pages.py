@@ -72,8 +72,8 @@ def test_review_page_roles_and_html(monkeypatch, role, path):
     assert response.status_code == 200
     assert 'data-shell-page="reviews"' in response.text
     assert '/static/sidebar.js?v=20261027-themed-dialogs-v1' in response.text
-    assert '/static/reviews.js?v=20260907a' in response.text
-    assert '/static/reviews.css?v=20261024-reviews-v2' in response.text
+    assert '/static/reviews.js?v=20261105-review-employee-name-v1' in response.text
+    assert '/static/reviews.css?v=20261105-employee-column-width-v1' in response.text
     assert 'id="reviewDateFrom" type="date" disabled' in response.text
     assert 'id="reviewTableBody"' in response.text
     assert 'class="status-panel hidden"' in response.text
@@ -92,5 +92,5 @@ def test_review_navigation_contract():
     shell = (ROOT / "api/app/static/app_shell.js").read_text(encoding="utf-8")
     management = (ROOT / "api/app/templates/management.html").read_text(encoding="utf-8")
     for path in PAGE_ROUTES:
-        assert f'["{path}", {{ page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }}]' in shell
+        assert f'["{path}", {{ page: "reviews", scripts: ["/static/reviews.js?v=20261105-review-employee-name-v1"] }}]' in shell
     assert 'href="/management/reviews"' in management

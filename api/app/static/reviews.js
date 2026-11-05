@@ -19,7 +19,7 @@
 
   function initReviewsPage({ root }) {
     const el = {};
-    ["EmployeeField", "DateFrom", "DateTo", "Stats", "Count", "Average", "Status",
+    ["EmployeeField", "EmployeeHeader", "DateFrom", "DateTo", "Stats", "Count", "Average", "Status",
       "TableWrap", "TableBody", "Pagination", "Prev", "Next", "PageSummary"].forEach((key) => {
       el[key] = root.querySelector("#review" + key);
     });
@@ -145,7 +145,7 @@
       const historyRow = node("tr");
       historyRow.hidden = true;
       const content = node("td", "reviews-history-cell");
-      content.colSpan = 5;
+      content.colSpan = admin ? 6 : 5;
       historyRow.append(content);
       cell.append(button);
       el.TableBody.append(historyRow);
@@ -193,6 +193,7 @@
         subject.append(link);
         const textCell = node("td");
         appendText(textCell, item.review_text);
+        if (admin) row.append(node("td", "", item.agent_full_name || EMPTY));
         row.append(
           node("td", "", formatDate(item.rated_at, appTimezone)),
           node("td", "", item.client_name_snapshot),
@@ -211,10 +212,6 @@
 
     async function loadReviews() {
       const requestGeneration = clearResults();
-      if (admin && !employee.value) {
-        status("Выберите сотрудника");
-        return;
-      }
       if (!el.DateFrom.value || !el.DateTo.value ||
           !el.DateFrom.checkValidity() || !el.DateTo.checkValidity() ||
           el.DateFrom.value > el.DateTo.value) {
@@ -228,7 +225,7 @@
         page: String(page),
         page_size: "30",
       });
-      if (admin) query.set("employee_id", employee.value);
+      if (admin && employee.value) query.set("employee_id", employee.value);
       try {
         const payload = await api("/api/v1/reviews?" + query, controller.signal);
         if (destroyed || requestGeneration !== generation) return;
@@ -261,6 +258,7 @@
         const sidebar = await window.HelpdeskSidebar.init();
         if (destroyed) return;
         admin = sidebar.role === "admin";
+        el.EmployeeHeader.hidden = !admin;
         appTimezone = sidebar.appTimezone;
         resetDates();
         if (admin) {
@@ -268,7 +266,7 @@
           employee = node("select");
           employee.id = "reviewEmployee";
           employee.disabled = true;
-          const placeholder = node("option", "", "Выберите сотрудника");
+          const placeholder = node("option", "", "Все сотрудники");
           placeholder.value = "";
           employee.append(placeholder);
           label.append(employee);
@@ -286,14 +284,11 @@
           listen(employee, "change", () => {
             page = 1;
             resetDates();
-            el.DateFrom.disabled = el.DateTo.disabled = !employee.value;
             loadReviews();
           });
-          status("Выберите сотрудника");
-        } else {
-          el.DateFrom.disabled = el.DateTo.disabled = false;
-          await loadReviews();
         }
+        el.DateFrom.disabled = el.DateTo.disabled = false;
+        await loadReviews();
       } catch (error) {
         if (destroyed || error.name === "AbortError") return;
         status("Не удалось загрузить страницу отзывов. Обновите страницу.");

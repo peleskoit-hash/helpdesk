@@ -39,9 +39,8 @@ def _day_start_utc(value: date) -> datetime:
     return datetime.combine(value, time.min, tzinfo=ZoneInfo(settings.app_timezone)).astimezone(timezone.utc)
 
 
-def _current_review_filters(employee_id: str, date_from: date | None, date_to: date | None) -> list:
+def _current_review_filters(date_from: date | None, date_to: date | None) -> list:
     clauses = [
-        TicketReview.agent_id == employee_id,
         TicketReview.is_current.is_(True),
     ]
     if date_from is not None:
@@ -49,18 +48,6 @@ def _current_review_filters(employee_id: str, date_from: date | None, date_to: d
     if date_to is not None:
         clauses.append(TicketReview.rated_at < _day_start_utc(date_to + timedelta(days=1)))
     return clauses
-
-
-def _empty_response(page: int, page_size: int) -> ReviewListResponse:
-    return ReviewListResponse(
-        items=[],
-        total_count=0,
-        average_rating=None,
-        min_review_date=None,
-        page=page,
-        pages=1,
-        page_size=page_size,
-    )
 
 
 def _employee_or_404(db: Session, employee_id: str) -> User:
@@ -75,11 +62,12 @@ def _employee_or_404(db: Session, employee_id: str) -> User:
     return employee
 
 
-def _row_out(row: TicketReview, history_pairs: set[tuple[str, str]]) -> ReviewCurrentRowOut:
+def _row_out(row: TicketReview, history_pairs: set[tuple[str, str]], agent_full_name: str | None) -> ReviewCurrentRowOut:
     return ReviewCurrentRowOut(
         review_id=row.id,
         ticket_id=row.ticket_id,
         agent_id=row.agent_id,
+        agent_full_name=agent_full_name,
         rated_at=row.rated_at,
         client_name_snapshot=row.client_name_snapshot,
         ticket_subject_snapshot=row.ticket_subject_snapshot,
@@ -136,19 +124,23 @@ def list_reviews(
     _require_review_access(user)
 
     if is_admin(user):
-        if not employee_id:
-            return _empty_response(page, page_size)
         selected_employee_id = employee_id
-        _employee_or_404(db, selected_employee_id)
+        if selected_employee_id:
+            _employee_or_404(db, selected_employee_id)
     else:
         selected_employee_id = user.id
 
-    clauses = _current_review_filters(selected_employee_id, date_from, date_to)
+    employee_filter = (
+        TicketReview.agent_id == selected_employee_id
+        if selected_employee_id
+        else TicketReview.agent_id.in_(select(User.id).where(User.role.in_(list(SUPPORT_ROLES))))
+    )
+    clauses = [employee_filter, *_current_review_filters(date_from, date_to)]
     total_count = int(db.execute(select(func.count()).select_from(TicketReview).where(*clauses)).scalar_one() or 0)
     average = db.execute(select(func.avg(TicketReview.rating)).where(*clauses)).scalar_one()
     average_rating = round(float(average), 2) if average is not None else None
     min_rated_at = db.execute(
-        select(func.min(TicketReview.rated_at)).where(TicketReview.agent_id == selected_employee_id)
+        select(func.min(TicketReview.rated_at)).where(employee_filter)
     ).scalar_one()
     min_review_date = None
     if min_rated_at is not None:
@@ -168,6 +160,10 @@ def list_reviews(
         .limit(page_size)
     ).scalars().all()
 
+    employee_names = dict(db.execute(
+        select(User.id, User.full_name).where(User.id.in_({row.agent_id for row in rows}))
+    ).all()) if rows else {}
+
     history_pairs: set[tuple[str, str]] = set()
     if rows:
         pair_clauses = [
@@ -185,7 +181,7 @@ def list_reviews(
         history_pairs = {(ticket_id, agent_id) for ticket_id, agent_id in history_rows}
 
     return ReviewListResponse(
-        items=[_row_out(row, history_pairs) for row in rows],
+        items=[_row_out(row, history_pairs, employee_names.get(row.agent_id)) for row in rows],
         total_count=total_count,
         average_rating=average_rating,
         min_review_date=min_review_date,

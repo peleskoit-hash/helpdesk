@@ -51,8 +51,8 @@
     initialized: false,
   };
   const shellRoutes = new Map([
-    ["/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
-    ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20260907a"] }],
+    ["/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20261105-review-employee-name-v1"] }],
+    ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20261105-review-employee-name-v1"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2"] }],
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261027-dialogs-complete-v3"] }],

@@ -61,7 +61,7 @@ async function load(role = "agent", handler = () => list(), {
   appTimezone = "UTC", now = "2026-09-07T12:00:00Z",
 } = {}) {
   const el = {};
-  for (const key of ["EmployeeField", "DateFrom", "DateTo", "Stats", "Count", "Average", "Status",
+  for (const key of ["EmployeeField", "EmployeeHeader", "DateFrom", "DateTo", "Stats", "Count", "Average", "Status",
     "TableWrap", "TableBody", "Pagination", "Prev", "Next", "PageSummary"]) el[key] = new Element();
   el.DateFrom.disabled = el.DateTo.disabled = true;
   const root = { querySelector: (selector) => el[selector.slice("#review".length)] };
@@ -113,7 +113,7 @@ for (const scenario of [
       assert.equal(new Date(scenario.now).getTimezoneOffset(), 0);
       const ui = await load(role, () => list(), scenario);
       if (role === "admin") {
-        assert.equal(ui.el.DateFrom.disabled, true);
+        assert.equal(ui.el.DateFrom.disabled, false);
         const select = employeeSelect(ui);
         select.value = "active";
         select.fire("change");
@@ -146,28 +146,35 @@ for (const scenario of [
   });
 }
 
-test("admin waits for an explicit employee and preserves API employee ordering", async () => {
+test("admin defaults to all employees, loads automatically and preserves API employee ordering", async () => {
   const ui = await load("admin");
-  assert.deepEqual(ui.requests.map((request) => request.url), ["/api/v1/reviews/employees"]);
-  assert.equal(ui.el.Status.textContent, "Выберите сотрудника");
-  assert.equal(ui.el.DateFrom.disabled, true);
+  assert.equal(ui.requests[0].url, "/api/v1/reviews/employees");
+  assert.equal(ui.requests.length, 2);
+  assert.equal(new URL(ui.requests[1].url, "http://local").searchParams.has("employee_id"), false);
+  assert.equal(ui.el.DateFrom.disabled, false);
+  assert.equal(ui.el.DateTo.disabled, false);
+  assert.equal(ui.el.Count.textContent, "1");
   const select = employeeSelect(ui);
+  assert.equal(select.value, "");
   assert.deepEqual(select.children.map((item) => item.textContent),
-    ["Выберите сотрудника", "Z Old (неактивен)", "A Active"]);
+    ["Все сотрудники", "Z Old (неактивен)", "A Active"]);
   select.value = "old";
   select.fire("change");
   await settle();
-  const query = new URL(ui.requests[1].url, "http://local").searchParams;
+  const query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
   assert.equal(query.get("employee_id"), "old");
   assert.equal(query.get("date_from"), "2026-09-01");
   assert.equal(query.get("date_to"), "2026-09-07");
-  assert.equal(ui.el.DateFrom.disabled, false);
   select.value = "";
   select.fire("change");
-  assert.equal(ui.el.DateFrom.disabled, true);
+  assert.equal(ui.el.DateFrom.disabled, false);
+  assert.equal(ui.el.DateTo.disabled, false);
   assert.equal(ui.el.Stats.hidden, true);
   assert.equal(ui.el.TableBody.children.length, 0);
-  assert.equal(ui.requests.length, 2);
+  await settle();
+  assert.equal(ui.requests.length, 4);
+  assert.equal(new URL(ui.requests.at(-1).url, "http://local").searchParams.has("employee_id"), false);
+  assert.equal(ui.el.Count.textContent, "1");
 });
 
 for (const role of ["agent", "trainee"]) {
@@ -194,17 +201,19 @@ for (const role of ["agent", "trainee"]) {
   });
 }
 
-test("min date clamps defaults and reloads the actual period; empty stats use a dash", async () => {
-  const ui = await load("agent", () => list([], { min_review_date: "2026-09-04" }));
-  assert.equal(ui.requests.length, 2);
-  assert.equal(ui.el.DateFrom.value, "2026-09-04");
-  assert.equal(ui.el.DateFrom.min, "2026-09-04");
-  assert.equal(ui.el.DateTo.max, "2026-09-07");
-  assert.equal(ui.el.Count.textContent, "0");
-  assert.equal(ui.el.Average.textContent, "—");
-  assert.equal(ui.el.TableWrap.hidden, true);
-  assert.equal(ui.el.Status.textContent, "За выбранный период отзывов нет");
-});
+for (const role of ["agent", "admin"]) {
+  test(role + " min date clamps defaults and reloads the actual period; empty stats use a dash", async () => {
+    const ui = await load(role, () => list([], { min_review_date: "2026-09-04" }));
+    assert.equal(ui.requests.length, role === "admin" ? 3 : 2);
+    assert.equal(ui.el.DateFrom.value, "2026-09-04");
+    assert.equal(ui.el.DateFrom.min, "2026-09-04");
+    assert.equal(ui.el.DateTo.max, "2026-09-07");
+    assert.equal(ui.el.Count.textContent, "0");
+    assert.equal(ui.el.Average.textContent, "—");
+    assert.equal(ui.el.TableWrap.hidden, true);
+    assert.equal(ui.el.Status.textContent, "За выбранный период отзывов нет");
+  });
+}
 
 test("history loads lazily, preserves order and dates outside the filter, and is cached per row", async () => {
   const history = [
@@ -280,25 +289,27 @@ test("switching employees resets period, minimum date and history", async () => 
   assert.equal(ui.el.TableBody.children[1].hidden, true);
 });
 
-test("pagination preserves filters, clears history, and date changes reset page and fix reversed dates", async () => {
-  const ui = await load("agent", (url) => list([current], {
-    page: Number(new URL(url, "http://local").searchParams.get("page")), pages: 3, total_count: 80,
-  }));
-  ui.el.Next.fire("click");
-  await settle();
-  let query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
-  assert.equal(query.get("page"), "2");
-  assert.equal(query.get("date_from"), "2026-09-01");
-  assert.equal(ui.el.PageSummary.textContent, "Страница 2 из 3");
-  ui.el.DateTo.value = "2026-08-31";
-  ui.el.DateTo.fire("change");
-  await settle();
-  query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
-  assert.equal(query.get("page"), "1");
-  assert.equal(query.get("date_from"), "2026-08-31");
-  assert.equal(query.get("date_to"), "2026-08-31");
-  assert.equal(ui.el.TableBody.children[1].hidden, true);
-});
+for (const role of ["agent", "admin"]) {
+  test(role + " pagination preserves filters, clears history, and date changes reset page and fix reversed dates", async () => {
+    const ui = await load(role, (url) => list([current], {
+      page: Number(new URL(url, "http://local").searchParams.get("page")), pages: 3, total_count: 80,
+    }));
+    ui.el.Next.fire("click");
+    await settle();
+    let query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
+    assert.equal(query.get("page"), "2");
+    assert.equal(query.get("date_from"), "2026-09-01");
+    assert.equal(ui.el.PageSummary.textContent, "Страница 2 из 3");
+    ui.el.DateTo.value = "2026-08-31";
+    ui.el.DateTo.fire("change");
+    await settle();
+    query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
+    assert.equal(query.get("page"), "1");
+    assert.equal(query.get("date_from"), "2026-08-31");
+    assert.equal(query.get("date_to"), "2026-08-31");
+    assert.equal(ui.el.TableBody.children[1].hidden, true);
+  });
+}
 
 test("late list responses cannot replace a newer period; destroy cancels active requests", async () => {
   const pending = [];
@@ -334,3 +345,46 @@ test("history arriving after a filter change is discarded and errors do not reta
   assert.equal(ui.el.Stats.hidden, true);
   assert.equal(ui.el.Status.textContent, "Не удалось загрузить отзывы. Повторите попытку.");
 });
+
+test("late all-employee and employee responses cannot replace a newer filter", async () => {
+  const pending = [];
+  const ui = await load("admin", () => new Promise((resolve) => pending.push(resolve)));
+  const select = employeeSelect(ui);
+  select.value = "old";
+  select.fire("change");
+  select.value = "";
+  select.fire("change");
+  ui.el.DateFrom.value = "2026-09-02";
+  ui.el.DateFrom.fire("change");
+  pending[3](list([], { total_count: 0 }));
+  await settle();
+  for (const resolve of pending.slice(0, 3)) resolve(list([current]));
+  await settle();
+  assert.equal(ui.el.Count.textContent, "0");
+  assert.equal(ui.el.TableBody.children.length, 0);
+  assert.equal(ui.el.Status.textContent, "За выбранный период отзывов нет");
+  assert.ok(ui.requests.slice(1, -1).every(request => request.options.signal.aborted));
+  const query = new URL(ui.requests.at(-1).url, "http://local").searchParams;
+  assert.equal(query.has("employee_id"), false);
+  assert.equal(query.get("date_from"), "2026-09-02");
+  assert.equal(query.get("page"), "1");
+});
+
+for (const role of ["admin", "agent", "trainee"]) {
+  test(role + " employee name column and history width", async () => {
+    const name = '<img src=x onerror=alert(1)>';
+    const ui = await load(role, () => list([
+      { ...current, agent_full_name: name },
+      { ...current, review_id: "review-2", agent_full_name: null },
+    ]));
+    const rows = ui.el.TableBody.children;
+    assert.equal(ui.el.EmployeeHeader.hidden, role !== "admin");
+    assert.equal(rows[0].children.length, role === "admin" ? 6 : 5);
+    assert.equal(rows[1].children[0].colSpan, role === "admin" ? 6 : 5);
+    if (role === "admin") {
+      assert.equal(rows[0].children[0].textContent, name);
+      assert.equal(rows[0].children[0].children.length, 0);
+      assert.equal(rows[2].children[0].textContent, "—");
+    }
+  });
+}

@@ -769,6 +769,7 @@ class ReviewEmployeeOut(BaseModel):
 
 
 class ReviewCurrentRowOut(BaseModel):
+    agent_full_name: str | None = None
     review_id: str
     ticket_id: str
     agent_id: str

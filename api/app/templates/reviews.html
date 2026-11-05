@@ -57,7 +57,7 @@
     </aside>
 
     <main id="appContent" class="main" data-shell-page="reviews">
-      <link rel="stylesheet" href="/static/reviews.css?v=20261024-reviews-v2" />
+      <link rel="stylesheet" href="/static/reviews.css?v=20261105-employee-column-width-v1" />
       <div class="toolbar">
         <button class="action" type="button" data-shell-back>Назад</button>
         <h1 class="settings-title">Отзывы</h1>
@@ -83,10 +83,11 @@
         <div id="reviewTableWrap" class="table-scroll reviews-table-wrap" hidden>
           <table class="reviews-table">
             <thead><tr>
-              <th scope="col">Дата</th>
-              <th scope="col">Имя клиента</th>
-              <th scope="col">Заголовок заявки</th>
-              <th scope="col">Оценка</th>
+              <th id="reviewEmployeeHeader" scope="col" hidden>ФИО сотрудника</th>
+              <th scope="col" class="reviews-date-column">Дата</th>
+              <th scope="col" class="reviews-client-column">Имя клиента</th>
+              <th scope="col" class="reviews-subject-column">Заголовок заявки</th>
+              <th scope="col" class="reviews-rating-column">Оценка</th>
               <th scope="col">Текст отзыва</th>
             </tr></thead>
             <tbody id="reviewTableBody"></tbody>
@@ -104,7 +105,7 @@
   <script src="/static/theme.js?v=20261029-contour-delete-only-v1"></script>
   <script src="/static/sidebar.js?v=20261027-themed-dialogs-v1"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261031-web-history-v1"></script>
-  <script src="/static/reviews.js?v=20260907a"></script>
+  <script src="/static/app_shell.js?v=20261105-review-resources-v1"></script>
+  <script src="/static/reviews.js?v=20261105-review-employee-name-v1"></script>
 </body>
 </html>

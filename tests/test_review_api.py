@@ -163,29 +163,69 @@ def test_employee_selector_requires_admin():
     assert response.status_code == 403
 
 
-def test_admin_without_employee_id_gets_empty_response_not_all_reviews():
+@pytest.mark.parametrize("employee_id", [None, ""])
+def test_admin_without_employee_id_gets_all_support_reviews(employee_id):
     Session = _session_factory()
     session = Session()
     _seed_base(session)
-    _add_review(
-        session,
-        review_id="review-1",
-        ticket_id="ticket-1",
-        agent_id="agent-1",
-        rated_at=datetime(2026, 9, 1, 10, 0, 0),
+    for index, (agent_id, rated_at, is_current) in enumerate([
+        ("agent-1", datetime(2026, 9, 1, 10), True),
+        ("trainee-1", datetime(2026, 9, 3, 10), True),
+        ("agent-old", datetime(2026, 9, 2, 10), True),
+        ("trainee-history", datetime(2026, 8, 1, 10), False),
+        ("admin-1", datetime(2026, 7, 1, 10), True),
+        ("observer-1", datetime(2026, 6, 1, 10), True),
+        ("agent-1", datetime(2026, 9, 3, 10), True),
+    ]):
+        ticket_id = f"ticket-all-{index}"
+        _add_ticket(session, ticket_id)
+        _add_review(session, review_id=f"review-all-{index}", ticket_id=ticket_id,
+                    agent_id=agent_id, rated_at=rated_at, is_current=is_current, rating=index % 5 + 1)
+
+    client = _client(session, _current_user("admin-1", "admin"))
+    params = {} if employee_id is None else {"employee_id": employee_id}
+    response = client.get("/api/v1/reviews", params=params)
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["review_id"] for item in body["items"]] == [
+        "review-all-6", "review-all-1", "review-all-2", "review-all-0",
+    ]
+    assert {item["agent_id"]: item["agent_full_name"] for item in body["items"]} == {
+        "agent-1": "Agent Active", "trainee-1": "Trainee Active", "agent-old": "Agent Old",
+    }
+    assert body["total_count"] == 4
+    assert body["average_rating"] == 2.0
+    assert body["min_review_date"] == "2026-08-01"
+
+    body = client.get("/api/v1/reviews", params={
+        **params, "date_from": "2026-09-02", "date_to": "2026-09-02",
+    }).json()
+    assert [item["review_id"] for item in body["items"]] == ["review-all-2"]
+    assert body["total_count"] == 1
+    assert body["average_rating"] == 3.0
+    assert body["min_review_date"] == "2026-08-01"
+
+
+def test_admin_unknown_employee_still_returns_404():
+    Session = _session_factory()
+    session = Session()
+    _seed_base(session)
+    response = _client(session, _current_user("admin-1", "admin")).get(
+        "/api/v1/reviews", params={"employee_id": "unknown"},
     )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "employee_not_found"
 
+
+def test_admin_empty_all_reviews():
+    Session = _session_factory()
+    session = Session()
+    _seed_base(session)
     response = _client(session, _current_user("admin-1", "admin")).get("/api/v1/reviews")
-
     assert response.status_code == 200
     assert response.json() == {
-        "items": [],
-        "total_count": 0,
-        "average_rating": None,
-        "min_review_date": None,
-        "page": 1,
-        "pages": 1,
-        "page_size": 30,
+        "items": [], "total_count": 0, "average_rating": None, "min_review_date": None,
+        "page": 1, "pages": 1, "page_size": 30,
     }
 
 
@@ -217,6 +257,7 @@ def test_admin_gets_current_reviews_for_selected_employee_only():
     assert body["total_count"] == 1
     assert body["items"][0]["review_id"] == wanted.id
     assert body["items"][0]["agent_id"] == "agent-1"
+    assert body["items"][0]["agent_full_name"] == "Agent Active"
 
 
 def test_agent_and_trainee_get_only_own_reviews_and_employee_id_cannot_switch_context():
@@ -244,6 +285,12 @@ def test_agent_and_trainee_get_only_own_reviews_and_employee_id_cannot_switch_co
         params={"employee_id": "trainee-1"},
     ).json()
     trainee_body = _client(session, _current_user("trainee-1", "trainee")).get("/api/v1/reviews").json()
+    for role, own_id, foreign_id in [("agent", "agent-1", "trainee-1"), ("trainee", "trainee-1", "agent-1")]:
+        client = _client(session, _current_user(own_id, role))
+        for params in [{}, {"employee_id": ""}, {"employee_id": foreign_id}, {"employee_id": "unknown"}]:
+            response = client.get("/api/v1/reviews", params=params)
+            assert response.status_code == 200
+            assert [item["agent_id"] for item in response.json()["items"]] == [own_id]
 
     assert [item["review_id"] for item in agent_body["items"]] == ["review-agent"]
     assert [item["review_id"] for item in trainee_body["items"]] == ["review-trainee"]
@@ -425,7 +472,8 @@ def test_reviews_are_sorted_by_rated_at_desc_then_id_desc():
     assert [item["review_id"] for item in body["items"]] == ["review-z", "review-a"]
 
 
-def test_default_pagination_returns_30_current_reviews():
+@pytest.mark.parametrize("role", ["agent", "admin"])
+def test_default_pagination_returns_30_current_reviews(role):
     Session = _session_factory()
     session = Session()
     _seed_base(session)
@@ -437,16 +485,27 @@ def test_default_pagination_returns_30_current_reviews():
             session,
             review_id=f"review-page-{index:02d}",
             ticket_id=ticket_id,
-            agent_id="agent-1",
+            agent_id=("agent-old" if role == "admin" and index % 2 else "agent-1"),
             rated_at=base_time + timedelta(minutes=index),
+            rating=1 if index == 0 else 5,
         )
 
-    body = _client(session, _current_user("agent-1", "agent")).get("/api/v1/reviews").json()
+    client = _client(session, _current_user(f"{role}-1", role))
+    body = client.get("/api/v1/reviews").json()
 
     assert body["page_size"] == 30
     assert body["total_count"] == 31
     assert body["pages"] == 2
     assert len(body["items"]) == 30
+
+    assert body["average_rating"] == round(151 / 31, 2)
+    assert [item["review_id"] for item in body["items"]] == [f"review-page-{i:02d}" for i in range(30, 0, -1)]
+    second_page = client.get("/api/v1/reviews", params={"page": 2}).json()
+    assert [item["review_id"] for item in second_page["items"]] == ["review-page-00"]
+    for item in body["items"] + second_page["items"]:
+        assert item["agent_full_name"] == {"agent-1": "Agent Active", "agent-old": "Agent Old"}[item["agent_id"]]
+    assert second_page["total_count"] == 31
+    assert second_page["average_rating"] == body["average_rating"]
 
 
 def test_has_history_false_when_pair_has_no_previous_versions():
@@ -531,7 +590,8 @@ def test_review_text_preserves_line_breaks_and_ticket_subject_snapshot_is_return
     assert body["items"][0]["ticket_subject_snapshot"] == "Snapshot Subject"
 
 
-def test_history_of_other_employee_is_forbidden_for_support_user():
+@pytest.mark.parametrize("role", ["agent", "trainee"])
+def test_history_of_other_employee_is_forbidden_for_support_user(role):
     Session = _session_factory()
     session = Session()
     _seed_base(session)
@@ -540,10 +600,10 @@ def test_history_of_other_employee_is_forbidden_for_support_user():
         session,
         review_id="review-trainee",
         ticket_id="ticket-2",
-        agent_id="trainee-1",
+        agent_id="trainee-1" if role == "agent" else "agent-1",
         rated_at=datetime(2026, 9, 2, 10, 0, 0),
     )
 
-    response = _client(session, _current_user("agent-1", "agent")).get(f"/api/v1/reviews/{current.id}/history")
+    response = _client(session, _current_user(f"{role}-1", role)).get(f"/api/v1/reviews/{current.id}/history")
 
     assert response.status_code == 403
