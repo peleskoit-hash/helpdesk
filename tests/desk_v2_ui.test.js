@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-overflow-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-surface-v2"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-overflow-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261105-table-header-surface-v2"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -1723,6 +1723,15 @@ for (const theme of ['light', 'dark']) test(`ticket header decoration does not o
   preferences.ticket_list_columns = ['type', 'department', 'requester', 'subject', 'assignee', 'age', 'location']
     .map(key => ({ key, width: key === 'subject' ? 340 : 160 }));
   await page.reload(); await page.waitForSelector('body.ticket-columns-auto .ticket-row');
+  // Check actual painted pixels in the padding and rounded upper corners.
+  const panel = page.locator('.panel.table-wrap');
+  const png = await panel.screenshot();
+  const surface = await page.locator('#ticketsTable thead').evaluate(head => getComputedStyle(head).backgroundColor);
+  const pixels = JSON.parse(require('node:child_process').execFileSync('python', ['-c',
+    'import sys,json,base64,io; from PIL import Image; d=json.load(sys.stdin); im=Image.open(io.BytesIO(base64.b64decode(d["png"]))).convert("RGB"); w,h=im.size; print(json.dumps([im.getpixel(p) for p in [(10,10),(w-11,10),(w//2,4),(4,22),(w-5,22)]]))'
+  ], { input: JSON.stringify({ png: png.toString('base64') }), encoding: 'utf8' }));
+  const expectedSurface = surface.match(/\d+/g).slice(0, 3).map(Number);
+  for (const pixel of pixels) assert.deepEqual(pixel, expectedSurface, 'header padding and corners are opaque surface');
   await page.addStyleTag({ content: '.table-scroll { scrollbar-gutter: stable; } .table-scroll::-webkit-scrollbar { width: 20px; height: 20px; }' });
   const metrics = () => page.locator('.table-scroll').evaluate(scroll => {
     const table = scroll.querySelector('table'), head = table.tHead;
@@ -1734,6 +1743,11 @@ for (const theme of ['light', 'dark']) test(`ticket header decoration does not o
     const scroll = document.querySelector('.table-scroll'); return scroll.scrollWidth <= scroll.clientWidth + 1;
   });
   const fitting = await metrics();
+  const widthsWithSurface = await page.locator('#ticketsTable th').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().width));
+  await page.locator('#ticketsTable thead').evaluate(head => { head.style.boxShadow = 'none'; });
+  assert.deepEqual(await metrics(), fitting, 'surface paint does not change table or scroll geometry');
+  assert.deepEqual(await page.locator('#ticketsTable th').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().width)), widthsWithSurface);
+  await page.locator('#ticketsTable thead').evaluate(head => { head.style.removeProperty('box-shadow'); });
   assert.equal(fitting.vertical, true);
   assert.equal(fitting.content, 'none');
   assert.notEqual(fitting.background, 'rgba(0, 0, 0, 0)');

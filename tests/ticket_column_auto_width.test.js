@@ -9,12 +9,12 @@ const { fill } = context.window.HelpdeskTicketColumnAutoWidth;
 test('ticket header overflow decoration is removed and CSS cache versions match every template', () => {
   const css = fs.readFileSync('api/app/static/desk-v2.css', 'utf8');
   assert.doesNotMatch(css, /#ticketsTable\s+thead::after/);
-  assert.match(css, /#ticketsTable thead \{ background: var\(--desk-surface\); \}/);
-  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261105-table-header-overflow-v1/);
+  assert.match(css, /#ticketsTable thead \{ background: var\(--desk-surface\); box-shadow: 0 -12px 0 12px var\(--desk-surface\); \}/);
+  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261105-table-header-surface-v2/);
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/styles\.css\?v=([^"']+)/g)) {
-      assert.equal(version, '20261105-table-header-overflow-v1', file);
+      assert.equal(version, '20261105-table-header-surface-v2', file);
     }
   }
 });
