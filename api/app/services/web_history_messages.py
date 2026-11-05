@@ -94,6 +94,8 @@ def history_messages(db, client, ticket_id):
             items.append({'id': result['message_id'], 'message_type': 'agent', 'text': result['text'],
                 'created_at': result['closed_at'], 'files': [dict(file, source='web_result',
                     preview_kind=_preview('web_result', file['mime_type'])) for file in result['files']]})
+            if result['wrong_problem_hint']:
+                items[-1]['wrong_problem_hint'] = result['wrong_problem_hint']
     return {'ticket_id': ticket.id, 'items': items}
 
 

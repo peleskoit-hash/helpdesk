@@ -216,7 +216,7 @@ def test_publisher_excludes_other_scenarios(case, changes):
 
 
 def test_rollback_removes_publication_and_blob_together(case):
-    task_id = seed_task(case)
+    task_id = seed_task(case, wrong_problem_hint='<b>Uncommitted hint</b>')
     final = message(case,task_id,'Rollback answer')
     file(case,task_id,final,'rollback.pdf')
     with Session(case.engine) as db:
@@ -230,6 +230,22 @@ def test_rollback_removes_publication_and_blob_together(case):
         assert db.get(WebTaskResult,task_id) is None
         assert not db.scalars(select(WebTaskResultFile)).all()
     assert close(case,task_id).status_code == 200
+
+
+@pytest.mark.parametrize('channel,delivered', [('web', False), ('telegram', False), ('telegram', True)])
+def test_pending_hint_preserves_telegram_delivery_semantics(channel, delivered):
+    from api.app.services.ticket_lifecycle import _send_pending_wrong_problem_hint
+    ticket = SimpleNamespace(channel=channel, wrong_problem_hint='<b>Menu hint</b>')
+    send = Mock(return_value={'result': {'message_id': 123}} if delivered else None)
+    add = Mock()
+    from unittest.mock import patch
+    with patch('api.app.services.ticket_lifecycle._ticket_has_telegram_contact', return_value=False):
+        _send_pending_wrong_problem_hint(None, ticket, send_to_telegram_client_fn=send, add_message_fn=add)
+    assert send.call_count == (1 if channel == 'telegram' else 0)
+    assert add.call_count == (1 if delivered else 0)
+    assert ticket.wrong_problem_hint == (None if delivered else '<b>Menu hint</b>')
+    if channel == 'telegram':
+        assert send.call_args.args[2] == '<b>Menu hint</b>'
 
 
 def test_read_count_and_idempotent_read_are_scoped_to_session(case):

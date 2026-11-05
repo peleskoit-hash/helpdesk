@@ -31,6 +31,7 @@ class ResultFile(BaseModel):
 
 class ResultDetail(ResultSummary):
     text: str
+    wrong_problem_hint: str | None = None
     files: list[ResultFile]
 
 

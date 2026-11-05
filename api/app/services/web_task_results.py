@@ -11,6 +11,7 @@ from ..config import settings
 from ..models import Client, Ticket, WebTaskResult, WebTaskResultFile
 from . import web_auth
 from .ticket_attachments import _ensure_local_attachment_file
+from .telegram_text_format import strip_telegram_html
 from .web_history import history_scope
 
 
@@ -88,9 +89,17 @@ def list_results(db, client, limit, offset):
 
 def result_detail(db, client, task_id):
     result = owned_result(db, client, task_id)
+    ticket = db.get(Ticket, result.task_id)
+    # Read-only projection also serves existing publications. Never expose a
+    # pending hint independently of a successfully published normal WEB result.
+    hint = None
+    if (ticket.channel == 'web' and ticket.workflow_type == 'task' and ticket.task_kind == 'normal'
+            and ticket.status == 'closed' and not ticket.suppress_client_answer):
+        hint = strip_telegram_html(ticket.wrong_problem_hint or '').strip() or None
     files = db.scalars(select(WebTaskResultFile).where(WebTaskResultFile.result_task_id == result.task_id)
                        .order_by(WebTaskResultFile.position, WebTaskResultFile.id)).all()
     return {'task_id': result.task_id, 'message_id': result.message_id, 'text': result.text,
+            'wrong_problem_hint': hint,
             'closed_at': result.closed_at, 'read_at': result.read_at,
             'files': [{'id': file.id, 'filename': file.filename, 'mime_type': file.mime_type, 'size': file.size,
                        'download_url': f'/api/v1/web/task-results/{result.task_id}/files/{file.id}'} for file in files]}

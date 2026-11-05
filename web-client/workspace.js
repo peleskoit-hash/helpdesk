@@ -653,6 +653,7 @@ export function mountWorkspace(root) {
       if (controller.signal.aborted) return;
       if (result?.ticket_id !== record.id || !Array.isArray(result.items) || !result.items.every(message =>
           validId(message.id) && ['client', 'agent'].includes(message.message_type) && typeof message.text === 'string'
+          && (message.wrong_problem_hint == null || typeof message.wrong_problem_hint === 'string')
           && typeof message.created_at === 'string' && Number.isFinite(Date.parse(message.created_at))
           && Array.isArray(message.files) && message.files.every(file => validId(file.id)
             && typeof file.filename === 'string' && typeof file.source === 'string' && typeof file.mime_type === 'string'
@@ -693,6 +694,12 @@ export function mountWorkspace(root) {
         for (const file of message.files) {
           renderHistoryFile(answer, record.id, file, controller.signal,
             (file, button, status) => downloadResult(record, file, button, status));
+        }
+        if (message.message_type === 'agent' && message.wrong_problem_hint) {
+          const hint = historyText(detail, '', 'aside');
+          hint.className = 'chat-message bot history-problem-hint';
+          historyText(hint, 'Подсказка по выбору пункта меню', 'strong');
+          historyText(hint, message.wrong_problem_hint).className = 'history-message-text';
         }
       }
       const readStatus = document.createElement('div');

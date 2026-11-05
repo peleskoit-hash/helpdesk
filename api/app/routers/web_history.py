@@ -56,6 +56,7 @@ class HistoryMessage(BaseModel):
     text: str
     created_at: datetime
     files: list[HistoryFile]
+    wrong_problem_hint: str | None = None
 
 
 class HistoryMessages(BaseModel):
@@ -63,7 +64,7 @@ class HistoryMessages(BaseModel):
     items: list[HistoryMessage]
 
 
-@router.get('/{ticket_id}/messages', response_model=HistoryMessages)
+@router.get('/{ticket_id}/messages', response_model=HistoryMessages, response_model_exclude_unset=True)
 def messages(ticket_id: UUID, client: CurrentWebClient = Depends(get_current_web_client),
              db: Session = Depends(get_db)):
     return history_messages(db, client, ticket_id)

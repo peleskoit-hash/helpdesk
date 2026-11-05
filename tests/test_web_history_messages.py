@@ -10,8 +10,83 @@ from api.app.models import InternalTaskDefinition, InternalTaskOccurrence, Ticke
 from api.app.services import web_history_messages as content
 from api.app.services.ticket_admin_actions import _delete_ticket_hard
 from test_web_task_results import case, engine, seed_task, message, file, close, BASE
+from api.app.models import WebTaskResult
 
 HISTORY = '/api/v1/web/history'
+
+
+@pytest.mark.parametrize('existing', [False, True])
+@pytest.mark.parametrize('is_special', [False, True])
+def test_wrong_problem_hint_requires_publication_and_is_read_only(case, existing, is_special):
+    # Existing closed publication reproduces DEV #820 without touching its DB.
+    ticket_id = '4fd147bd-83ac-59da-b150-dafea1287845'
+    hint = '<b>Верный пункт</b>\n<blockquote><i>Расшифровка</i> → Найти сделку но номеру☎️</blockquote>'
+    ticket = seed(case, id=ticket_id, wrong_problem_hint=hint, is_special=is_special)
+    final = message(case, ticket, 'фыв')
+    assert [row['text'] for row in detail(case, ticket).json()['items']] == ['Description']
+    assert case.http.get(f'{BASE}/{ticket}').status_code == 404
+    if existing:
+        with Session(case.engine) as db:
+            task = db.get(Ticket, ticket)
+            task.status, task.closed_at = 'closed', case.clock[0]
+            db.add(WebTaskResult(task_id=ticket, company_id='co', client_id='client', message_id=final,
+                                 text='фыв', closed_at=case.clock[0]))
+            db.commit()
+    else:
+        assert close(case, ticket).status_code == 200
+    with Session(case.engine) as db:
+        before = [(row.id, row.body) for row in db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == ticket))]
+    for _ in range(3):
+        result = case.http.get(f'{BASE}/{ticket}').json()
+        assert result['text'] == 'фыв'
+        assert result['wrong_problem_hint'] == 'Верный пункт\nРасшифровка → Найти сделку но номеру☎️'
+        rows = detail(case, ticket).json()['items']
+        assert [row['text'] for row in rows] == ['Description', 'фыв']
+        assert rows[-1]['wrong_problem_hint'] == result['wrong_problem_hint']
+        assert rows[0].get('wrong_problem_hint') is None
+        assert case.http.get(BASE).json()['unread_count'] == 1
+    with Session(case.engine) as db:
+        assert db.get(Ticket, ticket).wrong_problem_hint == hint
+        assert [(row.id, row.body) for row in db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == ticket))] == before
+
+
+@pytest.mark.parametrize('changes', [dict(suppress_client_answer=True), dict(status='closed'), dict(task_kind='group_parent')])
+def test_unpublished_hint_never_becomes_visible(case, changes):
+    ticket = seed(case, wrong_problem_hint='<b>Hidden hint</b>', **changes)
+    message(case, ticket, 'Answer')
+    if changes.get('suppress_client_answer'):
+        assert close(case, ticket).status_code == 200
+    assert case.http.get(f'{BASE}/{ticket}').status_code == 404
+    assert 'Hidden hint' not in detail(case, ticket).text
+
+
+@pytest.mark.parametrize('hint,expected', [
+    (None, None),
+    ('<b>Bold</b> <i>italic</i> <u>underlined</u> <s>old</s>\n<blockquote>Quote &amp; text</blockquote>',
+     'Bold italic underlined old\nQuote & text'),
+    ('<pre><code>x &lt; y</code></pre> <a href="javascript:alert(1)">Menu</a><img src=x onerror=alert(1)>',
+     'x < y Menu'),
+    ('&lt;script&gt;alert(1)&lt;/script&gt;', '<script>alert(1)</script>'),
+])
+def test_hint_html_is_returned_as_plain_text_without_changing_answer(case, hint, expected):
+    ticket = seed(case, wrong_problem_hint=hint)
+    message(case, ticket, '<b>Original answer</b>')
+    assert close(case, ticket).status_code == 200
+    result = case.http.get(f'{BASE}/{ticket}').json()
+    assert result['text'] == '<b>Original answer</b>'
+    assert result['wrong_problem_hint'] == expected
+    assert detail(case, ticket).json()['items'][-1].get('wrong_problem_hint') == expected
+
+
+def test_hint_hidden_if_existing_publication_answer_is_suppressed(case):
+    ticket = seed(case, wrong_problem_hint='Hidden hint')
+    message(case, ticket, 'Answer')
+    assert close(case, ticket).status_code == 200
+    with Session(case.engine) as db:
+        db.get(Ticket, ticket).suppress_client_answer = True
+        db.commit()
+    assert case.http.get(f'{BASE}/{ticket}').json()['wrong_problem_hint'] is None
+    assert 'Hidden hint' not in detail(case, ticket).text
 
 
 def seed(case, **changes):

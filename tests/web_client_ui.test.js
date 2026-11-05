@@ -2367,6 +2367,30 @@ const historyMessage = (text, files = [], type = 'client', created = '2026-10-29
   id: fileId, message_type: type, text, files, created_at: created,
 });
 
+test('history wrong problem hint: separate safe block after final answer and no duplicates on reopen', async t => {
+  const { page } = await pageFor(t);
+  const state = await mockResults(page);
+  const hint = 'Расшифровка → Найти сделку но номеру☎️\n<script>window.hintXss = true</script>';
+  state.messages = [historyMessage('Исходный запрос'), {
+    ...historyMessage('фыв', [], 'agent', '2026-10-30T10:00:00Z'), wrong_problem_hint: hint,
+  }];
+  await openResults(page);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await selectResult(page);
+    await page.locator('.history-problem-hint').waitFor();
+    assert.deepEqual(await page.locator('.history-message-text').allTextContents(), ['Исходный запрос', 'фыв', hint]);
+    assert.equal(await page.locator('.history-problem-hint').count(), 1);
+    assert.equal(await page.locator('.history-problem-hint').evaluate(node => node.previousElementSibling.tagName), 'ARTICLE');
+    assert.equal(await page.locator('.history-problem-hint script').count(), 0);
+    assert.equal(await page.evaluate(() => window.hintXss), undefined);
+    await page.waitForFunction(() => document.querySelector('[data-record]')?.dataset.read === 'true');
+    state.detail.read_at = '2026-10-31T12:00:00Z';
+    await page.keyboard.press('Escape');
+    await page.locator('#history-open').click();
+  }
+  assert.equal(state.calls.filter(call => call.action === 'read').length, 1);
+});
+
 async function trackHistoryUrls(page) {
   await page.evaluate(() => {
     window.liveHistoryUrls = new Set();
