@@ -12,6 +12,7 @@ from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, ClientCardFieldConfig, User
 from ..schemas import BotButtonInstructionUpdate
+from .settings_bot_button_structure import _preserve_level_order
 from ..services.button_automation_types import (
     AUTOMATION_TYPE_NONE,
     AUTOMATION_TYPE_SEND_FILES,
@@ -909,6 +910,8 @@ def save_bot_button_instruction(
         workflow_type_changed = normalize_workflow_type(row.workflow_type) != normalize_workflow_type(effective_workflow_type)
         if workflow_type_changed and effective_workflow_type in EDITABLE_EXISTING_WORKFLOW_TYPES:
             change_button_workflow_key(db, row, effective_workflow_type)
+        if {"label_override", "label_overridden"} & fields_set or button_label != row.button_label:
+            _preserve_level_order(db, row)
     if row is None:
         row = BotButtonSetting(
             id=str(uuid.uuid4()),

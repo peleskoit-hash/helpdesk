@@ -117,8 +117,8 @@ def test_type_cycles_preserve_identity_layout_settings_and_history(db, no_txt, s
             assert telegram._button_setting_for_ticket(db, historic).id == row.id
             assert telegram._resolve_button_setting_row(db, historic).id == row.id
             assert telegram._resolve_effective_direct_files(db, historic, None) == ["user.txt"]
-            assert resolve_ticket_subject(db, historic) == "A"
-            assert build_ticket_subject_map(db, [historic])[historic.id] == "A"
+            assert resolve_ticket_subject(db, historic) == "Visible label"
+            assert build_ticket_subject_map(db, [historic])[historic.id] == "Visible label"
             assert flow.get_problem_menu_for_ticket(db, historic,
                 get_or_create_client_profile_fn=lambda *args: pytest.fail("Saved menu must resolve"))["rows"] == []
             assert telegram._button_from_callback(db, f"btn:{snapshot['button_config_key']}", "menu-a").key == row.button_key

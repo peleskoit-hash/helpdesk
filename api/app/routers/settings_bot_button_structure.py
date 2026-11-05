@@ -137,6 +137,26 @@ def _rows_for_level_key(db: Session, menu_type: str, level_key: str) -> list[dic
     return rows
 
 
+def _preserve_level_order(db: Session, row: BotButtonSetting) -> None:
+    """Freeze the effective order before an edit changes the timestamp fallback."""
+    level_key = build_level_layout_key(row.menu_type, row.parent_path)
+    rows = _rows_for_level_key(db, row.menu_type, level_key)
+    layout = db.execute(select(BotMenuLevelLayout).where(BotMenuLevelLayout.level_key == level_key)).scalar_one_or_none()
+    layout_rows = list(layout.layout_json or []) if layout else []
+    used = {key for item in _normalize_level_layout(layout_rows) for key in item["button_keys"]}
+    for item in rows:
+        for node in item.get("buttons", []):
+            key = node.get("technical_key")
+            if key and key not in used:
+                layout_rows.append({"columns": 1, "button_keys": [key]})
+                used.add(key)
+    if layout is None:
+        db.add(BotMenuLevelLayout(id=str(uuid.uuid4()), menu_type=row.menu_type,
+                                 level_key=level_key, layout_json=layout_rows))
+    elif layout.layout_json != layout_rows:
+        layout.layout_json = layout_rows
+
+
 def _normalize_layout_payload_rows(raw_rows: object, allowed_keys: set[str]) -> list[dict]:
     if not isinstance(raw_rows, list):
         _error(422, "layout_rows_required", "Layout rows must be a list")

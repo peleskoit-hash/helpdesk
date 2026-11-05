@@ -163,3 +163,25 @@ def test_group_parent_and_child_keep_stored_subject_without_path_resolution():
     assert resolve_ticket_subject(session, parent) == "Parent"
     assert resolve_ticket_subject(session, child) == "Child"
     _assert_map_matches_resolver(session, parent, child)
+
+
+def test_current_labels_include_terminal_override_and_legacy_key_without_changing_storage():
+    session = _session()
+    outer = _seed_setting(session, button_key="menu-a|submenu|Old", button_path="Old", button_label="Outer")
+    inner = _seed_setting(session, button_key="menu-a|submenu|Old/Inner", button_path="Old/Inner", button_label="Inner")
+    leaf = _seed_setting(session, button_key="menu-a|ticket|Old/Inner/Leaf", button_path="Old/Inner/Leaf")
+    outer.button_kind = inner.button_kind = "section"
+    outer.label_overridden = inner.label_overridden = leaf.label_overridden = True
+    outer.label_override, inner.label_override, leaf.label_override = "Актуальное", "Вложенное", "Связь / Интернет"
+    leaf.legacy_button_key = "legacy-source"
+    ticket = _seed_ticket(session, subject="Stored", button_key=leaf.legacy_button_key)
+    snapshot = (ticket.subject, ticket.button_config_key, ticket.instruction_button_key, leaf.button_path, leaf.button_key)
+    assert resolve_ticket_subject(session, ticket) == "Актуальное → Вложенное → Связь / Интернет"
+    _assert_map_matches_resolver(session, ticket)
+    inner.currently_present = False
+    session.commit()
+    assert resolve_ticket_subject(session, ticket) == "Old → Inner → Связь / Интернет"
+    leaf.is_archived = True
+    session.commit()
+    assert resolve_ticket_subject(session, ticket) == "Old → Inner → Leaf"
+    assert (ticket.subject, ticket.button_config_key, ticket.instruction_button_key, leaf.button_path, leaf.button_key) == snapshot
