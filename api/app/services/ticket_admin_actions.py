@@ -3,8 +3,45 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
+from ..models import StatsCompletion, StatsWorkInterval, Ticket, TicketAttachment, TicketMessage, TicketView, WebTaskResult, WebTaskResultFile
+from .button_config import resolve_button_row
 from .telegram_client_avatar_cleanup import schedule_avatar_cleanup
+
+
+def is_preliminary_telegram_ticket(db: Session, ticket: Ticket) -> bool:
+    """Only an unformed /start ticket; never a task or a terminal automation."""
+    if not (
+        ticket.channel == "telegram"
+        and ticket.workflow_type == "ticket"
+        and ticket.intake_state == "collecting"
+        and ticket.ticket_number is None
+        and ticket.status == "unassigned"
+        and ticket.assignee_id is None
+        and ticket.closed_at is None
+        and ticket.task_kind == "normal"
+        and ticket.parent_ticket_id is None
+        and not ticket.is_special
+        and not ticket.quick_action_state_json
+    ):
+        return False
+    for key in (ticket.instruction_button_key, ticket.button_config_key):
+        if key:
+            button = resolve_button_row(db, key, include_inactive=True)
+            if button is not None and button.automation_key:
+                return False
+    return True
+
+
+def delete_preliminary_telegram_ticket(db: Session, ticket: Ticket) -> None:
+    if not is_preliminary_telegram_ticket(db, ticket):
+        raise ValueError("Only an unformed Telegram ticket can be cancelled by deletion")
+    # Flush pending system messages before the bulk correspondence deletion.
+    db.flush()
+    for model in (StatsCompletion, StatsWorkInterval):
+        db.execute(model.__table__.delete().where(
+            model.company_id == ticket.company_id, model.object_id == ticket.id, model.object_type == "ticket",
+        ))
+    _delete_ticket_hard(db, ticket)
 
 
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:

@@ -53,7 +53,7 @@ from ..services.ticket_attachments import (
     _save_upload_attachment,
     _send_attachment_to_telegram_client,
 )
-from ..services.ticket_admin_actions import _delete_ticket_hard
+from ..services.ticket_admin_actions import _delete_ticket_hard, delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run, validate_client_card_direct_user_changes
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
@@ -140,7 +140,7 @@ def _content_disposition_attachment(filename: str) -> str:
     return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
-def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket:
+def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_preliminary_close: bool = False) -> Ticket:
     if ticket_id.isdigit():
         stmt = select(Ticket).where(Ticket.ticket_number == int(ticket_id))
     else:
@@ -152,7 +152,10 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser) -> Ticket
         ensure_ticket_number(db, ticket)
         db.commit()
     if is_support_user(user):
-        if ticket.status != TicketStatus.CLOSED.value and (ticket.assignee_id != user.id or ticket.agent_visible is False):
+        if ticket.status != TicketStatus.CLOSED.value and (
+            ticket.agent_visible is False
+            or (ticket.assignee_id != user.id and not (allow_preliminary_close and is_preliminary_telegram_ticket(db, ticket)))
+        ):
             _error(403, "forbidden_ticket_access", "Нет доступа к заявке")
     if is_readonly_chiki_piki(user):
         profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
@@ -1930,7 +1933,7 @@ def delete_ticket_message(
 
 @router.post("/{ticket_id}/close")
 def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    ticket = _get_ticket_or_404(db, ticket_id, user)
+    ticket = _get_ticket_or_404(db, ticket_id, user, allow_preliminary_close=True)
     if not can_manage_ticket(user):
         _error(403, "readonly_role", "Нет прав на управление заявкой")
     if ticket.status == TicketStatus.CLOSED.value:
@@ -2018,6 +2021,9 @@ def restore(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = D
                     pass
         collecting.menu_message_id = None
         collecting.client_close_message_id = None
+        if is_preliminary_telegram_ticket(db, collecting):
+            delete_preliminary_telegram_ticket(db, collecting)
+            continue
         collecting.intake_state = TicketIntakeState.CANCELLED.value
         collecting_closed_at = datetime.utcnow()
         collecting.status = TicketStatus.CLOSED.value

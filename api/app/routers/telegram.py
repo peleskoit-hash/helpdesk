@@ -53,6 +53,7 @@ from ..services.assignment import assign_ticket_to_forced_user
 from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
 from ..services.ticket_numbering import ensure_ticket_number
+from ..services.ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
 from ..services.assignment import schedule_employee_assignment_notification
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.employee_telegram_notifications import schedule_new_message_notification
@@ -3321,15 +3322,17 @@ def cleanup_expired_task_intents(db: Session) -> int:
             expired.append(ticket)
     for ticket in expired:
         contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
-        ticket.intake_state = TicketIntakeState.CANCELLED.value
-        closed_at = datetime.utcnow()
-        ticket.status = TicketStatus.CLOSED.value
-        ticket.closed_at = closed_at
-        sync_work_interval_after_close(db, ticket, now=closed_at)
-        if ticket.workflow_type == TicketWorkflowType.TASK.value:
-            append_system_message(db, ticket, "Создание задачи отменено: клиент не отправил текст вовремя")
-        else:
-            append_system_message(db, ticket, "Создание заявки отменено: клиент не выбрал конечный пункт меню вовремя")
+        preliminary = is_preliminary_telegram_ticket(db, ticket)
+        if not preliminary:
+            ticket.intake_state = TicketIntakeState.CANCELLED.value
+            closed_at = datetime.utcnow()
+            ticket.status = TicketStatus.CLOSED.value
+            ticket.closed_at = closed_at
+            sync_work_interval_after_close(db, ticket, now=closed_at)
+            if ticket.workflow_type == TicketWorkflowType.TASK.value:
+                append_system_message(db, ticket, "Создание задачи отменено: клиент не отправил текст вовремя")
+            else:
+                append_system_message(db, ticket, "Создание заявки отменено: клиент не выбрал конечный пункт меню вовремя")
         _remove_menu_keyboard(db, ticket, fallback_chat_id=contact.external_chat_id if contact is not None else None)
         remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         if contact is not None:
@@ -3338,5 +3341,7 @@ def cleanup_expired_task_intents(db: Session) -> int:
             timeout_minutes = TASK_DESCRIPTION_TIMEOUT_MINUTES if ticket.workflow_type == TicketWorkflowType.TASK.value else MENU_SELECTION_TIMEOUT_MINUTES
             timeout_text, timeout_parse_mode = _automatic_telegram_text(db, timeout_key, timeout_fallback, ticket=ticket, contact=contact, extra={"timeout_minutes": timeout_minutes})
             send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
+        if preliminary:
+            delete_preliminary_telegram_ticket(db, ticket)
     db.commit()
     return len(expired) + origin_closed + phone_closed

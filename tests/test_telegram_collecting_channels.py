@@ -66,7 +66,10 @@ def test_timeout_cleanup_only_cancels_expired_telegram_draft(case, monkeypatch, 
     monkeypatch.setattr(telegram, 'remove_client_close_button', remove_close)
     monkeypatch.setattr(telegram, '_automatic_telegram_text', lambda *a, **kw: (kw['ticket'].id, None))
     assert telegram.cleanup_expired_task_intents(case.db) == 1
-    assert (tg.status, tg.intake_state) == ('closed', 'cancelled')
+    if workflow == 'ticket':
+        assert case.db.get(Ticket, 'tg') is None
+    else:
+        assert (tg.status, tg.intake_state) == ('closed', 'cancelled')
     assert (web.status, web.intake_state, web.closed_at) == ('unassigned', 'collecting', None)
     assert (fresh.status, fresh.intake_state) == ('unassigned', 'collecting')
     assert case.db.scalar(select(TicketMessage.id).where(TicketMessage.ticket_id == web.id)) is None

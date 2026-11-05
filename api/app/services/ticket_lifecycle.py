@@ -30,6 +30,7 @@ from .ticket_messages import persist_client_delivery_failure, record_client_deli
 from .ticket_subject import resolve_ticket_subject
 from .telegram_text_format import telegram_html_code, telegram_html_text
 from .internal_tasks import is_internal_task_ticket
+from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
 
 
 def _error(status_code: int, code: str, message: str):
@@ -824,6 +825,23 @@ def close_ticket_by_actor(
 
     if ticket.status == TicketStatus.CLOSED.value:
         return "already_closed"
+
+    if is_preliminary_telegram_ticket(db, ticket):
+        from .telegram_client_close import remove_client_close_button
+        from .telegram_menu_flow import _remove_menu_keyboard
+        from .telegram_bot import remove_inline_keyboard
+
+        _remove_menu_keyboard(db, ticket)
+        remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
+        if not skip_client_notification:
+            _send_optional_client_message(
+                db, ticket, ticket_closed_client_text,
+                failure_note="Уведомление об отмене создания заявки не удалось отправить клиенту в Telegram.",
+                send_to_telegram_client_fn=send_to_telegram_client_fn,
+                remove_keyboard=True,
+            )
+        delete_preliminary_telegram_ticket(db, ticket)
+        return "closed"
 
     ensure_task_uploads_finished(db, ticket)
     last_agent_message = last_agent_message_fn(db, ticket)

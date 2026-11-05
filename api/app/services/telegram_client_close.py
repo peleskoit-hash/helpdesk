@@ -20,6 +20,7 @@ from ..models import (
 )
 from .automatic_messages import render_automatic_message_for_telegram
 from .statistics_lifecycle import sync_work_interval_after_close
+from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
 from .telegram_post_close import (
     attributable_review_agent_id_for_client_close,
     finalize_review_offer_close_message,
@@ -182,6 +183,12 @@ def close_active_ticket_for_contact(
     if ticket is None:
         return None
 
+    if is_preliminary_telegram_ticket(db, ticket):
+        remove_menu_keyboard_fn(db, ticket, fallback_chat_id=contact.external_chat_id, fallback_message_id=fallback_message_id)
+        remove_client_close_button_fn(db, ticket)
+        delete_preliminary_telegram_ticket(db, ticket)
+        return ticket
+
     closed_at = datetime.utcnow()
     ticket.status = TicketStatus.CLOSED.value
     ticket.closed_at = closed_at
@@ -267,25 +274,31 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Это обращение уже нельзя закрыть этой кнопкой")
         return {"ok": True, "closed": False, "ticket_id": ticket.id}
 
-    closed_at = datetime.utcnow()
-    ticket.status = TicketStatus.CLOSED.value
-    ticket.closed_at = closed_at
-    ticket.is_frozen = False
-    ticket.freeze_until = None
-    sync_work_interval_after_close(db, ticket, now=closed_at)
-    ticket.intake_state = (
-        TicketIntakeState.CANCELLED.value
-        if ticket.intake_state == TicketIntakeState.COLLECTING.value
-        else ticket.intake_state
-    )
-    ticket.client_close_message_id = None
-    remove_menu_keyboard_fn(
-        db,
-        ticket,
-        fallback_chat_id=external_chat_id,
-        fallback_message_id=message_id if isinstance(message_id, int) else None,
-    )
-    append_system_message_fn(db, ticket, "Обращение закрыто клиентом через кнопку")
+    if is_preliminary_telegram_ticket(db, ticket):
+        remove_menu_keyboard_fn(db, ticket, fallback_chat_id=external_chat_id,
+                                fallback_message_id=message_id if isinstance(message_id, int) else None)
+        ticket.client_close_message_id = None
+        delete_preliminary_telegram_ticket(db, ticket)
+    else:
+        closed_at = datetime.utcnow()
+        ticket.status = TicketStatus.CLOSED.value
+        ticket.closed_at = closed_at
+        ticket.is_frozen = False
+        ticket.freeze_until = None
+        sync_work_interval_after_close(db, ticket, now=closed_at)
+        ticket.intake_state = (
+            TicketIntakeState.CANCELLED.value
+            if ticket.intake_state == TicketIntakeState.COLLECTING.value
+            else ticket.intake_state
+        )
+        ticket.client_close_message_id = None
+        remove_menu_keyboard_fn(
+            db,
+            ticket,
+            fallback_chat_id=external_chat_id,
+            fallback_message_id=message_id if isinstance(message_id, int) else None,
+        )
+        append_system_message_fn(db, ticket, "Обращение закрыто клиентом через кнопку")
     db.commit()
 
     if notify_client:
