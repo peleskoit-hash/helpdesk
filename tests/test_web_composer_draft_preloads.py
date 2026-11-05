@@ -311,3 +311,174 @@ def test_migration_creates_missing_table(case, monkeypatch):
         row, _ = service.create_preload(db, SimpleNamespace(id='client'),
             UploadFile(BytesIO(b'a'), filename='a.txt', headers=Headers({'content-type': 'text/plain'})), uuid4())
         assert row.ticket_id is None and row.composer_draft_id is not None
+
+
+@pytest.mark.parametrize('media', ['document', 'video'])
+def test_client_mp4_confirmed_telegram_receipt_is_ready_without_resending(draft, monkeypatch, media):
+    case, (calls, _, _), _ = draft
+    original = pipeline.send_document
+    def mp4(*args, **kw):
+        result = original(*args, **kw)
+        result['result'][media] = result['result'].pop('document')
+        return result
+    monkeypatch.setattr(pipeline, 'send_document', mp4)
+    row_id = upload(case, data=b'\x00\x00\x00\x18ftypmp42' + b'x'*335820, name='clip.mp4', mime='video/mp4').json()['id']
+    status = case.http.get(f'{BASE}/{row_id}').json()
+    assert status['status'] == 'ready' and not status['uncertain'], status
+    assert case.http.post(f'{BASE}/{row_id}/retry', headers=ORIGIN, json={}).status_code == 200
+    assert [kind for kind, _ in calls] == ['info', 'file']
+    with Session(case.engine) as db:
+        row = db.get(TicketAttachmentPreload, row_id)
+        assert state.state(row)['receipt']['media_type'] == media
+        assert row.telegram_file_id and row.telegram_staging_file_message_id
+
+
+@pytest.mark.parametrize('client,complete,accepted,expected', [(True,True,True,True), (False,True,True,False),
+    (True,False,True,False), (True,True,False,False)])
+def test_mp4_video_receipt_scope_and_incomplete_results(client, complete, accepted, expected):
+    from types import SimpleNamespace
+    row = SimpleNamespace(client_id='client' if client else None, user_id=None if client else 'staff',
+        mime_type='video/mp4', original_filename='clip.mp4')
+    receipt = {'accepted': accepted, 'media_type': 'video', 'file_id': 'known-file' if complete else None, 'message_id': '10'}
+    assert state.usable_preload_receipt(row, receipt) is expected
+    assert not state.usable_receipt(receipt)  # Staff/final delivery retains its document-only contract.
+
+
+def test_mp4_retry_after_confirmed_receipt_does_not_upload_again(draft, monkeypatch):
+    case, (calls, _, _), _ = draft
+    original_document, original_stage = pipeline.send_document, pipeline._send_staging_document
+    def video(*args, **kw):
+        result = original_document(*args, **kw)
+        result['result']['video'] = result['result'].pop('document')
+        return result
+    def interrupted(**kw):
+        original_stage(**kw)  # The Telegram receipt was durably saved before the interruption.
+        raise RuntimeError('Synthetic post-receipt interruption')
+    monkeypatch.setattr(pipeline, 'send_document', video)
+    monkeypatch.setattr(pipeline, '_send_staging_document', interrupted)
+    row_id = upload(case, name='clip.mp4', mime='video/mp4').json()['id']
+    failed = case.http.get(f'{BASE}/{row_id}').json()
+    assert failed['status'] == 'failed' and not failed['uncertain']
+    monkeypatch.setattr(pipeline, '_send_staging_document', original_stage)
+    assert case.http.post(f'{BASE}/{row_id}/retry', headers=ORIGIN, json={}).status_code == 200
+    assert case.http.get(f'{BASE}/{row_id}').json()['status'] == 'ready'
+    assert [kind for kind, _ in calls] == ['info', 'file']
+
+
+def test_parallel_files_with_production_sessions_share_one_summary_without_deadlock(draft, monkeypatch):
+    case, (calls, _, _), _ = draft
+    from api.app.routers import web_composer_draft as routes
+    monkeypatch.setattr(routes, 'deliver_attachment_preload', lambda **kw: None)
+    monkeypatch.setattr(pipeline, 'SessionLocal', lambda **kw: Session(
+        kw.get('bind', case.engine), autoflush=False, expire_on_commit=True))
+    ids = [upload(case, name=name, mime=mime).json()['id'] for name, mime in [
+        ('one.txt','text/plain'), ('two.zip','application/zip'), ('three.mp3','audio/mpeg'), ('four.bin','application/octet-stream')]]
+    barrier = Barrier(4)
+    def worker(row_id):
+        barrier.wait(timeout=10)
+        pipeline.deliver_attachment_preload(preload_id=row_id)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(worker, row_id) for row_id in ids]
+        for future in futures:
+            future.result(timeout=30)
+    with Session(case.engine) as db:
+        prepared = [db.get(TicketAttachmentPreload, row_id) for row_id in ids]
+        assert [r.status for r in prepared] == ['ready']*4, [(r.status, state.state(r)) for r in prepared]
+        assert len({r.telegram_staging_info_message_id for r in prepared}) == 1
+    assert [kind for kind, _ in calls].count('info') == 1
+    assert [kind for kind, _ in calls].count('file') == 4
+
+
+@pytest.mark.parametrize('round_number', range(3))
+def test_parallel_upload_requests_with_production_session_settings(draft, monkeypatch, round_number):
+    case, (calls, _, _), _ = draft
+    if case.engine.dialect.name != 'postgresql':
+        pytest.skip('PostgreSQL lock regression')
+    from api.app.db import get_db
+    from sqlalchemy.orm import sessionmaker
+    factory = sessionmaker(bind=case.engine, autoflush=False, expire_on_commit=True)
+    monkeypatch.setattr(pipeline, 'SessionLocal', factory)
+    def session():
+        with factory() as db:
+            yield db
+    case.http.app.dependency_overrides[get_db] = session
+    from api.app.routers import web_composer_draft as routes
+    monkeypatch.setattr(routes, 'deliver_attachment_preload', pipeline.deliver_attachment_preload)
+    barrier = Barrier(4)
+    def worker(index):
+        barrier.wait(timeout=10)
+        return upload(case, name=f'{index}.txt').json()['id']
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        ids = list(pool.map(worker, range(4)))
+    with Session(case.engine) as db:
+        prepared = [db.get(TicketAttachmentPreload, row_id) for row_id in ids]
+        assert [r.status for r in prepared] == ['ready']*4, [(r.status,state.state(r)) for r in prepared]
+        assert len({r.telegram_staging_info_message_id for r in prepared}) == 1
+    assert [kind for kind, _ in calls].count('info') == 1
+    assert [kind for kind, _ in calls].count('file') == 4
+
+
+def test_summary_registration_does_not_lock_another_uploading_file(draft, monkeypatch):
+    case, (calls, _, _), _ = draft
+    if case.engine.dialect.name != 'postgresql':
+        pytest.skip('PostgreSQL row-lock regression')
+    from sqlalchemy import event
+    from sqlalchemy.orm import sessionmaker
+    from api.app.routers import web_composer_draft as routes
+    monkeypatch.setattr(routes, 'deliver_attachment_preload', lambda **kw: None)
+    ids = [upload(case, name=f'{index}.txt').json()['id'] for index in range(2)]
+    factory = sessionmaker(bind=case.engine, autoflush=False, expire_on_commit=True)
+    @event.listens_for(factory, 'after_begin')
+    def short_lock_timeout(session, transaction, connection):
+        connection.exec_driver_sql("SET LOCAL statement_timeout = '300ms'")
+    monkeypatch.setattr(pipeline, 'SessionLocal', factory)
+    with Session(case.engine) as db:
+        state.patch(db.get(TicketAttachmentPreload, ids[0]), archive_reconcile_pending=True)
+        db.commit()
+    with Session(case.engine) as other_upload:
+        other_upload.scalar(select(TicketAttachmentPreload).where(TicketAttachmentPreload.id == ids[1]).with_for_update())
+        info_id = pipeline._ensure_group_archive_info_message(preload_id=ids[0])
+        assert info_id
+        with factory() as db:
+            pipeline.synchronize_web_preload_archives(db, [ids[0]])
+        with Session(case.engine) as db:
+            assert not state.state(db.get(TicketAttachmentPreload, ids[0]))['archive_reconcile_pending']
+    with Session(case.engine) as db:
+        assert db.get(TicketAttachmentPreload, ids[0]).telegram_staging_info_message_id == info_id
+        assert db.get(TicketAttachmentPreload, ids[1]).telegram_staging_info_message_id is None
+    for row_id in ids:
+        pipeline.deliver_attachment_preload(preload_id=row_id)
+    assert [kind for kind, _ in calls] == ['info', 'file', 'file']
+
+
+def test_last_delete_ignores_cancelled_preload_with_pending_local_cleanup(draft, monkeypatch):
+    case, (calls, deleted, _), edits = draft
+    first = upload(case, name='first.txt').json()['id']
+    second = upload(case, name='last.txt').json()['id']
+    with Session(case.engine) as db:
+        info = db.get(TicketAttachmentPreload, first).telegram_staging_info_message_id
+    unlink = pipeline._safe_unlink
+    monkeypatch.setattr(pipeline, '_safe_unlink', lambda *a, **kw: False)
+    assert case.http.delete(f'{BASE}/{first}', headers=ORIGIN).status_code == 200
+    assert info not in deleted
+    assert 'last.txt' in edits[-1][1] and 'first.txt' not in edits[-1][1]
+    monkeypatch.setattr(pipeline, '_safe_unlink', unlink)
+    assert case.http.delete(f'{BASE}/{second}', headers=ORIGIN).status_code == 200
+    assert info in deleted
+    assert case.http.delete(f'{BASE}/{first}', headers=ORIGIN).status_code == 200
+    assert [kind for kind, _ in calls] == ['info', 'file', 'file']
+
+
+@pytest.mark.parametrize('status,referenced', [('ready', True), ('cancelled', False)])
+def test_archive_reference_from_other_draft(draft, status, referenced):
+    case, _, _ = draft
+    first = upload(case).json()['id']
+    case.http.cookies.set('esdesk_web_session', 'token-peer')
+    other = upload(case).json()['id']
+    with Session(case.engine) as db:
+        a, b = db.get(TicketAttachmentPreload, first), db.get(TicketAttachmentPreload, other)
+        assert a.composer_draft_id != b.composer_draft_id
+        b.telegram_staging_info_message_id = a.telegram_staging_info_message_id
+        b.status = status
+        db.flush()
+        assert pipeline._archive_message_referenced(db, a.telegram_staging_info_message_id, [a.id]) is referenced

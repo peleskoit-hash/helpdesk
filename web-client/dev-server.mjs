@@ -10,6 +10,7 @@ const assets = new Map([
   ['/composer-draft.js', ['composer-draft.js', 'text/javascript; charset=utf-8']],
   ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
   ['/history-media.js', ['history-media.js', 'text/javascript; charset=utf-8']],
+  ['/file-size-notices.js', ['file-size-notices.js', 'text/javascript; charset=utf-8']],
   ['/task-files.js', ['task-files.js', 'text/javascript; charset=utf-8']],
   ['/appearance.js', ['appearance.js', 'text/javascript; charset=utf-8']],
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
@@ -17,6 +18,7 @@ const assets = new Map([
   ['/api.js', ['api.js', 'text/javascript; charset=utf-8']],
   ['/assets/web-source.webp', ['assets/web-source.webp', 'image/webp']],
   ['/assets/17575.ttf', ['assets/17575.ttf', 'font/ttf']],
+  ['/assets/paperclip.svg', ['assets/paperclip.svg', 'image/svg+xml']],
   ['/assets/telegram-source.svg', ['assets/telegram-source.svg', 'image/svg+xml']],
 ]);
 const routes = new Map([
@@ -25,6 +27,7 @@ const routes = new Map([
   ['/api/v1/web/history', 'GET'],
   ['/api/v1/web/menu', 'GET'],
   ['/api/v1/web/chat', 'GET'],
+  ['/api/v1/web/chat/attachment-too-large', 'POST'],
   ['/api/v1/web/composer-draft', 'GET, PUT'],
   ['/api/v1/web/tasks/active', 'GET'],
   ['/api/v1/web/tasks/select', 'POST'],
@@ -75,7 +78,11 @@ export function createDevServer({ apiOrigin = 'http://127.0.0.1:8000', dockerMod
     const preloadCreate = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads$`, 'i').test(path);
     const preloadFile = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads/${uuid}$`, 'i').test(path);
     const preloadRetry = new RegExp(`^/api/v1/web/tasks/${uuid}/attachment-preloads/${uuid}/retry$`, 'i').test(path);
-    const method = (preloadFile ? 'GET, DELETE' : preloadCreate || preloadRetry ? 'POST' : null) || routes.get(path) || (taskAction ? 'POST' : historyRoute ? 'GET' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
+    const draftPreloadList = path === '/api/v1/web/composer-draft/attachment-preloads';
+    const draftPreloadFile = new RegExp(`^/api/v1/web/composer-draft/attachment-preloads/${uuid}$`, 'i').test(path);
+    const draftPreloadRetry = new RegExp(`^/api/v1/web/composer-draft/attachment-preloads/${uuid}/retry$`, 'i').test(path);
+    const draftPreloadContent = new RegExp(`^/api/v1/web/composer-draft/attachment-preloads/${uuid}/content$`, 'i').test(path);
+    const method = (draftPreloadList ? 'GET, POST' : draftPreloadFile ? 'GET, DELETE' : draftPreloadRetry ? 'POST' : draftPreloadContent ? 'GET' : null) || (preloadFile ? 'GET, DELETE' : preloadCreate || preloadRetry ? 'POST' : null) || routes.get(path) || (taskAction ? 'POST' : historyRoute ? 'GET' : resultRoute ? (path.endsWith('/read') ? 'POST' : 'GET') : undefined);
     if (method) {
       if (!method.split(', ').includes(req.method)) {
         res.writeHead(405, { Allow: method }).end();

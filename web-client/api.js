@@ -99,6 +99,7 @@ export async function getWebChat(signal) {
   const result = await requestWebHistory('/chat', signal);
   if (!Array.isArray(result?.items) || result.items.length > 50 || result.items.some(row =>
     !row || typeof row.id !== 'string' || !/^\d+$/.test(row.id) || !['client', 'bot', 'system'].includes(row.message_type)
+    || row.notice_event_id !== undefined && !uuid.test(row.notice_event_id)
     || typeof row.text !== 'string' || typeof row.created_at !== 'string' || !Number.isFinite(Date.parse(row.created_at)))
     || new Set(result.items.map(row => row.id)).size !== result.items.length) {
     throw new TaskError(502, 'Не удалось проверить историю чата.');
@@ -127,7 +128,7 @@ export class TaskError extends Error {
   }
 }
 
-async function taskRequest(path, method, body, signal, upload = false) {
+async function taskRequest(path, method, body, signal, upload = false, root = '/api/v1/web/tasks/') {
   requireWebSession();
   const controller = new AbortController();
   sessionRequests.add(controller);
@@ -136,7 +137,7 @@ async function taskRequest(path, method, body, signal, upload = false) {
   if (signal.aborted) abort();
   const timeout = setTimeout(abort, upload ? 360000 : 15000);
   try {
-    const response = await fetch('/api/v1/web/tasks/' + path, {
+    const response = await fetch(root + path, {
       method, signal: controller.signal, credentials: 'same-origin', mode: 'same-origin',
       cache: 'no-store', redirect: 'error',
       headers: upload || body === undefined ? {} : { 'Content-Type': 'application/json' },
@@ -199,3 +200,46 @@ async function composerDraft(method, body, signal) {
 }
 export const getComposerDraft = signal => composerDraft('GET', undefined, signal);
 export const putComposerDraft = (text, version, signal) => composerDraft('PUT', { text, version }, signal);
+
+
+const draftFilesRoot = '/api/v1/web/composer-draft/attachment-preloads';
+async function draftFileRequest(id, suffix, method, body, signal, upload = false) {
+  const result = await taskRequest((id ? '/' + encodeURIComponent(id) : '') + suffix,
+    method, body, signal, upload, draftFilesRoot);
+  if (!uuid.test(result?.id) || !['uploading', 'ready', 'failed', 'cancelled'].includes(result.status)) {
+    throw new TaskError(502, 'Не удалось проверить состояние файла.');
+  }
+  return result;
+}
+export function createDraftPreload(file, uploadId, signal) {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  body.append('upload_id', uploadId);
+  return draftFileRequest(null, '', 'POST', body, signal, true);
+}
+export const getDraftPreload = (id, signal) => draftFileRequest(id, '', 'GET', undefined, signal);
+export const retryDraftPreload = (id, confirm, signal) => draftFileRequest(id, '/retry', 'POST', { confirm_uncertain: confirm }, signal);
+export async function listDraftPreloads(signal) {
+  const result = await taskRequest('', 'GET', undefined, signal, false, draftFilesRoot);
+  if (!Array.isArray(result) || result.some(row => !uuid.test(row?.id) || typeof row.original_filename !== 'string'
+      || !Number.isSafeInteger(row.file_size) || row.file_size < 0 || typeof row.mime_type !== 'string'
+      || !['uploading', 'ready', 'failed'].includes(row.status)) || new Set(result.map(row => row.id)).size !== result.length) {
+    throw new TaskError(502, 'Не удалось проверить список файлов.');
+  }
+  return result;
+}
+export async function deleteDraftPreload(id, signal) {
+  const result = await taskRequest('/' + encodeURIComponent(id), 'DELETE', undefined, signal, false, draftFilesRoot);
+  if (result?.ok !== true) throw new TaskError(502, 'Не удалось подтвердить удаление файла.');
+}
+export const getDraftPreloadContent = (id, signal) => requestWebHistory('/composer-draft/attachment-preloads/'
+  + encodeURIComponent(id) + '/content', signal, 'GET', true);
+
+
+export async function notifyAttachmentTooLarge(metadata, signal) {
+  const result = await taskRequest('', 'POST', metadata, signal, false, '/api/v1/web/chat/attachment-too-large');
+  if (result?.ok !== true || typeof result.message_id !== 'string' || !/^\d+$/.test(result.message_id)) {
+    throw new TaskError(502, 'Не удалось подтвердить сохранение уведомления.');
+  }
+  return result;
+}

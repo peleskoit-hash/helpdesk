@@ -467,6 +467,7 @@ test('composer draft: successful TASK send does not clear another tab update', a
   await other.route('**/api/v1/web/tasks/active', route => route.fulfill({ json: null }));
   await other.route('**/api/v1/web/chat', route => route.fulfill({ json: { items: [] } }));
   await other.route('**/api/v1/web/composer-draft', state.handleDraft);
+  await other.route('**/api/v1/web/composer-draft/attachment-preloads', route => route.fulfill({ json: [] }));
   await other.goto(origin); await draftSaved(other);
   await other.locator('#demo-text').fill('Fresh text in second tab'); await draftSaved(other);
   state.taskHold = null; release();
@@ -661,6 +662,22 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     if (state.menuHold) await state.menuHold;
     await route.fulfill({ status: state.menuStatus, contentType: 'application/json', body: JSON.stringify(state.menu) });
   });
+  state.noticeCalls = []; state.noticeEvents = new Map();
+  if (mocked) await page.route('**/api/v1/web/chat/attachment-too-large', async route => {
+    const body = route.request().postDataJSON();
+    state.noticeCalls.push(body);
+    if (state.noticeHold) await state.noticeHold;
+    if (state.noticeNetwork) return route.abort('failed');
+    if (state.noticeStatus) return route.fulfill({ status: state.noticeStatus, json: {} });
+    const key = state.clientId + ':' + body.event_id;
+    if (!state.noticeEvents.has(key)) {
+      chatEvent(key, 'bot', `Предупреждение из настроек: ${body.file_name} / ${Math.ceil(body.file_size / 1024)} КиБ`);
+      state.chat.at(-1).notice_event_id = body.event_id;
+      state.noticeEvents.set(key, state.chat.at(-1).id);
+    }
+    if (state.noticeLostReply) { state.noticeLostReply = false; return route.abort('failed'); }
+    return route.fulfill({ json: { ok: true, message_id: state.noticeEvents.get(key) } });
+  });
   if (mocked) await page.route('**/api/v1/web/chat', async route => {
     state.chatCount++;
     const snapshot = structuredClone(state.chat);
@@ -668,7 +685,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     if (state.chatHold) await state.chatHold;
     await route.fulfill({ status: state.syncStatus, json: { items: snapshot, total: snapshot.length, page: 1, page_size: 50 } });
   });
-  if (mocked) await page.route('**/api/v1/web/tasks/**', async route => {
+  const handleTask = async route => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/active')) {
       state.activeCount++;
@@ -680,7 +697,22 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     const multipart = (route.request().headers()['content-type'] || '').startsWith('multipart/form-data');
     if (url.pathname.includes('/attachment-preloads')) {
       const method = route.request().method();
-      const create = url.pathname.endsWith('/attachment-preloads');
+      const collection = url.pathname.endsWith('/attachment-preloads');
+      const create = collection && method === 'POST';
+      const owner = state.clientId;
+      if (collection && method === 'GET') {
+        const snapshot = [...state.preloadRows.values()].filter(row => row.owner === owner).map(row => ({
+          id: row.id, original_filename: row.file.name, mime_type: row.file.type, file_size: row.file.size,
+          status: state.preloadStatus, uncertain: state.preloadUncertain,
+        }));
+        if (state.preloadListHold) await state.preloadListHold;
+        return route.fulfill({ json: snapshot });
+      }
+      if (url.pathname.endsWith('/content')) {
+        const row = state.preloadRows.get(url.pathname.split('/').at(-2));
+        return row?.owner === owner ? route.fulfill({ contentType: row.file.type, body: Buffer.from(row.file.bytes, 'base64') })
+          : route.fulfill({ status: 404, json: {} });
+      }
       if (multipart) {
         const form = await new Request('http://testserver', { method: 'POST', headers: route.request().headers(), body: route.request().postDataBuffer() }).formData();
         const file = form.get('file');
@@ -696,7 +728,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
       if (create) {
         const existing = [...state.preloadRows.values()].find(row => row.uploadId === body.upload_id);
         id = existing?.id || require('node:crypto').randomUUID();
-        state.preloadRows.set(id, { id, uploadId: body.upload_id });
+        state.preloadRows.set(id, { id, uploadId: body.upload_id, file: body.file, owner });
       } else if (method === 'DELETE') {
         state.preloadRows.delete(id);
         return route.fulfill({ json: { ok: true } });
@@ -725,6 +757,7 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
     else if (url.pathname.endsWith('/description')) result = { state: 'ready', text: 'Задача создана (сервер)' };
     else result = { state: 'cancelled', text: 'Создание отменено (сервер)' };
     if (state.taskStatus === 200) {
+      if (url.pathname.endsWith('/description')) for (const id of body.preload_ids || []) state.preloadRows.delete(id);
       const event = url.pathname.endsWith('/select') ? body.request_id : url.pathname;
       if (url.pathname.endsWith('/select')) chatEvent(event + ':client', 'system', 'Выбран пункт «Настройка»');
       if (url.pathname.endsWith('/confirm')) chatEvent(event + ':client', 'client', 'Подтвердить');
@@ -735,7 +768,12 @@ async function pageFor(t, { width = 1280, height = 900, colorScheme = 'light', m
         : { ...result, task_id: taskId, status: 'unassigned', expires_at: '2099-11-03T10:10:00Z', button_id: 'leaf' };
     }
     await route.fulfill({ status: state.taskStatus, contentType: 'application/json', body: JSON.stringify(state.taskStatus === 200 ? { ...result, task_id: taskId, status: 'unassigned', expires_at: null } : { detail: state.taskError }) });
-  });
+  };
+  if (mocked) {
+    await page.route('**/api/v1/web/tasks/**', handleTask);
+    await page.route('**/api/v1/web/composer-draft/attachment-preloads', handleTask);
+    await page.route('**/api/v1/web/composer-draft/attachment-preloads/**', handleTask);
+  }
   if (mocked) await page.route('**/api/v1/web/history?*', route => route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 15 } }));
   await page.goto(origin);
   return { page, context, state };
@@ -1179,8 +1217,9 @@ for (const colorScheme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(await page.locator('#demo-send').isDisabled(), true);
     assert.equal(await page.getByText('Демонстрационная задача Д-1043 создана:', { exact: false }).count(), 0);
     assert.equal(await page.getByText('Не запускается рабочая программа', { exact: true }).count(), 0);
+    const chooser = page.waitForEvent('filechooser');
     await page.locator('#demo-files').click();
-    assert.ok((await page.locator('#composer-hint').innerText()).includes('только текстовое описание'));
+    await (await chooser).setFiles([]);
     assert.equal(await page.locator('#close-conversation').isDisabled(), true);
     assert.equal(await page.locator('#demo-text').isEnabled(), true);
     assert.equal(await page.locator('#demo-send').isDisabled(), true);
@@ -2509,7 +2548,7 @@ test('task files: immediate preloads, image preview, remove and JSON description
   await (await chooser).setFiles([uploadImage(), uploadNote()]);
   await page.locator('#task-selected-files img').evaluate(img => img.decode());
   assert.equal(await page.locator('.task-selected-file').count(), 2);
-  assert.match(await page.locator('#task-selected-files').innerText(), /notes.txt.*Б/);
+  assert.match(await page.locator('#task-selected-files').innerText(), /notes.txt[\s\S]*Б/);
   await page.getByRole('button', { name: 'Удалить файл: ordinary.webp', exact: true }).click();
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
   await page.locator('#task-file-input').setInputFiles(uploadImage());
@@ -2554,7 +2593,9 @@ test('task files: immediate preloads, image preview, remove and JSON description
 test('task files: per-file size limit and sticker rejection happen before upload', async t => {
   const { page, state } = await taskWithFiles(t);
   await page.locator('#task-file-input').setInputFiles({ name: 'large.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
-  await page.getByText('large.bin: размер превышает 20 МиБ.', { exact: true }).waitFor();
+  await page.getByText('Предупреждение из настроек: large.bin / 20481 КиБ', { exact: true }).waitFor();
+  assert.equal(await page.locator('#task-file-error').isHidden(), true);
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 0);
   assert.equal(await page.locator('.task-selected-file').count(), 0);
   assert.equal(state.taskCalls.length, 1);
   await page.locator('#task-file-input').setInputFiles({ name: 'sticker.tgs', mimeType: 'application/octet-stream', buffer: Buffer.from('gzip') });
@@ -2589,7 +2630,7 @@ test('task files: unknown response locks files and retry preserves exact bytes',
   assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
 });
 
-test('task files: known rollback keeps selection editable; cancel frees preview', async t => {
+test('task files: known rollback keeps selection editable; cancel preserves preview', async t => {
   const { page, state } = await taskWithFiles(t);
   await trackHistoryUrls(page);
   await page.locator('#task-file-input').setInputFiles([uploadImage(), uploadNote()]);
@@ -2608,10 +2649,11 @@ test('task files: known rollback keeps selection editable; cancel frees preview'
   state.taskStatus = 200;
   await page.locator('#close-conversation').click();
   await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
-  assert.equal(await page.locator('#task-selected-files').isVisible(), false);
-  assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
+  assert.equal(await page.locator('#task-selected-files').isVisible(), true);
+  assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 1);
+  const chooser = page.waitForEvent('filechooser');
   await page.locator('#demo-files').click();
-  assert.match(await page.locator('#composer-hint').innerText(), /только текстовое описание/);
+  await (await chooser).setFiles([]);
 });
 
 test('real task upload through proxy: lost committed response archives once and history downloads same bytes', async t => {
@@ -2668,7 +2710,7 @@ test('task preloads: loading text and indeterminate bar disappear only on ready;
   await page.locator('#demo-text').fill('Text while uploading');
   await page.locator('#task-file-input').setInputFiles([uploadImage(), uploadNote()]);
   await page.waitForFunction(() => document.querySelectorAll('.task-file-progress').length === 2);
-  assert.deepEqual(await page.locator('.task-file-loading').allTextContents(), ['Идёт загрузка...', 'Идёт загрузка...']);
+  assert.deepEqual(await page.locator('.task-file-loading').allTextContents(), ['Идёт загрузка…', 'Идёт загрузка…']);
   assert.equal(await page.locator('.task-file-progress').first().evaluate(el => getComputedStyle(el, '::after').animationName), 'task-file-loading');
   assert.equal(await page.locator('.task-file-progress').first().getAttribute('aria-valuenow'), null);
   assert.equal(await page.locator('#demo-send').isDisabled(), true);
@@ -2787,7 +2829,7 @@ test('task preloads: removal during status polling never restores a selected fil
 });
 
 
-test('task preloads: cancel clears loading rows and URLs without creating another task', async t => {
+test('task preloads: cancel preserves universal files and URLs without creating another task', async t => {
   const { page, state } = await taskWithFiles(t);
   await trackHistoryUrls(page);
   state.preloadStatus = 'uploading';
@@ -2795,9 +2837,10 @@ test('task preloads: cancel clears loading rows and URLs without creating anothe
   await page.locator('.task-file-progress').waitFor();
   await page.locator('#close-conversation').click();
   await page.getByText('Создание отменено (сервер)', { exact: true }).waitFor();
-  assert.equal(await page.locator('#task-selected-files').isHidden(), true);
-  assert.equal(await page.locator('.task-file-progress').count(), 0);
-  assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 0);
+  assert.equal(await page.locator('#task-selected-files').isVisible(), true);
+  assert.equal(await page.locator('.task-file-progress').count(), 1);
+  assert.equal(await page.evaluate(() => window.liveHistoryUrls.size), 1);
+  assert.equal(state.preloadCalls.filter(call => call.method === 'DELETE').length, 0);
   assert.equal(state.taskCalls.filter(call => call.path.endsWith('/select')).length, 1);
   assert.equal(state.taskCalls.filter(call => call.path.endsWith('/description')).length, 0);
   assert.equal(await page.locator('#demo-send').innerText(), 'Отправить ↑');
@@ -2870,4 +2913,332 @@ test('task preloads: failed DELETE can be retried without reuploading or restori
   assert.equal(await page.locator('#task-selected-files').isHidden(), true);
   assert.equal(state.preloadCalls.filter(call => call.multipart).length, 1);
   assert.equal(state.preloadCalls.filter(call => call.method === 'DELETE').length, 2);
+});
+
+
+test('universal files: upload before scenario, reload, relogin and isolate another client', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles([uploadImage(), uploadNote()]);
+  await filesReady(page);
+  assert.equal(state.taskCalls.length, 0);
+  assert.equal(await page.getByText('Файл загружен', { exact: true }).count(), 2);
+  assert.ok(state.preloadCalls.filter(c => c.multipart).every(c => c.path === '/api/v1/web/composer-draft/attachment-preloads'));
+  state.me = 200;
+  await page.reload();
+  await filesReady(page);
+  await page.locator('#task-selected-files img').evaluate(img => img.decode());
+  assert.equal(await page.locator('.task-selected-file').count(), 2);
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click();
+  await waitLogin(page);
+  state.clientId = 'another-client';
+  await submit(page);
+  await page.waitForFunction(() => !document.querySelector('#session-panel').hidden);
+  assert.equal(await page.locator('.task-selected-file').count(), 0);
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click();
+  await waitLogin(page);
+  state.clientId = 'synthetic-client';
+  await submit(page);
+  await page.waitForFunction(() => document.querySelectorAll('.task-selected-file').length === 2);
+  await page.locator('#task-selected-files img').evaluate(img => img.decode());
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 2);
+  assert.equal(state.preloadCalls.filter(c => c.method === 'DELETE').length, 0);
+});
+
+
+test('universal files: a successful description consumes its snapshot and preserves newly added files', async t => {
+  const { page, state } = await taskWithFiles(t);
+  await page.locator('#task-file-input').setInputFiles([uploadImage(), uploadNote()]);
+  await filesReady(page);
+  await page.locator('#demo-text').fill('Snapshot');
+  let release;
+  state.taskHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release?.());
+  await page.locator('#demo-send').click();
+  await page.waitForFunction(() => document.querySelector('#demo-composer').getAttribute('aria-busy') === 'true');
+  await page.locator('#task-file-input').setInputFiles({ name: 'new-tab.txt', mimeType: 'text/plain', buffer: Buffer.from('new') });
+  await page.waitForFunction(() => document.querySelectorAll('.task-selected-file[data-status="ready"]').length === 3);
+  const request = state.taskCalls.find(c => c.path.endsWith('/description'));
+  assert.equal(request.body.preload_ids.length, 2);
+  state.taskHold = null; release();
+  await page.getByText('Задача создана (сервер)', { exact: true }).waitFor();
+  assert.equal(await page.locator('#task-selected-files .task-file-name').innerText(), 'new-tab.txt');
+  assert.equal(state.preloadRows.size, 1);
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 3);
+});
+
+
+test('universal files: timeout and New conversation preserve restored files', async t => {
+  const { page, state } = await taskWithFiles(t);
+  await page.locator('#task-file-input').setInputFiles(uploadNote());
+  await filesReady(page);
+  await page.clock.install();
+  state.activeTask = null;
+  await page.clock.fastForward(5100);
+  await page.getByText('Нажмите „Новое обращение“', { exact: true }).waitFor();
+  assert.equal(await page.locator('.task-selected-file').count(), 1);
+  await page.locator('#new-conversation').click();
+  assert.equal(await page.locator('.task-selected-file').count(), 1);
+  assert.equal(state.preloadCalls.filter(c => c.method === 'DELETE').length, 0);
+});
+
+
+test('universal files: delayed restoration cannot overwrite a newer local file', async t => {
+  const { page, state } = await pageFor(t);
+  let release;
+  state.preloadListHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release?.());
+  await submit(page);
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles(uploadNote());
+  await page.locator('.task-file-ready').waitFor();
+  state.preloadListHold = null; release();
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('.task-file-name').innerText(), 'notes.txt');
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 1);
+});
+
+
+for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
+  test(`universal files geometry: two visible tiles, fixed status area, ${width}px ${colorScheme}`, async t => {
+    const { page, state } = await pageFor(t, { width, colorScheme });
+    await submit(page);
+    await page.locator('#demo-files:not(:disabled)').waitFor({ state: 'visible' });
+    const measure = () => page.locator('#demo-composer').evaluate(form => {
+      const list = form.querySelector('#task-selected-files'), input = form.querySelector('textarea');
+      const rows = [...list.children].map(row => row.getBoundingClientRect());
+      return { form: form.getBoundingClientRect().height, editor: input.getBoundingClientRect().height,
+        list: list.clientHeight, scroll: list.scrollHeight, width: list.clientWidth, scrollWidth: list.scrollWidth,
+        rows: rows.map(r => ({ height: r.height, top: r.top, bottom: r.bottom })),
+        gap: getComputedStyle(list).rowGap, overflow: document.documentElement.scrollWidth > innerWidth,
+        listBottom: list.getBoundingClientRect().bottom, actionsTop: form.querySelector('.composer-actions').getBoundingClientRect().top,
+        icon: getComputedStyle(form.querySelector('.task-file-icon') || form, '::before').maskImage };
+    });
+    const empty = await measure();
+    state.preloadStatus = 'uploading';
+    await page.locator('#task-file-input').setInputFiles(uploadNote());
+    await page.locator('.task-file-progress').waitFor();
+    const one = await measure();
+    assert.ok(one.editor >= 64 && one.editor < empty.editor);
+    assert.ok(one.form - empty.form >= 30 && one.form - empty.form <= 42, JSON.stringify({ empty, one }));
+    await page.locator('#task-file-input').setInputFiles({ ...uploadNote(), name: 'second-long-name-'.repeat(8)+'.txt' });
+    await page.waitForFunction(() => document.querySelectorAll('.task-selected-file').length === 2);
+    const two = await measure();
+    await page.locator('#task-file-input').setInputFiles({ ...uploadNote(), name: 'third.txt' });
+    await page.waitForFunction(() => document.querySelectorAll('.task-selected-file').length === 3);
+    const three = await measure();
+    assert.equal(three.gap, '4px');
+    assert.equal(three.list, three.rows[0].height*2 + 4);
+    assert.equal(three.form, two.form);
+    assert.ok(three.scroll > three.list && three.rows[2].top >= three.listBottom);
+    assert.ok(three.scrollWidth <= three.width && !three.overflow && three.actionsTop >= three.listBottom);
+    assert.match(three.icon, /paperclip\.svg/);
+    state.preloadStatus = 'ready';
+    await filesReady(page);
+    const ready = await measure();
+    if (process.env.WEB_CLIENT_TEST_ARTIFACTS) await page.locator('#demo-composer').screenshot({
+      path: path.join(process.env.WEB_CLIENT_TEST_ARTIFACTS, `universal-files-${width}-${colorScheme}.png`),
+    });
+    assert.equal(ready.form, three.form);
+    assert.deepEqual(ready.rows.map(r => r.height), three.rows.map(r => r.height));
+    assert.equal(await page.locator('.task-file-ready').count(), 3);
+    assert.equal(await page.locator('.task-file-progress').count(), 0);
+    await page.setViewportSize({ width: width === 1440 ? 900 : 360, height: 700 });
+    const resized = await measure();
+    assert.equal(resized.list, 148);
+    assert.ok(resized.editor >= 64 && !resized.overflow && resized.scrollWidth <= resized.width);
+  });
+}
+
+
+test('universal files: MP4 ready is confirmed by server without an optimistic ready or automatic retry', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  await page.locator('#demo-files:not(:disabled)').waitFor({ state: 'visible' });
+  state.preloadStatus = 'uploading';
+  await page.locator('#task-file-input').setInputFiles({ name: 'clip.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(335832) });
+  await page.locator('.task-file-progress').waitFor();
+  assert.equal(await page.locator('.task-file-ready').count(), 0);
+  state.preloadStatus = 'ready';
+  await filesReady(page);
+  assert.equal(await page.locator('.task-file-ready').innerText(), 'Файл загружен');
+  assert.equal(await page.locator('.task-file-icon').getAttribute('data-type'), 'MP4');
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 1);
+});
+
+
+test('universal files: another tab adds a server file outside the submitted snapshot', async t => {
+  const { page, state } = await taskWithFiles(t);
+  await page.locator('#task-file-input').setInputFiles(uploadNote());
+  await filesReady(page);
+  await page.locator('#demo-text').fill('First tab snapshot');
+  let release;
+  state.taskHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release?.());
+  await page.locator('#demo-send').click();
+  await page.waitForFunction(() => document.querySelector('#demo-composer').getAttribute('aria-busy') === 'true');
+  const id = require('node:crypto').randomUUID();
+  state.preloadRows.set(id, { id, uploadId: require('node:crypto').randomUUID(), owner: state.clientId,
+    file: { name: 'another-tab.txt', type: 'text/plain', size: 3, bytes: Buffer.from('new').toString('base64') } });
+  state.taskHold = null; release();
+  await page.locator('#task-selected-files').getByText('another-tab.txt', { exact: true }).waitFor();
+  assert.equal(state.preloadRows.size, 1);
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length, 1);
+});
+
+
+test('real universal MP4 through proxy: video receipt becomes ready and survives reload', async t => {
+  await control('reset');
+  const { page } = await pageFor(t, { mocked: false });
+  await submit(page);
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles({ name: 'clip.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(335832) });
+  await filesReady(page);
+  assert.equal(await page.locator('.task-file-ready').innerText(), 'Файл загружен');
+  const before = await control('state');
+  assert.equal(before.archive_calls.length, 1);
+  assert.equal(before.tasks.length, 0);
+  await page.reload();
+  await filesReady(page);
+  assert.equal(await page.locator('.task-file-name').innerText(), 'clip.mp4');
+  assert.equal((await control('state')).archive_calls.length, 1);
+});
+
+
+test('universal files: uncertain never displays success even with an inconsistent ready payload', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  state.preloadStatus = 'ready'; state.preloadUncertain = true;
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles(uploadNote());
+  await page.getByRole('button', { name: 'Подтвердить повтор загрузки', exact: true }).waitFor();
+  assert.equal(await page.locator('.task-file-ready').count(), 0);
+  assert.equal(state.preloadCalls.filter(c => c.path.endsWith('/retry')).length, 0);
+});
+
+
+test('universal files: BFCache resumes an interrupted create with its original upload ID', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  let release;
+  state.preloadCreateHold = new Promise(resolve => { release = resolve; });
+  t.after(() => release?.());
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles(uploadNote());
+  await page.waitForFunction(() => document.querySelector('.task-file-progress'));
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  state.me = 200; state.preloadCreateHold = null;
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  try {
+    await page.waitForFunction(() => document.querySelector('.task-file-ready'), undefined, { timeout: 6000 });
+  } finally { release(); }
+  const creates = state.preloadCalls.filter(c => c.multipart);
+  assert.equal(creates.length, 2);
+  assert.equal(creates[0].body.upload_id, creates[1].body.upload_id);
+  assert.equal(state.preloadRows.size, 1);
+});
+
+
+async function chooseFilesBeforeTask(page, files) {
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('#demo-files').click();
+  await (await chooser).setFiles(files);
+}
+const largeFile = (name='large.mp4', size=20*1024*1024+1) => ({ name, mimeType:'video/mp4', buffer:Buffer.alloc(size) });
+
+for (const colorScheme of ['light','dark']) {
+  test(`oversize notice: boundary, mixed selection and normal bot bubble ${colorScheme}`, async t => {
+    const { page, state } = await pageFor(t, { colorScheme });
+    await submit(page);
+    await chooseFilesBeforeTask(page, [largeFile('allowed.mp4',20*1024*1024),largeFile(),uploadNote()]);
+    await page.getByText('Предупреждение из настроек: large.mp4 / 20481 КиБ', { exact:true }).waitFor();
+    await filesReady(page);
+    assert.equal(state.taskCalls.length, 0);
+    assert.deepEqual(state.preloadCalls.filter(c => c.multipart).map(c => c.body.file.name).sort(), ['allowed.mp4','notes.txt']);
+    assert.equal(state.noticeCalls.length,1);
+    assert.deepEqual(Object.keys(state.noticeCalls[0]).sort(),['event_id','file_name','file_size']);
+    assert.equal(state.noticeCalls[0].file_size,20*1024*1024+1);
+    assert.equal(await page.locator('#task-selected-files .task-selected-file').count(),2);
+    const message = page.locator('#chat-messages article').last();
+    assert.equal(await message.locator('strong').innerText(),'Elite Sochi Support');
+    assert.equal(await message.evaluate(node => node.classList.contains('system')),false);
+    assert.equal(await page.locator('#task-file-error').isHidden(),true);
+  });
+}
+
+
+test('oversize notice: separate attempts, multiple files, reload and relog', async t => {
+  const { page, state } = await pageFor(t);
+  await submit(page);
+  await chooseFilesBeforeTask(page,[largeFile('same.zip'),largeFile('other.pdf',21*1024*1024)]);
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length===2);
+  await chooseFilesBeforeTask(page,largeFile('same.zip'));
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length===3);
+  assert.equal(new Set(state.noticeCalls.map(c => c.event_id)).size,3);
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length,0);
+  assert.equal(await page.locator('.task-selected-file').count(),0);
+  state.me=200;
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length===3);
+  await page.getByRole('button',{name:'Выйти',exact:true}).click(); await waitLogin(page); await submit(page);
+  await page.waitForFunction(() => document.querySelectorAll('#chat-messages article').length===3);
+  assert.equal(state.noticeCalls.length,3);
+});
+
+
+test('oversize notice: network failure leaves the file rejected; retry reuses event UUID', async t => {
+  const { page, state } = await pageFor(t);
+  state.noticeNetwork=true;
+  await submit(page); await chooseFilesBeforeTask(page,largeFile());
+  await page.getByRole('button',{name:'Повторить уведомление',exact:true}).waitFor();
+  assert.equal(await page.locator('.task-selected-file').count(),0);
+  assert.equal(state.chat.length,0);
+  assert.equal(state.preloadCalls.filter(c => c.multipart).length,0);
+  state.noticeNetwork=false;
+  await page.getByRole('button',{name:'Повторить уведомление',exact:true}).click();
+  await page.getByText('Предупреждение из настроек: large.mp4 / 20481 КиБ',{exact:true}).waitFor();
+  assert.equal(state.noticeCalls.length,2);
+  assert.equal(state.noticeCalls[0].event_id,state.noticeCalls[1].event_id);
+  assert.equal(await page.locator('#task-file-error').isHidden(),true);
+});
+
+
+test('oversize notice: lost committed acknowledgement never creates a second warning', async t => {
+  const { page,state } = await pageFor(t);
+  state.noticeLostReply=true;
+  await submit(page); await chooseFilesBeforeTask(page,largeFile());
+  await page.getByRole('button',{name:'Повторить уведомление',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Повторить уведомление',exact:true}).click();
+  await page.getByText('Предупреждение из настроек: large.mp4 / 20481 КиБ',{exact:true}).waitFor();
+  assert.equal(state.chat.length,1);
+  assert.equal(state.noticeCalls[0].event_id,state.noticeCalls[1].event_id);
+  assert.equal(await page.locator('#task-file-error').isHidden(),true);
+});
+
+
+test('real oversize notice: DB template survives F5 and login without files or Ticket', async t => {
+  await control('reset');
+  const { page }=await pageFor(t,{mocked:false});
+  await submit(page);
+  const posts=[];
+  page.on('request', request => { if(request.method()==='POST') posts.push(request.url()); });
+  await chooseFilesBeforeTask(page,largeFile('real.mp4'));
+  const text='Ограничение из БД: real.mp4 / 20481 КиБ';
+  await page.getByText(text,{exact:true}).waitFor();
+  assert.ok(posts.some(url => url.endsWith('/chat/attachment-too-large')));
+  assert.ok(!posts.some(url => url.includes('/attachment-preloads')));
+  const current=await control('state');
+  assert.equal(current.tasks.length,0); assert.equal(current.attachments.length,0);
+  assert.equal(current.archive_calls.length,0); assert.equal(current.summary_calls.length,0);
+  await page.reload(); await page.getByText(text,{exact:true}).waitFor();
+  await page.getByText('Выберите тему обращения',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Выйти',exact:true}).click(); await waitLogin(page); await submit(page);
+  await page.getByText(text,{exact:true}).waitFor();
+  assert.equal(await page.locator('#task-file-error').isHidden(),true);
 });

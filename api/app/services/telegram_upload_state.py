@@ -69,9 +69,21 @@ def receipt(response):
     return value
 
 
-def usable_receipt(value):
-    return bool(value.get("accepted") and value.get("media_type") == "document" and value.get("file_id") and
+def usable_receipt(value, *, allow_video=False):
+    return bool(value.get("accepted") and (value.get("media_type") == "document" or allow_video and value.get("media_type") == "video") and value.get("file_id") and
                 len(value["file_id"]) <= 255 and str(value.get("message_id") or "").isdecimal() and int(value["message_id"]) > 0)
+
+
+def preload_accepts_video(row):
+    return (getattr(row, 'client_id', None) is not None and getattr(row, 'user_id', None) is None
+            and ((getattr(row, 'mime_type', '') or '').lower() == 'video/mp4'
+                 or (getattr(row, 'original_filename', '') or '').lower().endswith('.mp4')))
+
+
+def usable_preload_receipt(row, value=None):
+    if value is None:
+        value = state(row).get('receipt') or {}
+    return usable_receipt(value, allow_video=preload_accepts_video(row))
 
 
 def fail(row, code="staging_failed", uncertain=False):
@@ -127,7 +139,7 @@ def expire_attempt(db, row):
             return None
         attempt = state(row).get("staging_attempt") or {}
         if row.status == "uploading" and attempt.get("active") and time.time() - attempt.get("started_at", time.time()) > ATTEMPT_TIMEOUT:
-            fail(row, "staging_interrupted", uncertain=not usable_receipt(state(row).get("receipt") or {}))
+            fail(row, "staging_interrupted", uncertain=not usable_preload_receipt(row))
             patch(row, staging_attempt={**attempt, "active": False}, archive_reconcile_pending=True)
             db.commit()
     if row.status == "failed" and row.final_attachment_id:
@@ -252,13 +264,13 @@ def retry_preload(db, row, confirm_uncertain=False, *, client_id=None):
         if time.time() - attempt.get("started_at", time.time()) <= ATTEMPT_TIMEOUT:
             db.commit()
             return row, False
-        fail(row, "staging_interrupted", uncertain=not usable_receipt(info.get("receipt") or {}))
+        fail(row, "staging_interrupted", uncertain=not usable_preload_receipt(row, info.get("receipt") or {}))
         patch(row, staging_attempt={**attempt, "active": False})
         db.commit()
         info = state(row)
     if info.get("uncertain") and not confirm_uncertain:
         error("attachment_retry_uncertain", "Telegram мог принять файл. Подтвердите повтор: в технической группе возможна лишняя копия.")
-    if confirm_uncertain and not usable_receipt(info.get("receipt") or {}):
+    if confirm_uncertain and not usable_preload_receipt(row, info.get("receipt") or {}):
         patch(row, receipt=None, previous_receipts=[*info.get("previous_receipts", []), info.get("receipt") or {}])
         row.telegram_file_id = None
     row.status = "uploading"
@@ -284,4 +296,4 @@ def source_references(db, path, excluded_ticket_ids=()):
 
 def archived_document(row):
     value = state(row).get("receipt")
-    return usable_receipt(value) if isinstance(value, dict) else bool(row.telegram_file_id)
+    return usable_preload_receipt(row, value) if isinstance(value, dict) else bool(row.telegram_file_id)

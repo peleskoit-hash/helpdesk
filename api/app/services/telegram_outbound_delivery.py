@@ -319,7 +319,8 @@ def _archive_message_referenced(db, message_id, ignored_preload_ids=()):
     return bool(db.scalar(select(TicketAttachment.id).where(or_(
         TicketAttachment.telegram_archive_message_id == message_id,
         TicketAttachment.telegram_archive_info_message_id == message_id)).limit(1)) or db.scalar(
-        select(TicketAttachmentPreload.id).where(TicketAttachmentPreload.id.not_in(ignored_preload_ids), or_(
+        select(TicketAttachmentPreload.id).where(TicketAttachmentPreload.id.not_in(ignored_preload_ids),
+            TicketAttachmentPreload.status != 'cancelled', or_(
             TicketAttachmentPreload.telegram_staging_file_message_id == message_id,
             TicketAttachmentPreload.telegram_staging_info_message_id == message_id)).limit(1)))
 
@@ -537,6 +538,7 @@ def _send_staging_document(
         mime_type=preload.mime_type,
         on_receipt=lambda response: upload_state.store_receipt(object_session(preload), preload, response),
         on_wait=lambda: upload_state.heartbeat(object_session(preload), preload, "staging_attempt"),
+        allow_video=upload_state.preload_accepts_video(preload),
     )
 
 
@@ -547,6 +549,7 @@ def _send_staging_document_from_path(
     mime_type: str | None,
     on_receipt=None,
     on_wait=None,
+    allow_video: bool = False,
 ) -> tuple[str, str | None, str]:
     path = Path(local_path)
     if not path.exists() or not path.is_file():
@@ -570,7 +573,7 @@ def _send_staging_document_from_path(
     if on_receipt:
         on_receipt(response)
     value = upload_state.receipt(response)
-    if not upload_state.usable_receipt(value):
+    if not upload_state.usable_receipt(value, allow_video=allow_video):
         raise RuntimeError("Telegram staging upload returned incomplete media receipt")
     return value["file_id"], value.get("file_unique_id"), value["message_id"]
 
@@ -586,7 +589,7 @@ def _lock_web_preload_draft(db, preload):
 
 def synchronize_web_preload_archives(db, preload_ids):
     """Post-commit, retryable metadata reconciliation; never uploads binary data."""
-    seen = set()
+    results = {}
     for preload_id in preload_ids:
         try:
             db.commit()
@@ -603,9 +606,6 @@ def synchronize_web_preload_archives(db, preload_ids):
                 db.commit()
                 continue
             key = _group_key_from_preload(row)
-            if key in seen:
-                db.commit()
-                continue
             rows = _archive_rows_for_display(_load_group_preloads(db, ticket_id=row.ticket_id,
                 user_id=row.user_id, client_id=row.client_id, archive_group_id=_archive_group_id(row)))
             info_id = _actual_info_message_id(rows)
@@ -613,17 +613,18 @@ def synchronize_web_preload_archives(db, preload_ids):
                 db.commit()
                 continue  # A concurrent split requires a fresh coordination attempt.
             ticket = db.get(Ticket, row.ticket_id) if row.ticket_id is not None else None
-            success = _best_effort_edit_group_archive_message(group_rows=rows, ticket=ticket,
-                user=archive_owner(db, row), status_text=_group_status_text(rows), force=True)
-            for member in rows:
-                member.telegram_staging_info_message_id = info_id
-                upload_state.patch(member, archive_reconcile_pending=not success)
-                if member.final_attachment_id:
-                    attachment = db.get(TicketAttachment, member.final_attachment_id)
-                    if attachment is not None:
-                        attachment.telegram_archive_info_message_id = info_id
+            if key not in results:
+                results[key] = _best_effort_edit_group_archive_message(group_rows=rows, ticket=ticket,
+                    user=archive_owner(db, row), status_text=_group_status_text(rows), force=True)
+            # Other files may hold their own attempt/receipt locks. Reconcile only
+            # this file; the group leader coordinates the shared Telegram message.
+            row.telegram_staging_info_message_id = info_id
+            upload_state.patch(row, archive_reconcile_pending=not results[key])
+            if row.final_attachment_id:
+                attachment = db.get(TicketAttachment, row.final_attachment_id)
+                if attachment is not None:
+                    attachment.telegram_archive_info_message_id = info_id
             db.commit()
-            seen.add(key)
         except Exception as exc:
             db.rollback()
             # The original transfer committed with this marker; leave it retryable.
@@ -760,9 +761,6 @@ def _ensure_group_archive_info_message(*, preload_id: str) -> str:
                         _delete_archive_message_by_id(created_message_id)
                         continue
                     leader_row.telegram_staging_info_message_id = created_message_id
-                if preload.client_id is not None:
-                    for member in group_rows:
-                        member.telegram_staging_info_message_id = created_message_id
                 finalize_db.commit()
                 return created_message_id
             finally:
@@ -1333,9 +1331,9 @@ def _mark_preload_preparation_failed(db, preload: TicketAttachmentPreload) -> bo
         db.refresh(preload, with_for_update=True)
         if preload.status == "cancelled":
             return False
-    upload_state.fail(preload, uncertain=bool(upload_state.state(preload).get("binary_started")) and not upload_state.usable_receipt(upload_state.state(preload).get("receipt") or {}))
+    upload_state.fail(preload, uncertain=bool(upload_state.state(preload).get("binary_started")) and not upload_state.usable_preload_receipt(preload))
     value = upload_state.state(preload).get("receipt") or {}
-    if value.get("accepted") and value.get("media_type") not in {None, "document"}:
+    if value.get("accepted") and value.get("media_type") not in {None, "document"} and not upload_state.usable_preload_receipt(preload, value):
         upload_state.patch(preload, error_code="staging_media_mismatch",
             error="Telegram вернул другой тип файла вместо документа. Исходник сохранён; повтор требует подтверждения.", uncertain=True)
     if task and preload.final_attachment_id:
@@ -1373,7 +1371,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                         upload_state.patch(row, receipt=exc.receipt)
                         row.telegram_staging_file_message_id = exc.receipt.get("message_id")
                     upload_state.patch(row, error_code="staging_registration_failed",
-                        uncertain=not upload_state.usable_receipt(upload_state.state(row).get("receipt") or {}))
+                        uncertain=not upload_state.usable_preload_receipt(row))
                 db.commit()
         logger.warning("preload=%s preparation_failed=%s", preload_id, type(exc).__name__)
     finally:
@@ -1466,7 +1464,7 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
 
         attempt_token = (upload_state.state(preload).get("staging_attempt") or {}).get("token")
         saved_receipt = upload_state.state(preload).get("receipt") or {}
-        if upload_state.usable_receipt(saved_receipt):
+        if upload_state.usable_preload_receipt(preload, saved_receipt):
             preload.telegram_file_id = saved_receipt["file_id"]
             preload.telegram_file_unique_id = saved_receipt.get("file_unique_id")
             preload.telegram_staging_file_message_id = saved_receipt["message_id"]

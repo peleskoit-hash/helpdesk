@@ -8,6 +8,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ..models import Client, WebChatMessage
 from .web_auth import as_utc
 
+FILE_SIZE_NOTICE_PREFIX = 'web-attachment-too-large:'
+
 
 def record_message(db, client_id, *, message_type, author, text, created_at=None, event_key=None):
     """The first write for a client's event_key wins, including concurrent retries."""
@@ -51,5 +53,7 @@ def list_messages(db, client, page=1, page_size=50):
                       .order_by(WebChatMessage.created_at, WebChatMessage.id)
                       .offset((page - 1) * page_size).limit(page_size)).all()
     return {'items': [dict(id=str(row.id), message_type=row.message_type, author=row.author,
-                           text=row.text, created_at=as_utc(row.created_at)) for row in rows],
+                           text=row.text, created_at=as_utc(row.created_at),
+                           **({'notice_event_id': row.event_key[len(FILE_SIZE_NOTICE_PREFIX):]}
+                              if (row.event_key or '').startswith(FILE_SIZE_NOTICE_PREFIX) else {})) for row in rows],
             'total': total, 'page': page, 'page_size': page_size}

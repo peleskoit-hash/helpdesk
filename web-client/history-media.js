@@ -1,4 +1,4 @@
-import { getHistoryFile } from './api.js?v=20261104-web-composer-draft-v1';
+import { getHistoryFile } from './api.js?v=20261105-web-file-size-notice-v1';
 
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 

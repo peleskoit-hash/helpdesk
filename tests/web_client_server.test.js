@@ -299,11 +299,11 @@ test('initial task multipart upload forwards original bytes and only the WEB coo
 
 test('WEB resource versions match the direct page, updated workspace and unchanged dependencies', async t => {
   const { readFile } = require('node:fs/promises');
-  const version = '20261102-web-preloads-v1';
-  const workspaceVersion = '20261104-web-composer-draft-v1';
+  const version = '20261105-web-file-size-notice-v1';
+  const workspaceVersion = '20261105-web-file-size-notice-v1';
   const index = await readFile('web-client/index.html', 'utf8');
   assert.ok(index.includes('/app.js?v=' + workspaceVersion) && index.includes('/workspace.css?v=' + version));
-  const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js', 'composer-draft.js'], 'composer-draft.js': ['api.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js'] };
+  const expected = { 'app.js': ['api.js', 'workspace.js'], 'workspace.js': ['api.js', 'history-media.js', 'task-files.js', 'composer-draft.js'], 'composer-draft.js': ['api.js'], 'history-media.js': ['api.js'], 'task-files.js': ['api.js', 'file-size-notices.js'], 'file-size-notices.js': ['api.js'] };
   for (const [file, imports] of Object.entries(expected)) {
     const source = await readFile('web-client/' + file, 'utf8');
     for (const dependency of imports) {
@@ -375,4 +375,58 @@ test('composer proxy: only GET/PUT, exact JSON, required Origin and isolated WEB
   assert.equal(seen.length, 2);
   assert.equal(seen[1].body, body);
   assert.ok(seen.every(call => call.path === path && call.headers.cookie === 'esdesk_web_session=client' && !call.headers.authorization));
+});
+
+
+test('universal preload proxy preserves exact methods, upload bytes, content and WEB-only cookies', async t => {
+  const seen = [];
+  const upstream = await listen(t, http.createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    seen.push({ path: req.url, method: req.method, headers: req.headers, body });
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream' }).end('content');
+  }));
+  const port = await listen(t, createDevServer({ apiOrigin: `http://127.0.0.1:${upstream}` }));
+  const root = '/api/v1/web/composer-draft/attachment-preloads';
+  const item = root+'/11111111-1111-4111-8111-111111111111';
+  const headers = { Origin: `http://127.0.0.1:${port}`, Cookie: 'esdesk_session=staff; esdesk_web_session=client', Authorization: 'Bearer staff' };
+  for (const [url, method] of [[root,'GET'],[root,'POST'],[item,'GET'],[item,'DELETE'],[item+'/retry','POST'],[item+'/content','GET']]) {
+    assert.equal((await request(port, url, headers, method, method === 'POST' ? 'original bytes' : undefined)).status, 200);
+  }
+  for (const [url, method] of [[root,'PUT'],[item,'POST'],[item+'/retry','GET'],[item+'/content','DELETE']]) {
+    assert.equal((await request(port, url, headers, method)).status, 405);
+  }
+  for (const url of [root+'/bad',item+'/extra',item+'/content/extra']) assert.equal((await request(port, url, headers)).status, 404);
+  assert.ok(seen.every(call => call.headers.cookie === 'esdesk_web_session=client' && !call.headers.authorization));
+  assert.equal(seen[1].body, 'original bytes');
+  const icon = await request(port, '/assets/paperclip.svg');
+  assert.equal(icon.status, 200);
+  const { readFile } = require('node:fs/promises');
+  assert.equal(icon.body, await readFile('web-client/assets/paperclip.svg', 'utf8'));
+  assert.match(icon.headers['content-type'], /image\/svg\+xml/);
+  assert.match(await readFile('web-client/Dockerfile', 'utf8'), /COPY[^\n]*assets/);
+  assert.match(await readFile('web-client/.dockerignore', 'utf8'), /!assets\/\*\*/);
+});
+
+
+test('oversized-file notification proxy: exact POST, metadata and isolated WEB cookie', async t=>{
+  const seen=[];
+  const upstream=await listen(t,http.createServer(async(req,res)=>{
+    let body='';for await(const chunk of req) body+=chunk;
+    seen.push({method:req.method,path:req.url,headers:req.headers,body});
+    res.writeHead(200,{'Content-Type':'application/json'}).end('{"ok":true,"message_id":"1"}');
+  }));
+  const port=await listen(t,createDevServer({apiOrigin:`http://127.0.0.1:${upstream}`}));
+  const path='/api/v1/web/chat/attachment-too-large';
+  const headers={Origin:`http://127.0.0.1:${port}`,Cookie:'esdesk_session=staff; esdesk_web_session=client','Content-Type':'application/json'};
+  const body=JSON.stringify({file_name:'video.mp4',file_size:20971521,event_id:'11111111-1111-4111-8111-111111111111'});
+  assert.equal((await request(port,path,headers,'POST',body)).status,200);
+  for(const method of ['GET','PUT','DELETE']) assert.equal((await request(port,path,headers,method)).status,405);
+  assert.equal((await request(port,path,{},'POST',body)).status,403);
+  assert.equal((await request(port,path+'/extra',headers,'POST',body)).status,404);
+  assert.equal(seen.length,1);assert.equal(seen[0].body,body);
+  assert.equal(seen[0].headers.cookie,'esdesk_web_session=client');
+  assert.equal((await request(port,'/file-size-notices.js?v=20261105-web-file-size-notice-v1')).status,200);
+  const {readFile}=require('node:fs/promises');
+  assert.match(await readFile('web-client/Dockerfile','utf8'),/file-size-notices\.js/);
+  assert.match(await readFile('web-client/.dockerignore','utf8'),/!file-size-notices\.js/);
 });

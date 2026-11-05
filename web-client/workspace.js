@@ -1,8 +1,8 @@
 // Technical chat and ordinary task intake are restored from the WEB API.
-import { getWebMenu, getWebChat, getActiveWebTask, stopWebRequests, resumeWebRequests, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261104-web-composer-draft-v1';
-import { renderHistoryFile } from './history-media.js?v=20261104-web-composer-draft-v1';
-import { createComposerDraft } from './composer-draft.js?v=20261104-web-composer-draft-v1';
-import { createTaskFiles } from './task-files.js?v=20261104-web-composer-draft-v1';
+import { getWebMenu, getWebChat, getActiveWebTask, stopWebRequests, resumeWebRequests, sendTaskAction, requestTaskResult, getWebHistory, getHistoryMessages, getHistoryFile, TaskError } from './api.js?v=20261105-web-file-size-notice-v1';
+import { renderHistoryFile } from './history-media.js?v=20261105-web-file-size-notice-v1';
+import { createComposerDraft } from './composer-draft.js?v=20261105-web-file-size-notice-v1';
+import { createTaskFiles } from './task-files.js?v=20261105-web-file-size-notice-v1';
 export function mountWorkspace(root) {
   root.innerHTML = `
     <aside class="client-sidebar" aria-label="Панель клиента">
@@ -51,7 +51,7 @@ export function mountWorkspace(root) {
   sessionDialog.addEventListener('cancel', event => event.preventDefault());
   sessionDialog.querySelector('button').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   let sessionLocked = false;
-  const taskFiles = createTaskFiles(byId('task-file-input'), byId('task-selected-files'), byId('task-file-error'), updateTaskUI);
+  const taskFiles = createTaskFiles(byId('task-file-input'), byId('task-selected-files'), byId('task-file-error'), updateTaskUI, refreshWorkspace);
   let activeTask = null;
   let pendingAction = null;
   let taskBusy = false;
@@ -140,6 +140,7 @@ export function mountWorkspace(root) {
     if (sessionLocked || root.hidden) return;
     sessionLocked = true;
     composer.stop();
+    taskFiles.pause();
     generation++;
     restoring = true;
     stopWebRequests();
@@ -174,12 +175,11 @@ export function mountWorkspace(root) {
       const items = await getWebChat(controller.signal);
       if (controller.signal.aborted || version !== syncVersion || current !== generation || !syncRunning) return;
       renderChat(items);
-      // This history contains TASK lifecycle events, even if its selection was evicted by the 50-message limit.
-      if (task || !menuRestored && items.length) menuHidden = true;
+      // File-size notices alone do not mean that the client selected a scenario.
+      if (task || !menuRestored && items.some(row => !row.notice_event_id)) menuHidden = true;
       menuRestored = true;
-      if (!pendingAction && activeTask?.taskId && activeTask.taskId !== task?.task_id) taskFiles.clear({ serverCleanup: true });
+      taskFiles.refresh();
       activeTask = task ? { taskId: task.task_id, buttonId: task.button_id, state: task.state } : null;
-      if (task?.state === 'collecting') taskFiles.setTask(task.task_id);
       restoring = false;
       if (syncError) { clearTaskError(); syncError = false; }
     } catch (error) {
@@ -199,7 +199,7 @@ export function mountWorkspace(root) {
       } else if (current === generation && !syncRunning) updateTaskUI();
     }
   }
-  window.addEventListener('pagehide', stopSync);
+  window.addEventListener('pagehide', () => { stopSync(); taskFiles.pause(); });
 
   let menuRequest;
   let menuUnavailable = false;
@@ -255,7 +255,7 @@ export function mountWorkspace(root) {
     if (sessionLocked) return;
     resumeWebRequests();
     if (typeof clientId === 'string') currentClientId = clientId;
-    if (currentClientId) composer.start(currentClientId);
+    if (currentClientId) { composer.start(currentClientId); taskFiles.start(currentClientId); }
     if (!syncRunning) {
       syncRunning = true;
       restoring = true;
@@ -318,8 +318,8 @@ export function mountWorkspace(root) {
     byId('task-sign-in').hidden = byId('task-error').dataset.status !== '401';
     byId('demo-text').disabled = sessionLocked || !currentClientId;
     byId('demo-send').disabled = blocked || unresolved || byId('demo-text').disabled || activeTask?.state !== 'collecting' || !byId('demo-text').value.trim() || !taskFiles.ready();
-    byId('demo-files').disabled = blocked || unresolved;
-    taskFiles.setDisabled(blocked || unresolved || activeTask?.state !== 'collecting');
+    byId('demo-files').disabled = sessionLocked || !currentClientId;
+    taskFiles.setDisabled(sessionLocked || !currentClientId);
     byId('close-conversation').disabled = blocked || unresolved || !activeTask?.taskId;
     for (const button of root.querySelectorAll('[data-task-terminal]')) {
       button.disabled = blocked || Boolean(activeTask) || unresolved;
@@ -338,7 +338,10 @@ export function mountWorkspace(root) {
   }
   async function runTaskAction(operation) {
     if (taskBusy) return;
-    if (operation.kind === 'description' && !operation.composer) operation.composer = composer.snapshot();
+    if (operation.kind === 'description' && !operation.composer) {
+      operation.composer = composer.snapshot();
+      taskFiles.reserve(operation.body.preload_ids);
+    }
     invalidateSync();
     pendingAction = operation;
     taskBusy = true;
@@ -355,16 +358,14 @@ export function mountWorkspace(root) {
       if (operation.kind === 'select') menuHidden = true;
       if (operation.kind === 'description' && result.state === 'ready') {
         const container = document.createElement('div');
-        taskFiles.appendSent(container);
+        taskFiles.appendSent(container, operation.body.preload_ids);
         sentPreview = { text: operation.body.text, container };
         composer.sent(operation.composer);
       }
       if (['ready', 'cancelled'].includes(result.state)) {
-        taskFiles.clear({ serverCleanup: true });
         activeTask = null;
       } else {
         activeTask = { ...activeTask, taskId: result.task_id, state: result.state };
-        if (result.state === 'collecting') taskFiles.setTask(result.task_id);
       }
     } catch (error) {
       if (current !== generation) return;
@@ -376,10 +377,10 @@ export function mountWorkspace(root) {
       byId('task-error').dataset.status = String(error.status || 0);
       if (error.status === 401) { restoring = true; stopSync(); }
       if (!uncertain) {
+        if (operation.kind === 'description') taskFiles.release(operation.body.preload_ids);
         pendingAction = null;
         if ((operation.kind === 'select' && !activeTask?.taskId) || error.status === 410 || error.status === 404
             || ['web_task_cancelled', 'web_task_no_longer_collecting', 'web_task_already_created'].includes(error.code)) {
-          taskFiles.clear({ serverCleanup: true });
           activeTask = null;
         }
       }
@@ -409,7 +410,6 @@ export function mountWorkspace(root) {
   byId('task-retry').addEventListener('click', () => { if (pendingAction) runTaskAction(pendingAction); });
   byId('task-sign-in').addEventListener('click', () => root.dispatchEvent(new CustomEvent('web-session-expired')));
   function start() {
-    taskFiles.clear({ serverCleanup: sessionLocked });
     taskFiles.clearSent();
     activeTask = null;
     pendingAction = null;
@@ -463,8 +463,7 @@ export function mountWorkspace(root) {
     }
   });
   byId('demo-files').addEventListener('click', () => {
-    if (activeTask?.state === 'collecting' && !taskBusy && !pendingAction) byId('task-file-input').click();
-    else byId('composer-hint').textContent = 'В этом сценарии поддерживается только текстовое описание';
+    if (!sessionLocked && currentClientId) byId('task-file-input').click();
   });
   function historyButton(container, text, action) {
     const button = document.createElement('button');
@@ -752,6 +751,7 @@ export function mountWorkspace(root) {
     isLocked: () => sessionLocked,
     reset() {
       composer.stop(true);
+      taskFiles.clear();
       currentClientId = null;
       stopSync();
       generation++;

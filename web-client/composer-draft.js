@@ -1,4 +1,4 @@
-import { getComposerDraft, putComposerDraft } from './api.js?v=20261104-web-composer-draft-v1';
+import { getComposerDraft, putComposerDraft } from './api.js?v=20261105-web-file-size-notice-v1';
 
 // Server versions arbitrate writes; only unsynchronized text is backed up locally.
 export function createComposerDraft(input, changed) {

@@ -160,3 +160,51 @@ test('API-client composer draft: exact text, expected version, same-session PUT 
   t.mock.method(global, 'fetch', async () => new Response('{}', { status: 409 }));
   await assert.rejects(api.putComposerDraft('Keep', 2, signal()), error => error.status === 409);
 });
+
+
+test('API universal preloads: no task ID, stable upload, protected content and strict metadata', async t => {
+  api.resumeWebRequests();
+  const calls = [], root = '/api/v1/web/composer-draft/attachment-preloads';
+  const row = { id, status: 'ready', original_filename: 'clip.mp4', mime_type: 'video/mp4', file_size: 10 };
+  t.mock.method(global, 'fetch', async (url, options) => {
+    calls.push({ url, ...options });
+    return url.endsWith('/content') ? new Response('original bytes') : response(
+      options.method === 'DELETE' ? { ok: true } : options.method === 'GET' && url === root ? [row] : row);
+  });
+  const file = new File(['mp4'], 'clip.mp4', { type: 'video/mp4' });
+  await api.createDraftPreload(file, uploadId, signal());
+  assert.deepEqual(await api.listDraftPreloads(signal()), [row]);
+  await api.getDraftPreload(id, signal());
+  await api.retryDraftPreload(id, false, signal());
+  assert.equal(await (await api.getDraftPreloadContent(id, signal())).text(), 'original bytes');
+  await api.deleteDraftPreload(id, signal());
+  assert.deepEqual(calls.map(call => [call.url, call.method]), [
+    [root, 'POST'], [root, 'GET'], [root+'/'+id, 'GET'], [root+'/'+id+'/retry', 'POST'],
+    [root+'/'+id+'/content', 'GET'], [root+'/'+id, 'DELETE'],
+  ]);
+  assert.equal(calls[0].body.get('upload_id'), uploadId);
+  assert.equal(calls[0].body.get('file').name, 'clip.mp4');
+  assert.equal(calls[0].headers['Content-Type'], undefined);
+  assert.ok(calls.every(call => call.credentials === 'same-origin' && call.redirect === 'error'));
+  t.mock.method(global, 'fetch', async () => response([{ ...row, id: 'not-a-uuid' }]));
+  await assert.rejects(api.listDraftPreloads(signal()), error => error.status === 502);
+});
+
+
+test('API oversized-file notice sends metadata only and requires an acknowledgement', async t => {
+  api.resumeWebRequests();
+  const metadata={file_name:'video.mp4',file_size:20*1024*1024+1,event_id:uploadId};
+  const calls=[];
+  t.mock.method(global,'fetch',async(url,options)=>{calls.push({url,...options});return response({ok:true,message_id:'1'});});
+  await api.notifyAttachmentTooLarge(metadata,signal());
+  assert.equal(calls[0].url,'/api/v1/web/chat/attachment-too-large');
+  assert.equal(calls[0].method,'POST');
+  assert.deepEqual(JSON.parse(calls[0].body),metadata);
+  assert.equal(calls[0].headers['Content-Type'],'application/json');
+  assert.equal(calls[0].credentials,'same-origin');
+  assert.ok(calls[0].body.length<256);
+  for (const result of [{ok:false,message_id:'1'},{ok:true},{ok:true,message_id:1}]) {
+    t.mock.method(global,'fetch',async()=>response(result));
+    await assert.rejects(api.notifyAttachmentTooLarge(metadata,signal()),error=>error.status===502);
+  }
+});

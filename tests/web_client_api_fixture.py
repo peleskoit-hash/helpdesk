@@ -29,6 +29,10 @@ from api.app.services import telegram_outbound_delivery, telegram_attachments
 
 def run():
     storage = TemporaryDirectory(prefix='web-client-test-')
+    from api.app.services import telegram_bot
+    def no_network(*args, **kwargs):
+        raise AssertionError('Unexpected Telegram network in isolated fixture')
+    telegram_bot.urlopen = no_network
     settings.attachment_storage_dir = storage.name
     settings.telegram_staging_chat_id = 'synthetic-staging'
     archive_bytes = {}
@@ -42,7 +46,8 @@ def run():
         archive_calls.append({'name': kwargs['filename'], 'size': path.stat().st_size})
         message_id = 900 + len(archive_calls)
         archive_bytes['synthetic-file-' + str(message_id)] = path.read_bytes()
-        return {'ok': True, 'result': {'message_id': message_id, 'document': {
+        return {'ok': True, 'result': {'message_id': message_id,
+            ('video' if kwargs.get('mime_type') == 'video/mp4' else 'document'): {
             'file_id': 'synthetic-file-' + str(message_id), 'file_unique_id': 'synthetic-unique-' + str(message_id)}}}
     telegram_outbound_delivery.send_document = archive
     def archive_summary(chat_id, text, **kwargs):
@@ -97,6 +102,7 @@ def run():
                                 confirmation_enabled=True, confirmation_text='Synthetic confirmation'))
         for key, body in [('telegram.task.request_text', 'Synthetic description prompt'),
                           ('telegram.task.created', 'Synthetic task created'),
+                          ('telegram.attachment.too_large', '<b>Ограничение из БД</b>: {{file_name}} / {{file_size}} КиБ'),
                           ('telegram.intake.task_timeout', 'Synthetic task expired'),
                           ('telegram.ticket.close.unassigned.client', 'Synthetic task cancelled')]:
             db.add(AutomaticMessageTemplate(id=key, key=key, body=body, is_overridden=True))
@@ -129,11 +135,11 @@ def run():
 
     @app.post("/__test__/reset")
     def reset(db=Depends(get_db)):
-        db.execute(delete(WebClientDraft))
         db.execute(delete(WebChatMessage))
         db.execute(delete(WebTaskResultFile))
         db.execute(delete(WebTaskResult))
         db.execute(delete(TicketAttachmentPreload))
+        db.execute(delete(WebClientDraft))
         db.execute(delete(TicketAttachment))
         db.execute(delete(TicketMessage))
         db.execute(delete(Ticket))

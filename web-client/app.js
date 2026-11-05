@@ -1,5 +1,5 @@
-import { AuthError, webAuth } from './api.js?v=20261104-web-composer-draft-v1';
-import { mountWorkspace } from './workspace.js?v=20261104-web-composer-draft-v1';
+import { AuthError, webAuth } from './api.js?v=20261105-web-file-size-notice-v1';
+import { mountWorkspace } from './workspace.js?v=20261105-web-file-size-notice-v1';
 import { setupAppearance } from './appearance.js';
 
 const workspace = mountWorkspace(document.getElementById('session-panel'));
