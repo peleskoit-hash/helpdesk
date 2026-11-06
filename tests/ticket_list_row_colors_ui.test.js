@@ -81,8 +81,8 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput"[^>]*type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261105-column-auto-width-v7/);
-  assert.match(template, /styles\.css\?v=20261106-ticket-table-v2/);
+  assert.match(template, /list\.js\?v=20261106-closed-unseen-v1/);
+  assert.match(template, /styles\.css\?v=20261106-status-admin-v1/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -180,8 +180,8 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1", "\/static\/list\.js\?v=20261105-column-auto-width-v7"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261105-column-auto-width-v7/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1", "\/static\/list\.js\?v=20261106-closed-unseen-v1"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261106-closed-unseen-v1/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});
@@ -512,4 +512,31 @@ test("WEB source uses channel independently of workflow; existing Telegram and i
   assert.match(context.renderChannelIcon({ is_internal_task: true }), /ticket-channel-sync/);
   assert.match(context.renderChannelIcon({ channel: "telegram", is_internal_task: true }), /ticket-channel-sync/);
   assert.match(context.renderChannelIcon({}), /ticket-channel-telegram/);
+});
+
+
+test("unread emphasis excludes either closed indicator and preserves seen and frozen behavior", () => {
+  const source = sourceBetween(listSource, 'const rowClasses = ["row-click", "ticket-row"];', 'tr.className = rowClasses.join');
+  const classify = (ticket, role, tab) => {
+    const before = JSON.stringify(ticket);
+    const context = vm.createContext({ t: ticket, state: { role, tab }, ticketRowColorClass: loadColorClass() });
+    const classes = vm.runInContext(source + '\nrowClasses;', context);
+    assert.equal(JSON.stringify(ticket), before, 'read flags remain untouched');
+    return classes;
+  };
+  for (const role of ['agent', 'trainee', 'admin']) for (const workflow_type of ['ticket', 'task']) {
+    for (const assignee_id of ['self', 'other']) for (const seen_by_agent of [false, true, null, undefined]) {
+      for (const [tab, status, is_frozen] of [['active', 'new', false], ['active', 'closed', false], ['closed', 'new', false], ['closed', 'closed', false], ['frozen', 'new', true], ['active', 'new', true]]) {
+        const ticket = { workflow_type, assignee_id, seen_by_agent, status, is_frozen };
+        const classes = classify(ticket, role, tab);
+        const label = JSON.stringify({ role, tab, ...ticket });
+        assert.equal(classes.includes('ticket-row-unseen'), role !== 'admin' && seen_by_agent === false && status !== 'closed' && tab !== 'closed', label);
+        assert.equal(classes.includes('ticket-row-seen'), Boolean(seen_by_agent) && !is_frozen && tab !== 'frozen' && status !== 'closed' && tab !== 'closed', label);
+      }
+    }
+    const ticket = { workflow_type, status: 'closed', seen_by_agent: false };
+    assert.equal(classify(ticket, role, 'closed').includes('ticket-row-unseen'), false);
+    ticket.status = 'new';
+    assert.equal(classify(ticket, role, 'active').includes('ticket-row-unseen'), role !== 'admin');
+  }
 });

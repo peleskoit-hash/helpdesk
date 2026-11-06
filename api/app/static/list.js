@@ -1390,7 +1390,7 @@ function renderTable() {
     if (t.seen_by_agent && !(t.is_frozen || state.tab === "frozen") && !(t.status === "closed" || state.tab === "closed")) {
       rowClasses.push("ticket-row-seen");
     }
-    if ((state.role === "agent" || state.role === "trainee") && t.seen_by_agent === false) {
+    if ((state.role === "agent" || state.role === "trainee") && t.seen_by_agent === false && !(t.status === "closed" || state.tab === "closed")) {
       rowClasses.push("ticket-row-unseen");
     }
     tr.className = rowClasses.join(" ");

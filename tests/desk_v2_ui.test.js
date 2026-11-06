@@ -2325,3 +2325,59 @@ for (const theme of ['light', 'dark']) for (const tab of ['active', 'closed']) {
     if (process.env.WEB_CLIENT_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.WEB_CLIENT_SCREENSHOT_DIR, `staff-sources-${theme}-${tab}.png`) });
   });
 }
+
+
+for (const role of ['agent', 'trainee']) for (const tab of ['active', 'closed', 'frozen']) {
+  test(`closed unread list emphasis: ${role}, ${tab}`, async t => {
+    const ticketRows = [];
+    for (const workflow_type of ['ticket', 'task']) for (const assignee_id of [user.id, 'other-agent']) {
+      for (const status of ['new', 'closed']) for (const seen_by_agent of [false, true]) {
+        ticketRows.push({ ...rows[0], id: `unread-${ticketRows.length}`, workflow_type, assignee_id,
+          status, seen_by_agent, is_frozen: tab === 'frozen', subject: `Unread regression ${ticketRows.length}` });
+      }
+    }
+    const { page, requests } = await setup(t, { width: 1440, height: 900, theme: 'light', role,
+      pageName: 'tickets', ticketRows, initialPath: `/tickets?tab=${tab}` });
+    assert.ok(requests.some(req => req.path === `/api/v1/tickets/${tab}` && req.method === 'GET'));
+    const checkRows = async currentTab => {
+      const rendered = await page.locator('.ticket-row').evaluateAll(nodes => nodes.map(row => ({
+        unseen: row.classList.contains('ticket-row-unseen'), seen: row.classList.contains('ticket-row-seen'),
+        weight: getComputedStyle(row.querySelector('.ticket-row-link')).fontWeight,
+      })));
+      assert.equal(rendered.length, ticketRows.length);
+      rendered.forEach((row, i) => {
+        const ticket = ticketRows[i], closed = ticket.status === 'closed' || currentTab === 'closed';
+        const unread = ticket.seen_by_agent === false && !closed;
+        assert.equal(row.unseen, unread, JSON.stringify(ticket));
+        assert.equal(row.seen, ticket.seen_by_agent && !ticket.is_frozen && currentTab !== 'frozen' && !closed);
+        if (unread) assert.equal(row.weight, '700');
+        else if (closed) assert.notEqual(row.weight, '700');
+      });
+    };
+    await checkRows(tab);
+    if (tab === 'closed') {
+      // Reopening leaves the API read flags intact and restores active-list emphasis.
+      ticketRows.forEach(ticket => { ticket.status = 'new'; ticket.is_frozen = false; });
+      await page.goto('http://desk.test/tickets?tab=active');
+      await page.waitForSelector('.ticket-row');
+      await checkRows('active');
+    }
+  });
+}
+
+
+test('unread fix list resource loads on direct and SPA entry', async t => {
+  for (const pageName of ['tickets', 'ticket']) {
+    const { page } = await setup(t, { width: 1440, height: 900, theme: 'light', role: 'agent', pageName });
+    if (pageName === 'ticket') {
+      await page.evaluate(() => { window.unreadFixDocument = document; });
+      await page.locator('.sidebar a[href="/tickets?tab=active"]').click();
+      await page.waitForSelector('.ticket-row');
+      assert.equal(await page.evaluate(() => window.unreadFixDocument === document), true);
+    }
+    const urls = await page.evaluate(() => performance.getEntriesByType('resource')
+      .filter(entry => new URL(entry.name).pathname === '/static/list.js').map(entry => new URL(entry.name).search));
+    assert.ok(urls.length > 0);
+    assert.ok(urls.every(query => query === '?v=20261106-closed-unseen-v1'), urls.join(', '));
+  }
+});
