@@ -575,6 +575,7 @@ test("sidebar user menu init creates separate panel and binds interactions", asy
     "Личные данные",
     "Уведомления в боте",
     "Отзывы",
+    "Статистика",
     "Выход",
   ]);
 

@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261106-composer-comment-v2");
+@import url("/static/desk-v2.css?v=20261106-personal-stats-v3");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -8338,3 +8338,32 @@ body #appContent[data-shell-page="ticket-card"] .composer-enter-settings .status
 .bot-create-menu-fields .bot-create-menu-error:empty {
   display: none;
 }
+
+/* Personal completion statistics: shared sidebar dialog. */
+.personal-stats-dialog {
+  box-sizing: border-box;
+  width: min(960px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: clamp(16px, 3vw, 40px);
+  border: 1px solid var(--desk-border, #e4e0ec);
+  border-radius: 20px;
+  background: var(--desk-surface, #fffefd);
+  color: var(--desk-text, #302c40);
+  box-shadow: 0 24px 80px #00000040;
+  font: 600 clamp(18px, 2.5vw, 32px)/1.5 var(--desk-font, "Segoe UI", sans-serif);
+}
+.personal-stats-dialog::backdrop { background: #14122188; backdrop-filter: blur(6px); }
+.personal-stats-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.personal-stats-dialog h2 { margin: 0; font-size: clamp(26px, 3.5vw, 44px); font-weight: 750; }
+.personal-stats-dialog button { background: var(--desk-soft, #f6f4f9); color: inherit; border: 1px solid var(--desk-border, #e4e0ec); border-radius: 10px; min-width: clamp(40px, 5vw, 72px); min-height: clamp(40px, 5vw, 72px); flex: 0 0 auto; font: inherit; cursor: pointer; }
+.personal-stats-dialog label { display: flex; align-items: center; gap: 16px; margin: 32px 0; cursor: pointer; }
+.personal-stats-dialog label > span { font-size: .75em; }
+.personal-stats-dialog > p:last-of-type { font-size: .75em; padding: 12px 16px; background: var(--desk-soft, #f6f4f9); border-radius: 12px; }
+.personal-stats-dialog table { margin: 0; width: 100%; table-layout: fixed; border-collapse: collapse; font-size: clamp(14px, 2.2vw, 28px); }
+.personal-stats-dialog th, .personal-stats-dialog td { padding: clamp(10px, 1.2vw, 16px) clamp(2px, .6vw, 8px); overflow-wrap: anywhere; border-bottom: 1px solid var(--desk-border, #e4e0ec); text-align: right; }
+.personal-stats-dialog th:first-child { text-align: left; width: 36%; }
+.personal-stats-dialog p { margin-bottom: 0; overflow-wrap: anywhere; }
+.personal-stats-dialog :focus-visible { outline: 3px solid var(--desk-focus, #7760a8); outline-offset: 2px; }

@@ -368,14 +368,12 @@ def get_my_completion_stats(
         )
 
     period_starts = _completion_period_bounds()
-    start_min = period_starts["year"]
 
     completions = db.execute(
         select(StatsCompletion).where(
             StatsCompletion.company_id == user.company_id,
             StatsCompletion.completed_by_user_id == user.id,
             StatsCompletion.completed_at.is_not(None),
-            StatsCompletion.completed_at >= start_min,
             StatsCompletion.is_completed.is_(True),
             StatsCompletion.object_type.in_(["ticket", "task"]),
         )
@@ -408,6 +406,10 @@ def get_my_completion_stats(
             "month": build_period_stats(period_starts["month"]),
             "week": build_period_stats(period_starts["week"]),
             "day": build_period_stats(period_starts["day"]),
+        },
+        rolling={
+            period: build_period_stats(period_starts["day"] - timedelta(days=days - 1))
+            for period, days in (("week", 7), ("month", 30), ("year", 365))
         },
         legacy=int(user.legacy_ticket_count or 0),
     )

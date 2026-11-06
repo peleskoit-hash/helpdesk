@@ -374,6 +374,7 @@
         ["profile", "\u041b\u0438\u0447\u043d\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435"],
         ["bot-notifications", "\u0423\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u044f \u0432 \u0431\u043e\u0442\u0435"],
         ["feedback", "\u041e\u0442\u0437\u044b\u0432\u044b"],
+        ["statistics", "Статистика"],
         ["logout", "\u0412\u044b\u0445\u043e\u0434"],
       ].forEach(([key, label]) => {
         const item = document.createElement("button");
@@ -392,6 +393,8 @@
   }
 
   function renderUserMenuVisibility(menu) {
+    const statisticsItem = menu?.querySelector("[data-sidebar-user-menu-item='statistics']");
+    if (statisticsItem) statisticsItem.hidden = state.role !== "agent" && state.role !== "trainee";
     const reviewItem = menu?.querySelector("[data-sidebar-user-menu-item='feedback']");
     if (reviewItem) {
       reviewItem.hidden = state.role !== "agent" && state.role !== "trainee";
@@ -452,6 +455,90 @@
     panel.classList.toggle("hidden", state.role !== "agent" && state.role !== "trainee");
   }
 
+  let completionDialog = null;
+
+  async function openCompletionStats() {
+    if (completionDialog) return;
+    const previous = document.activeElement;
+    const dialog = document.createElement("dialog");
+    completionDialog = dialog;
+    dialog.className = "personal-stats-dialog";
+    dialog.setAttribute("aria-labelledby", "personalStatsTitle");
+    const add = (tag, parent, text) => {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      parent.appendChild(node);
+      return node;
+    };
+    const header = add("header", dialog);
+    add("h2", header, "Статистика").id = "personalStatsTitle";
+    const close = add("button", header, "×");
+    close.type = "button";
+    close.setAttribute("aria-label", "Закрыть");
+    const label = add("label", dialog);
+    const calendar = add("input", label);
+    calendar.type = "checkbox";
+    calendar.className = "desk-toggle";
+    calendar.setAttribute("role", "switch");
+    calendar.checked = true;
+    add("span", label, "Календарные");
+    const status = add("p", dialog, "Загрузка…");
+    status.setAttribute("role", "status");
+    const table = add("table", dialog);
+    table.hidden = true;
+    const heading = add("tr", add("thead", table));
+    ["Период", "Заявки", "Задачи", "Всего"].forEach((text) => {
+      add("th", heading, text).setAttribute("scope", "col");
+    });
+    const body = add("tbody", table);
+    const rows = ["Сегодня", "Неделя", "Месяц", "Год", "Всё время"].map((text) => {
+      const row = add("tr", body);
+      add("th", row, text).setAttribute("scope", "row");
+      return [add("td", row), add("td", row), add("td", row)];
+    });
+    const legacy = add("p", dialog);
+    legacy.hidden = true;
+    let data = null;
+    const render = () => {
+      if (!data) return;
+      const periods = calendar.checked ? data.calendar : data.rolling;
+      [data.calendar.day, periods.week, periods.month, periods.year, data.total].forEach((stats, index) => {
+        ["tickets", "tasks", "total"].forEach((key, column) => {
+          rows[index][column].textContent = String(stats[key]);
+        });
+      });
+    };
+    const finish = () => {
+      if (completionDialog !== dialog) return;
+      completionDialog = null;
+      dialog.close();
+      dialog.remove();
+      if (previous?.isConnected) previous.focus();
+    };
+    close.addEventListener("click", finish);
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(); });
+    dialog.addEventListener("click", (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) finish();
+    });
+    calendar.addEventListener("change", render);
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    close.focus();
+    try {
+      data = await api("/api/v1/users/me/completion-stats");
+      if (completionDialog !== dialog) return;
+      render();
+      legacy.textContent = `Helpdeskeddy legacy count: ${data.legacy}`;
+      legacy.hidden = !(Number(data.legacy) > 0);
+      table.hidden = false;
+      status.hidden = true;
+    } catch {
+      if (completionDialog === dialog) status.textContent = "Не удалось загрузить статистику. Попробуйте открыть окно снова.";
+    }
+  }
+
   function bindUserMenu() {
     const structure = ensureUserMenuStructure();
     if (!structure) return;
@@ -497,6 +584,10 @@
       item.addEventListener("click", () => {
         const action = item.dataset.sidebarUserMenuItem;
         closeMenu();
+        if (action === "statistics") {
+          if (state.role === "agent" || state.role === "trainee") openCompletionStats();
+          return;
+        }
         if (action === "logout") {
           if (typeof logoutForm.requestSubmit === "function") {
             logoutForm.requestSubmit();

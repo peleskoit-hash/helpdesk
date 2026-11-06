@@ -111,7 +111,7 @@ for (const theme of ['light', 'dark']) test(`system event editors V2: ${theme}`,
     await page.locator('#backFromSystemButtonGroupBtn').click();
   }
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css']) {
-    assert.ok(resources.includes(`/static/${file}?v=${file === 'bot-buttons-browser-v2.css' ? '20261106-system-editors-v2' : '20261106-composer-comment-v2'}`), `Fresh asset: ${file}`);
+    assert.ok(resources.includes(`/static/${file}?v=${file === 'bot-buttons-browser-v2.css' ? '20261106-system-editors-v2' : '20261106-personal-stats-v3'}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);
 });

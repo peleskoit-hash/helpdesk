@@ -89,7 +89,7 @@ def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
         if "/static/sidebar.js" not in content:
             continue
         sidebar_entrypoints.append(template.name)
-        assert '/static/sidebar.js?v=20261027-themed-dialogs-v1' in content
+        assert '/static/sidebar.js?v=20261106-personal-stats-v2' in content
         assert '<script src="/static/sidebar.js"></script>' not in content
 
     assert sidebar_entrypoints

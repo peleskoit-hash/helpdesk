@@ -689,6 +689,7 @@ class CompletionStatsOut(BaseModel):
     role: str
     total: CompletionPeriodStats | None = None
     calendar: dict[str, CompletionPeriodStats] | None = None
+    rolling: dict[str, CompletionPeriodStats] | None = None
     legacy: int | None = None
 
 

@@ -71,7 +71,7 @@ def test_review_page_roles_and_html(monkeypatch, role, path):
         return
     assert response.status_code == 200
     assert 'data-shell-page="reviews"' in response.text
-    assert '/static/sidebar.js?v=20261027-themed-dialogs-v1' in response.text
+    assert '/static/sidebar.js?v=20261106-personal-stats-v2' in response.text
     assert '/static/reviews.js?v=20261105-review-employee-name-v1' in response.text
     assert '/static/reviews.css?v=20261105-employee-column-width-v1' in response.text
     assert 'id="reviewDateFrom" type="date" disabled' in response.text

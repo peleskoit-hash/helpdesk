@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+import pytest
+from api.app.routers import users
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine
@@ -11,6 +15,15 @@ from sqlalchemy.pool import StaticPool
 from api.app.db import Base
 from api.app.models import Client, Company, StatsCompletion, Ticket, TicketStatus, User
 from api.app.routers.users import get_my_completion_stats
+
+
+@pytest.fixture(autouse=True)
+def freeze_stats_clock(monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 3, 15, tzinfo=ZoneInfo("Europe/Moscow")).astimezone(tz)
+    monkeypatch.setattr(users, "datetime", Clock)
 
 
 def _session():
@@ -137,3 +150,58 @@ def test_completion_stats_survive_hard_deleted_source_ticket():
 
     assert stats.calendar["year"].tickets == 1
     assert stats.calendar["year"].total == 1
+
+
+@pytest.mark.parametrize("now,expected", [
+    (datetime(2026, 11, 6, 0, 15), ("2026-11-06", "2026-11-02", "2026-11-01", "2026-01-01")),
+    (datetime(2027, 1, 1, 0, 15), ("2027-01-01", "2026-12-28", "2027-01-01", "2027-01-01")),
+])
+@pytest.mark.parametrize("role", ["agent", "trainee"])
+def test_calendar_rolling_boundaries_all_history_and_legacy(monkeypatch, now, expected, role):
+    msk = ZoneInfo("Europe/Moscow")
+    now = now.replace(tzinfo=msk)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+    monkeypatch.setattr(users, "datetime", Clock)
+    bounds = users._completion_period_bounds()
+    assert [bounds[key].isoformat() for key in ("day", "week", "month", "year")] == [date + "T00:00:00+03:00" for date in expected]
+    session = _session()
+    company = Company(id="company", name="ACME")
+    agent = User(id="agent-a", company_id=company.id, email="a@test", login="a", full_name="Agent", role=role, legacy_ticket_count=17)
+    session.add_all([company, agent])
+    starts = {**bounds, **{f"rolling_{key}": bounds["day"] - timedelta(days=days) for key, days in (("week", 6), ("month", 29), ("year", 364))}}
+    dates = [datetime(2020, 1, 1, tzinfo=msk)]
+    for start in starts.values():
+        dates.extend([start - timedelta(microseconds=1), start, start + timedelta(microseconds=1)])
+    for index, date in enumerate(dates):
+        # SQLite stores UTC without timezone, as production completion writers do.
+        utc = date.astimezone(timezone.utc).replace(tzinfo=None)
+        session.add(_completion(company.id, f"ticket-{index}", completed_at=utc))
+        session.add(_completion(company.id, f"task-{index}", object_type="task", completed_at=utc))
+    session.add(_completion(company.id, "other-agent", user_id="other"))
+    session.add(_completion("other-company", "other-company"))
+    session.add(_completion(company.id, "reopened", is_completed=False))
+    session.commit()
+    result = get_my_completion_stats(db=session, current_user=_current_user(agent))
+    assert result.legacy == 17
+    assert result.total.model_dump() == {"tickets": len(dates), "tasks": len(dates), "total": len(dates) * 2}
+    for key, start in starts.items():
+        stats = result.rolling[key.removeprefix("rolling_")] if key.startswith("rolling_") else result.calendar[key]
+        count = sum(date >= start for date in dates)
+        assert stats.model_dump() == {"tickets": count, "tasks": count, "total": count * 2}, key
+    session.close()
+
+
+@pytest.mark.parametrize("role", ["admin", "chiki_piki", "client"])
+def test_other_roles_have_no_personal_periods(role):
+    session = _session()
+    company = Company(id="company", name="ACME")
+    user = User(id="user", company_id=company.id, email="u@test", login="u", full_name="User", role=role, legacy_ticket_count=9)
+    session.add_all([company, user])
+    session.commit()
+    result = get_my_completion_stats(db=session, current_user=_current_user(user))
+    assert result.total is result.calendar is result.rolling is None
+    assert result.legacy == 9
+    session.close()
