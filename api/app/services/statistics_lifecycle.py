@@ -44,13 +44,14 @@ def _close_open_intervals(db: Session, user: User, ended_at: datetime) -> None:
         interval.ended_at = ended_at
 
 
-def _open_status_interval(db: Session, user: User, status: str, started_at: datetime) -> None:
+def _open_status_interval(db: Session, user: User, status: str, started_at: datetime, *, changed_by_admin: bool | None = None) -> None:
     db.add(
         StatsUserStatusInterval(
             id=str(uuid.uuid4()),
             company_id=user.company_id,
             user_id=user.id,
             status=_normalized_status(status),
+            changed_by_admin=changed_by_admin,
             started_at=started_at,
             ended_at=None,
             created_at=started_at,
@@ -73,6 +74,7 @@ def set_user_availability_status(
     *,
     now: datetime | None = None,
     touch_updated_at: bool = True,
+    changed_by_admin: bool | None = None,
 ) -> datetime:
     changed_at = _now(now)
     old_status = _normalized_status(user.availability_status)
@@ -80,7 +82,7 @@ def set_user_availability_status(
 
     if is_status_history_trackable(user.role, user.is_active) and old_status != new_status:
         _close_open_intervals(db, user, changed_at)
-        _open_status_interval(db, user, new_status, changed_at)
+        _open_status_interval(db, user, new_status, changed_at, changed_by_admin=changed_by_admin)
 
     user.availability_status = status
     if touch_updated_at:
@@ -95,6 +97,7 @@ def sync_user_status_history_after_profile_update(
     previous_role: str | None,
     previous_is_active: bool | None,
     previous_availability_status: str | None,
+    changed_by_admin: bool | None = None,
     now: datetime | None = None,
 ) -> datetime:
     changed_at = _now(now)
@@ -109,7 +112,7 @@ def sync_user_status_history_after_profile_update(
         _open_status_interval(db, user, user.availability_status, changed_at)
     elif was_trackable and is_trackable and status_changed:
         _close_open_intervals(db, user, changed_at)
-        _open_status_interval(db, user, user.availability_status, changed_at)
+        _open_status_interval(db, user, user.availability_status, changed_at, changed_by_admin=changed_by_admin)
 
     return changed_at
 

@@ -342,6 +342,7 @@ def test_status_transitions_returns_adjacent_status_change():
             "from_status": "online",
             "to_status": "waiting",
             "changed_at": "2026-09-02T10:10:00",
+            "changed_by_admin": None,
         }
     ]
 
@@ -652,3 +653,47 @@ def test_status_transitions_full_page_total_sort_and_cursor(sort_order):
         date_from="2026-09-02T08:02:00Z", date_to="2026-09-02T08:05:00Z",
     ).json()
     assert filtered["total_count"] == len(filtered["items"]) == 3
+
+
+
+def test_real_status_handlers_preserve_admin_flags_order_and_noops(monkeypatch):
+    from api.app.services.statistics_lifecycle import initialize_user_status_history
+
+    session = _session()
+    company, admin, agent = _seed_admin_context(session)
+    other = _user(session, company, "agent-b")
+    for employee in (agent, other):
+        initialize_user_status_history(session, employee)
+    session.commit()
+    assert all(row.changed_by_admin is None for row in session.query(StatsUserStatusInterval).all())
+    client = _api_client(session, _current_user(agent.id, "agent"))
+    response = client.patch("/api/v1/users/me/status", json={"availability_status": "waiting"})
+    assert response.status_code == 200, response.text
+    client = _api_client(session, _current_user(admin.id))
+    expected = [(agent.id, "waiting", None)]
+    for employee, status in [(agent, "lunch"), (other, "waiting"), (agent, "offline"), (other, "lunch"), (agent, "waiting")]:
+        response = client.patch(f"/api/v1/users/{employee.id}/status", json={"availability_status": status})
+        assert response.status_code == 200, response.text
+        expected.append((employee.id, status, True))
+    response = client.patch(f"/api/v1/users/{agent.id}/status", json={"availability_status": "waiting"})
+    assert response.status_code == 200
+    response = client.patch(f"/api/v1/settings/users/{agent.id}", json={"availability_status": "lunch"})
+    assert response.status_code == 200, response.text
+    expected.append((agent.id, "lunch", True))
+    response = client.patch(f"/api/v1/settings/users/{agent.id}", json={"availability_status": "lunch"})
+    assert response.status_code == 200
+    items = client.get("/api/v1/management/statistics/status-transitions", params={"sort_order": "asc"}).json()["items"]
+    assert [(i["user_id"], i["to_status"], i["changed_by_admin"]) for i in items] == expected
+    assert session.query(StatsUserStatusInterval).count() == len(expected) + 2
+
+    # Failure at commit occurs after the lifecycle has flushed the new interval.
+    def fail_commit():
+        raise RuntimeError("transaction failed")
+    monkeypatch.setattr(session, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="transaction failed"):
+        client.patch(f"/api/v1/users/{agent.id}/status", json={"availability_status": "offline"})
+    session.rollback()
+    assert session.get(User, agent.id).availability_status == "lunch"
+    assert session.query(StatsUserStatusInterval).count() == len(expected) + 2
+    assert session.query(StatsUserStatusInterval).filter_by(user_id=agent.id, ended_at=None).one().status == "lunch"
+    assert len(client.get("/api/v1/management/statistics/status-transitions").json()["items"]) == len(expected)

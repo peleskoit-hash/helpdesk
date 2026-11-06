@@ -182,10 +182,12 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   }
   & .status-log-table { width: 100%; min-width: 0; margin: 0; table-layout: fixed; border-collapse: collapse; font-size: 21px; }
   & .status-log-table :is(th, td) { font-size: inherit; padding: 27px; border-bottom: 1px solid var(--desk-border); text-align: left; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
-  & .status-log-table :is(th, td):nth-child(1) { width: 23%; }
-  & .status-log-table :is(th, td):nth-child(2), & .status-log-table :is(th, td):nth-child(3) { width: 19%; }
-  & .status-log-table :is(th, td):nth-child(4) { width: 21%; }
-  & .status-log-table :is(th, td):nth-child(5) { width: 18%; }
+  & .status-log-table :is(th, td):nth-child(1) { width: 22%; }
+  & .status-log-table :is(th, td):nth-child(2), & .status-log-table :is(th, td):nth-child(3) { width: 17%; }
+  & .status-log-table :is(th, td):nth-child(4) { width: 17%; }
+  & .status-log-table :is(th, td):nth-child(5) { width: 17%; }
+  & .status-log-table :is(th, td):nth-child(6) { width: 10%; padding-left: 8px; padding-right: 8px; }
+  & .status-log-table th.status-log-admin-heading { font-size: 23px; white-space: nowrap; }
   & .status-log-table .management-statistics-user-muted { font-size: 27px; }
   & .status-log-table th { font-size: 29.25px; color: var(--desk-muted); }
   & .status-log-sort { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
@@ -203,7 +205,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .management-statistics-table th { background: var(--desk-soft); }
   @container (min-width: 601px) and (max-width: 1050px) {
     & .status-log-table { table-layout: auto; }
-    & .status-log-table :is(th, td):nth-child(n) { width: auto; padding-left: 4px; padding-right: 4px; overflow-wrap: normal; }
+    & .status-log-table :is(th, td):nth-child(n) { width: auto; padding-left: 4px; padding-right: 4px; }
   }
   @container (max-width: 600px) {
     & .status-log-table { display: block; }

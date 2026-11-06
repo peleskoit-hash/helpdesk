@@ -550,6 +550,9 @@ def ensure_stats_foundation_tables() -> None:
                 """
             )
         )
+        status_columns = {column["name"] for column in inspect(conn).get_columns("stats_user_status_intervals")}
+        if "changed_by_admin" not in status_columns:
+            conn.execute(text("ALTER TABLE stats_user_status_intervals ADD COLUMN changed_by_admin BOOLEAN"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_completions_company_completed_at ON stats_completions(company_id, completed_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_completions_company_user_completed_at ON stats_completions(company_id, completed_by_user_id, completed_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stats_work_intervals_company_user_started ON stats_work_intervals(company_id, user_id, started_at)"))

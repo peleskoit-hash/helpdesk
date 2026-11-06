@@ -52,3 +52,31 @@ test("status card sizing is scoped to internal status-board elements", () => {
   assert.doesNotMatch(statusScope, /\.sidebar\s*\{/);
   assert.doesNotMatch(statusScope, /\.toolbar\s*\{/);
 });
+
+
+test("inFlight ignores another status for the same user but allows different users", async () => {
+  const vm = require("node:vm");
+  const requests = [], pending = [];
+  const context = {
+    state: { inFlight: new Set() },
+    renderStatusBoard() {}, setStatus() {}, showError(error) { throw new Error(error); },
+    async loadStatusBoard() {},
+    api(url, options) {
+      requests.push([url, JSON.parse(options.body).availability_status]);
+      return new Promise(resolve => pending.push(resolve));
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(sourceBetween(script, "async function updateUserStatus(", "function startPolling()"), context);
+  const first = context.updateUserStatus("agent-a", "waiting");
+  await context.updateUserStatus("agent-a", "lunch");
+  const other = context.updateUserStatus("agent-b", "offline");
+  assert.deepEqual(requests, [["/api/v1/users/agent-a/status", "waiting"], ["/api/v1/users/agent-b/status", "offline"]]);
+  pending.splice(0).forEach(resolve => resolve({}));
+  await Promise.all([first, other]);
+  assert.equal(context.state.inFlight.size, 0);
+  const next = context.updateUserStatus("agent-a", "lunch");
+  pending.pop()({});
+  await next;
+  assert.equal(requests.length, 3);
+});

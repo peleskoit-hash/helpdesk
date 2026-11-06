@@ -522,7 +522,7 @@ def update_user_status(
         _error(400, "user_inactive", "Нельзя изменить статус неактивного пользователя")
     if user.role not in {"agent", "trainee"}:
         _error(400, "invalid_role", "Статус можно менять только сотрудникам поддержки")
-    set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow())
+    set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow(), changed_by_admin=True)
     if user.role == "agent" and payload.availability_status == "online":
         db.flush()
         assign_unassigned_fairly(db, user.company_id, notify_client=True)

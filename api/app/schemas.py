@@ -747,6 +747,7 @@ class ManagementStatusStatsOut(BaseModel):
 
 
 class ManagementStatusTransitionItem(BaseModel):
+    changed_by_admin: bool | None = None
     user_id: str
     full_name: str | None = None
     is_active: bool | None = None

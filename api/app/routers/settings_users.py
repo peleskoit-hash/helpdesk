@@ -319,6 +319,7 @@ def update_user(
         previous_role=previous_role,
         previous_is_active=previous_is_active,
         previous_availability_status=previous_availability_status,
+        changed_by_admin=True,
         now=now,
     )
     target.updated_at = now

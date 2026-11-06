@@ -447,6 +447,7 @@ def get_status_transitions(
                 from_status=from_status,
                 to_status=current.status,
                 changed_at=current.started_at,
+                changed_by_admin=current.changed_by_admin,
             )
         )
     return ManagementStatusTransitionsOut(items=items, next_cursor=next_cursor, has_more=has_more, total_count=total_count)

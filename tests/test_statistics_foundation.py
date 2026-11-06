@@ -395,3 +395,22 @@ def test_bootstrap_does_not_backfill_historical_completion():
     session.commit()
 
     assert session.query(StatsCompletion).filter_by(company_id=company.id, object_id=closed.id).count() == 0
+
+
+
+def test_status_admin_flag_evolution_preserves_legacy_intervals(monkeypatch):
+    from sqlalchemy import text
+    engine = _engine()
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE stats_user_status_intervals (id VARCHAR(36) PRIMARY KEY, company_id VARCHAR(36), user_id VARCHAR(36), status VARCHAR(40), started_at TIMESTAMP, ended_at TIMESTAMP, created_at TIMESTAMP)"))
+        conn.execute(text("INSERT INTO stats_user_status_intervals VALUES ('old', 'company', 'agent', 'online', '2026-09-01', NULL, '2026-09-01')"))
+        before = conn.execute(text("SELECT * FROM stats_user_status_intervals")).one()
+    schema_evolution.ensure_stats_foundation_tables()
+    schema_evolution.ensure_stats_foundation_tables()
+    with engine.connect() as conn:
+        after = conn.execute(text("SELECT * FROM stats_user_status_intervals")).one()
+    assert tuple(after[:-1]) == tuple(before)
+    assert after[-1] is None
+    column = next(c for c in inspect(engine).get_columns("stats_user_status_intervals") if c["name"] == "changed_by_admin")
+    assert column["nullable"] and column["default"] is None

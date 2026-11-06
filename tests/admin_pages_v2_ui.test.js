@@ -8,7 +8,7 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 const pages = {
-  '/statuses': 'statuses', '/management/integrations': 'management_integrations',
+  '/tickets': 'tickets', '/statuses': 'statuses', '/management/integrations': 'management_integrations',
   '/management/feedback': 'management_feedback', '/management/statistics': 'management_statistics',
   '/management/saved-files': 'management_saved_files', '/quick-replies': 'quick_replies',
 };
@@ -82,7 +82,7 @@ async function setup(t, theme, width, target = '/statuses') {
     else if (p.endsWith('/statistics/work-time')) data = { total: { tickets: 2, tasks: 1, objects: 3, average_seconds: 1200, median_seconds: 1200 }, items: [{ user_id: employee.id, full_name: employee.full_name, is_active: true, tickets: 2, tasks: 1, objects: 3, average_seconds: 1200, median_seconds: 1200 }] };
     else if (p.endsWith('/statistics/statuses')) data = { total: { online_seconds: 3600, on_ticket_seconds: 1800, total_seconds: 5400 }, items: [{ user_id: employee.id, full_name: employee.full_name, is_active: true, online_seconds: 3600, on_ticket_seconds: 1800, total_seconds: 5400 }] };
     else if (p.endsWith('/statistics/status-transitions')) {
-      let items = Array.from({ length: 125 }, (_, i) => ({ user_id: employee.id, full_name: employee.full_name, is_active: true, from_status: 'online', to_status: 'on_ticket', changed_at: new Date(Date.UTC(2026, 9, 25, 10, i)).toISOString() }));
+      let items = Array.from({ length: 125 }, (_, i) => ({ user_id: employee.id, full_name: employee.full_name, is_active: true, from_status: 'online', to_status: 'on_ticket', changed_by_admin: [true, false, null, undefined][i % 4], changed_at: new Date(Date.UTC(2026, 9, 25, 10, i)).toISOString() }));
       const q = url.searchParams;
       if (q.get('date_from')) items = items.filter(i => Date.parse(i.changed_at) >= Date.parse(q.get('date_from')));
       if (q.get('date_to')) items = items.filter(i => Date.parse(i.changed_at) < Date.parse(q.get('date_to')));
@@ -238,13 +238,17 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1280, 1920
     assert.match(requests()[0].query, /limit=50/);
     assert.match(await page.locator('#statusLogSummary').innerText(), /1–50 из 125/);
     assert.equal(await page.locator('#statusLogPrev').isDisabled(), true);
-    assert.equal(await page.locator('#statusLogTableBody tr').first().locator('td').count(), 5);
+    assert.equal(await page.locator('#statusLogTableBody tr').first().locator('td').count(), 6);
+    assert.equal(await page.locator('.status-log-table th').count(), 6);
+    assert.equal(await page.locator('.status-log-admin-heading').innerHTML(), 'Изменено<br>Админом');
+    assert.deepEqual(await page.locator('#statusLogTableBody tr').evaluateAll(rows => rows.slice(0, 4).map(row => row.cells[5].textContent)), ['Да', '', '', '']);
+    assert.equal(await page.locator('.status-log-admin-heading').evaluate(el => getComputedStyle(el).fontSize), '23px');
     const presentation = await page.locator('#statusLogTableBody tr').first().evaluate(row => ({
       display: getComputedStyle(row).display,
       labels: [...row.cells].map(cell => cell.dataset.label),
       visibleLabels: [...row.cells].map(cell => getComputedStyle(cell, '::before').content),
     }));
-    const labels = ['Сотрудник', 'Был статус', 'Стал статус', 'Дата', 'Время'];
+    const labels = ['Сотрудник', 'Был статус', 'Стал статус', 'Дата', 'Время', 'Изменено Админом'];
     assert.deepEqual(presentation.labels, labels);
     assert.equal(presentation.display, width >= 1280 ? 'table-row' : 'grid');
     if (width < 1280) assert.deepEqual(presentation.visibleLabels, labels.map(label => `"${label}"`));
@@ -318,3 +322,63 @@ for (const theme of ['light', 'dark']) for (const width of [1920, 1440, 390]) {
     }
   });
 }
+
+
+test('status board disables rapid same-employee clicks while PATCH is pending', async t => {
+  const { page } = await setup(t, 'light', 1440, '/statuses');
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const requests = [];
+  await page.route('**/api/v1/users/agent/status', async route => {
+    requests.push(route.request().postDataJSON().availability_status);
+    await pending;
+    await route.fulfill({ contentType: 'application/json', body: '{}' });
+  });
+  await page.locator('.status-board-btn[data-status="waiting"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.status-board-btn:disabled').length === 5);
+  await page.evaluate(() => document.querySelector('.status-board-btn[data-status="lunch"]').click());
+  assert.deepEqual(requests, ['waiting']);
+  release();
+  await page.waitForFunction(() => document.querySelectorAll('.status-board-btn:disabled').length === 0);
+  assert.deepEqual(requests, ['waiting']);
+});
+
+
+test('status admin resource versions stay synchronized across templates and CSS imports', () => {
+  const version = '20261106-status-admin-v1';
+  for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
+    const html = fs.readFileSync(path.join('api/app/templates', file), 'utf8');
+    for (const resource of ['styles.css', 'app_shell.js']) {
+      const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
+      for (const url of urls) assert.equal(url, `/static/${resource}?v=${version}`, file);
+    }
+  }
+  assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes(`/static/desk-v2.css?v=${version}`));
+  assert.ok(fs.readFileSync('api/app/static/desk-v2.css', 'utf8').includes(`/static/admin-pages-v2.css?v=${version}`));
+  const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
+  assert.match(shell, /\["\/statuses",.*"\/static\/status_transitions.js\?v=20261106-status-admin-v1"/);
+});
+
+for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
+  const { page } = await setup(t, 'light', 1440, start);
+  assert.equal(await page.locator('link[href="/static/styles.css?v=20261106-status-admin-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261106-status-admin-v1"]').count(), 1);
+  await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
+  if (start === '/tickets') {
+    await page.locator('.sidebar a[href="/statuses"]').click();
+    await page.waitForSelector('[data-shell-page="statuses"]');
+    assert.equal(await page.evaluate(() => window.statusCacheDocument === document && window.statusCacheSidebar === document.querySelector('.sidebar')), true);
+  }
+  await page.locator('[data-status-tab="log"]').click();
+  await page.waitForSelector('#statusLogTableBody tr');
+  assert.equal(await page.locator('.status-log-table th').count(), 6);
+  assert.equal(await page.locator('#statusLogTableBody tr').first().locator('td').count(), 6);
+  assert.equal(await page.locator('.status-log-admin-heading').innerHTML(), 'Изменено<br>Админом');
+  assert.equal(await page.locator('.status-log-admin-heading').evaluate(el => getComputedStyle(el).fontSize), '23px');
+  const resources = await page.evaluate(() => performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname + new URL(entry.name).search));
+  for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
+    const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
+    assert.ok(matching.length > 0, resource);
+    assert.ok(matching.every(url => url === '/static/' + resource + '?v=20261106-status-admin-v1'), matching.join(', '));
+  }
+});
