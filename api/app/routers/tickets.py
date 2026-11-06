@@ -950,7 +950,7 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
                 try:
                     if workflow_type == TicketWorkflowType.TICKET.value:
                         defer_notification(_send_to_telegram_client, db, ticket,
-                            _ticket_closed_client_text(db, ticket), required=False, remove_keyboard=True)
+                            TICKET_CLOSED_CLIENT_TEXT, required=False, remove_keyboard=True)
                     elif workflow_type == TicketWorkflowType.TASK.value and ticket_task_kind != TicketTaskKind.GROUP_CHILD.value:
                         client_message = _first_client_message(db, ticket)
                         defer_notification(_send_to_telegram_client, db, ticket,

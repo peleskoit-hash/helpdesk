@@ -164,15 +164,22 @@ def test_closed_objects_never_notify(case, tmp_path, skip, channel, kind):
 
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
 @pytest.mark.parametrize("skip", [False, True])
-def test_active_notification_after_commit(case, workflow, skip):
+def test_active_notification_after_commit(case, monkeypatch, workflow, skip):
     target = case.target(workflow=workflow)
     target_id = target.id
-    expected = (tickets._ticket_closed_client_text(case.db, target) if workflow == "ticket" else
+    template = Mock(return_value="Configured close text with review and suggestion buttons")
+    monkeypatch.setattr(tickets, "_ticket_closed_client_text", template)
+    expected = (tickets.TICKET_CLOSED_CLIENT_TEXT if workflow == "ticket" else
                 tickets.format_task_closed_without_answer_text(case.db, target, tickets._first_client_message(case.db, target)))
     response = case.delete([target], skip)
     assert response.status_code == 200, response.text
     assert case.db.get(Ticket, target_id) is None
     assert [content for _, content, _ in case.sent] == ([] if skip else [expected])
+    template.assert_not_called()
+    for _, _, kwargs in case.sent:
+        assert "reply_markup" not in kwargs
+        assert kwargs["remove_keyboard"] is True
+    assert not case.db.scalars(select(TicketReviewCycle.id).where(TicketReviewCycle.ticket_id == target_id)).all()
 
 
 @pytest.mark.parametrize("failure", ["delete", "commit"])
@@ -292,6 +299,8 @@ def test_real_sender_uses_snapshot_after_ticket_deletion(case, monkeypatch):
     assert response.status_code == 200, response.text
     assert len(delivered) == 1
     assert delivered[0][0] == target_id
+    assert delivered[0][1] == tickets.TICKET_CLOSED_CLIENT_TEXT
+    assert delivered[0][2].get("reply_markup") is None
     assert delivered[0][2]["remove_keyboard"] is True
 
 
@@ -327,7 +336,6 @@ def test_closed_child_with_open_sibling_keeps_parent_open(case):
 
 
 @pytest.mark.parametrize("workflow,helper", [
-    ("ticket", "_ticket_closed_client_text"),
     ("task", "_first_client_message"),
     ("task", "format_task_closed_without_answer_text"),
 ])
@@ -346,7 +354,6 @@ def test_notification_preparation_failure_does_not_block_delete(case, monkeypatc
 
 
 @pytest.mark.parametrize("workflow,helper", [
-    ("ticket", "_ticket_closed_client_text"),
     ("task", "_first_client_message"),
     ("task", "format_task_closed_without_answer_text"),
 ])
