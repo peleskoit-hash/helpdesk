@@ -44,6 +44,36 @@ def delete_preliminary_telegram_ticket(db: Session, ticket: Ticket) -> None:
     _delete_ticket_hard(db, ticket)
 
 
+def is_uncreated_normal_task(db: Session, ticket: Ticket) -> bool:
+    """A selected task without a client description, never an existing task."""
+    if not (ticket.workflow_type == "task" and ticket.task_kind == "normal"
+            and ticket.channel in ("telegram", "web") and ticket.intake_state == "collecting"
+            and ticket.status == "unassigned" and ticket.assignee_id is None
+            and ticket.closed_at is None and ticket.parent_ticket_id is None and not ticket.is_special):
+        return False
+    from .internal_tasks import is_internal_task_ticket
+    db.flush()
+    if is_internal_task_ticket(db, ticket):
+        return False
+    for key in (ticket.instruction_button_key, ticket.button_config_key):
+        if key:
+            button = resolve_button_row(db, key, include_inactive=True)
+            if button is not None and button.automation_key == "telegram_group":
+                return False
+    # Any client message is sufficient evidence to preserve the task, including files.
+    return db.scalar(select(TicketMessage.id).where(
+        TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == "client").limit(1)) is None
+
+
+def delete_uncreated_normal_task(db: Session, ticket: Ticket) -> None:
+    if not is_uncreated_normal_task(db, ticket):
+        raise ValueError("Only an uncreated normal task can be cancelled by deletion")
+    for model in (StatsCompletion, StatsWorkInterval):
+        db.execute(model.__table__.delete().where(
+            model.company_id == ticket.company_id, model.object_id == ticket.id, model.object_type == "task"))
+    _delete_ticket_hard(db, ticket)
+
+
 def _delete_ticket_hard(db: Session, ticket: Ticket) -> list[str]:
     warnings: list[str] = []
     children = db.execute(select(Ticket.id, Ticket.company_id, Ticket.client_id).where(Ticket.parent_ticket_id == ticket.id)).all()

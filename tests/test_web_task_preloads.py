@@ -262,7 +262,7 @@ def test_multipart_cannot_mix_preload_ids_and_files(case, preloads):
     assert result.status_code == 422 and len(preloads[0]) == 2
 
 
-@pytest.mark.parametrize('action', ['cancel', 'delete'])
+@pytest.mark.parametrize('action', ['cancel', 'delete', 'admin-web', 'admin-telegram'])
 def test_cancel_during_background_upload_cleans_late_file_and_summary(case, preloads, monkeypatch, action):
     task = choose(case).json()['task_id']
     row_ids = []
@@ -282,14 +282,29 @@ def test_cancel_during_background_upload_cleans_late_file_and_summary(case, prel
         future = pool.submit(upload, case, task)
         try:
             assert started.wait(10)
-            result = cancel(case, task) if action == 'cancel' else case.http.delete(url(task, row_ids[0]), headers=ORIGIN)
-            assert result.status_code == 200, result.text
+            if action.startswith('admin-'):
+                from api.app.auth import CurrentUser
+                from api.app.routers import tickets
+                from api.app.schemas import AdminBulkTicketsPayload
+                monkeypatch.setattr(tickets, '_send_to_telegram_client', lambda *a, **kw: {'ok': True})
+                with Session(case.engine) as db:
+                    db.get(Ticket, task).channel = action.removeprefix('admin-')
+                    db.commit()
+                    outcome = tickets.admin_close_tickets(AdminBulkTicketsPayload(ticket_ids=[task]), db=db,
+                        user=CurrentUser(id='admin', role='admin', real_user_id='admin', real_role='admin', is_real_admin=True))
+                    assert outcome.closed == 1
+            else:
+                result = cancel(case, task) if action == 'cancel' else case.http.delete(url(task, row_ids[0]), headers=ORIGIN)
+                assert result.status_code == 200, result.text
         finally:
             release.set()
         assert future.result(timeout=15).status_code == 200
     with Session(case.engine) as db:
         assert db.get(TicketAttachmentPreload, row_ids[0]) is None
-        assert db.get(Ticket, task).intake_state == ('cancelled' if action == 'cancel' else 'collecting')
+        if action != 'delete':
+            assert db.get(Ticket, task) is None
+        else:
+            assert db.get(Ticket, task).intake_state == 'collecting'
     assert set(preloads[1]) == {'101', '102'}
     assert not list(Path(settings.attachment_storage_dir).glob('*'))
 

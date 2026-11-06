@@ -53,7 +53,7 @@ from ..services.assignment import assign_ticket_to_forced_user
 from ..services.assignment import assign_ticket_to_agent
 from ..services.assignment import choose_online_agent
 from ..services.ticket_numbering import ensure_ticket_number
-from ..services.ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
+from ..services.ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, delete_uncreated_normal_task, is_uncreated_normal_task
 from ..services.assignment import schedule_employee_assignment_notification
 from ..services.assignment import set_group_parent_assigned_hook
 from ..services.employee_telegram_notifications import schedule_new_message_notification
@@ -75,6 +75,7 @@ from ..services.telegram_client_close import (
     process_client_close_callback,
     remove_client_close_button,
     send_client_close_notification,
+    prepare_uncreated_task_close_notification,
     store_client_close_button,
 )
 from ..services.auto_close import refresh_ticket_auto_close_timer
@@ -2986,6 +2987,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
 
     if text.startswith("/close"):
         close_fallback_message_id = message.get("message_id") if isinstance(message.get("message_id"), int) else None
+        prepared_close = []
         closed_ticket = close_active_ticket_for_contact(
             db,
             contact,
@@ -2997,10 +2999,15 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
             ),
             append_system_message_fn=append_system_message,
             fallback_message_id=close_fallback_message_id,
+            before_delete_task_fn=(lambda ticket: prepared_close.append(
+                prepare_uncreated_task_close_notification(
+                    db, ticket, contact))) if notify_client else None,
         )
         db.commit()
         if notify_client:
-            if closed_ticket is not None:
+            if prepared_close:
+                send_message(external_chat_id, **prepared_close[0])
+            elif closed_ticket is not None:
                 _close_response, review_cycle = send_client_close_notification(
                     db,
                     ticket=closed_ticket,
@@ -3108,18 +3115,26 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
     collecting_ticket = None if album_task is not None else _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
     if collecting_ticket is not None and collecting_ticket.workflow_type == TicketWorkflowType.TASK.value:
         if collecting_ticket.updated_at + timedelta(minutes=TASK_DESCRIPTION_TIMEOUT_MINUTES) <= _now_for(collecting_ticket.updated_at):
-            collecting_ticket.intake_state = TicketIntakeState.CANCELLED.value
-            closed_at = datetime.utcnow()
-            collecting_ticket.status = TicketStatus.CLOSED.value
-            collecting_ticket.closed_at = closed_at
-            sync_work_interval_after_close(db, collecting_ticket, now=closed_at)
-            append_system_message(db, collecting_ticket, "\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: \u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0442\u0435\u043a\u0441\u0442 \u0432\u043e\u0432\u0440\u0435\u043c\u044f")
+            uncreated_task = is_uncreated_normal_task(db, collecting_ticket)
+            if not uncreated_task:
+                collecting_ticket.intake_state = TicketIntakeState.CANCELLED.value
+                closed_at = datetime.utcnow()
+                collecting_ticket.status = TicketStatus.CLOSED.value
+                collecting_ticket.closed_at = closed_at
+                sync_work_interval_after_close(db, collecting_ticket, now=closed_at)
+                append_system_message(db, collecting_ticket, "\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e: \u043a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0442\u0435\u043a\u0441\u0442 \u0432\u043e\u0432\u0440\u0435\u043c\u044f")
             _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id)
             remove_client_close_button(db, collecting_ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
+            expired_ticket_id = collecting_ticket.id
+            timeout_notification = (_automatic_telegram_text(
+                db, "telegram.intake.task_timeout", TASK_EXPIRED_TEXT, ticket=collecting_ticket,
+                contact=contact, extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES}) if notify_client else None)
+            if uncreated_task:
+                delete_uncreated_normal_task(db, collecting_ticket)
             db.commit()
             if notify_client:
-                send_message(external_chat_id, *_automatic_telegram_text(db, "telegram.intake.task_timeout", TASK_EXPIRED_TEXT, ticket=collecting_ticket, contact=contact, extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES}))
-            return {"ok": True, "task_pending_expired": True, "ticket_id": collecting_ticket.id}
+                send_message(external_chat_id, *timeout_notification)
+            return {"ok": True, "task_pending_expired": True, "ticket_id": expired_ticket_id}
 
         client_body = text
         button = _button_from_callback(
@@ -3322,7 +3337,8 @@ def cleanup_expired_task_intents(db: Session) -> int:
             expired.append(ticket)
     for ticket in expired:
         contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
-        preliminary = is_preliminary_telegram_ticket(db, ticket)
+        uncreated_task = is_uncreated_normal_task(db, ticket)
+        preliminary = is_preliminary_telegram_ticket(db, ticket) or uncreated_task
         if not preliminary:
             ticket.intake_state = TicketIntakeState.CANCELLED.value
             closed_at = datetime.utcnow()
@@ -3342,6 +3358,9 @@ def cleanup_expired_task_intents(db: Session) -> int:
             timeout_text, timeout_parse_mode = _automatic_telegram_text(db, timeout_key, timeout_fallback, ticket=ticket, contact=contact, extra={"timeout_minutes": timeout_minutes})
             send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
         if preliminary:
-            delete_preliminary_telegram_ticket(db, ticket)
+            if uncreated_task:
+                delete_uncreated_normal_task(db, ticket)
+            else:
+                delete_preliminary_telegram_ticket(db, ticket)
     db.commit()
     return len(expired) + origin_closed + phone_closed

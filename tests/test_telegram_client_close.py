@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import delete
 
 from api.app.config import settings
-from api.app.models import TicketMessage
+from api.app.models import Ticket, TicketMessage
 from api.app.routers import telegram
 from api.app.services.telegram_client_close import client_can_close_ticket
 from test_ticket_review_telegram import (
@@ -55,8 +55,9 @@ def test_collecting_task_can_be_cancelled(case, via):
     ticket = seed(case, workflow='task', intake='collecting')
     assert client_can_close_ticket(case.db, ticket)
     assert close(case, via)['closed'] is True
-    case.db.refresh(ticket)
-    assert (ticket.status, ticket.intake_state) == ('closed', 'cancelled')
+    assert case.db.get(Ticket, ticket.id) is None
+    assert close(case, via).get('closed', False) is False
+    assert case.db.get(Ticket, ticket.id) is None
 
 
 @pytest.mark.parametrize('assigned', [False, True])

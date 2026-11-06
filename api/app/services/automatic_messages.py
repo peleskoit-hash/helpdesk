@@ -15,6 +15,7 @@ from .template_fields import template_context
 
 _FIELD_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}")
 _EMPTY = "не задано"
+TASK_CREATION_CANCELLED_TEXT = "Создание задачи отменено. Чтобы создать новую задачу, нажмите /start."
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,17 @@ AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
         category_title="Задачи",
         sort_order=20,
         default_text="Заявка создана и передана в работу.\n\nДля создания другой нажмите\n /start",
+        variable_scopes=("client", "ticket", "menu"),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.task.creation_cancelled.client",
+        title="Создание задачи отменено клиентом",
+        description="Отмена создания обычной задачи клиентом через /close или кнопку закрытия",
+        category="tasks",
+        category_title="Задачи",
+        sort_order=25,
+        default_text=TASK_CREATION_CANCELLED_TEXT,
         variable_scopes=("client", "ticket", "menu"),
         runtime_enabled=True,
     ),

@@ -1639,7 +1639,8 @@ def test_task_files_only_completion_keeps_files_only_branch(tmp_path):
 
 
 @pytest.mark.parametrize("channel", ["telegram", "web"])
-def test_all_task_close_paths_send_feedback_action_to_client(channel):
+@pytest.mark.parametrize("force_group", [False, True])
+def test_task_close_buttons_preserve_normal_and_delete_paths(channel, force_group):
     session = _session()
 
     normal = _seed_ticket(session, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.NORMAL.value)
@@ -1710,7 +1711,12 @@ def test_all_task_close_paths_send_feedback_action_to_client(channel):
         SimpleNamespace(id="admin-1", role="admin"),
         **{**close_kwargs, "force_without_agent_reply_for_task": True, "is_admin_fn": lambda actor: True, "last_agent_message_fn": lambda *_: None},
     )
-    close_ticket_by_actor(session, parent_direct, SimpleNamespace(id="agent-1", role="agent"), **close_kwargs)
+    close_ticket_by_actor(
+        session, parent_direct, SimpleNamespace(id="admin-1" if force_group else "agent-1",
+                                              role="admin" if force_group else "agent"),
+        **{**close_kwargs, "force_without_agent_reply_for_task": force_group,
+           "is_admin_fn": lambda actor: force_group},
+    )
     forced_child = _seed_ticket(session, channel=channel, workflow_type="task", task_kind="group_child",
                                 parent_ticket_id=parent_auto.id)
     close_ticket_by_actor(
@@ -1730,7 +1736,10 @@ def test_all_task_close_paths_send_feedback_action_to_client(channel):
     for ticket in [normal, without_answer, parent_direct, parent_auto, parent_delete]:
         if channel == "telegram":
             assert sent[ticket.id]
-            assert _markup_labels(sent[ticket.id][0]) == ["Предложения и замечания"]
+            if ticket in (without_answer, parent_auto) or (ticket is parent_direct and force_group):
+                assert sent[ticket.id][0] is None
+            else:
+                assert _markup_labels(sent[ticket.id][0]) == ["Предложения и замечания"]
         else:
             assert ticket.id not in sent
 
@@ -1783,3 +1792,51 @@ def test_channel_close_preserves_result_and_completion_rules(channel, workflow, 
         assert session.query(TicketReviewCycle).filter_by(ticket_id=ticket.id).count() == 0
         assert all("не удалось" not in body for body in _system_messages(session, ticket))
     session.close()
+
+
+@pytest.mark.parametrize('workflow,force,answer,client_body', [
+    ('task', True, None, 'Request'),
+    ('task', True, 'Answer', 'Request'),
+    ('task', True, '', 'Request'),
+    ('task', True, 'Answer', None),
+    ('task', False, 'Answer', 'Request'),
+    ('ticket', False, 'Answer', 'Request'),
+    ('ticket', True, 'Answer', 'Request'),
+    ('ticket', True, None, 'Request'),
+])
+def test_forced_task_close_has_no_post_close_buttons(workflow, force, answer, client_body):
+    from api.app.services.ticket_lifecycle import format_task_closed_without_answer_text, _format_task_completion_text
+    session = _session()
+    try:
+        ticket = _seed_ticket(session, workflow_type=workflow, task_kind='normal')
+        _seed_contact_for_ticket(session, ticket)
+        client_message = (_add_message(session, ticket, MessageType.CLIENT, client_body, None)
+                          if client_body is not None else None)
+        session.commit()
+        agent_message = _seed_agent_message(session, ticket, 'agent', body=answer) if answer is not None else None
+        if answer == '':
+            _seed_attachment(session, ticket, agent_message)
+        expected = ('Ticket closed' if workflow == 'ticket' else
+            format_task_closed_without_answer_text(session, ticket, client_message)
+            if agent_message is None or client_message is None else
+            _format_task_completion_text(session, ticket, client_message, agent_message))
+        sent, files = [], []
+        assert close_ticket_by_actor(session, ticket, SimpleNamespace(id='admin', role='admin'),
+            force_without_agent_reply_for_task=force, is_admin_fn=lambda actor: True,
+            get_or_create_client_profile_fn=lambda *a: None,
+            last_agent_message_fn=lambda *a: agent_message, first_client_message_fn=lambda *a: client_message,
+            send_to_telegram_client_fn=lambda db, row, text, **kw: sent.append((text, kw)) or {'ok': True},
+            actor_display_name_fn=lambda *a: 'Admin', add_message_fn=_add_message,
+            message_attachments_fn=_message_attachments,
+            send_attachment_to_telegram_client_fn=lambda db, row, attachment, **kw: files.append(attachment.id),
+            onsite_close_reminder_text='onsite', ticket_closed_client_text='Ticket closed') == 'closed'
+        assert len(sent) == 1 and sent[0][0] == expected
+        if workflow == 'task' and force:
+            assert sent[0][1].get('reply_markup') is None
+            assert sent[0][1]['remove_keyboard'] is True
+        else:
+            assert _markup_labels(sent[0][1]['reply_markup']) == ['Предложения и замечания']
+        assert len(files) == (1 if workflow == 'task' and answer == '' else 0)
+    finally:
+        session.close()
+        session.get_bind().dispose()

@@ -372,3 +372,46 @@ def test_notification_preparation_database_failure_rolls_back(case, monkeypatch,
     rollback.assert_called_once()
     assert case.db.get(Ticket, target_id) is not None
     assert not case.sent
+
+
+@pytest.mark.parametrize('skip', [False, True])
+@pytest.mark.parametrize('overridden', [False, True])
+def test_real_task_delete_sender_preserves_task_template_after_commit(case, monkeypatch, skip, overridden):
+    from api.app.models import AutomaticMessageTemplate
+    keys = ['telegram.ticket.close.client', 'telegram.task.closed_without_answer.client']
+    case.db.execute(AutomaticMessageTemplate.__table__.delete().where(AutomaticMessageTemplate.key.in_(keys)))
+    target = case.target(workflow='task')
+    target_id = target.id
+    case.db.add(TelegramContact(id=str(uuid.uuid4()), company_id=target.company_id,
+        client_id=target.client_id, external_chat_id=target_id, external_user_id=target_id))
+    case.db.add(AutomaticMessageTemplate(id=str(uuid.uuid4()), key='telegram.ticket.close.client',
+        body='WRONG: review and suggestions', is_overridden=True, html_enabled=False))
+    if overridden:
+        case.db.add(AutomaticMessageTemplate(id=str(uuid.uuid4()), key='telegram.task.closed_without_answer.client',
+            body='Настроенное удаление задачи.', is_overridden=True, html_enabled=False))
+    case.db.commit()
+    expected = tickets.format_task_closed_without_answer_text(case.db, target, tickets._first_client_message(case.db, target))
+    delivered = []
+
+    def send(chat_id, body, **kwargs):
+        assert case.committed, 'Delivery must follow commit'
+        with Session(case.db.get_bind()) as check:
+            assert check.get(Ticket, target_id) is None
+            assert check.scalar(select(TicketMessage.id).where(TicketMessage.ticket_id == target_id)) is None
+        delivered.append((chat_id, body, kwargs))
+        return {'ok': True, 'result': {'message_id': 123}}
+
+    monkeypatch.setattr(tickets, 'send_message', send)
+    monkeypatch.setattr(tickets, '_send_to_telegram_client', case.send_to_telegram_client)
+    response = case.delete([target], skip)
+    assert response.status_code == 200, response.text
+    assert len(delivered) == (0 if skip else 1)
+    if not skip:
+        assert delivered[0][0:2] == (target_id, expected)
+        assert delivered[0][2]['remove_keyboard'] is True
+        assert delivered[0][2].get('reply_markup') is None
+        assert 'WRONG' not in expected
+        if overridden:
+            assert expected == 'Настроенное удаление задачи.'
+    case.db.execute(AutomaticMessageTemplate.__table__.delete().where(AutomaticMessageTemplate.key.in_(keys)))
+    case.db.commit()

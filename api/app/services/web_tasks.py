@@ -1,7 +1,8 @@
 """Ordinary WEB task intake, serialized by client until the operation commits.
 
 Selection requires a stable request UUID; its scoped UUID5 is the persisted task
-identity, including after cancellation. Retrying must reuse that request UUID.
+identity. Cancellation retries are recognized only while the terminal event
+remains in the last 50 WEB chat messages. Retrying must reuse that request UUID.
 Only WEB intake metadata uses quick_action_state_json[STATE_KEY]. No Telegram
 updates, chat IDs, keyboards, automation dispatch or customer delivery are used.
 """
@@ -15,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import BotButtonSetting, Client, Ticket, TicketAttachmentPreload, TicketMessage
+from ..models import BotButtonSetting, Client, Ticket, TicketAttachmentPreload, TicketMessage, WebChatMessage
 from ..routers import telegram
 from . import web_auth, web_chat, telegram_upload_state as upload_state
 from .attachment_preload_owners import client_collecting_ticket, owned_client_preload
@@ -25,6 +26,7 @@ from .ticket_messages import _attachment_from_preload
 from .assignment import append_system_message
 from .automatic_messages import get_automatic_message_row, render_automatic_message_text
 from .statistics_lifecycle import sync_work_interval_after_close
+from .ticket_admin_actions import is_uncreated_normal_task, delete_uncreated_normal_task
 from .web_menu import read_client_menu
 from .web_task_attachments import attach_client_files, file_manifest
 from .web_composer_draft_attachments import claim_description_preloads
@@ -70,26 +72,32 @@ def chat_event(db, ticket, event, body, *, client=False, system=False):
 
 
 def close_draft(db, ticket, reason):
-    now = web_auth.utcnow()
-    ticket.intake_state = 'cancelled'
-    ticket.status = 'closed'
-    ticket.closed_at = now
-    ticket.quick_action_state_json = {**(ticket.quick_action_state_json or {}), STATE_KEY: {**state(ticket), 'reason': reason}}
-    sync_work_interval_after_close(db, ticket, now=now)
-    append_system_message(db, ticket, 'Создание задачи отменено: клиент не отправил текст вовремя'
-                          if reason == 'expired' else 'Создание задачи отменено клиентом через WEB')
+    uncreated_task = is_uncreated_normal_task(db, ticket)
+    if not uncreated_task:
+        now = web_auth.utcnow()
+        ticket.intake_state = 'cancelled'
+        ticket.status = 'closed'
+        ticket.closed_at = now
+        ticket.quick_action_state_json = {**(ticket.quick_action_state_json or {}), STATE_KEY: {**state(ticket), 'reason': reason}}
+        sync_work_interval_after_close(db, ticket, now=now)
+        append_system_message(db, ticket, 'Создание задачи отменено: клиент не отправил текст вовремя'
+                              if reason == 'expired' else 'Создание задачи отменено клиентом через WEB')
     key = 'telegram.intake.task_timeout' if reason == 'expired' else 'telegram.ticket.close.unassigned.client'
+    text = message_text(db, key, ticket)
+    result = {'task_id': ticket.id, 'state': 'cancelled', 'status': 'closed', 'expires_at': None, 'text': text}
     if reason == 'cancelled':
         chat_event(db, ticket, 'cancel-requested', 'Отменить создание задачи', client=True)
-    chat_event(db, ticket, reason, message_text(db, key, ticket))
+    chat_event(db, ticket, reason, text)
+    if uncreated_task:
+        delete_uncreated_normal_task(db, ticket)
+    return result
 
 
 def expire(db, ticket):
     if (ticket.intake_state == 'collecting' and ticket.status == 'unassigned'
             and ticket.assignee_id is None and deadline(ticket) <= web_auth.utcnow()):
-        close_draft(db, ticket, 'expired')
-        return True
-    return False
+        return close_draft(db, ticket, 'expired')
+    return None
 
 
 def response(db, ticket):
@@ -114,15 +122,31 @@ def response(db, ticket):
     return result
 
 
+def terminal_response(db, owner, task_id):
+    event = db.scalar(select(WebChatMessage).where(WebChatMessage.client_id == owner.id,
+        WebChatMessage.event_key.in_([f'web-task:{task_id}:cancelled', f'web-task:{task_id}:expired'])))
+    if event is None:
+        return None
+    if event.event_key.endswith(':expired'):
+        raise HTTPException(410, detail={'error': {'code': 'web_task_expired', 'message': event.text, 'details': {}}})
+    return {'task_id': str(task_id), 'state': 'cancelled', 'status': 'closed', 'expires_at': None, 'text': event.text}
+
+
 def owned_task(db, owner: Client, task_id):
     ticket = db.scalar(select(Ticket).where(Ticket.id == str(task_id), Ticket.client_id == owner.id,
         Ticket.company_id == owner.company_id, Ticket.channel == 'web', Ticket.workflow_type == 'task', Ticket.task_kind == 'normal'))
+    if ticket is None:
+        terminal = terminal_response(db, owner, task_id)
+        if terminal is not None:
+            fail(db, 'web_task_cancelled')
     if ticket is None or not state(ticket):
         fail(db, 'web_task_not_found', 404)
     if ticket.intake_state == 'collecting' and (ticket.status != 'unassigned' or ticket.assignee_id is not None):
         fail(db, 'web_task_no_longer_collecting', ticket=ticket, key='telegram.ticket.close.unassigned.client')
-    if expire(db, ticket):
+    expired = expire(db, ticket)
+    if expired is not None:
         db.commit()
+        raise HTTPException(410, detail={'error': {'code': 'web_task_expired', 'message': expired['text'], 'details': {}}})
     return ticket
 
 
@@ -135,7 +159,9 @@ def active_task(db, owner):
     for ticket in candidates:
         if not state(ticket):
             continue
-        ticket = owned_task(db, owner, ticket.id)  # Persist expiration through the existing path.
+        if expire(db, ticket) is not None:
+            db.commit()
+            continue
         if ticket.intake_state == 'collecting':
             return {**response(db, ticket), 'button_id': state(ticket)['button_id']}
     return None
@@ -187,6 +213,9 @@ def confirm_task(db, owner, client, task_id):
 
 def select_task(db, owner, client, button_id, request_id, confirmed=False):
     task_id = str(uuid5(REQUEST_NAMESPACE, f'{owner.company_id}:{owner.id}:{request_id}'))
+    terminal = terminal_response(db, owner, task_id)
+    if terminal is not None:
+        fail(db, 'web_task_cancelled', key='telegram.ticket.close.unassigned.client')
     existing = db.get(Ticket, task_id)
     if existing is not None:
         ticket = owned_task(db, owner, task_id)
@@ -279,13 +308,17 @@ def describe_task(db, owner, client, task_id, body, uploads=(), preload_ids=()):
 
 
 def cancel_task(db, owner, client, task_id):
+    terminal = terminal_response(db, owner, task_id)
+    if terminal is not None:
+        return terminal
     ticket = owned_task(db, owner, task_id)
     if ticket.intake_state == 'ready':
         fail(db, 'web_task_already_created')
     if ticket.intake_state == 'collecting':
-        close_draft(db, ticket, 'cancelled')
+        result = close_draft(db, ticket, 'cancelled')
         web_auth.register_web_activity(db, client)
         db.commit()
+        return result
     return response(db, ticket)
 
 

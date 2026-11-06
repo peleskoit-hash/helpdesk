@@ -223,3 +223,14 @@ def test_startup_does_not_create_chat_table(chat, monkeypatch):
         asyncio.run(main.on_startup())
     assert not inspect(chat.engine).has_table('web_chat_messages')
     assert any(route.path == BASE and 'GET' in route.methods for route in main.app.routes)
+
+
+@pytest.mark.parametrize('event', ['cancelled', 'expired'])
+def test_terminal_task_events_have_no_retention_exception(chat, event):
+    ids = [write(chat, event_key=f'web-task:{index}:{event}') for index in range(65)]
+    with Session(chat.engine) as db:
+        assert db.scalar(select(func.count()).select_from(WebChatMessage).where(WebChatMessage.client_id == 'client')) == 50
+    first = chat.http.get(BASE + '?page_size=25').json()
+    second = chat.http.get(BASE + '?page=2&page_size=25').json()
+    assert first['total'] == second['total'] == 50
+    assert [row['id'] for row in first['items'] + second['items']] == ids[-50:]

@@ -21,6 +21,7 @@ from api.app.routers.web_tasks import router
 from api.app.routers import telegram
 from api.app.services import assignment, employee_telegram_notifications as notices, telegram_bot, web_auth, web_tasks
 from test_web_auth import engine
+from test_uncreated_normal_tasks import forbid_deleted_task_access
 
 ORIGIN = {'Origin': 'http://testserver'}
 BASE = '/api/v1/web/tasks'
@@ -157,7 +158,7 @@ def test_active_expires_once_through_existing_timeout_path(case):
         ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
     with Session(case.engine) as db:
         ticket = db.get(Ticket, selected['task_id'])
-        assert ticket.status == 'closed' and ticket.intake_state == 'cancelled'
+        assert ticket is None
         assert web_tasks.cleanup_expired_web_tasks(db) == 0
 
 
@@ -250,7 +251,8 @@ def test_cancel_and_repeated_cancel_only_touch_web_draft(case):
     selected = choose(case, request_id).json()
     assert cancel(case, selected['task_id']).json()['state'] == 'cancelled'
     assert cancel(case, selected['task_id']).status_code == 200
-    assert choose(case, request_id).json()['state'] == 'cancelled'
+    replay = choose(case, request_id)
+    assert replay.status_code == 409 and replay.json()['detail']['error']['code'] == 'web_task_cancelled'
     assert description(case, selected['task_id']).status_code == 409
     assert chat_log(case) == [('system', 'Elite Sochi Support', 'Выбран пункт «Task subject»'),
         ('bot', 'Elite Sochi Support', selected['text']),
@@ -259,6 +261,7 @@ def test_cancel_and_repeated_cancel_only_touch_web_draft(case):
     with Session(case.engine) as db:
         assert db.scalar(select(WebChatMessage.text).where(
             WebChatMessage.event_key == f"web-task:{selected['task_id']}:cancel-requested")) == 'Отменить создание задачи'
+        assert db.get(Ticket, selected['task_id']) is None
         assert db.get(Ticket, 'telegram-draft').intake_state == 'collecting'
         assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == 'telegram-draft')).all()
     assert case.staff.call_count == 0
@@ -290,9 +293,9 @@ def test_ten_minute_timeout_and_late_retries(case, background):
         ('bot', 'Elite Sochi Support', selected['text']), ('bot', 'Elite Sochi Support', 'Expired after 10')]
     with Session(case.engine) as db:
         task = db.get(Ticket, selected['task_id'])
-        assert (task.status, task.intake_state) == ('closed', 'cancelled')
+        assert task is None
         assert db.get(Ticket,'telegram-pending').intake_state == 'collecting'
-        assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == task.id, TicketMessage.message_type == 'client')).all()
+        assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == selected['task_id'], TicketMessage.message_type == 'client')).all()
     assert case.staff.call_count == 0
 
 
@@ -469,13 +472,12 @@ def test_concurrent_requests_do_not_duplicate_task_message_or_notifications(case
     assert any(r.status_code == 200 for r in responses)
     with Session(case.engine) as db:
         tasks = db.scalars(select(Ticket)).all()
-        assert len(tasks) == 1
+        assert len(tasks) == (0 if mode == 'cancel-description' and not any(r.status_code == 200 and r.json().get('state') == 'ready' for r in responses) else 1)
         messages = db.scalars(select(TicketMessage).where(TicketMessage.message_type == 'client')).all()
         assert len(messages) <= 1
         assert case.staff.call_count == len(messages)
         events = db.scalars(select(WebChatMessage).order_by(WebChatMessage.id)).all()
-        assert len(events) == (4 if tasks[0].intake_state == 'ready' else
-                               4 if tasks[0].intake_state == 'cancelled' else 2)
+        assert len(events) == (4 if not tasks or tasks[0].intake_state == 'ready' else 2)
         assert len({event.event_key for event in events}) == len(events)
 
 
@@ -595,3 +597,72 @@ def test_no_online_agent_uses_existing_distribution_queue(case):
         assert task.assignee_id is None and task.status == 'unassigned'
         assert db.scalar(select(TicketMessage.id).where(TicketMessage.ticket_id == task.id,TicketMessage.body == 'На распределении'))
     case.staff.assert_not_called()
+
+@pytest.mark.parametrize('finish', ['cancel', 'timeout', 'admin'])
+def test_terminal_retries_are_bounded_by_chat_retention(case, finish):
+    from api.app.auth import CurrentUser
+    from api.app.routers import tickets
+    from api.app.routers.web_history import router as history_router
+    from api.app.schemas import AdminBulkTicketsPayload
+    from api.app.services import web_chat
+    case.http.app.include_router(history_router)
+    request_id = uuid4()
+    task_id = choose(case, request_id).json()['task_id']
+    if finish == 'cancel':
+        assert cancel(case, task_id).status_code == 200
+    elif finish == 'timeout':
+        case.clock[0] += timedelta(minutes=10)
+        with Session(case.engine) as db:
+            assert web_tasks.cleanup_expired_web_tasks(db) == 1
+    else:
+        with Session(case.engine) as db:
+            tickets.admin_close_tickets(AdminBulkTicketsPayload(ticket_ids=[task_id]), db=db,
+                                       user=CurrentUser(id='admin', role='admin', real_user_id='admin', real_role='admin', is_real_admin=True))
+    for _ in range(2):
+        expected = 410 if finish == 'timeout' else 409
+        for button_id in ('button', 'another-button'):
+            assert choose(case, request_id, button_id=button_id).status_code == expected
+        assert cancel(case, task_id).status_code == (410 if finish == 'timeout' else 200)
+        with Session(case.engine) as db:
+            assert db.get(Ticket, task_id) is None
+            assert not db.scalars(select(TicketMessage).where(TicketMessage.ticket_id == task_id)).all()
+        history = case.http.get('/api/v1/web/history')
+        assert history.status_code == 200, history.text
+        assert task_id not in [row['id'] for row in history.json()['items']]
+    with Session(case.engine) as db:
+        for index in range(55):
+            web_chat.record_message(db, 'client', message_type='bot', author='Support', text=str(index),
+                                    created_at=case.clock[0] + timedelta(seconds=index+1))
+        db.commit()
+        assert len(db.scalars(select(WebChatMessage).where(WebChatMessage.client_id == 'client')).all()) == 50
+        assert web_chat.list_messages(db, SimpleNamespace(id='client'))['total'] == 50
+        assert web_tasks.terminal_response(db, db.get(Client, 'client'), task_id) is None
+        assert db.get(Ticket, task_id) is None
+    # No durable receipt is retained beyond the original chat window.
+    assert cancel(case, task_id).status_code == 404
+
+
+@pytest.mark.parametrize('via', ['cancel', 'active-timeout', 'confirm-timeout', 'describe-timeout', 'preload-timeout'])
+def test_web_handlers_do_not_access_deleted_task(case, via, forbid_deleted_task_access):
+    task_id = choose(case).json()['task_id']
+    if via != 'cancel':
+        case.clock[0] += timedelta(minutes=10)
+    if via == 'cancel':
+        result = cancel(case, task_id)
+        assert result.status_code == 200 and result.json()['state'] == 'cancelled'
+        assert cancel(case, task_id).json() == result.json()
+    elif via == 'active-timeout':
+        result = case.http.get(BASE + '/active')
+        assert result.status_code == 200 and result.json() is None
+    elif via == 'describe-timeout':
+        assert description(case, task_id).status_code == 410
+    elif via == 'confirm-timeout':
+        assert case.http.post(f'{BASE}/{task_id}/confirm', headers=ORIGIN).status_code == 410
+    else:
+        result = case.http.post(f'{BASE}/{task_id}/attachment-preloads', headers=ORIGIN,
+            data={'upload_id': str(uuid4())}, files={'file': ('pending.txt', b'pending', 'text/plain')})
+        assert result.status_code == 410
+    assert forbid_deleted_task_access
+    with Session(case.engine) as db:
+        assert db.get(Ticket, task_id) is None
+    assert description(case, task_id).status_code == (409 if via == 'cancel' else 410)

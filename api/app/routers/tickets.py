@@ -55,7 +55,7 @@ from ..services.ticket_attachments import (
     _save_upload_attachment,
     _send_attachment_to_telegram_client,
 )
-from ..services.ticket_admin_actions import _delete_ticket_hard, delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
+from ..services.ticket_admin_actions import _delete_ticket_hard, delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, is_uncreated_normal_task
 from ..services.client_card import _client_card_view_config, _custom_field_map, _normalize_custom_field_value, _profile_out
 from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run, validate_client_card_direct_user_changes
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
@@ -781,7 +781,8 @@ def admin_close_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends(
     not_found = [ticket_id for ticket_id in payload.ticket_ids if ticket_id not in found_ids]
 
     for ticket in tickets:
-        ensure_task_uploads_finished(db, ticket)
+        if not is_uncreated_normal_task(db, ticket):
+            ensure_task_uploads_finished(db, ticket)
     closed = 0
     already_closed = 0
     for ticket in tickets:

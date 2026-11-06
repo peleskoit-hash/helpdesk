@@ -30,7 +30,7 @@ from .ticket_messages import persist_client_delivery_failure, record_client_deli
 from .ticket_subject import resolve_ticket_subject
 from .telegram_text_format import telegram_html_code, telegram_html_text
 from .internal_tasks import is_internal_task_ticket
-from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
+from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, delete_uncreated_normal_task, is_uncreated_normal_task
 
 
 def _error(status_code: int, code: str, message: str):
@@ -562,6 +562,7 @@ def finalize_group_parent_if_ready(
     parent: Ticket,
     *,
     skip_client_notification: bool = False,
+    include_post_close_actions: bool = True,
     closed_by_user_id: str | None = None,
     system_note: str = "Групповая задача завершена системой",
     first_client_message_fn,
@@ -611,7 +612,8 @@ def finalize_group_parent_if_ready(
             ),
             failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
-            reply_markup=_post_close_markup_for_ticket(db, parent, assume_closed=True),
+            remove_keyboard=not include_post_close_actions,
+            reply_markup=_post_close_markup_for_ticket(db, parent, assume_closed=True) if include_post_close_actions else None,
         )
         for attachment in attachments:
             filename = attachment.original_filename or "файл"
@@ -771,7 +773,7 @@ def _close_task_without_reply(
             _format_task_closed_without_answer_text(db, ticket, client_message, subject_text=subject_text),
             failure_note="Задача закрыта, но уведомление о закрытии не удалось отправить клиенту в Telegram.",
             send_to_telegram_client_fn=send_to_telegram_client_fn,
-            reply_markup=_post_close_markup_for_ticket(db, ticket),
+            remove_keyboard=True,
         )
     if ticket.task_kind == TicketTaskKind.GROUP_CHILD.value and ticket.parent_ticket_id:
         parent = db.get(Ticket, ticket.parent_ticket_id)
@@ -815,6 +817,7 @@ def close_ticket_by_actor(
             db_session,
             parent_ticket,
             skip_client_notification=skip_client_notification,
+            include_post_close_actions=not is_force_close_action,
             first_client_message_fn=first_client_message_fn,
             send_to_telegram_client_fn=send_to_telegram_client_fn,
             send_attachment_to_telegram_client_fn=send_attachment_to_telegram_client_fn,
@@ -826,21 +829,30 @@ def close_ticket_by_actor(
     if ticket.status == TicketStatus.CLOSED.value:
         return "already_closed"
 
-    if is_preliminary_telegram_ticket(db, ticket):
+    uncreated_task = is_force_close_action and is_uncreated_normal_task(db, ticket)
+    if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         from .telegram_client_close import remove_client_close_button
         from .telegram_menu_flow import _remove_menu_keyboard
         from .telegram_bot import remove_inline_keyboard
 
-        _remove_menu_keyboard(db, ticket)
-        remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
+        if ticket.channel == "telegram":
+            _remove_menu_keyboard(db, ticket)
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
         if not skip_client_notification:
             _send_optional_client_message(
-                db, ticket, ticket_closed_client_text,
+                db, ticket, (format_task_closed_without_answer_text(db, ticket, None)
+                             if uncreated_task and ticket.channel == "telegram" else ticket_closed_client_text),
                 failure_note="Уведомление об отмене создания заявки не удалось отправить клиенту в Telegram.",
                 send_to_telegram_client_fn=send_to_telegram_client_fn,
                 remove_keyboard=True,
             )
-        delete_preliminary_telegram_ticket(db, ticket)
+        if uncreated_task:
+            if ticket.channel == "web":
+                from .web_tasks import chat_event, message_text
+                chat_event(db, ticket, "cancelled", message_text(db, "telegram.ticket.close.unassigned.client", ticket))
+            delete_uncreated_normal_task(db, ticket)
+        else:
+            delete_preliminary_telegram_ticket(db, ticket)
         return "closed"
 
     ensure_task_uploads_finished(db, ticket)
@@ -942,7 +954,8 @@ def close_ticket_by_actor(
                     ),
                     failure_note="Групповая задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
-                    reply_markup=_post_close_markup_for_ticket(db, ticket),
+                    remove_keyboard=is_force_close_action,
+                    reply_markup=None if is_force_close_action else _post_close_markup_for_ticket(db, ticket),
                 )
                 for attachment in attachments:
                     filename = attachment.original_filename or "файл"
@@ -1000,7 +1013,8 @@ def close_ticket_by_actor(
                     _format_task_completion_text(db, ticket, client_message, last_agent_message, subject_text=subject_text),
                     failure_note="Задача завершена, но уведомление о завершении не удалось отправить клиенту в Telegram.",
                     send_to_telegram_client_fn=send_to_telegram_client_fn,
-                    reply_markup=_post_close_markup_for_ticket(db, ticket),
+                    remove_keyboard=is_force_close_action,
+                    reply_markup=None if is_force_close_action else _post_close_markup_for_ticket(db, ticket),
                 )
                 for attachment in final_attachments:
                     filename = attachment.original_filename or "файл"

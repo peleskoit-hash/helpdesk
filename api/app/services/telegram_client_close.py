@@ -18,9 +18,9 @@ from ..models import (
     TicketTaskKind,
     TicketWorkflowType,
 )
-from .automatic_messages import render_automatic_message_for_telegram
+from .automatic_messages import TASK_CREATION_CANCELLED_TEXT, render_automatic_message_for_telegram
 from .statistics_lifecycle import sync_work_interval_after_close
-from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket
+from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, delete_uncreated_normal_task, is_uncreated_normal_task
 from .telegram_post_close import (
     attributable_review_agent_id_for_client_close,
     finalize_review_offer_close_message,
@@ -164,6 +164,14 @@ def send_client_close_notification(
     return close_response, review_cycle
 
 
+def prepare_uncreated_task_close_notification(db, ticket, contact):
+    text, parse_mode = _render_client_close_message_for_telegram(
+        db, ticket=ticket, contact=contact, fallback=TASK_CREATION_CANCELLED_TEXT,
+        key="telegram.task.creation_cancelled.client")
+    # An uncreated task has no review cycle or post-close actions.
+    return dict(text=text, parse_mode=parse_mode, remove_keyboard=True, reply_markup=None)
+
+
 def close_active_ticket_for_contact(
     db: Session,
     contact,
@@ -174,6 +182,7 @@ def close_active_ticket_for_contact(
     remove_client_close_button_fn,
     append_system_message_fn,
     fallback_message_id: int | None = None,
+    before_delete_task_fn=None,
 ) -> Ticket | None:
     ticket = active_ticket_for_client_fn(db, contact.company_id, contact.client_id) or collecting_ticket_for_client_fn(
         db,
@@ -183,10 +192,16 @@ def close_active_ticket_for_contact(
     if ticket is None:
         return None
 
-    if is_preliminary_telegram_ticket(db, ticket):
+    uncreated_task = is_uncreated_normal_task(db, ticket)
+    if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         remove_menu_keyboard_fn(db, ticket, fallback_chat_id=contact.external_chat_id, fallback_message_id=fallback_message_id)
         remove_client_close_button_fn(db, ticket)
-        delete_preliminary_telegram_ticket(db, ticket)
+        if uncreated_task:
+            if before_delete_task_fn is not None:
+                before_delete_task_fn(ticket)
+            delete_uncreated_normal_task(db, ticket)
+        else:
+            delete_preliminary_telegram_ticket(db, ticket)
         return ticket
 
     closed_at = datetime.utcnow()
@@ -274,11 +289,20 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Это обращение уже нельзя закрыть этой кнопкой")
         return {"ok": True, "closed": False, "ticket_id": ticket.id}
 
-    if is_preliminary_telegram_ticket(db, ticket):
+    ticket_id = ticket.id
+    prepared_close = None
+    if notify_client and is_uncreated_normal_task(db, ticket):
+        prepared_close = prepare_uncreated_task_close_notification(
+            db, ticket, contact)
+    uncreated_task = is_uncreated_normal_task(db, ticket)
+    if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         remove_menu_keyboard_fn(db, ticket, fallback_chat_id=external_chat_id,
                                 fallback_message_id=message_id if isinstance(message_id, int) else None)
         ticket.client_close_message_id = None
-        delete_preliminary_telegram_ticket(db, ticket)
+        if uncreated_task:
+            delete_uncreated_normal_task(db, ticket)
+        else:
+            delete_preliminary_telegram_ticket(db, ticket)
     else:
         closed_at = datetime.utcnow()
         ticket.status = TicketStatus.CLOSED.value
@@ -306,16 +330,19 @@ def process_client_close_callback(
             answer_callback_query_fn(callback_id, "Обращение закрыто")
         if isinstance(message_id, int):
             safe_remove_inline_keyboard_fn(external_chat_id, message_id)
-        _close_response, review_cycle = send_client_close_notification(
-            db,
-            ticket=ticket,
-            contact=contact,
-            external_chat_id=external_chat_id,
-            send_message_fn=send_message_fn,
-            ticket_closed_client_text=ticket_closed_client_text,
-            ticket_closed_client_message_key=ticket_closed_client_message_key,
-        )
-        if review_cycle is not None:
-            db.commit()
+        if prepared_close is not None:
+            send_message_fn(external_chat_id, **prepared_close)
+        else:
+            _close_response, review_cycle = send_client_close_notification(
+                db,
+                ticket=ticket,
+                contact=contact,
+                external_chat_id=external_chat_id,
+                send_message_fn=send_message_fn,
+                ticket_closed_client_text=ticket_closed_client_text,
+                ticket_closed_client_message_key=ticket_closed_client_message_key,
+            )
+            if review_cycle is not None:
+                db.commit()
 
-    return {"ok": True, "closed": True, "ticket_id": ticket.id}
+    return {"ok": True, "closed": True, "ticket_id": ticket_id}
