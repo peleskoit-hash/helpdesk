@@ -90,6 +90,10 @@
 
     function renderReplies() {
       el.list.innerHTML = "";
+      const header = document.createElement("div");
+      header.className = "quick-replies-header";
+      header.innerHTML = "<span>Краткое название</span><span>Автор</span><span>Дата создания</span><span>Действия</span>";
+      el.list.appendChild(header);
       for (const reply of state.replies) {
         const row = document.createElement("div");
         row.className = "quick-reply-row";
@@ -99,21 +103,18 @@
         card.setAttribute("role", "button");
         card.className = `quick-reply-card${isOwnAdminReply(reply) ? " ticket-type-request" : ""}`;
         card.dataset.replyId = reply.id;
+        const date = reply.created_at ? new Date(reply.created_at) : null;
+        const created = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString("ru-RU") : "—";
         card.innerHTML = `
-          <span class="quick-reply-card-title">${escapeHtml(reply.short_title)}</span>
-          ${ticketMode ? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="${escapeHtml(reply.id)}">Использовать</button></span>` : ""}
+          <span class="quick-reply-card-title" title="${escapeHtml(reply.short_title)}">${escapeHtml(reply.short_title)}</span>
+          <span class="quick-reply-card-author">${escapeHtml(reply.author_name || "—")}</span>
+          <span class="quick-reply-card-date">${escapeHtml(created)}</span>
+          <span class="quick-reply-card-actions">
+            ${ticketMode ? `<button type="button" class="action" data-use="${escapeHtml(reply.id)}">Использовать</button>` : ""}
+            ${canDelete() ? `<button type="button" class="action danger quick-reply-delete" data-delete="${escapeHtml(reply.id)}" ${state.deletingIds.has(String(reply.id)) ? "disabled" : ""}>Удалить</button>` : ""}
+          </span>
         `;
         row.appendChild(card);
-
-        if (canDelete()) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "action danger quick-reply-delete";
-          button.dataset.delete = reply.id;
-          button.textContent = "Удалить";
-          button.disabled = state.deletingIds.has(String(reply.id));
-          row.appendChild(button);
-        }
 
         el.list.appendChild(row);
       }
@@ -380,7 +381,7 @@
     });
     el.list.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
-      if (event.target?.closest?.("[data-use]")) return;
+      if (event.target?.closest?.("[data-use]") || event.target?.closest?.("[data-delete]")) return;
       const card = event.target?.closest?.("[data-reply-id]");
       const replyId = card?.dataset?.replyId;
       if (!replyId) return;

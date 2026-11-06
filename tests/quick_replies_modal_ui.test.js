@@ -197,7 +197,7 @@ test("quick reply modal confirms dirty title, body, and file list before closing
     saved_files: [{ id: "f1", display_filename: "a.txt" }],
   };
   const { el, confirms } = await loadQuickReplies({ replies: [reply] });
-  const card = el.quickRepliesList.children[0].children[0];
+  const card = el.quickRepliesList.children[1].children[0];
 
   el.quickRepliesList.fire("click", { target: card });
   el.quickReplyTitleInput.value = "New title";
@@ -230,7 +230,7 @@ test("quick reply modal does not confirm when draft returns to initial values", 
   };
   const { el, confirms } = await loadQuickReplies({ replies: [reply] });
 
-  el.quickRepliesList.fire("click", { target: el.quickRepliesList.children[0].children[0] });
+  el.quickRepliesList.fire("click", { target: el.quickRepliesList.children[1].children[0] });
   el.quickReplyTitleInput.value = "Changed";
   el.quickReplyTitleInput.value = "Title";
   el.quickReplyBodyInput.value = "Changed";

@@ -562,3 +562,32 @@ def test_delete_cleans_usage_and_keeps_other_replies():
     assert db.get(QuickReply, kept.id) is not None
     assert db.execute(select(QuickReplyUsage).where(QuickReplyUsage.quick_reply_id == deleted.id)).scalars().all() == []
     assert db.execute(select(QuickReplyUsage).where(QuickReplyUsage.quick_reply_id == kept.id)).scalars().all()
+
+
+@pytest.mark.parametrize("title", [" VPN помощь ", "vpn ПОМОЩЬ", "VPN\t \nпомощь", "vpn\u00a0помощь"])
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_duplicate_title_returns_409_without_changing_records(title, method):
+    db = _session()
+    _seed_users(db)
+    original = _create(db, "admin-1", "admin", "VPN помощь", "Original")
+    own = _create(db, "agent-1", "agent", "Other", "Draft")
+    client = _client(db)
+    path = "/api/v1/quick-replies" + (f"/{own.id}" if method == "patch" else "")
+    response = getattr(client, method)(path, json={"short_title": title, "body": "Changed"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"]["code"] == "quick_reply_title_duplicate"
+    assert "уже существует" in response.json()["detail"]["error"]["message"]
+    assert db.get(QuickReply, own.id).short_title == "Other"
+    assert db.get(QuickReply, original.id).body == "Original"
+    assert len(list_quick_replies(db=db, user=_user("agent-1", "agent"))) == 2
+
+
+def test_title_casefold_and_editing_own_title():
+    db = _session()
+    _seed_users(db)
+    reply = _create(db, "agent-1", "agent", "Straße", "Body")
+    client = _client(db)
+    assert client.post("/api/v1/quick-replies", json={"short_title": "STRASSE", "body": "Body"}).status_code == 409
+    response = client.patch(f"/api/v1/quick-replies/{reply.id}", json={"short_title": "Straße", "body": "Updated"})
+    assert response.status_code == 200
+    assert response.json()["body"] == "Updated"

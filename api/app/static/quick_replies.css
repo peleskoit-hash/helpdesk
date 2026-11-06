@@ -1,0 +1,50 @@
+/* Shared intrinsic tracks keep the original cards aligned with their header. */
+body #appContent.main[data-shell-page="quick-replies"] {
+  & .quick-replies-workspace { grid-template-rows: auto minmax(0, 1fr); }
+  & .quick-replies-list {
+    grid-template-columns: minmax(0, 1fr) max-content max-content max-content;
+    column-gap: 15px;
+    grid-auto-rows: max-content;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+    isolation: isolate;
+  }
+  & .quick-reply-row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    gap: inherit;
+  }
+  & .quick-reply-card, & .quick-replies-header {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    column-gap: inherit;
+    align-items: center;
+  }
+  & .quick-replies-list { padding-inline: 19px; }
+  & .quick-reply-card {
+    margin-inline: -19px;
+    padding-inline: 18px;
+  }
+  & .quick-replies-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-inline: -19px;
+    padding: 15px 19px;
+    background: var(--surface);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  & .quick-reply-card-title {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+  }
+  & .quick-reply-card-author, & .quick-reply-card-date { white-space: nowrap; }
+  & .quick-reply-card-actions { gap: 8px; justify-content: start; }
+  & .quick-reply-card-actions button { flex: none; white-space: nowrap; }
+}

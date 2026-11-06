@@ -3338,26 +3338,32 @@ test('ticket draft changes leave attachment preload restoration untouched', () =
 test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
-  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/quick_replies\.js\?v=20261027-message-dialogs-v2"\] \}\]/);
+  assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/quick_replies\.js\?v=20261106-columns-v1"\] \}\]/);
   assert.match(quickRepliesTemplate, /styles\.css\?v=20261106-ticket-table-v2/);
-  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261027-message-dialogs-v2/);
+  assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261106-columns-v1/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
 
-test('quick replies management mode renders compact cards without edit or use columns', () => {
+test('quick replies management mode keeps cards with four headers and no edit or use columns', () => {
   assert.match(quickRepliesTemplate, /id="quickRepliesList" class="quick-replies-list"/);
   assert.match(quickRepliesSource, /card\.className = `quick-reply-card\$\{isOwnAdminReply\(reply\) \? " ticket-type-request" : ""\}`/);
   assert.match(quickRepliesSource, /card\.dataset\.replyId = reply\.id/);
   assert.doesNotMatch(quickRepliesTemplate, /<table|<thead|<tbody|quickRepliesHeadRow|quickRepliesRows/);
   assert.doesNotMatch(quickRepliesSource, /Редактировать|data-edit|const cols|renderHead/);
   assert.doesNotMatch(quickRepliesTemplate, />Использовать</);
-  assert.doesNotMatch(quickRepliesSource, /ticketMode[\s\S]{0,80}<th>[\s\S]{0,80}Использовать/);
+  const renderSource = sourceBetween(quickRepliesSource, 'function renderReplies()', 'function fileName');
+  assert.match(renderSource, /header\.className = "quick-replies-header"/);
+  assert.match(renderSource, /header\.innerHTML = "<span>Краткое название<\/span><span>Автор<\/span><span>Дата создания<\/span><span>Действия<\/span>"/);
+  assert.doesNotMatch(renderSource, /<table\b|<thead\b|<tbody\b|<th\b|<td\b|data-edit/);
+  assert.match(renderSource, /ticketMode \? `<button[^>]+data-use=[^>]+>Использовать<\/button>` : ""/);
 });
 
-test('quick replies ticket context keeps disabled use action separate from card open', () => {
+test('quick replies ticket context keeps use action inside card actions and separate from card open', () => {
   assert.match(quickRepliesSource, /const ticketId = \(params\.get\("ticket_id"\) \|\| ""\)\.trim\(\)/);
-  assert.match(quickRepliesSource, /ticketMode \? `<span class="quick-reply-card-actions"><button type="button" class="action" data-use="\$\{escapeHtml\(reply\.id\)\}">Использовать<\/button><\/span>` : ""/);
-  assert.match(quickRepliesSource, /event\.stopPropagation\(\)/);
+  assert.match(quickRepliesSource, /const ticketMode = Boolean\(ticketId\)/);
+  assert.match(quickRepliesSource, /<span class="quick-reply-card-actions">\s*\$\{ticketMode \? `<button type="button" class="action" data-use="\$\{escapeHtml\(reply\.id\)\}">Использовать<\/button>` : ""\}/);
+  const clickSource = sourceBetween(quickRepliesSource, 'el.list.addEventListener("click"', 'el.list.addEventListener("keydown"');
+  assert.match(clickSource, /if \(useId\) \{\s*event\.stopPropagation\(\);[\s\S]*if \(reply\) void useReply\(reply\)[^\n]*\s*return;\s*\}\s*const card/);
   assert.match(quickRepliesSource, /await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`, \{ method: "POST" \}\)/);
   assert.match(quickRepliesSource, /window\.location\.href = ticketUrl\(\)/);
 });
@@ -3369,7 +3375,26 @@ test('quick replies ticket context use button is single-flight and keyboard-isol
   assert.match(useSource, /state\.useInFlight = true;[\s\S]*try \{[\s\S]*await api\(`\/api\/v1\/quick-replies\/\$\{encodeURIComponent\(reply\.id\)\}\/use`/);
   assert.match(useSource, /finally \{[\s\S]*state\.useInFlight = false;[\s\S]*\}/);
   const keydownSource = sourceBetween(quickRepliesSource, 'el.list.addEventListener("keydown"', 'await load();');
-  assert.match(keydownSource, /if \(event\.target\?\.closest\?\.\("\[data-use\]"\)\) return/);
+  assert.match(keydownSource, /if \(event\.key !== "Enter" && event\.key !== " "\) return/);
+  assert.match(keydownSource, /if \(event\.target\?\.closest\?\.\("\[data-use\]"\) \|\| event\.target\?\.closest\?\.\("\[data-delete\]"\)\) return/);
+  const keyboardHandlerSource = sourceBetween(quickRepliesSource, 'el.list.addEventListener("keydown"', 'el.modal.addEventListener("click"');
+  let handler;
+  const opened = [];
+  const reply = { id: 'reply-1' };
+  vm.runInNewContext(keyboardHandlerSource, {
+    el: { list: { addEventListener: (name, callback) => { assert.equal(name, 'keydown'); handler = callback; } } },
+    state: { replies: [reply] },
+    openEdit: value => opened.push(value),
+  });
+  for (const key of ['Enter', ' ']) {
+    for (const action of [null, 'data-use', 'data-delete']) {
+      opened.length = 0;
+      let prevented = false;
+      handler({ key, target: { closest: selector => selector === `[${action}]` ? {} : selector === '[data-reply-id]' ? { dataset: { replyId: reply.id } } : null }, preventDefault: () => { prevented = true; } });
+      assert.deepEqual(opened, action ? [] : [reply]);
+      assert.equal(prevented, !action);
+    }
+  }
   assert.match(keydownSource, /if \(reply\) openEdit\(reply\)/);
 });
 

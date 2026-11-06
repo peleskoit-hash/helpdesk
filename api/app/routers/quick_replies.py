@@ -74,6 +74,13 @@ def _clean_payload(payload: QuickReplyPayload) -> tuple[str, str]:
     return title, body
 
 
+def _ensure_unique_title(db: Session, title: str, reply_id: str | None = None):
+    normalized = " ".join(title.split()).casefold()
+    for existing_id, existing_title in db.execute(select(QuickReply.id, QuickReply.short_title)):
+        if existing_id != reply_id and " ".join(existing_title.split()).casefold() == normalized:
+            _error(409, "quick_reply_title_duplicate", "Быстрый ответ с таким кратким названием уже существует")
+
+
 def _payload_has_saved_file_ids(payload: QuickReplyPayload) -> bool:
     fields_set = getattr(payload, "model_fields_set", None)
     if fields_set is None:
@@ -180,6 +187,7 @@ def create_quick_reply(
     if not _can_create(user):
         _error(403, "quick_reply_create_forbidden", "Нет прав на создание быстрого ответа")
     title, body = _clean_payload(payload)
+    _ensure_unique_title(db, title)
     now = datetime.utcnow()
     reply = QuickReply(
         id=str(uuid.uuid4()),
@@ -209,6 +217,7 @@ def update_quick_reply(
     if not _can_edit(user, reply):
         _error(403, "quick_reply_edit_forbidden", "Нет прав на редактирование быстрого ответа")
     title, body = _clean_payload(payload)
+    _ensure_unique_title(db, title, reply.id)
     saved_file_ids = None
     if _payload_has_saved_file_ids(payload):
         saved_file_ids = _validate_saved_file_ids(db, payload.saved_file_ids)
