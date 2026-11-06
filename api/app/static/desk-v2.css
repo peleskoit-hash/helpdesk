@@ -333,6 +333,7 @@ body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tick
 }
 
 body #appContent.main[data-shell-page="ticket-card"] {
+  & > .toolbar { padding-left: 16px; }
   & > .ticket-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr) minmax(230px, 260px); padding: 14px 16px 16px; gap: 12px; }
   & .ticket-card > .ticket-card-wrap > .card-head { padding: 12px; }
   & .ticket-head-main { background: transparent; border: 0; border-radius: 0; padding: 0; contain: none; align-items: center; gap: 8px; }
@@ -434,7 +435,7 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 8px 36px 8px 16px; font-size: 14px; }
   & .bulk-freeze-btn { width: auto; }
   & select.bulk-assign-btn { width: 300px; appearance: auto; cursor: pointer; }
-  & .bulk-admin-actions { padding: 5px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); }
+  & .bulk-admin-actions { padding: 0 2px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); }
   & select.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
   & .table-scroll { padding: 8px 12px 0; }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
@@ -651,6 +652,7 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
   body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) { min-height: 100dvh; }
   body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) > .content { padding: 12px; }
   body #appContent.main[data-shell-page="tickets-list"] .toolbar { padding: 12px; }
+  body #appContent.main[data-shell-page="ticket-card"] > .toolbar { padding-left: 12px; }
   body #appContent.main[data-shell-page="tickets-list"] .bulk-admin-actions { flex-wrap: wrap; white-space: normal; }
   body #appContent.main[data-shell-page="ticket-card"] .message { max-width: 94%; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-head-main { flex-wrap: wrap; }
