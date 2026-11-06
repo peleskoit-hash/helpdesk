@@ -31,6 +31,12 @@
         span.style.font = style.font;
         span.style.letterSpacing = style.letterSpacing;
         span.textContent = select.selectedOptions[0]?.textContent?.trim() || "";
+        // Measure the browser's native arrow, border and padding for the selected name only.
+        const option = select.selectedOptions[0]?.cloneNode(true);
+        select.replaceChildren(...(option ? [option] : []));
+        select.style.setProperty("width", "auto", "important");
+        select.style.setProperty("min-width", "0", "important");
+        select.style.setProperty("max-width", "none", "important");
         return [select, span];
       }));
       selectSamples.forEach((span, select) => select.parentElement.appendChild(span));
@@ -43,7 +49,8 @@
         const text = (select ? content.selectedOptions[0]?.textContent : content.textContent)?.trim() || "";
         if (!text || /^[—–-]$/.test(text)) return 0;
         if (select) {
-          return selectSamples.get(content).getBoundingClientRect().width + (dataOnly ? 0 : padding(content) + 20 + padding(cell));
+          return dataOnly ? selectSamples.get(content).getBoundingClientRect().width
+            : content.getBoundingClientRect().width + padding(cell);
         }
         if (content === cell) {
           const range = document.createRange();
@@ -61,10 +68,10 @@
           const width = contentWidth(cell, true);
           return { width, extra: contentWidth(cell) - width };
         }).filter((value) => value.width > 0);
-        const target = values.length ? Math.min(Math.max(...values.map((value) => value.width)), values.reduce((sum, value) => sum + value.width, 0) / values.length * 1.5) + Math.max(...values.map((value) => value.extra)) : 0;
+        const target = values.length ? Math.min(Math.max(...values.map((value) => value.width)), values.reduce((sum, value) => sum + value.width, 0) / values.length * 2) + Math.max(...values.map((value) => value.extra)) : 0;
         return { key: column.key, width: Math.ceil(Math.max(minimum, target)), fullWidth: Math.ceil(Math.max(minimum, ...values.map(value => value.width + value.extra))) };
       });
-      // The 1.5 cap is the baseline. Use only spare subject space for uncapped content,
+      // The 2× cap is the baseline. Use only spare subject space for uncapped content,
       // fitting small deficits first so an outlier cannot crowd out ordinary names.
       const scroll = table.closest(".table-scroll");
       const style = getComputedStyle(scroll);

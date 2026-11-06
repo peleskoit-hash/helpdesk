@@ -84,16 +84,15 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 700, 390]) {
       const group = style('#bulkAdminActions'), header = style('#ticketsTable thead');
       return { border: group.borderTopWidth, borderStyle: group.borderTopStyle, bg: group.backgroundColor,
         headerBg: header.backgroundColor, surface: header.getPropertyValue('--desk-surface').trim(),
-        fill: getComputedStyle(document.querySelector('#ticketsTable thead'), '::after').backgroundColor,
-        fillWidth: parseFloat(getComputedStyle(document.querySelector('#ticketsTable thead'), '::after').width),
-        scrollWidth: document.querySelector('.table-scroll').clientWidth,
+        headerPosition: header.position, headerShadow: header.boxShadow,
         headerHeight: document.querySelector('thead').getBoundingClientRect().height,
         footerHeight: document.querySelector('.table-pagination-footer').getBoundingClientRect().height,
         overflow: document.documentElement.scrollWidth > innerWidth };
     });
     assert.equal(ui.border, '1px'); assert.equal(ui.borderStyle, 'solid'); assert.notEqual(ui.bg, 'rgba(0, 0, 0, 0)');
-    assert.ok(ui.fillWidth >= ui.scrollWidth - 1, 'header covers the viewport even when the table is narrower');
-    assert.equal(ui.headerBg, ui.fill); assert.notEqual(ui.fill, 'rgba(0, 0, 0, 0)');
+    assert.equal(ui.headerPosition, 'sticky');
+    assert.match(ui.headerBg, /^rgb\(/, 'header surface is opaque');
+    assert.ok(ui.headerShadow.includes(ui.headerBg), 'surface shadow covers the gaps around the header');
     assert.ok(ui.headerHeight <= ui.footerHeight, JSON.stringify(ui)); assert.equal(ui.overflow, false);
     for (const kind of kinds) {
       const colors = await page.locator(`tr.ticket-color-${kind}`).first().evaluate(row => ({

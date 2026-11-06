@@ -82,7 +82,7 @@ test("ticket color preference is loaded, toggled, and persisted with a partial p
   assert.match(template, /id="colorEnabledInput"[^>]*type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
   assert.match(template, /list\.js\?v=20261105-column-auto-width-v7/);
-  assert.match(template, /styles\.css\?v=20261106-personal-stats-v3/);
+  assert.match(template, /styles\.css\?v=20261106-ticket-table-v2/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
   assert.match(stateSource, /colorEnabled: true/);
@@ -180,7 +180,7 @@ test("ticket task panel preference control and lifecycle are wired into list set
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261105-column-auto-width-v6", "\/static\/list\.js\?v=20261105-column-auto-width-v7"\] \}\]/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1", "\/static\/list\.js\?v=20261105-column-auto-width-v7"\] \}\]/);
   assert.match(template, /list\.js\?v=20261105-column-auto-width-v7/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");

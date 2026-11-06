@@ -29,7 +29,7 @@ async function setup(t, theme, width, kind) {
       assert.match(request.headers().cookie, /desk_session=authorized/);
       return route.continue();
     }
-    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261106-personal-stats-v3"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
+    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261106-ticket-table-v2"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
   });
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${origin}/tickets/${kind === 'task' ? 531 : 530}`);
