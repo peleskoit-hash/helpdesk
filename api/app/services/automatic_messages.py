@@ -61,6 +61,32 @@ class SafeTelegramHtml:
 
 AUTOMATIC_MESSAGE_REGISTRY: tuple[AutomaticMessageDefinition, ...] = (
     AutomaticMessageDefinition(
+        key="telegram.after_hours.creation_blocked.client",
+        title="Создание заявки или задачи в нерабочее время",
+        description="Сообщение клиенту при запрете создания заявки или задачи вне времени приёма обращений",
+        category="after_19",
+        category_title="После 19:00",
+        sort_order=10,
+        default_text=(
+            "Сейчас создание заявки или задачи недоступно. Попробуйте в рабочее время.\n"
+            "Рабочие часы поддержки: Пн–Сб 08:00–19:00 МСК, воскресенье — выходной."
+        ),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
+        key="telegram.after_hours.automation_handoff_blocked.client",
+        title="Передача автоматического обращения сотруднику в нерабочее время",
+        description="Сообщение клиенту при запрете передачи автоматического обращения сотруднику вне времени приёма обращений",
+        category="after_19",
+        category_title="После 19:00",
+        sort_order=20,
+        default_text=(
+            "Сейчас передача автоматического обращения сотруднику недоступна. Попробуйте в рабочее время.\n"
+            "Рабочие часы поддержки: Пн–Сб 08:00–19:00 МСК, воскресенье — выходной."
+        ),
+        runtime_enabled=True,
+    ),
+    AutomaticMessageDefinition(
         key="telegram.onboarding.first_connection.client",
         title="Первое подключение клиента",
         description="Приветствие и объяснение первичного обращения при первом /start",

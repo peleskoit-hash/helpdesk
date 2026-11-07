@@ -8,6 +8,8 @@ from sqlalchemy import select, text
 
 from ..models import TelegramContact, Ticket, TicketAttachment, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .telegram_bot import copy_message
+from .telegram_intake_hours import is_telegram_intake_open
+from .telegram_automation import _block_automation_handoff
 from .telegram_group_registry import group_for_ticket
 
 _locks = WeakValueDictionary()
@@ -67,6 +69,14 @@ def pending_tickets(db, chat_id=None):
 
 
 def handoff(db, ticket, button, chat_id, notify_client, *, callbacks, reason):
+    if ticket.status == TicketStatus.CLOSED.value:
+        return {"ok": True, "ticket_id": ticket.id, "closed": True}
+    if ticket.channel == "telegram" and not is_telegram_intake_open():
+        callbacks["append_system"](db, ticket, reason.removesuffix("; заявка передана сотрудникам."), agent_visible=True)
+        return _block_automation_handoff(
+            db, ticket, chat_id, notify_client, complete_fn=callbacks["complete"],
+            remove_close_fn=callbacks["remove_close"], send_fn=callbacks["send"],
+        )
     callbacks["append_system"](db, ticket, reason, agent_visible=True)
     if ticket.workflow_type == TicketWorkflowType.AUTO.value:
         ticket.workflow_type = TicketWorkflowType.TICKET.value

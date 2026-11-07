@@ -13,6 +13,8 @@ from .bitrix_client import BitrixApiError, get_deal_phone_lookup
 from .bitrix_deal_input import extract_deal_id
 from .button_automation_types import get_button_automation_meta
 from .telegram_group_automation import chat_lock
+from .telegram_intake_hours import is_telegram_intake_open
+from .telegram_automation import _block_automation_handoff
 from . import bitrix_phone_deals
 
 KEY = "bitrix_deal_phone_lookup"
@@ -306,6 +308,15 @@ def pending(ticket):
 
 def handoff(db, ticket, chat, notify, callbacks, *, technical=False):
     if not state(ticket).get("handed_off"):
+        if ticket.status == TicketStatus.CLOSED.value:
+            return {"ok": True, "ticket_id": ticket.id, "closed": True}
+        if ticket.channel == "telegram" and not is_telegram_intake_open():
+            append_summary(db, ticket, callbacks, "Расшифровка Bitrix: передача сотрудникам недоступна" +
+                           ("; техническая ошибка API" if technical else "; запрос клиента"))
+            return _block_automation_handoff(
+                db, ticket, chat, notify, complete_fn=callbacks["complete"],
+                remove_close_fn=callbacks["remove_close"], send_fn=callbacks["send"],
+            )
         ticket.quick_action_state_json = {**ticket.quick_action_state_json, automation_key(ticket): {**state(ticket), "handed_off": True, "technical": technical}}
         # The distribution and its durable marker must share one transaction.
         ticket.intake_state = TicketIntakeState.READY.value

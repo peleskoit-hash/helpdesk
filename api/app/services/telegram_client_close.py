@@ -21,6 +21,7 @@ from ..models import (
 from .automatic_messages import TASK_CREATION_CANCELLED_TEXT, render_automatic_message_for_telegram
 from .statistics_lifecycle import sync_work_interval_after_close
 from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, delete_uncreated_normal_task, is_uncreated_normal_task
+from .ticket_admin_actions import is_uncreated_telegram_group_parent_task, delete_uncreated_telegram_group_parent_task
 from .telegram_post_close import (
     attributable_review_agent_id_for_client_close,
     finalize_review_offer_close_message,
@@ -192,14 +193,18 @@ def close_active_ticket_for_contact(
     if ticket is None:
         return None
 
-    uncreated_task = is_uncreated_normal_task(db, ticket)
+    uncreated_group_parent = is_uncreated_telegram_group_parent_task(db, ticket)
+    uncreated_task = is_uncreated_normal_task(db, ticket) or uncreated_group_parent
     if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         remove_menu_keyboard_fn(db, ticket, fallback_chat_id=contact.external_chat_id, fallback_message_id=fallback_message_id)
         remove_client_close_button_fn(db, ticket)
         if uncreated_task:
             if before_delete_task_fn is not None:
                 before_delete_task_fn(ticket)
-            delete_uncreated_normal_task(db, ticket)
+            if uncreated_group_parent:
+                delete_uncreated_telegram_group_parent_task(db, ticket)
+            else:
+                delete_uncreated_normal_task(db, ticket)
         else:
             delete_preliminary_telegram_ticket(db, ticket)
         return ticket
@@ -291,16 +296,20 @@ def process_client_close_callback(
 
     ticket_id = ticket.id
     prepared_close = None
-    if notify_client and is_uncreated_normal_task(db, ticket):
+    uncreated_group_parent = is_uncreated_telegram_group_parent_task(db, ticket)
+    uncreated_task = is_uncreated_normal_task(db, ticket) or uncreated_group_parent
+    if notify_client and uncreated_task:
         prepared_close = prepare_uncreated_task_close_notification(
             db, ticket, contact)
-    uncreated_task = is_uncreated_normal_task(db, ticket)
     if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         remove_menu_keyboard_fn(db, ticket, fallback_chat_id=external_chat_id,
                                 fallback_message_id=message_id if isinstance(message_id, int) else None)
         ticket.client_close_message_id = None
         if uncreated_task:
-            delete_uncreated_normal_task(db, ticket)
+            if uncreated_group_parent:
+                delete_uncreated_telegram_group_parent_task(db, ticket)
+            else:
+                delete_uncreated_normal_task(db, ticket)
         else:
             delete_preliminary_telegram_ticket(db, ticket)
     else:

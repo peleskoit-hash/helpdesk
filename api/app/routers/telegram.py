@@ -68,6 +68,12 @@ from ..services.template_fields import render_template_text
 from ..services.telegram_text_format import prepare_telegram_html_message, strip_telegram_html
 from ..services.temporary_rop import temporary_rop_destination
 from ..services.automatic_messages import get_automatic_message_row, render_automatic_message_for_telegram, render_automatic_message_text
+from ..services.telegram_intake_hours import is_telegram_intake_open
+from ..services.telegram_after_hours_cleanup import is_ordinary_telegram_task_draft
+from ..services.ticket_admin_actions import (
+    is_uncreated_telegram_group_parent_task,
+    delete_uncreated_telegram_group_parent_task,
+)
 from ..services.telegram_client_close import (
     CLIENT_CLOSE_MESSAGE_KEY,
     client_can_close_ticket,
@@ -102,6 +108,7 @@ from ..services.button_automation_types import (
     AUTOMATION_TYPE_SEND_FILES,
 )
 from ..services.telegram_automation import (
+    _block_automation_handoff,
     _handoff_automation_task_to_agent,
     AUTOMATION_FALLBACK_CLIENT_TEXT,
     process_collecting_ticket_automation,
@@ -1065,6 +1072,11 @@ def _fallback_auto_to_support(
     client_message_fallback: str = MATERIAL_UNAVAILABLE_TEXT,
     client_message_extra: dict | None = None,
 ) -> User | None:
+    if ticket.status == TicketStatus.CLOSED.value:
+        return None
+    handoff_blocked = ticket.channel == "telegram" and not is_telegram_intake_open()
+    if handoff_blocked:
+        reason = reason.removesuffix(". Заявка передана сотруднику.")
     setting = _button_setting_for_ticket(db, ticket)
     context = {
         "workflow_type": ticket.workflow_type,
@@ -1076,6 +1088,14 @@ def _fallback_auto_to_support(
     append_system_message(db, ticket,
         f"Автоматическая отправка материала не выполнена: {reason}\n"
         f"Исходные данные автоматизации: {json.dumps(context, ensure_ascii=False)}", agent_visible=True)
+    if handoff_blocked:
+        _block_automation_handoff(
+            db, ticket, external_chat_id, notify_client, complete_fn=_complete_auto_ticket,
+            remove_close_fn=lambda db, ticket: remove_client_close_button(
+                db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard),
+            send_fn=send_message,
+        )
+        return None
     ticket.intake_state = TicketIntakeState.READY.value
     ticket.workflow_type = TicketWorkflowType.TASK.value
     ticket.task_kind = TicketTaskKind.NORMAL.value
@@ -1132,7 +1152,8 @@ def _dispatch_builtin_button_automation(
         else:
             append_system_message(db, ticket, "Не удалось начать ожидание сообщения для Telegram-группы", agent_visible=True)
         db.commit()
-        return {"ok": True, "ticket_id": ticket.id, "workflow_type": ticket.workflow_type, "automation_pending": True, "status": ticket.status}
+        return {"ok": True, "ticket_id": ticket.id, "workflow_type": ticket.workflow_type,
+                "automation_pending": ticket.status != TicketStatus.CLOSED.value, "status": ticket.status}
 
     if effective_automation_key == AUTOMATION_TYPE_SEND_FILES:
         if workflow_type == TicketWorkflowType.AUTO.value:
@@ -1161,7 +1182,7 @@ def _dispatch_builtin_button_automation(
                         "ticket_id": ticket.id,
                         "workflow_type": ticket.workflow_type,
                         "status": ticket.status,
-                        "automation_handoff": True,
+                        "automation_handoff": ticket.status != TicketStatus.CLOSED.value,
                     }
             direct_file_ok, direct_file_error = _send_button_direct_file(db, ticket, button, external_chat_id)
             _send_button_rule_files(db, ticket, button, external_chat_id)
@@ -1238,7 +1259,7 @@ def _dispatch_builtin_button_automation(
                     "ticket_id": ticket.id,
                     "workflow_type": ticket.workflow_type,
                     "status": ticket.status,
-                    "automation_handoff": True,
+                    "automation_handoff": ticket.status != TicketStatus.CLOSED.value,
                 }
         _complete_auto_ticket(db, ticket, external_chat_id, False)
         db.commit()
@@ -1265,7 +1286,7 @@ def _dispatch_builtin_button_automation(
             "ticket_id": ticket.id,
             "workflow_type": ticket.workflow_type,
             "status": ticket.status,
-            "automation_handoff": True,
+            "automation_handoff": ticket.status != TicketStatus.CLOSED.value,
         }
 
     if workflow_type == TicketWorkflowType.TICKET.value:
@@ -2132,6 +2153,51 @@ def _process_menu_callback(
     return {"ok": True, "menu_key": menu_key}
 
 
+def _is_hours_limited_button(button: ButtonSpec) -> bool:
+    return button.kind in {"ticket", "task", "group_task"} and button.automation_key not in {
+        "telegram_group", telegram_client_origin.KEY, *telegram_bitrix_phone.KEYS,
+        AUTOMATION_TYPE_MESSAGE_ONLY, AUTOMATION_TYPE_SEND_FILES,
+    }
+
+
+def _block_button_after_hours(db, contact, ticket, callback_id, message_id, notify_client):
+    # Render before deleting the draft: template fields may refer to it.
+    text, mode = render_automatic_message_for_telegram(
+        db, "telegram.after_hours.creation_blocked.client", ticket=ticket, contact=contact,
+    )
+    delete_draft = None
+    if ticket is not None:
+        db.flush()
+        # Existing predicates alone do not all exclude automation or client data.
+        automated = bool(ticket.quick_action_state_json) or ticket.workflow_type == "auto"
+        for key in (ticket.instruction_button_key, ticket.button_config_key):
+            row = resolve_button_row(db, key, include_inactive=True) if key else None
+            automated = automated or (row is not None and bool(row.automation_key or row.workflow_type == "auto"))
+        has_client_data = db.scalar(select(TicketMessage.id).where(
+            TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == "client").limit(1)) is not None
+        has_children = db.scalar(select(Ticket.id).where(Ticket.parent_ticket_id == ticket.id).limit(1)) is not None
+        if ticket.channel == "telegram" and not automated and not has_client_data and not has_children:
+            if is_preliminary_telegram_ticket(db, ticket):
+                delete_draft = delete_preliminary_telegram_ticket
+            elif is_uncreated_normal_task(db, ticket):
+                delete_draft = delete_uncreated_normal_task
+            elif is_uncreated_telegram_group_parent_task(db, ticket):
+                delete_draft = delete_uncreated_telegram_group_parent_task
+    if notify_client and isinstance(message_id, int):
+        _safe_remove_inline_keyboard(contact.external_chat_id, message_id)
+    if delete_draft is not None:
+        if notify_client:
+            _remove_menu_keyboard(db, ticket, fallback_chat_id=contact.external_chat_id)
+            remove_client_close_button(db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard)
+        delete_draft(db, ticket)
+    db.commit()
+    if notify_client:
+        if callback_id:
+            answer_callback_query(callback_id)
+        send_message(contact.external_chat_id, text, parse_mode=mode)
+    return {"ok": True, "after_hours_blocked": True}
+
+
 def _process_problem_type_callback(
     db: Session,
     payload: dict,
@@ -2211,6 +2277,8 @@ def _process_problem_type_callback(
         return {"ok": True, "ticket_id": active_ticket.id, "already_active": True}
 
     collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
+    if _is_hours_limited_button(button) and not is_telegram_intake_open():
+        return _block_button_after_hours(db, contact, collecting_ticket, callback_id, message_id, notify_client)
     if collecting_ticket is None:
         collecting_ticket = _create_collecting_ticket(db, contact.company_id, contact.client_id)
     _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id, fallback_message_id=message_id if isinstance(message_id, int) else None)
@@ -2219,6 +2287,7 @@ def _process_problem_type_callback(
     collecting_ticket.instruction_button_key = _resolve_instruction_button_key(db, menu_name, button.key)
     confirmation_enabled, confirmation_text = _resolve_effective_confirmation(collecting_ticket, button, db)
     if confirmation_enabled:
+        collecting_ticket.button_config_key = button.key
         db.commit()
         if notify_client:
             if callback_id:
@@ -2326,6 +2395,8 @@ def _process_problem_type_callback(
         return {"ok": True, "ticket_id": collecting_ticket.id, "task_pending": True, "button": button.label}
 
     ticket = collecting_ticket
+    if _is_hours_limited_button(button) and not is_telegram_intake_open():
+        return _block_button_after_hours(db, contact, ticket, callback_id, message_id, notify_client)
     assigned_agent = _ready_ticket_for_distribution(db, ticket, button)
     db.commit()
 
@@ -2362,6 +2433,9 @@ def _group_automation_callbacks():
         "handoff": lambda db, ticket, button, chat, notify: _handoff_automation_task_to_agent(
             db, ticket, button, chat, notify, append_button_system_text_fn=_store_button_system_text,
             ready_ticket_for_distribution_fn=_ready_ticket_for_distribution, send_message_fn=send_message,
+            complete_automation_fn=_complete_auto_ticket,
+            remove_client_close_button_fn=lambda db, ticket: remove_client_close_button(
+                db, ticket, remove_inline_keyboard_fn=remove_inline_keyboard),
         ),
     }
 
@@ -2668,6 +2742,8 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                     _send_problem_menu_for_contact(db, contact, collecting_ticket)
                 return {"ok": True, "ticket_id": collecting_ticket.id, "confirmation": "no"}
 
+            if decision == "yes" and _is_hours_limited_button(button) and not is_telegram_intake_open():
+                return _block_button_after_hours(db, contact, collecting_ticket, callback_id, message_id, notify_client)
             _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
             origin_wait = _begin_client_origin_wait(db, collecting_ticket, external_chat_id, notify_client, callback_id)
             if origin_wait is not None:
@@ -2761,6 +2837,8 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 return {"ok": True, "ticket_id": collecting_ticket.id, "task_pending": True, "button": button.label}
 
             ticket = collecting_ticket
+            if _is_hours_limited_button(button) and not is_telegram_intake_open():
+                return _block_button_after_hours(db, contact, ticket, callback_id, message_id, notify_client)
             assigned_agent = _ready_ticket_for_distribution(db, ticket, button)
             db.commit()
             if notify_client:
@@ -3043,6 +3121,16 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
         has_destination = bool((profile.destination or "").strip()) if profile is not None else False
         needs_onboarding = bool(profile is None or not profile.is_verified or not has_destination)
         if ticket is None and needs_onboarding:
+            if not is_telegram_intake_open():
+                db.commit()
+                if notify_client:
+                    blocked_text, blocked_parse_mode = render_automatic_message_for_telegram(
+                        db,
+                        "telegram.after_hours.creation_blocked.client",
+                        contact=contact,
+                    )
+                    send_message(external_chat_id, blocked_text, parse_mode=blocked_parse_mode)
+                return {"ok": True, "command": "start", "after_hours_blocked": True}
             first_connection_config = first_connection_values(db, _first_connection_defaults(db, contact))
             return process_first_connection_start(
                 db,
@@ -3114,8 +3202,11 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
     album_task = _task_for_client_album(db, contact, attachment_data)
     collecting_ticket = None if album_task is not None else _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
     if collecting_ticket is not None and collecting_ticket.workflow_type == TicketWorkflowType.TASK.value:
+        if is_ordinary_telegram_task_draft(db, collecting_ticket) and not is_telegram_intake_open():
+            return _block_button_after_hours(db, contact, collecting_ticket, "", None, notify_client)
         if collecting_ticket.updated_at + timedelta(minutes=TASK_DESCRIPTION_TIMEOUT_MINUTES) <= _now_for(collecting_ticket.updated_at):
-            uncreated_task = is_uncreated_normal_task(db, collecting_ticket)
+            uncreated_group_parent = is_uncreated_telegram_group_parent_task(db, collecting_ticket)
+            uncreated_task = is_uncreated_normal_task(db, collecting_ticket) or uncreated_group_parent
             if not uncreated_task:
                 collecting_ticket.intake_state = TicketIntakeState.CANCELLED.value
                 closed_at = datetime.utcnow()
@@ -3130,7 +3221,10 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 db, "telegram.intake.task_timeout", TASK_EXPIRED_TEXT, ticket=collecting_ticket,
                 contact=contact, extra={"timeout_minutes": TASK_DESCRIPTION_TIMEOUT_MINUTES}) if notify_client else None)
             if uncreated_task:
-                delete_uncreated_normal_task(db, collecting_ticket)
+                if uncreated_group_parent:
+                    delete_uncreated_telegram_group_parent_task(db, collecting_ticket)
+                else:
+                    delete_uncreated_normal_task(db, collecting_ticket)
             db.commit()
             if notify_client:
                 send_message(external_chat_id, *timeout_notification)
@@ -3337,7 +3431,8 @@ def cleanup_expired_task_intents(db: Session) -> int:
             expired.append(ticket)
     for ticket in expired:
         contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
-        uncreated_task = is_uncreated_normal_task(db, ticket)
+        uncreated_group_parent = is_uncreated_telegram_group_parent_task(db, ticket)
+        uncreated_task = is_uncreated_normal_task(db, ticket) or uncreated_group_parent
         preliminary = is_preliminary_telegram_ticket(db, ticket) or uncreated_task
         if not preliminary:
             ticket.intake_state = TicketIntakeState.CANCELLED.value
@@ -3359,7 +3454,10 @@ def cleanup_expired_task_intents(db: Session) -> int:
             send_message(contact.external_chat_id, timeout_text, parse_mode=timeout_parse_mode)
         if preliminary:
             if uncreated_task:
-                delete_uncreated_normal_task(db, ticket)
+                if uncreated_group_parent:
+                    delete_uncreated_telegram_group_parent_task(db, ticket)
+                else:
+                    delete_uncreated_normal_task(db, ticket)
             else:
                 delete_preliminary_telegram_ticket(db, ticket)
     db.commit()

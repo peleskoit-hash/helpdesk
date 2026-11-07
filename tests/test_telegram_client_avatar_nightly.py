@@ -338,4 +338,5 @@ def test_nightly_failure_does_not_stop_existing_scheduler_passes(monkeypatch):
     monkeypatch.setattr(scheduler.asyncio, "sleep", sleep)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(scheduler.internal_task_scheduler_loop())
-    assert calls == ["run_internal_task_scheduler_once", "run_internal_task_recurring_once", "run_avatar_cleanup_once"] * 2
+    assert calls == ["run_internal_task_scheduler_once", "run_internal_task_recurring_once", "run_avatar_cleanup_once",
+                     "run_telegram_after_hours_cleanup_once"] * 2

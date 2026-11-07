@@ -31,6 +31,7 @@ from .ticket_subject import resolve_ticket_subject
 from .telegram_text_format import telegram_html_code, telegram_html_text
 from .internal_tasks import is_internal_task_ticket
 from .ticket_admin_actions import delete_preliminary_telegram_ticket, is_preliminary_telegram_ticket, delete_uncreated_normal_task, is_uncreated_normal_task
+from .ticket_admin_actions import is_uncreated_telegram_group_parent_task, delete_uncreated_telegram_group_parent_task
 
 
 def _error(status_code: int, code: str, message: str):
@@ -829,7 +830,8 @@ def close_ticket_by_actor(
     if ticket.status == TicketStatus.CLOSED.value:
         return "already_closed"
 
-    uncreated_task = is_force_close_action and is_uncreated_normal_task(db, ticket)
+    uncreated_group_parent = is_force_close_action and is_uncreated_telegram_group_parent_task(db, ticket)
+    uncreated_task = is_force_close_action and (is_uncreated_normal_task(db, ticket) or uncreated_group_parent)
     if is_preliminary_telegram_ticket(db, ticket) or uncreated_task:
         from .telegram_client_close import remove_client_close_button
         from .telegram_menu_flow import _remove_menu_keyboard
@@ -850,7 +852,10 @@ def close_ticket_by_actor(
             if ticket.channel == "web":
                 from .web_tasks import chat_event, message_text
                 chat_event(db, ticket, "cancelled", message_text(db, "telegram.ticket.close.unassigned.client", ticket))
-            delete_uncreated_normal_task(db, ticket)
+            if uncreated_group_parent:
+                delete_uncreated_telegram_group_parent_task(db, ticket)
+            else:
+                delete_uncreated_normal_task(db, ticket)
         else:
             delete_preliminary_telegram_ticket(db, ticket)
         return "closed"

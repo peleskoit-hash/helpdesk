@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Ticket, TicketIntakeState, TicketStatus, TicketWorkflowType
 from .automatic_messages import render_automatic_message_for_telegram
+from .telegram_intake_hours import is_telegram_intake_open
 from .button_automation_types import (
     AUTOMATION_TYPE_BITRIX_DEAL_PHONE_LOOKUP,
     AUTOMATION_TYPE_BITRIX_PHONE_DEAL_LOOKUP,
@@ -40,6 +41,20 @@ def get_automation_registry() -> dict[str, dict]:
     }
 
 
+def _block_automation_handoff(db, ticket, chat, notify, *, complete_fn, remove_close_fn, send_fn):
+    text, mode = render_automatic_message_for_telegram(
+        db, "telegram.after_hours.automation_handoff_blocked.client", ticket=ticket,
+    )
+    remove_close_fn(db, ticket)
+    ticket.agent_visible = False
+    ticket.load_counted = False
+    complete_fn(db, ticket, chat, False)
+    db.commit()
+    if notify:
+        send_fn(chat, text, parse_mode=mode)
+    return {"ok": True, "ticket_id": ticket.id, "closed": True, "after_hours_blocked": True}
+
+
 def _handoff_automation_task_to_agent(
     db: Session,
     ticket: Ticket,
@@ -50,7 +65,16 @@ def _handoff_automation_task_to_agent(
     append_button_system_text_fn,
     ready_ticket_for_distribution_fn,
     send_message_fn,
+    complete_automation_fn,
+    remove_client_close_button_fn,
 ):
+    if ticket.status == TicketStatus.CLOSED.value:
+        return {"ok": True, "ticket_id": ticket.id, "closed": True}
+    if ticket.channel == "telegram" and not is_telegram_intake_open():
+        return _block_automation_handoff(
+            db, ticket, external_chat_id, notify_client, complete_fn=complete_automation_fn,
+            remove_close_fn=remove_client_close_button_fn, send_fn=send_message_fn,
+        )
     if button is not None:
         append_button_system_text_fn(db, ticket, button)
     ready_ticket_for_distribution_fn(db, ticket, button)
