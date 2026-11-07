@@ -1162,6 +1162,22 @@ body[data-sidebar-ready="0"] .admin-select-col {
   font-weight: 700;
 }
 
+.sidebar .status-panel .agent-status-btn {
+  position: relative;
+  padding-right: 52px;
+}
+
+.sidebar .status-panel .agent-status-btn.active::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: -1px;
+  height: calc(100% + 2px);
+  aspect-ratio: 803 / 845;
+  background: url("/static/icons/employee-status-selected.png") top right / contain no-repeat;
+  pointer-events: none;
+}
+
 .status-offline { background: #ffe4e6; }
 .status-online { background: #dcfce7; }
 .status-on-ticket { background: #ede9fe; }
