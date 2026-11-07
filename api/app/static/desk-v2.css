@@ -431,8 +431,10 @@ body #appContent.main[data-shell-page="tickets-list"] {
     backdrop-filter: blur(.5px);
     -webkit-backdrop-filter: blur(.5px);
   }
-  & .toolbar > .search-input-wrap { flex: 1 1 300px; max-width: 560px; }
-  & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 8px 36px 8px 16px; font-size: 14px; }
+  & .toolbar > .search-input-wrap { flex: 0 1 var(--compact-search-width, 34ch); width: var(--compact-search-width, 34ch); max-width: 100%; min-width: 0; }
+  & .search-input-wrap #searchInput { width: 100%; min-width: 0; padding: 9px 12px 9px 36px; font-size: 14px; line-height: 1.4; }
+  & .search-input-wrap.has-query #searchInput { padding-right: 34px; }
+  & .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; fill: none; stroke: var(--desk-muted); stroke-width: 2; pointer-events: none; }
   & .bulk-freeze-btn { width: auto; }
   & select.bulk-assign-btn { width: 300px; appearance: auto; cursor: pointer; }
   & .bulk-admin-actions { padding: 0 2px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); }
@@ -653,6 +655,7 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
   body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tickets-list"]) > .content { padding: 12px; }
   body #appContent.main[data-shell-page="tickets-list"] .toolbar { padding: 12px; }
   body #appContent.main[data-shell-page="ticket-card"] > .toolbar { padding-left: 12px; }
+  body #appContent.main[data-shell-page="ticket-card"] > .toolbar.task-panel-eligible { padding-block: 12px; }
   body #appContent.main[data-shell-page="tickets-list"] .bulk-admin-actions { flex-wrap: wrap; white-space: normal; }
   body #appContent.main[data-shell-page="ticket-card"] .message { max-width: 94%; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-head-main { flex-wrap: wrap; }
@@ -782,4 +785,35 @@ body #appContent.main[data-shell-page="settings-home"] {
   body:has(#appContent.main[data-shell-page="settings-home"]) .layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 100dvh; }
   body:has(#appContent.main[data-shell-page="settings-home"]) .sidebar { max-height: 360px; overflow-y: auto; }
   body #appContent.main[data-shell-page="settings-home"] { height: 100dvh; }
+}
+
+/* Task chips share the header; their allocation never participates in wrapping. */
+body #appContent.main:is([data-shell-page="tickets-list"], [data-shell-page="ticket-card"]) > .toolbar {
+  position: relative;
+  & > .task-panel {
+    --task-panel-chip-min: 104px;
+    position: absolute; display: flex; align-items: center; align-self: auto; gap: 6px;
+    height: 30px; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0;
+    background: transparent; box-shadow: none; backdrop-filter: none;
+  }
+  & .task-panel-slots { display: flex; flex: 1; gap: 6px; min-width: 0; }
+  & .task-panel-slots:empty { display: none; }
+  & .task-panel-chip { flex: 1; min-width: 0; max-width: 180px; }
+  & .task-panel-slots:has(> .task-panel-chip + .task-panel-chip) > .task-panel-chip { max-width: none; }
+  & .task-panel-more { flex: 0 0 44px; }
+  & :is(.task-panel-chip, .task-panel-more, .task-panel-menu-item) {
+    --task-chip-fill: color-mix(in srgb, var(--desk-surface) 90%, var(--desk-text));
+    --task-chip-line: color-mix(in srgb, var(--desk-border) 65%, var(--desk-text));
+    background: var(--task-chip-fill); color: var(--desk-text); border-color: var(--task-chip-line);
+    box-shadow: inset 0 0 0 1px var(--task-chip-fill), inset 0 0 0 2px var(--task-chip-line);
+  }
+  & :is(.task-panel-chip, .task-panel-more, .task-panel-menu-item):hover, & .task-panel-more.active {
+    --task-chip-fill: color-mix(in srgb, var(--desk-surface) 86%, var(--desk-text));
+    --task-chip-line: var(--desk-accent);
+  }
+  & :is(.task-panel-chip, .task-panel-menu-item)[aria-current="page"] {
+    --task-chip-fill: var(--desk-tint); --task-chip-line: var(--desk-accent);
+    background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent);
+  }
+  & .task-panel-dropdown { position: fixed; right: auto; width: min(420px, calc(100vw - 16px)); }
 }

@@ -8,7 +8,7 @@ test.before(async () => { browser = await chromium.launch({ channel: process.env
 test.after(async () => { await browser?.close(); });
 
 async function setup(t, name) {
-  const page = await browser.newPage();
+  const page = await browser.newPage({viewport:{width:1600,height:700}});
   t.after(() => page.close());
   const source = fs.readFileSync(`api/app/static/${name}.js`, 'utf8');
   assert.match(source, /taskPanelStatus: "loading"/);
@@ -17,16 +17,22 @@ async function setup(t, name) {
     assert.ok(from >= 0 && to > from);
     return source.slice(from, to);
   };
-  await page.setContent(`<main class="main" data-shell-page="${name === 'list' ? 'tickets-list' : 'ticket-card'}" style="height:600px">
-    <header class="toolbar" style="height:40px">Шапка</header>
+  await page.setContent(`<main id="appContent" class="main" data-shell-page="${name === 'list' ? 'tickets-list' : 'ticket-card'}" style="height:600px">
+    <header class="toolbar" style="height:40px"><button id="backToListBtn">Назад</button>
     <div id="taskPanel" class="task-panel hidden">
     <div id="taskPanelSlots" class="task-panel-slots"></div>
     <button id="taskPanelMoreBtn" class="task-panel-more hidden">…</button>
     <div id="taskPanelDropdown" class="task-panel-dropdown hidden"></div></div>
-    <section class="content" style="grid-template-columns:1fr"><div class="panel">Основной контейнер</div></section></main>`);
+    <div class="display-settings" style="margin-left:auto;width:100px">Оформление</div></header><section class="content" style="grid-template-columns:1fr"><div class="panel">Основной контейнер</div></section></main>`);
   await page.addStyleTag({ content: fs.readFileSync('api/app/static/styles.css', 'utf8') });
+  await page.addStyleTag({ content: fs.readFileSync('api/app/static/desk-v2.css', 'utf8') });
+  await page.addScriptTag({ content: fs.readFileSync('api/app/static/task_panel_layout.js', 'utf8') });
   await page.evaluate(() => {
     window.state = { role: 'agent', taskPanelEnabled: true, taskPanelItems: [], taskPanelStatus: 'loading' };
+    HelpdeskTaskPanelLayout.restore(state,{userId:'agent',role:'agent',sessionLoginTs:1});
+    state.taskPanelEnabled=true;
+    window.pageEventController=new AbortController();
+    window.destroyed=false;
     window.el = Object.fromEntries(['taskPanel', 'taskPanelSlots', 'taskPanelMoreBtn', 'taskPanelDropdown']
       .map(id => [id, document.getElementById(id)]));
     window.errors = [];
@@ -40,7 +46,7 @@ async function setup(t, name) {
     };
   });
   await page.addScriptTag({ content:
-    between('function canUseTaskPanel(', name === 'list' ? 'function allowedTicketColumnKeys(' : 'function taskPanelReturnUrl(')
+    between('function canUseTaskPanel(', name === 'list' ? 'function allowedTicketColumnKeys(' : 'function taskPanelTicketHref(')
     + between('function taskPanelItemHtml(', name === 'list' ? 'function closeOnBackdropClick(' : 'function cleanupTicketCardPage('),
   });
   await page.evaluate(() => renderTaskPanel());
@@ -56,6 +62,7 @@ async function reply(page, items) {
 }
 
 for (const name of ['list', 'ticket']) {
+  const maximum = name === 'list' ? 6 : 7;
   test(`${name}: loading, empty, populated and overflow states replace each other without duplicates`, async t => {
     const page = await setup(t, name);
     assert.equal(await page.locator('#taskPanel').isVisible(), true);
@@ -73,10 +80,10 @@ for (const name of ['list', 'ticket']) {
     assert.equal(await page.locator('#taskPanelSlots').textContent(), 'Нет заявок');
     const items = Array.from({ length: 9 }, (_, i) => ({ id: String(i), subject: `Заявка ${i}`, has_unread: i === 0 }));
     await reply(page, items);
-    assert.deepEqual(await page.locator('#taskPanelSlots a .task-panel-subject').allTextContents(), items.slice(0, 8).map(i => i.subject));
+    assert.deepEqual(await page.locator('#taskPanelSlots a .task-panel-subject').allTextContents(), items.slice(0, maximum).map(i => i.subject));
     assert.equal(await page.locator('#taskPanelSlots .task-panel-unread').count(), 1);
     assert.equal(await page.locator('#taskPanelMoreBtn').isVisible(), true);
-    assert.equal(await page.locator('#taskPanelDropdown a').count(), 1);
+    assert.equal(await page.locator('#taskPanelDropdown a').count(), items.length-maximum);
     assert.equal(await page.locator('#taskPanelSlots').textContent().then(s => s.includes('Нет заявок')), false);
     await begin(page);
     await reply(page, []);
@@ -133,6 +140,7 @@ for (const name of ['list', 'ticket']) {
           el.taskPanelDropdown.classList.remove('hidden');
           el.taskPanelMoreBtn.classList.add('active');
           el.taskPanelDropdown.querySelector('a').focus();
+          taskPanelLayout.positionDropdown();
         }
         window.savedChip = el.taskPanelSlots.firstElementChild;
         window.savedLink = el.taskPanelDropdown.firstElementChild;
@@ -152,7 +160,7 @@ for (const name of ['list', 'ticket']) {
         assert.equal(await page.locator('#taskPanelDropdown').isVisible(), true);
         assert.equal(await page.evaluate(() => state.taskPanelDropdownOpen), true);
         await begin(page, true);
-        await reply(page, items.map((item, i) => ({ ...item, subject: i === 8 ? 'Изменено' : item.subject })));
+        await reply(page, items.map((item, i) => ({ ...item, subject: i === maximum ? 'Изменено' : item.subject })));
         assert.equal(await page.locator('#taskPanel').isVisible(), true);
         assert.equal(await page.locator('#taskPanelDropdown').isVisible(), true);
         assert.equal(await page.locator('#taskPanelDropdown a').first().textContent(), 'Изменено');
@@ -160,29 +168,111 @@ for (const name of ['list', 'ticket']) {
           el.taskPanelDropdown.addEventListener('click', event => { event.preventDefault(); window.clicked = event.target.closest('a')?.getAttribute('href'); });
         });
         await page.locator('#taskPanelDropdown a').first().click();
-        assert.equal(await page.evaluate(() => clicked), '/tickets/8');
+        assert.equal(await page.evaluate(() => clicked), `/tickets/${maximum}`);
       } else {
         assert.equal(await page.locator('#taskPanelSlots').textContent(), 'Нет заявок');
       }
     });
   }
 
-  test(`${name}: visible panel has symmetric 3px gaps and unchanged horizontal insets`, async t => {
+  for (const role of ['agent','trainee']) test(`${name}: adaptive item counts retain every task for ${role}`, async t => {
+    const page=await setup(t,name);
+    await page.evaluate(role=>state.role=role,role);
+    for(const count of [0,1,5,8,12]) {
+      const items=Array.from({length:count},(_,i)=>({id:String(i),subject:'Длинное название '.repeat(8)+i,has_unread:i===0}));
+      await begin(page);await reply(page,items);
+      const links=await page.locator('#taskPanel a').all();
+      assert.equal(links.length,count);
+      assert.deepEqual(await page.locator('#taskPanel a').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('href'))),items.map(i=>`/tickets/${i.id}`));
+      assert.ok(await page.locator('#taskPanelSlots a').count()<=maximum);
+      if(count)assert.equal(await page.locator('#taskPanel .task-panel-unread').count(),1);
+    }
+  });
+
+  test(`${name}: inline panel has no shell and does not move the header or content`, async t => {
     const page = await setup(t, name);
     await begin(page);
     await reply(page, []);
-    const gaps = await page.evaluate(() => {
-      const rect = selector => document.querySelector(selector).getBoundingClientRect();
-      return { top: rect('#taskPanel').top - rect('.toolbar').bottom,
-        bottom: rect('.content > .panel').top - rect('#taskPanel').bottom,
-        left: rect('#taskPanel').left - rect('main').left,
-        right: rect('main').right - rect('#taskPanel').right };
-    });
-    assert.deepEqual(gaps, { top: 3, bottom: 3, left: 12, right: 12 });
+    const measure = () => page.evaluate(() => ({
+      toolbar: document.querySelector('.toolbar').getBoundingClientRect().height,
+      content: document.querySelector('.content').getBoundingClientRect().top,
+    }));
+    const enabled = await measure();
+    assert.equal(await page.locator('.toolbar>#taskPanel').count(), 1);
+    assert.deepEqual(await page.locator('#taskPanel').evaluate(node => {
+      const s=getComputedStyle(node); return [s.backgroundColor,s.borderWidth,s.borderRadius,s.boxShadow,s.padding,s.margin];
+    }), ['rgba(0, 0, 0, 0)','0px','0px','none','0px','0px']);
     await page.evaluate(() => { state.taskPanelEnabled = false; renderTaskPanel(); });
-    assert.equal(await page.locator('.content').evaluate(node => getComputedStyle(node).paddingTop), '12px');
-    await page.evaluate(() => { document.querySelector('main').dataset.shellPage = 'other-page'; });
-    assert.equal(await page.locator('#taskPanel').evaluate(node => getComputedStyle(node).marginTop), '0px');
-    assert.equal(await page.locator('.content').evaluate(node => getComputedStyle(node).paddingTop), '12px');
+    assert.deepEqual(await measure(), enabled);
   });
 }
+
+
+test('ticket: string UUID IDs highlight only the current task without changing links',async t=>{
+  const page=await setup(t,'ticket');
+  const current='6db5edac-dc60-4c8a-8a33-9b72175a2041', other='14ea1a8a-370f-4235-9c7b-aa572d2bb603';
+  await page.evaluate(id=>state.ticketId=id,current);
+  await begin(page);await reply(page,[{id:current,subject:'Current'},{id:other,subject:'Other'}]);
+  assert.deepEqual(await page.locator('#taskPanel a').evaluateAll(nodes=>nodes.map(el=>({href:el.getAttribute('href'),active:el.getAttribute('aria-current')}))),[
+    {href:`/tickets/${current}`,active:'page'},{href:`/tickets/${other}`,active:null},
+  ]);
+});
+
+
+test('ticket: panel positions use local toolbar coordinates under scaling',async t=>{
+  const page=await setup(t,'ticket');
+  await page.evaluate(()=>document.querySelector('.toolbar').style.zoom='0.75');
+  await begin(page);await reply(page,Array.from({length:10},(_,i)=>({id:String(i),subject:'Task '+i})));
+  const geometry=await page.evaluate(()=>{
+    const box=selector=>document.querySelector(selector).getBoundingClientRect();
+    const back=box('#backToListBtn'), chip=box('#taskPanelSlots a');
+    return {backRight:back.right,chipLeft:chip.left};
+  });
+  assert.ok(geometry.chipLeft>=geometry.backRight+4,JSON.stringify(geometry));
+});
+
+
+for(const name of ['list','ticket']) {
+  test(`${name}: cached tasks hydrate a fresh page and disabled mode stays off`,async t=>{
+    const page=await setup(t,name);
+    await begin(page);await reply(page,[{id:'private-a',subject:'Private A'}]);
+    const result=await page.evaluate(()=>{
+      const cache=HelpdeskTaskPanelLayout, identity={userId:'agent',role:'agent',sessionLoginTs:1};
+      const next={role:'agent'};cache.restore(next,identity);
+      const before={enabled:next.taskPanelEnabled,items:next.taskPanelItems,status:next.taskPanelStatus};
+      next.taskPanelEnabled=false;cache.remember(next);
+      const disabled={role:'agent'};cache.restore(disabled,identity);
+      return {before,disabled};
+    });
+    assert.equal(result.before.enabled,true);assert.equal(result.before.status,'ready');
+    assert.equal(result.before.items[0].id,'private-a');
+    assert.equal(result.disabled.taskPanelEnabled,false);assert.deepEqual(result.disabled.taskPanelItems,[]);
+  });
+  for(const change of [{userId:'other',role:'agent',sessionLoginTs:1},{userId:'agent',role:'trainee',sessionLoginTs:1},{userId:'agent',role:'agent',sessionLoginTs:2}]) {
+    test(`${name}: cached data and pending replies cannot cross ${JSON.stringify(change)}`,async t=>{
+      const page=await setup(t,name);
+      await begin(page);await reply(page,[{id:'private-a',subject:'Private A'}]);
+      await begin(page);
+      await page.evaluate(identity=>{
+        state.role=identity.role;state.userId=identity.userId;
+        HelpdeskTaskPanelLayout.restore(state,identity);renderTaskPanel();
+      },change);
+      await reply(page,[{id:'late-private-a',subject:'Late private A'}]);
+      assert.equal(await page.locator('#taskPanel a').count(),0);
+      assert.equal(await page.locator('#taskPanel').isVisible(),false);
+      assert.deepEqual(await page.evaluate(()=>state.taskPanelItems),[]);
+      const back=await page.evaluate(()=>{const next={role:'agent'};HelpdeskTaskPanelLayout.restore(next,{userId:'agent',role:'agent',sessionLoginTs:1});return next;});
+      assert.deepEqual(back.taskPanelItems,[]);
+    });
+  }
+}
+
+for(const name of ['list','ticket']) test(`${name}: replies from a destroyed page cannot replace the snapshot`,async t=>{
+  const page=await setup(t,name);
+  await begin(page);await reply(page,[{id:'current',subject:'Current'}]);
+  await begin(page);
+  await page.evaluate(name=>{if(name==='list'){pageEventController.abort();pageEventController=null;}else destroyed=true;},name);
+  await reply(page,[{id:'obsolete',subject:'Obsolete'}]);
+  const items=await page.evaluate(()=>{const next={role:'agent'};HelpdeskTaskPanelLayout.restore(next,{userId:'agent',role:'agent',sessionLoginTs:1});return next.taskPanelItems;});
+  assert.equal(items[0].id,'current');
+});

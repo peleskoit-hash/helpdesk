@@ -287,7 +287,7 @@ function taskPanelTicketHref(panelTicketId) {
 
 function taskPanelItemHtml(item, className) {
   const unread = item?.has_unread ? '<span class="task-panel-unread" aria-label="Новые сообщения"></span>' : "";
-  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" href="${escapeHtml(taskPanelTicketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
+  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" ${item.id === state.ticketId ? 'aria-current="page" ' : ""}href="${escapeHtml(taskPanelTicketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
 }
 
 function closeTaskPanelDropdown() {
@@ -296,13 +296,18 @@ function closeTaskPanelDropdown() {
   if (el.taskPanelMoreBtn) el.taskPanelMoreBtn.classList.remove("active");
 }
 
+let taskPanelLayout = null;
+
 function renderTaskPanel() {
   if (!el.taskPanel || !el.taskPanelSlots || !el.taskPanelMoreBtn || !el.taskPanelDropdown) return;
   const canUse = canUseTaskPanel();
+  el.taskPanel.parentElement.classList.toggle("task-panel-eligible", canUse);
   const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
   const shouldShow = canUse && state.taskPanelEnabled;
-  const visibleItems = items.slice(0, 8);
-  const overflowItems = items.slice(8);
+  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel);
+  const capacity = taskPanelLayout.capacity(items.length);
+  const visibleItems = items.slice(0, capacity);
+  const overflowItems = items.slice(capacity);
   const slotsHtml = !shouldShow ? "" : items.length
     ? visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("")
     : `<span class="task-panel-chip"><span class="task-panel-subject">${state.taskPanelStatus === "ready" ? "Нет заявок" : state.taskPanelStatus === "error" ? "Не удалось загрузить панель задач" : "Загрузка…"}</span></span>`;
@@ -326,25 +331,33 @@ function renderTaskPanel() {
 }
 
 async function loadTaskPanel(options = {}) {
+  const scope = state.taskPanelScope;
   if (!canUseTaskPanel() || !state.taskPanelEnabled) {
     state.taskPanelItems = [];
+    window.HelpdeskTaskPanelLayout.remember(state);
     renderTaskPanel();
     return;
   }
   renderTaskPanel();
   try {
-    state.taskPanelItems = await api("/api/v1/tickets/task-panel");
+    const items = await api("/api/v1/tickets/task-panel");
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
+    state.taskPanelItems = items;
     state.taskPanelStatus = "ready";
+    window.HelpdeskTaskPanelLayout.remember(state);
     renderTaskPanel();
   } catch (e) {
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
     state.taskPanelItems = [];
     state.taskPanelStatus = "error";
+    window.HelpdeskTaskPanelLayout.remember(state);
     renderTaskPanel();
     if (!options.silent) showError(`Не удалось загрузить панель задач.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
 
 function cleanupTicketCardPage() {
+  taskPanelLayout?.destroy();
   destroyed = true;
   TicketClientCard.destroyClientEditor(clientCardCtx());
   flushDraftKeepalive();
@@ -1632,18 +1645,23 @@ async function loadMe() {
 }
 
 async function loadComposerPreferences(options = {}) {
+  const scope = state.taskPanelScope;
   const silent = Boolean(options.silent);
   try {
     await TicketClientCard.waitForBlockPreferences();
     const payload = await api("/api/v1/users/me/preferences");
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
     state.clientCardCollapsedBlocks = payload?.client_card_collapsed_blocks || {};
     state.sendByEnter = Boolean(payload?.send_by_enter);
     state.taskPanelEnabled = payload?.task_panel_enabled === true;
+    window.HelpdeskTaskPanelLayout.remember(state);
     refreshSendByEnterUi();
     renderTaskPanel();
   } catch (e) {
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
     state.sendByEnter = false;
     state.taskPanelEnabled = false;
+    window.HelpdeskTaskPanelLayout.remember(state);
     refreshSendByEnterUi();
     renderTaskPanel();
     if (!silent) {
@@ -1680,6 +1698,7 @@ function syncSidebarState(sidebarState) {
   state.role = sidebarState.role || state.role;
   state.userId = sidebarState.userId || state.userId;
   state.isRealAdmin = Boolean(sidebarState.isRealAdmin);
+  window.HelpdeskTaskPanelLayout.restore(state, sidebarState);
   state.supportAgents = Array.isArray(sidebarState.agents) ? sidebarState.agents : state.supportAgents;
   state.adminAssigneeIds = Array.isArray(sidebarState.adminAssigneeIds) ? sidebarState.adminAssigneeIds : state.adminAssigneeIds;
   state.counts = sidebarState.counts || state.counts;
@@ -1821,6 +1840,7 @@ function bindPageHandlers() {
       state.taskPanelDropdownOpen = !state.taskPanelDropdownOpen;
       el.taskPanelMoreBtn.classList.toggle("active", state.taskPanelDropdownOpen);
       el.taskPanelDropdown?.classList.toggle("hidden", !state.taskPanelDropdownOpen);
+      taskPanelLayout?.positionDropdown();
     });
   }
 

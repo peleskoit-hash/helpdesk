@@ -476,13 +476,13 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
   });
 }
 
-async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [], ticketRows = rows, initialPath = null, replaceInitial = false }) {
+async function setup(t, { width, height, theme, pageName, role = 'admin', workflowType = 'ticket', clientAvatar = false, cardPatch = {}, fullName = user.full_name, quickReplies = [], ticketRows = rows, initialPath = null, replaceInitial = false, taskPanelItems = rows.slice(0, 10), taskPanelEnabled = true }) {
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(error.message));
   const me = { ...user, role, full_name: fullName };
-  const preferences = { appearance_revision: '0', theme_preference: theme, color_enabled: true, task_panel_enabled: true,
+  const preferences = { appearance_revision: '0', theme_preference: theme, color_enabled: true, task_panel_enabled: taskPanelEnabled,
     ticket_list_columns: columns.map(key => ({ key, width: key === 'subject' ? 340 : 160 })) };
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
@@ -521,7 +521,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me, { ...me, id: 'agent-2', full_name: 'Елена Александровна Волкова' }];
     else if (p.endsWith('/counts')) result = { active: 28, unassigned: 3, frozen: 4, closed: 158, special: 1,
       by_assignee: { 'agent-1': { active: 123, frozen: 12 }, 'agent-2': { active: 3, frozen: 456 } } };
-    else if (p.endsWith('/task-panel')) result = rows.slice(0, 10);
+    else if (p.endsWith('/task-panel')) result = taskPanelItems;
     else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: ticketRows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
@@ -1324,7 +1324,7 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
     assert.equal(layout.padding,'14px 16px 16px');
     assert.equal(layout.gap,'12px');
     assert.equal(layout.inset,16);
-    assert.equal(layout.taskMargin,'8px 16px 0px');
+    assert.equal(layout.taskMargin,'0px');
     assert.ok(layout.tableHeight>400); assert.equal(layout.overflow,false);
     const table = page.locator('.table-scroll');
     await table.evaluate(el => {el.scrollTop=el.scrollHeight;el.scrollLeft=el.scrollWidth;});
@@ -2380,4 +2380,211 @@ test('unread fix list resource loads on direct and SPA entry', async t => {
     assert.ok(urls.length > 0);
     assert.ok(urls.every(query => query === '?v=20261106-closed-unseen-v1'), urls.join(', '));
   }
+});
+
+
+for (const role of ['admin', 'agent', 'trainee']) for (const width of [1920, 1366, 1024, 390]) for (const theme of ['light','dark']) for (const workflowType of ['ticket','task']) {
+  test(`inline task panel header: ${role} ${width} ${theme} ${workflowType}`, async t => {
+    const items = Array.from({length: 12}, (_, i) => ({id:`demo-${i}`,subject:'Длинное название задачи '.repeat(8)+i,has_unread:i%2===0}));
+    const {page,preferences,requests} = await setup(t, {width,height:1080,theme,role,workflowType,pageName:'tickets',taskPanelItems:items});
+    const measure = () => page.evaluate(() => {
+      const toolbar=document.querySelector('.toolbar'), panel=document.querySelector('#taskPanel'), right=document.querySelector('.toolbar>.display-settings');
+      const rect=toolbar.getBoundingClientRect(), s=getComputedStyle(panel);
+      return {height:rect.height,contentY:document.querySelector('#appContent>.content').getBoundingClientRect().top,
+        rightX:right.getBoundingClientRect().x,background:s.backgroundColor,border:s.borderWidth,radius:s.borderRadius,shadow:s.boxShadow,
+        count:panel.querySelectorAll('#taskPanelSlots a').length,remaining:panel.querySelectorAll('#taskPanelDropdown a').length,
+        panelWidth:panel.getBoundingClientRect().width,visibility:s.visibility};
+    });
+    await page.waitForTimeout(80);
+    const on=await measure();
+    assert.equal(await page.locator('.toolbar>#taskPanel').count(),1);
+    assert.equal(await page.locator('#appContent>#taskPanel').count(),0);
+    assert.equal(on.background,'rgba(0, 0, 0, 0)');assert.equal(on.border,'0px');assert.equal(on.radius,'0px');assert.equal(on.shadow,'none');
+    const input=page.locator('#searchInput'), searchWidth=(await input.boundingBox()).width;
+    assert.equal(await input.getAttribute('placeholder'),'Поиск по теме/клиенту/сообщениям');
+    assert.equal(await page.locator('.search-icon').count(),1);
+    if(width>390) {
+      assert.ok(await input.evaluate(el=>{const s=getComputedStyle(el),ctx=document.createElement('canvas').getContext('2d');ctx.font=s.font;
+        return el.getBoundingClientRect().width-parseFloat(s.borderLeftWidth)-parseFloat(s.borderRightWidth)-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight)>=ctx.measureText(el.placeholder).width-.5;}));
+    }
+    await input.fill('Длинный запрос '.repeat(15));
+    assert.equal((await input.boundingBox()).width,searchWidth);
+    assert.equal(await input.evaluate(el=>parseFloat(getComputedStyle(el).paddingRight)),34);
+    await input.press('Enter');
+    await page.waitForFunction(()=>new URL(location.href).searchParams.has('q'));
+    assert.ok(requests.some(r=>new URLSearchParams(r.query).has('query')));
+    await page.locator('#searchClearBtn').click();assert.equal(await input.inputValue(),'');
+    assert.equal((await input.boundingBox()).width,searchWidth);
+    if(role==='admin') {
+      assert.equal(await page.locator('#taskPanel').isVisible(),false);
+      assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,0);
+      assert.equal(await page.locator('#bulkAssignBtn').isVisible(),true);
+    } else {
+      assert.ok(on.count<=6);assert.equal(on.count+on.remaining,12);
+      if(on.visibility!=='hidden') {
+        await page.locator('#taskPanelMoreBtn').click();assert.equal(await page.locator('#taskPanelDropdown').isVisible(),true);
+        assert.ok(await page.locator('#taskPanelDropdown a').first().evaluate(el=>{
+          const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
+        }));
+        assert.equal((await measure()).height,on.height);
+        await page.keyboard.press('Escape');assert.equal(await page.locator('#taskPanelDropdown').isVisible(),false);
+      }
+      const before=requests.filter(r=>r.path.endsWith('/task-panel')).length;
+      await page.setViewportSize({width:width-10,height:1080});await page.waitForTimeout(80);
+      assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,before);
+      await page.setViewportSize({width,height:1080});await page.waitForTimeout(80);
+      preferences.task_panel_enabled=false;await page.reload();await page.waitForSelector('.ticket-row');
+      const off=await measure();assert.equal(off.height,on.height);assert.equal(off.contentY,on.contentY);assert.equal(off.rightX,on.rightX);
+      preferences.task_panel_enabled=true;
+    }
+    await page.locator('.ticket-row-link').first().click();await page.waitForSelector('.message');await page.waitForTimeout(80);
+    const cardOn=await measure();
+    if(process.env.INLINE_PANEL_REPORT) fs.appendFileSync(process.env.INLINE_PANEL_REPORT,JSON.stringify({role,width,theme,workflowType,searchWidth,list:on,card:cardOn})+'\n');
+    if(role!=='admin') {
+      assert.equal(cardOn.height,on.height);
+      assert.equal(cardOn.count+cardOn.remaining,12);
+      assert.equal(await page.locator('#taskPanel a[aria-current="page"]').count(),1);
+      preferences.task_panel_enabled=false;await page.reload();await page.waitForSelector('.message');
+      const cardOff=await measure();assert.equal(cardOff.height,cardOn.height);assert.equal(cardOff.contentY,cardOn.contentY);assert.equal(cardOff.rightX,cardOn.rightX);
+    }
+  });
+}
+
+
+test('compact search remains available to the read-only role',async t=>{
+  const {page,requests}=await setup(t,{width:1366,height:900,theme:'dark',role:'chiki_piki',pageName:'tickets'});
+  const input=page.locator('#searchInput'), icon=await page.locator('.search-icon').boundingBox();
+  await page.mouse.click(icon.x+icon.width/2,icon.y+icon.height/2);
+  assert.equal(await input.evaluate(el=>document.activeElement===el),true);
+  assert.ok((await input.boundingBox()).width<400);
+  assert.equal(await page.locator('#taskPanel').isVisible(),false);
+  assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,0);
+});
+
+
+for (const pageName of ['tickets','ticket']) for (const theme of ['light','dark']) for (const count of [0,1,4,8,12]) {
+  test(`compact task chips at 1920: ${pageName} ${theme} ${count}`,async t=>{
+    const items=Array.from({length:count},(_,i)=>({id:`demo-${i}`,subject:'Длинное название задачи '.repeat(8)+i,has_unread:i===0}));
+    const {page}=await setup(t,{width:1920,height:1080,theme,role:'agent',pageName,taskPanelItems:items});
+    await page.waitForFunction(count=>document.querySelectorAll('#taskPanel a').length===count &&
+      (count>0 || document.querySelector('#taskPanelSlots').textContent.includes('Нет заявок')),count);
+    const metrics=await page.evaluate(()=>{
+      const panel=document.querySelector('#taskPanel'), toolbar=document.querySelector('.toolbar');
+      return {height:toolbar.getBoundingClientRect().height,panelWidth:panel.getBoundingClientRect().width,
+        chips:[...panel.querySelectorAll('.task-panel-chip')].map(el=>({width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height})),
+        links:[...panel.querySelectorAll('a')].map(el=>el.getAttribute('href')),
+        active:[...panel.querySelectorAll('[aria-current="page"]')].map(el=>el.getAttribute('href'))};
+    });
+    assert.equal(metrics.height,57);
+    assert.equal(metrics.chips.length,Math.max(1,Math.min(pageName==='tickets'?6:7,count)));
+    for(const chip of metrics.chips){assert.ok(chip.width>0);if(count<=1)assert.ok(chip.width<=180.01);assert.equal(chip.height,30);}
+    const widths=metrics.chips.map(chip=>chip.width);
+    assert.ok(Math.max(...widths)-Math.min(...widths)<1);
+    assert.deepEqual(metrics.links,items.map(item=>`/tickets/${item.id}`));
+    if(count<=1)assert.ok(metrics.chips[0].width<metrics.panelWidth/2);
+    if(pageName==='ticket')assert.deepEqual(metrics.active,count?['/tickets/demo-0']:[]);
+    if(count===0)assert.equal(await page.locator('#taskPanelSlots').textContent(),'Нет заявок');
+  });
+}
+
+
+for(const width of [1920,1366,1024,390]) for(const workflowType of ['ticket','task']) {
+ test(`task panel SPA geometry: ${width} ${workflowType}`,async t=>{
+  const items=Array.from({length:12},(_,i)=>({id:`demo-${i}`,subject:'Длинное название задачи '.repeat(8)+i}));
+  const {page}=await setup(t,{width,height:1080,theme:'dark',role:'agent',pageName:'tickets',workflowType,taskPanelItems:items});
+  await page.evaluate(()=>window.savedSidebar=document.querySelector('.sidebar'));
+  async function geometry(maximum) {
+   await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===12);
+   const result=await page.evaluate(()=>{
+    const rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,height:r.height};};
+    const anchor=document.querySelector('.toolbar .search-input-wrap, #backToListBtn'),panel=document.querySelector('#taskPanel'),settings=document.querySelector('.toolbar>.display-settings');
+    const a=rect(anchor),p=rect(panel),r=rect(settings),toolbar=rect(document.querySelector('.toolbar'));
+    const chips=[...document.querySelectorAll('#taskPanelSlots a')].map(rect),more=document.querySelector('#taskPanelMoreBtn');
+    const back=document.querySelector('#backToListBtn');
+    return {anchor:a,panel:p,right:r,toolbar,chips,more:rect(more),visibility:getComputedStyle(panel).visibility,
+      backClickable:!back||back.contains(document.elementFromPoint((a.left+a.right)/2,a.top+a.height/2)),
+      sameRow:Math.abs(a.top+a.height/2-r.top-r.height/2)<2,sidebarPreserved:window.savedSidebar===document.querySelector('.sidebar')};
+   });
+   assert.ok(result.chips.length<=maximum);assert.ok(result.sidebarPreserved);assert.ok(result.backClickable);
+   if(result.visibility!=='hidden') {
+    assert.ok(result.panel.left>=result.anchor.right+6,JSON.stringify(result));
+    if(result.sameRow)assert.ok(result.panel.right<=result.right.left-6,JSON.stringify(result));
+    if(result.chips.length>1)assert.ok(Math.abs(result.chips.at(-1).right+6-result.more.left)<1.5,JSON.stringify(result));
+   }
+   if(width>=1024)assert.equal(result.toolbar.height,57);
+   return result;
+  }
+  await geometry(6);
+  for(let cycle=0;cycle<2;cycle++) {
+   await page.locator('.ticket-row-link').nth(cycle).click();await page.waitForSelector('.message');
+   const card=await geometry(7);
+   if(process.env.PANEL_GEOMETRY_REPORT)fs.appendFileSync(process.env.PANEL_GEOMETRY_REPORT,JSON.stringify({width,workflowType,cycle,card})+'\n');
+   await page.locator('#backToListBtn').click();await page.waitForSelector('.ticket-row');
+   await geometry(6);
+  }
+ });
+}
+
+
+for(const role of ['agent','trainee']) test(`task panel cache paints before slow SPA requests: ${role}`,async t=>{
+  const {page,requests}=await setup(t,{width:1366,height:900,theme:'dark',role,pageName:'tickets'});
+  await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
+  assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,1);
+  let releasePreferences,releaseTasks;
+  const preferenceGate=new Promise(resolve=>releasePreferences=resolve),taskGate=new Promise(resolve=>releaseTasks=resolve);
+  await page.route('**/api/v1/users/me/preferences',async route=>{await preferenceGate;await route.fallback();});
+  await page.route('**/api/v1/tickets/task-panel',async route=>{await taskGate;await route.fallback();});
+  try {
+    await page.evaluate(()=>{
+      window.panelFrames=[];window.recordPanel=true;
+      function sample(){if(!recordPanel)return;const root=document.querySelector('#appContent');
+        if(root.dataset.shellPage==='ticket-card')panelFrames.push(document.querySelectorAll('#taskPanel a').length);
+        requestAnimationFrame(sample);}
+      requestAnimationFrame(sample);
+    });
+    await page.locator('.ticket-row-link').first().click();await page.locator('#backToListBtn').waitFor();
+    await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
+    assert.ok(!(await page.locator('#taskPanelSlots').textContent()).includes('Загрузка'));
+    await page.evaluate(()=>window.firstCachedChip=document.querySelector('#taskPanelSlots a'));
+    releasePreferences();await page.waitForSelector('.message');
+    assert.equal(await page.evaluate(()=>firstCachedChip===document.querySelector('#taskPanelSlots a')),true);
+    releaseTasks();
+    await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const frames=await page.evaluate(()=>{recordPanel=false;return panelFrames;});
+    assert.ok(frames.length>0);assert.ok(frames.every(n=>n===10),JSON.stringify(frames));
+    assert.equal(await page.evaluate(()=>firstCachedChip===document.querySelector('#taskPanelSlots a')),true);
+    await page.locator('#backToListBtn').click();await page.waitForSelector('.ticket-row');
+    await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
+    assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,3);
+  } finally {releasePreferences();releaseTasks();}
+});
+
+for(const theme of ['light','dark']) test(`task chip theme fill and inward double border: ${theme}`,async t=>{
+  const {page}=await setup(t,{width:1920,height:1080,theme,role:'agent',pageName:'tickets'});
+  await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
+  const read=()=>page.locator('#taskPanelSlots a').first().evaluate(el=>{
+    const rgba=color=>{const ctx=document.createElement('canvas').getContext('2d');ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return [...ctx.getImageData(0,0,1,1).data].slice(0,3);};
+    const lum=rgb=>rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
+    const s=getComputedStyle(el),background=rgba(s.backgroundColor),a=lum(background),b=lum(rgba(s.color)),r=el.getBoundingClientRect();
+    return {background,surfaceLum:lum(rgba(getComputedStyle(el.closest('.toolbar')).backgroundColor)),lum:a,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),shadow:s.boxShadow,border:s.borderTopWidth,width:r.width,height:r.height,toolbar:el.closest('.toolbar').getBoundingClientRect().height};
+  });
+  await page.locator('#themeToggleBtn').click();
+  const colors=[];
+  for(const hue of [20,140,260]) {
+    await page.locator('#appearance-interface-hue').evaluate((el,hue)=>{el.value=hue;el.dispatchEvent(new Event('input',{bubbles:true}));},hue);
+    await page.locator('#appearance-interface-intensity').evaluate(el=>{el.value=80;el.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.waitForTimeout(200);
+    const state=await read();colors.push(state.background);
+    assert.ok(theme==='dark'?state.lum>state.surfaceLum:state.lum<state.surfaceLum,JSON.stringify(state));
+    assert.ok(state.contrast>=4.5,JSON.stringify(state));assert.equal((state.shadow.match(/inset/g)||[]).length,2);
+    assert.equal(state.border,'1px');assert.equal(state.height,30);assert.equal(state.toolbar,57);
+  }
+  assert.notDeepEqual(colors[0],colors[1]);assert.notDeepEqual(colors[1],colors[2]);
+  await page.keyboard.press('Escape');
+  await page.locator('#taskPanelSlots a').first().hover();
+  assert.ok((await read()).contrast>=4.5);
+  assert.equal((await page.locator('#taskPanelMoreBtn').evaluate(el=>getComputedStyle(el).boxShadow).then(s=>s.match(/inset/g)||[])).length,2);
+  await page.locator('.ticket-row-link').first().click();await page.waitForSelector('.message');
+  assert.equal(await page.locator('#taskPanel a[aria-current="page"]').count(),1);
 });

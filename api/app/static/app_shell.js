@@ -120,7 +120,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/list.js?v=20261106-closed-unseen-v1"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261106-inline-panel-v1", "/static/list.js?v=20261106-closed-unseen-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -128,6 +128,7 @@
       test: (url) => /^\/tickets\/[^/]+$/.test(url.pathname),
       scripts: [
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
+        "/static/task_panel_layout.js?v=20261106-inline-panel-v1",
         "/static/ticket_api.js?v=20261102-error-status-v1",
         "/static/ticket_attachments.js?v=20261031-web-history-v1",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
@@ -364,6 +365,7 @@
     }
 
     try {
+      await ensurePageScript(payload.page);
       if (!mountShellPayload(payload)) throw new Error("Shell mount failed");
       updateSidebarActiveState(url);
       const nextUrl = `${url.pathname}${url.search}${url.hash}`;
@@ -372,7 +374,6 @@
       } else {
         window.history.pushState({ shell: true, url: nextUrl }, "", nextUrl);
       }
-      await ensurePageScript(payload.page);
       if (window.HelpdeskTheme?.initThemeToggle) {
         window.HelpdeskTheme.initThemeToggle();
       }

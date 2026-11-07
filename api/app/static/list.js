@@ -294,6 +294,7 @@ function updateSearchUi() {
   }
   if (el.searchInput) {
     el.searchInput.classList.toggle("search-active", hasApplied);
+    el.searchInput.parentElement.classList.toggle("has-query", hasDraft);
   }
 }
 
@@ -398,10 +399,13 @@ function applyTaskPanelPreference() {
 }
 
 async function loadPreferences() {
+  const scope = state.taskPanelScope;
   const preferences = await api("/api/v1/users/me/preferences");
+  if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted) return;
   state.ticketListAutoWidth = preferences?.ticket_list_auto_width === true;
   state.colorEnabled = preferences?.color_enabled !== false;
   state.taskPanelEnabled = preferences?.task_panel_enabled === true;
+  window.HelpdeskTaskPanelLayout.remember(state);
   state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || DEFAULT_TICKET_COLUMNS);
   applyColorPreference();
   applyTaskPanelPreference();
@@ -440,13 +444,18 @@ function closeTaskPanelDropdown() {
   if (el.taskPanelMoreBtn) el.taskPanelMoreBtn.classList.remove("active");
 }
 
+let taskPanelLayout = null;
+
 function renderTaskPanel() {
   if (!el.taskPanel || !el.taskPanelSlots || !el.taskPanelMoreBtn || !el.taskPanelDropdown) return;
   const canUse = canUseTaskPanel();
+  el.taskPanel.parentElement.classList.toggle("task-panel-eligible", canUse);
   const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
   const shouldShow = canUse && state.taskPanelEnabled;
-  const visibleItems = items.slice(0, 8);
-  const overflowItems = items.slice(8);
+  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel);
+  const capacity = taskPanelLayout.capacity(items.length);
+  const visibleItems = items.slice(0, capacity);
+  const overflowItems = items.slice(capacity);
   const slotsHtml = !shouldShow ? "" : items.length
     ? visibleItems.map((item) => taskPanelItemHtml(item, "task-panel-chip")).join("")
     : `<span class="task-panel-chip"><span class="task-panel-subject">${state.taskPanelStatus === "ready" ? "Нет заявок" : state.taskPanelStatus === "error" ? "Не удалось загрузить панель задач" : "Загрузка…"}</span></span>`;
@@ -475,17 +484,24 @@ async function loadTaskPanel(options = {}) {
 }
 
 async function fetchTaskPanelItems(options = {}) {
+  const scope = state.taskPanelScope;
   if (!canUseTaskPanel() || !state.taskPanelEnabled) {
     state.taskPanelItems = [];
+    window.HelpdeskTaskPanelLayout.remember(state);
     return;
   }
   renderTaskPanel();
   try {
-    state.taskPanelItems = await api("/api/v1/tickets/task-panel");
+    const items = await api("/api/v1/tickets/task-panel");
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted) return;
+    state.taskPanelItems = items;
     state.taskPanelStatus = "ready";
+    window.HelpdeskTaskPanelLayout.remember(state);
   } catch (e) {
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted) return;
     state.taskPanelItems = [];
     state.taskPanelStatus = "error";
+    window.HelpdeskTaskPanelLayout.remember(state);
     if (!options.silent) showError(`Не удалось загрузить панель задач.\n\n${e.message || "Неизвестная ошибка"}`);
   }
 }
@@ -1318,6 +1334,7 @@ async function saveColumnsModal() {
     state.ticketListAutoWidth = preferences?.ticket_list_auto_width ?? state.draftTicketListAutoWidth;
     state.ticketListColumns = normalizeTicketColumns(preferences?.ticket_list_columns || payloadColumns);
     state.taskPanelEnabled = preferences?.task_panel_enabled === true;
+    window.HelpdeskTaskPanelLayout.remember(state);
     state.columnDraftPreviewActive = false;
     closeColumnsModal();
     renderTable();
@@ -1622,6 +1639,7 @@ function syncSidebarState(sidebarState) {
   state.role = sidebarState.role || state.role;
   state.userId = sidebarState.userId || state.userId;
   state.isRealAdmin = Boolean(sidebarState.isRealAdmin);
+  window.HelpdeskTaskPanelLayout.restore(state, sidebarState);
   state.supportAgents = Array.isArray(sidebarState.agents) ? sidebarState.agents : state.supportAgents;
   state.adminAssigneeIds = Array.isArray(sidebarState.adminAssigneeIds) ? sidebarState.adminAssigneeIds : state.adminAssigneeIds;
   state.counts = sidebarState.counts || state.counts;
@@ -1637,7 +1655,7 @@ function syncSidebarState(sidebarState) {
   applyRoleUi();
   const nextAssigneeKey = (state.adminAssigneeIds || []).slice().sort().join(",");
   const isInitialSidebarHydration = !prevUserId && Boolean(state.userId);
-  if (isInitialSidebarHydration && state.hasPageFromUrl) {
+  if (isInitialSidebarHydration) {
     return;
   }
   if ((prevRole !== state.role || prevUserId !== state.userId || prevAssigneeKey !== nextAssigneeKey) && !state.isLoading) {
@@ -1965,6 +1983,7 @@ function init() {
       state.taskPanelDropdownOpen = !state.taskPanelDropdownOpen;
       el.taskPanelMoreBtn.classList.toggle("active", state.taskPanelDropdownOpen);
       el.taskPanelDropdown?.classList.toggle("hidden", !state.taskPanelDropdownOpen);
+      taskPanelLayout?.positionDropdown();
     }, { signal: pageSignal });
   }
   document.addEventListener("click", (event) => {
@@ -2016,6 +2035,7 @@ runTicketsListPage().catch((error) => {
 
 return {
   destroy() {
+    taskPanelLayout?.destroy();
     initialAutoWidthGeneration++;
     columnAutoResizeObserver?.disconnect();
     state.columnAutoCalculation = null;

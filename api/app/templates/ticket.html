@@ -71,16 +71,17 @@
         <label id="agentControl" class="hidden">Пользователь
           <select id="agentSelect"></select>
         </label>
+        <div id="taskPanel" class="task-panel hidden">
+          <div id="taskPanelSlots" class="task-panel-slots"></div>
+          <button id="taskPanelMoreBtn" class="task-panel-more hidden" type="button" aria-label="Ещё заявки">…</button>
+          <div id="taskPanelDropdown" class="task-panel-dropdown hidden"></div>
+        </div>
         <div class="display-settings">
           <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Оформление">Оформление</button>
         </div>
       </div>
 
-      <div id="taskPanel" class="task-panel hidden">
-        <div id="taskPanelSlots" class="task-panel-slots"></div>
-        <button id="taskPanelMoreBtn" class="task-panel-more hidden" type="button" aria-label="Ещё заявки">…</button>
-        <div id="taskPanelDropdown" class="task-panel-dropdown hidden"></div>
-      </div>
+
 
       <section class="content ticket-layout">
         <aside class="panel ticket-side ticket-client-side">
@@ -314,6 +315,7 @@
   <script src="/static/sidebar.js?v=20261106-personal-stats-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
+  <script src="/static/task_panel_layout.js?v=20261106-inline-panel-v1"></script>
   <script src="/static/app_shell.js?v=20261106-closed-unseen-v1"></script>
   <script src="/static/ticket_api.js?v=20261102-error-status-v1"></script>
   <script src="/static/ticket_attachments.js?v=20261031-web-history-v1"></script>
