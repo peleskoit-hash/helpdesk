@@ -20,6 +20,7 @@ from .internal_task_recurrence import (
 from .internal_tasks import materialize_internal_task
 from .telegram_client_avatar_nightly import run_avatar_cleanup_once
 from .telegram_after_hours_cleanup import run_telegram_after_hours_cleanup_once
+from .employee_auto_offline import run_employee_auto_offline_once
 
 
 logger = logging.getLogger(__name__)
@@ -442,4 +443,10 @@ async def internal_task_scheduler_loop() -> None:
             raise
         except Exception:
             logger.exception("Telegram after-hours cleanup pass failed")
+        try:
+            await asyncio.to_thread(run_employee_auto_offline_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Employee auto-offline pass failed")
         await asyncio.sleep(INTERNAL_TASK_SCHEDULER_INTERVAL_SECONDS)
