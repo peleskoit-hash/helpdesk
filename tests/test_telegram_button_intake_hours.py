@@ -35,8 +35,20 @@ def button(case, kind="ticket", **values):
 
 
 def choose(case, row, decision=None, notify=True, update_id=100):
+    # These hours tests seed the menu/confirmation directly, without a Telegram send.
+    message_id = 55 if decision is None else 56
+    case.contact.active_menu_message_id = str(message_id)
+    case.contact.menu_message_ids_json = [message_id]
+    ticket = telegram._collecting_ticket_for_client(case.db, case.contact.company_id, case.contact.client_id)
+    if ticket is not None:
+        ticket.menu_message_id = str(message_id)
+        if decision is not None:
+            ticket.button_config_key = row.button_key
+    case.db.commit()
     data = f"btnid:{row.id}" if decision is None else f"confirm:{decision}:btnid:{row.id}"
-    payload = _callback_payload(update_id=update_id, contact=case.contact, data=data, message_id=55)
+    payload = _callback_payload(update_id=update_id, contact=case.contact, data=data, message_id=message_id)
+    if decision is not None:
+        payload["callback_query"]["message"]["reply_markup"] = telegram._confirmation_markup(f"btnid:{row.id}")
     return telegram.process_telegram_update(case.db, payload, notify_client=notify)
 
 
@@ -87,7 +99,7 @@ def test_blocking_deletes_only_uncreated_draft(case, monkeypatch, kind, decision
     if notify:
         case.send.assert_called_once_with(case.contact.external_chat_id, custom, parse_mode="HTML")
         telegram.answer_callback_query.assert_called_once()
-        assert any(call.args == (case.contact.external_chat_id, 55) for call in case.removed.call_args_list)
+        assert any(call.args == (case.contact.external_chat_id, 55 if decision is None else 56) for call in case.removed.call_args_list)
     else:
         case.send.assert_not_called()
         case.removed.assert_not_called()
@@ -295,6 +307,9 @@ def test_automation_draft_is_not_deleted_when_ordinary_button_is_blocked(case, k
 def test_navigation_is_not_blocked(case, monkeypatch):
     check = Mock(side_effect=AssertionError("Navigation must bypass intake hours"))
     monkeypatch.setattr(telegram, "is_telegram_intake_open", check)
+    case.contact.active_menu_message_id = "55"
+    case.contact.menu_message_ids_json = [55]
+    case.db.commit()
     payload = _callback_payload(update_id=100, contact=case.contact, data="menu:__root__", message_id=55)
     result = telegram.process_telegram_update(case.db, payload, notify_client=False)
     assert result == {"ok": True, "menu_key": None}

@@ -247,7 +247,7 @@ def test_clear_client_menu_keyboards_keeps_tracking_when_delete_fails(monkeypatc
     session.flush()
     session.refresh(ticket)
 
-    assert contact.menu_message_ids_json == [201, 300]
+    assert contact.menu_message_ids_json == [201, 202, 300]
     assert contact.active_menu_message_id == "300"
     assert ticket.menu_message_id == "201"
 
@@ -293,14 +293,13 @@ def test_start_sends_new_menu_before_deleting_old_and_never_deletes_new(monkeypa
     events = []
     _patch_start_flow(monkeypatch, session, contact, ticket)
 
-    def fake_send(db, send_contact, send_ticket):
+    def fake_send(*args, **kwargs):
         events.append(("send", 20))
         response = {"ok": True, "result": {"message_id": 20}}
-        telegram_router._store_menu_message_id(send_ticket, response)
-        telegram_router._remember_contact_menu_message(send_contact, response)
         return response
 
-    monkeypatch.setattr(telegram_router, "_send_problem_menu_for_contact", fake_send)
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_with_visibility", fake_send)
+    monkeypatch.setattr(telegram_router, "_menu_name_for_contact", lambda *args: "menu-a")
     monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: events.append(("delete", message_id)) or True)
 
     telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
@@ -353,13 +352,12 @@ def test_start_cleanup_does_not_delete_historical_ticket_menu_ids(monkeypatch):
     deleted = []
     _patch_start_flow(monkeypatch, session, contact, current)
 
-    def fake_send(db, send_contact, send_ticket):
+    def fake_send(*args, **kwargs):
         response = {"ok": True, "result": {"message_id": 20}}
-        telegram_router._store_menu_message_id(send_ticket, response)
-        telegram_router._remember_contact_menu_message(send_contact, response)
         return response
 
-    monkeypatch.setattr(telegram_router, "_send_problem_menu_for_contact", fake_send)
+    monkeypatch.setattr(telegram_router, "_send_problem_menu_with_visibility", fake_send)
+    monkeypatch.setattr(telegram_router, "_menu_name_for_contact", lambda *args: "menu-a")
     monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda chat_id, message_id: deleted.append(message_id) or True)
 
     telegram_router.process_telegram_update(session, _start_payload(), notify_client=True)
@@ -1771,6 +1769,7 @@ def test_existing_button_type_change_applies_to_new_telegram_ticket(monkeypatch,
     session = _session()
     key = f"menu-a|{old_type}|A"
     row = _seed_row(session, button_key=key, workflow_type=old_type)
+    monkeypatch.setattr(telegram_router, "is_telegram_intake_open", lambda: True)
     identity = (row.id, row.stable_button_id, row.legacy_button_key)
     source = ButtonSpec(key="txt-a", label="A", kind=old_type)
     refs = (TerminalButtonRef(
@@ -2981,3 +2980,264 @@ def test_bot_button_layout_normalizes_empty_rows(monkeypatch):
     )
 
     assert result["rows"] == [{"columns": 1, "button_keys": ["menu-a|ticket|B"]}]
+
+
+@pytest.fixture
+def menu_flow(monkeypatch):
+    session = _session()
+    _, contact, ticket = _seed_menu_client(session)
+    ticket.channel, ticket.intake_state, ticket.status = "telegram", "collecting", "unassigned"
+    ticket.menu_message_id = contact.active_menu_message_id = "10"
+    contact.menu_message_ids_json = [10]
+    session.commit()
+    events = []
+    sequence = iter(range(100, 200))
+
+    def send(*args, **kwargs):
+        mid = next(sequence)
+        events.append(("send", mid, kwargs.get("reply_markup")))
+        return {"ok": True, "result": {"message_id": mid}}
+
+    monkeypatch.setattr(telegram_router, "send_message", send)
+    monkeypatch.setattr(telegram_router, "answer_callback_query", lambda *args: None)
+    monkeypatch.setattr(telegram_router, "_menu_name_for_contact", lambda *args: "menu-a")
+    monkeypatch.setattr(telegram_router, "schedule_avatar_refresh", lambda *args: None)
+    monkeypatch.setattr(telegram_router, "is_telegram_intake_open", lambda: True)
+    monkeypatch.setattr(telegram_router, "_ready_ticket_for_distribution", lambda db, ticket, button: setattr(ticket, "intake_state", "ready"))
+    monkeypatch.setattr(telegram_menu_flow, "delete_message", lambda chat, mid: events.append(("delete", mid)))
+    monkeypatch.setattr(telegram_menu_flow, "remove_inline_keyboard", lambda chat, mid: events.append(("remove", mid)))
+    update_ids = iter(range(1000, 2000))
+
+    def callback(data, mid=None, notify=True):
+        source_id = int(contact.active_menu_message_id) if mid is None else mid
+        markup = next((event[2] for event in events if event[0] == "send" and event[1] == source_id), None)
+        return telegram_router.process_telegram_update(session, {
+            "update_id": next(update_ids), "callback_query": {
+                "id": "callback", "data": data, "from": {"id": contact.external_user_id},
+                "message": {"message_id": source_id, "reply_markup": markup,
+                            "chat": {"id": contact.external_chat_id, "type": "private"}},
+            }}, notify_client=notify)
+
+    yield SimpleNamespace(db=session, contact=contact, ticket=ticket, events=events, callback=callback)
+    session.close()
+
+
+def test_nested_navigation_and_back_track_and_delete_each_source(menu_flow):
+    flow = menu_flow
+    section = _seed_row(flow.db, button_key="section", button_kind="section", workflow_type="submenu", button_path="S")
+    nested = _seed_row(flow.db, button_key="nested", button_kind="section", workflow_type="submenu", button_path="S/N", parent_path="S")
+    _seed_row(flow.db, button_key="leaf", button_path="S/N/A", parent_path="S/N")
+    for data in (f"menuid:{section.id}", f"menuid:{nested.id}", f"menuid:{section.id}", "menu:__root__"):
+        old = int(flow.contact.active_menu_message_id)
+        assert "menu_key" in flow.callback(data)
+        assert flow.contact.active_menu_message_id == flow.ticket.menu_message_id
+        assert int(flow.contact.active_menu_message_id) != old
+        assert ("delete", old) in flow.events
+        assert flow.callback(data, old)["ignored"] == "stale_menu"
+    assert [event[0] for event in flow.events] == ["send", "delete"] * 4
+
+
+@pytest.mark.parametrize("kind", ["ticket", "task", "group_task", "auto"])
+@pytest.mark.parametrize("delete_fails,remove_fails", [(False, False), (True, False), (True, True)])
+def test_terminal_selection_consumed_even_when_cleanup_fails(menu_flow, monkeypatch, kind, delete_fails, remove_fails):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type=kind, button_kind="group_parent" if kind == "group_task" else "terminal")
+    def delete(chat, mid):
+        flow.events.append(("delete", mid))
+        if delete_fails:
+            raise TelegramApiError("delete refused")
+    def remove(chat, mid):
+        flow.events.append(("remove", mid))
+        if remove_fails:
+            raise TelegramApiError("edit refused")
+    monkeypatch.setattr(telegram_menu_flow, "delete_message", delete)
+    monkeypatch.setattr(telegram_menu_flow, "remove_inline_keyboard", remove)
+    result = flow.callback(f"btnid:{row.id}")
+    assert result["ticket_id"] == flow.ticket.id
+    assert flow.contact.active_menu_message_id is None
+    assert flow.ticket.menu_message_id == ("10" if delete_fails and kind != "auto" else None)
+    assert (10 in flow.contact.menu_message_ids_json) == delete_fails
+    assert ("delete", 10) in flow.events
+    assert (("remove", 10) in flow.events) == delete_fails
+    for _ in range(2):
+        assert flow.callback(f"btnid:{row.id}", 10)["ignored"] == "stale_menu"
+    assert len(flow.db.query(Ticket).all()) == 1
+
+
+@pytest.mark.parametrize("decision", ["yes", "no"])
+def test_confirmation_requires_current_action_and_distinct_message(menu_flow, decision):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    other = _seed_row(flow.db, button_key="other", workflow_type="task")
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    mid = int(flow.contact.active_menu_message_id)
+    assert mid != 10 and flow.ticket.menu_message_id == str(mid)
+    assert flow.callback(f"confirm:{decision}:btnid:{row.id}", 10)["ignored"] == "stale_confirmation"
+    assert flow.callback(f"confirm:{decision}:btnid:{other.id}", mid)["ignored"] == "stale_confirmation"
+    result = flow.callback(f"confirm:{decision}:btnid:{row.id}", mid)
+    assert result.get("confirmation") == "no" if decision == "no" else result["task_pending"]
+    assert ("delete", mid) in flow.events
+    for _ in range(2):
+        assert flow.callback(f"confirm:{decision}:btnid:{row.id}", mid)["ignored"] == "stale_confirmation"
+
+
+def test_old_confirmation_after_start_and_new_selection_is_rejected(menu_flow):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    old = int(flow.contact.active_menu_message_id)
+    telegram_router._send_problem_menu_for_contact(flow.db, flow.contact, flow.ticket)
+    flow.db.commit()
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    current = flow.contact.active_menu_message_id
+    assert flow.callback(f"confirm:yes:btnid:{row.id}", old)["ignored"] == "stale_confirmation"
+    assert flow.contact.active_menu_message_id == current
+    assert flow.ticket.intake_state == "collecting"
+
+
+@pytest.mark.parametrize("data", ["btnid:unknown", "btn:unknown", "menuid:unknown", "menu:__root__"])
+@pytest.mark.parametrize("untracked", [False, True])
+def test_stale_callback_without_active_ticket_never_mutates_draft(menu_flow, data, untracked):
+    flow = menu_flow
+    if untracked:
+        flow.contact.active_menu_message_id = None
+    flow.db.commit()
+    before = (flow.ticket.button_config_key, flow.ticket.updated_at, flow.ticket.menu_message_id)
+    for _ in range(2):
+        assert flow.callback(data, 9, notify=False)["ignored"] == "stale_menu"
+    assert (flow.ticket.button_config_key, flow.ticket.updated_at, flow.ticket.menu_message_id) == before
+    assert len(flow.db.query(Ticket).all()) == 1
+    assert flow.events == []
+
+
+def test_submenu_send_failure_preserves_old_menu(menu_flow, monkeypatch):
+    flow = menu_flow
+    section = _seed_row(flow.db, button_key="section", button_kind="section", workflow_type="submenu", button_path="S")
+    def fail(*args, **kwargs):
+        raise TelegramApiError("send failed")
+    monkeypatch.setattr(telegram_router, "send_message", fail)
+    with pytest.raises(TelegramApiError, match="send failed"):
+        flow.callback(f"menuid:{section.id}")
+    flow.db.rollback()
+    assert flow.contact.active_menu_message_id == flow.ticket.menu_message_id == "10"
+    assert flow.events == []
+
+
+def test_active_ticket_still_prevents_creation(menu_flow):
+    flow = menu_flow
+    row = _seed_row(flow.db)
+    flow.ticket.intake_state = "ready"
+    flow.db.commit()
+    assert flow.callback(f"btnid:{row.id}")["already_active"]
+    assert len(flow.db.query(Ticket).all()) == 1
+
+
+def test_cleanup_failure_does_not_reactivate_consumed_menu(menu_flow, monkeypatch):
+    flow = menu_flow
+    monkeypatch.setattr(telegram_router, "_safe_delete_message", lambda *args: False)
+    telegram_router._clear_client_menu_keyboards(flow.db, flow.contact)
+    assert flow.contact.menu_message_ids_json == [10]
+    assert flow.contact.active_menu_message_id is None
+    flow.db.commit()
+    assert flow.callback("menu:__root__", 10)["ignored"] == "stale_menu"
+
+
+def test_remove_menu_never_deletes_untracked_user_message(menu_flow):
+    flow = menu_flow
+    flow.ticket.menu_message_id = None
+    telegram_menu_flow._remove_menu_keyboard(flow.db, flow.ticket, fallback_message_id=999)
+    assert flow.events == []
+
+
+
+def test_repeated_start_replaces_menu_and_invalidates_old_confirmation(menu_flow):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    confirmation_id = int(flow.contact.active_menu_message_id)
+    for update_id in (7000, 7001):
+        old = int(flow.contact.active_menu_message_id)
+        payload = _start_payload(flow.contact.external_chat_id, flow.contact.external_user_id)
+        payload["update_id"] = update_id
+        assert telegram_router.process_telegram_update(flow.db, payload, notify_client=True)["command"] == "start"
+        assert flow.contact.active_menu_message_id == flow.ticket.menu_message_id
+        assert ("delete", old) in flow.events
+    assert flow.callback(f"confirm:yes:btnid:{row.id}", confirmation_id)["ignored"] == "stale_confirmation"
+
+
+@pytest.mark.parametrize("missing_id", [False, True])
+def test_confirmation_send_failure_keeps_selection_menu(menu_flow, monkeypatch, missing_id):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    def fail(*args, **kwargs):
+        if missing_id:
+            return {"ok": False}
+        raise TelegramApiError("send failed")
+    monkeypatch.setattr(telegram_router, "send_message", fail)
+    if missing_id:
+        flow.callback(f"btnid:{row.id}")
+        assert flow.callback(f"confirm:yes:btnid:{row.id}", 10)["ignored"] == "stale_confirmation"
+    else:
+        with pytest.raises(TelegramApiError, match="send failed"):
+            flow.callback(f"btnid:{row.id}")
+        flow.db.rollback()
+    assert flow.contact.active_menu_message_id == flow.ticket.menu_message_id == "10"
+    assert flow.events == []
+
+
+def test_two_concurrent_updates_consume_menu_once(menu_flow, tmp_path):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    flow = menu_flow
+    row = _seed_row(flow.db)
+    callback_data = f"btnid:{row.id}"
+    chat_id, user_id = flow.contact.external_chat_id, flow.contact.external_user_id
+    flow.db.delete(flow.ticket)
+    flow.db.commit()
+    path = tmp_path / "concurrent-menus.db"
+    with sqlite3.connect(path) as destination:
+        flow.db.connection().connection.driver_connection.backup(destination)
+    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+    factory = sessionmaker(bind=engine, autoflush=False)
+    barrier = Barrier(2)
+
+    def press(update_id):
+        with factory() as db:
+            barrier.wait(timeout=10)
+            return telegram_router.process_telegram_update(db, {
+                "update_id": update_id, "callback_query": {
+                    "id": str(update_id), "data": callback_data, "from": {"id": user_id},
+                    "message": {"message_id": 10, "chat": {"id": chat_id, "type": "private"}},
+                }}, notify_client=False)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(press, (8000, 8001)))
+        assert sum("ticket_id" in result for result in results) == 1
+        assert sum(result.get("ignored") == "stale_menu" for result in results) == 1
+        with factory() as db:
+            assert db.query(Ticket).count() == 1
+    finally:
+        engine.dispose()
+
+
+
+def test_current_menu_cannot_be_used_as_confirmation_message(menu_flow):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    telegram_router._send_problem_menu_for_contact(flow.db, flow.contact, flow.ticket)
+    flow.db.commit()
+    assert flow.callback(f"confirm:yes:btnid:{row.id}")["ignored"] == "stale_confirmation"
+    assert flow.ticket.intake_state == "collecting"
+
+
+def test_confirmation_without_source_keyboard_is_rejected(menu_flow):
+    flow = menu_flow
+    row = _seed_row(flow.db, workflow_type="task", confirmation_enabled=True, confirmation_text="Confirm")
+    assert flow.callback(f"btnid:{row.id}")["awaiting_confirmation"]
+    mid = int(flow.contact.active_menu_message_id)
+    flow.events[:] = [(event[0], event[1], None) if event[0] == "send" else event for event in flow.events]
+    assert flow.callback(f"confirm:yes:btnid:{row.id}", mid)["ignored"] == "stale_confirmation"
+    assert flow.contact.active_menu_message_id == str(mid)

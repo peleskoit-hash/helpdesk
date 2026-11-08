@@ -19,21 +19,31 @@ def _store_menu_message_id(ticket: Ticket, response: dict):
 
 
 def _remove_menu_keyboard(db: Session, ticket: Ticket, fallback_chat_id: str | None = None, fallback_message_id: int | None = None):
+    contact_query = select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)
+    if fallback_chat_id is not None:
+        contact_query = contact_query.where(TelegramContact.external_chat_id == fallback_chat_id)
+    contact = db.execute(contact_query).scalar_one_or_none()
     chat_id = fallback_chat_id
     if chat_id is None:
-        contact = db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
         chat_id = contact.external_chat_id if contact is not None else None
     message_id_str = ticket.menu_message_id
-    message_id = int(message_id_str) if message_id_str and message_id_str.isdigit() else fallback_message_id
-    if chat_id and message_id is not None:
-        try:
-            delete_message(chat_id, message_id)
-        except Exception:
-            try:
-                remove_inline_keyboard(chat_id, message_id)
-            except Exception:
-                pass
-    ticket.menu_message_id = None
+    # A fallback may be a user's /close message: only remove tracked menus.
+    message_id = int(message_id_str) if message_id_str and message_id_str.isdigit() else None
+    if message_id is None and contact is not None and str(fallback_message_id) == contact.active_menu_message_id:
+        message_id = fallback_message_id
+    if message_id is None:
+        return
+    if contact is not None and contact.active_menu_message_id == str(message_id):
+        contact.active_menu_message_id = None
+    cleared = bool(chat_id) and _safe_delete_message(chat_id, message_id)
+    if cleared:
+        ticket.menu_message_id = None
+    if contact is not None:
+        ids = list(contact.menu_message_ids_json or [])
+        ids = [mid for mid in ids if str(mid) != str(message_id)]
+        if not cleared:
+            ids.append(message_id)
+        contact.menu_message_ids_json = ids[-20:]
 
 
 def _safe_remove_inline_keyboard(chat_id: str, message_id: int | None):

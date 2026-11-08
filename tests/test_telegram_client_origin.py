@@ -23,6 +23,12 @@ from test_telegram_client_blocking import _seed_contact, _seed_ticket
 
 @pytest.fixture
 def flow(case, monkeypatch, tmp_path):
+    from api.app.services import telegram_automation, telegram_bitrix_phone, telegram_group_automation
+    for module in (telegram, telegram_automation, telegram_bitrix_phone, telegram_group_automation):
+        monkeypatch.setattr(module, "is_telegram_intake_open", lambda: True)
+    from api.app.services import telegram_menu_flow
+    monkeypatch.setattr(telegram_menu_flow, "delete_message", Mock())
+    monkeypatch.setattr(telegram_menu_flow, "remove_inline_keyboard", Mock())
     company = case.db.scalar(select(Company))
     client, _, contact = _seed_contact(case.db, company=company)
     ticket = _seed_ticket(case.db, company_id=company.id, client_id=client.id,
@@ -30,6 +36,8 @@ def flow(case, monkeypatch, tmp_path):
     button = BotButtonSetting(id="origin-button", button_key="Menu|auto|Origin", menu_type="Menu",
         workflow_type="auto", button_path="Origin", button_label="Откуда клиент", automation_key="client_origin",
         automation_overridden=True, currently_present=True)
+    contact.active_menu_message_id = ticket.menu_message_id = "10"
+    contact.menu_message_ids_json = [10]
     case.db.add(button)
     case.db.commit()
     case.ticket, case.button, case.contact = ticket, button, contact
@@ -53,10 +61,17 @@ def flow(case, monkeypatch, tmp_path):
 
 
 def choose(flow, confirmation=False, update_id=10):
+    mid = 10
+    if confirmation:
+        flow.button.confirmation_enabled = True
+        flow.button.confirmation_text = "Confirm"
+        flow.db.commit()
+        assert choose(flow, update_id=update_id - 1)["awaiting_confirmation"]
+        mid = int(flow.contact.active_menu_message_id)
     return telegram.process_telegram_update(flow.db, {"update_id": update_id, "callback_query": {
-        "id": "choose", "data": f"confirm:yes:{flow.button.button_key}" if confirmation else f"btnid:{flow.button.id}",
+        "id": "choose", "data": f"confirm:yes:btnid:{flow.button.id}" if confirmation else f"btnid:{flow.button.id}",
         "from": {"id": int(flow.contact.external_user_id)},
-        "message": {"message_id": 10, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}},
+        "message": {"message_id": mid, "reply_markup": telegram._confirmation_markup(f"btnid:{flow.button.id}") if confirmation else None, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}},
     }}, notify_client=True)
 
 
@@ -522,6 +537,9 @@ def test_historical_origin_button_never_closes_a_new_request(flow, new_kind):
     flow.ticket = new_ticket
     if new_kind == "origin":
         flow.sent.return_value = {"ok": True, "result": {"message_id": 900}}
+        flow.contact.active_menu_message_id = new_ticket.menu_message_id = "10"
+        flow.contact.menu_message_ids_json = [10]
+        flow.db.commit()
         choose(flow, update_id=12)
     update = {"update_id": 13, "callback_query": {"id": "old-close", "data": "client_close",
         "from": {"id": int(flow.contact.external_user_id)}, "message": incoming(flow, "")["message"]}}

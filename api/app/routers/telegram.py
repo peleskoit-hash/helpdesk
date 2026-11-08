@@ -525,12 +525,17 @@ def _menu_name_for_ticket_client(db: Session, ticket: Ticket) -> str:
     return BASIC_MENU_NAME
 
 
-def _send_problem_menu_for_contact(db: Session, contact: TelegramContact, ticket: Ticket | None = None):
+def _send_problem_menu_for_contact(db: Session, contact: TelegramContact, ticket: Ticket | None = None, *, menu_key: str | None = None):
     menu_name = _menu_name_for_contact(db, contact)
-    response = _send_problem_menu_with_visibility(db, contact.external_chat_id, menu_name=menu_name)
+    old_ids = _start_menu_cleanup_ids(contact, ticket)
+    response = _send_problem_menu_with_visibility(db, contact.external_chat_id, menu_name=menu_name, menu_key=menu_key)
+    message_id = _response_message_id(response)
+    if message_id is None:
+        return response
     if ticket is not None:
         _store_menu_message_id(ticket, response)
     _remember_contact_menu_message(contact, response)
+    _clear_client_menu_keyboards(db, contact, old_ids, keep_message_id=int(message_id))
     return response
 
 
@@ -583,13 +588,11 @@ def _remember_contact_menu_message(contact: TelegramContact, response: dict) -> 
 
 def _start_menu_cleanup_ids(contact: TelegramContact, *tickets: Ticket | None) -> list[int]:
     ids = _contact_menu_message_ids(contact)
-    if not ids:
-        for ticket in tickets:
-            try:
-                if ticket is not None and ticket.menu_message_id:
-                    ids.append(int(ticket.menu_message_id))
-            except Exception:
-                continue
+    if contact.active_menu_message_id and contact.active_menu_message_id.isdigit():
+        ids.append(int(contact.active_menu_message_id))
+    for ticket in tickets:
+        if ticket is not None and ticket.menu_message_id and ticket.menu_message_id.isdigit():
+            ids.append(int(ticket.menu_message_id))
     return ids
 
 
@@ -600,7 +603,7 @@ def _clear_client_menu_keyboards(
     *,
     keep_message_id: int | None = None,
 ) -> None:
-    """Remove old tracked menu copies after a replacement /start response was sent."""
+    """Remove tracked menu copies while preserving the replacement message."""
     ids = list(old_message_ids) if old_message_ids is not None else _contact_menu_message_ids(contact)
     dedup = []
     seen: set[int] = set()
@@ -629,13 +632,27 @@ def _clear_client_menu_keyboards(
             )
         ).scalars().all()
         for ticket in tickets:
-            ticket.menu_message_id = None
-    next_ids = failed_ids[:1]
+            if ticket.menu_message_id in cleared_id_strings:
+                ticket.menu_message_id = None
+    active_id = contact.active_menu_message_id
+    next_ids = failed_ids
     if keep_message_id is not None:
         next_ids.append(keep_message_id)
     else:
         next_ids.extend(mid for mid in _contact_menu_message_ids(contact) if mid not in cleared_ids and mid not in next_ids)
-    _set_contact_menu_message_ids(contact, next_ids[-2:])
+    _set_contact_menu_message_ids(contact, next_ids)
+    # Cleanup history is not authorization to press a menu again.
+    if keep_message_id is None:
+        contact.active_menu_message_id = active_id if active_id and active_id not in {str(mid) for mid in seen} else None
+
+
+def _is_current_menu_callback(db: Session, contact: TelegramContact | None, message_id: object) -> bool:
+    if contact is None or not isinstance(message_id, int) or message_id <= 0:
+        return False
+    if contact.active_menu_message_id != str(message_id):
+        return False
+    ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
+    return ticket is None or ticket.menu_message_id in (None, str(message_id))
 
 
 def _button_visibility_enabled(row: BotButtonSetting | None) -> bool:
@@ -2116,8 +2133,8 @@ def _process_menu_callback(
                         if notify_client:
                             if callback_id:
                                 answer_callback_query(callback_id, "Эта кнопка больше недоступна. Откройте меню заново.")
-                            _safe_delete_message(external_chat_id, message_id if isinstance(message_id, int) else None)
-                            _send_problem_menu_with_visibility(db, external_chat_id, menu_name=menu_name)
+                            _send_problem_menu_for_contact(db, contact, _collecting_ticket_for_client(db, contact.company_id, contact.client_id))
+                            db.commit()
                         return {"ok": True, "ignored": "menu_disabled"}
                 elif menu_key:
                     row = db.execute(
@@ -2137,19 +2154,21 @@ def _process_menu_callback(
                 collecting_ticket = _collecting_ticket_for_client(db, contact.company_id, contact.client_id)
                 if collecting_ticket is None:
                     collecting_ticket = _create_collecting_ticket(db, contact.company_id, contact.client_id)
-                collecting_ticket.button_config_key = f"{SUBMENU_MARKER_PREFIX}{menu_key}"
-                collecting_ticket.updated_at = datetime.utcnow()
-                db.commit()
+                if not notify_client:
+                    collecting_ticket.button_config_key = f"{SUBMENU_MARKER_PREFIX}{menu_key}"
+                    collecting_ticket.updated_at = datetime.utcnow()
+                    contact.active_menu_message_id = None
+                    db.commit()
 
     if notify_client and external_chat_id:
         if callback_id:
             answer_callback_query(callback_id)
-        if isinstance(message_id, int):
-            _safe_delete_message(external_chat_id, message_id)
-        response = _send_problem_menu_with_visibility(db, external_chat_id, menu_key=menu_key, menu_name=menu_name)
+        response = _send_problem_menu_for_contact(db, contact, collecting_ticket, menu_key=menu_key)
         if collecting_ticket is not None:
-            _store_menu_message_id(collecting_ticket, response)
-            db.commit()
+            if _response_message_id(response) is not None:
+                collecting_ticket.button_config_key = f"{SUBMENU_MARKER_PREFIX}{menu_key}"
+                collecting_ticket.updated_at = datetime.utcnow()
+        db.commit()
     return {"ok": True, "menu_key": menu_key}
 
 
@@ -2161,6 +2180,7 @@ def _is_hours_limited_button(button: ButtonSpec) -> bool:
 
 
 def _block_button_after_hours(db, contact, ticket, callback_id, message_id, notify_client):
+    contact.active_menu_message_id = None
     # Render before deleting the draft: template fields may refer to it.
     text, mode = render_automatic_message_for_telegram(
         db, "telegram.after_hours.creation_blocked.client", ticket=ticket, contact=contact,
@@ -2247,16 +2267,18 @@ def _process_problem_type_callback(
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id, "Эта кнопка больше недоступна. Откройте меню заново.")
-            _safe_delete_message(external_chat_id, message_id if isinstance(message_id, int) else None)
-            _send_problem_menu_with_visibility(db, external_chat_id, menu_name=menu_name_for_contact)
+            _send_problem_menu_for_contact(db, contact, _collecting_ticket_for_client(db, contact.company_id, contact.client_id))
+            db.commit()
         return {"ok": True, "ignored": "button_disabled"}
     active_ticket = _active_ticket_for_client(db, contact.company_id, contact.client_id)
     if active_ticket is not None:
+        contact.active_menu_message_id = None
         db.commit()
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id, "\u0423 \u0412\u0430\u0441 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435")
-            _safe_delete_message(external_chat_id, message_id if isinstance(message_id, int) else None)
+            _clear_client_menu_keyboards(db, contact)
+            db.commit()
             markup = client_close_markup() if client_can_close_ticket(db, active_ticket) else None
             active_ticket_text, active_ticket_parse_mode = _automatic_telegram_text(
                 db,
@@ -2281,14 +2303,14 @@ def _process_problem_type_callback(
         return _block_button_after_hours(db, contact, collecting_ticket, callback_id, message_id, notify_client)
     if collecting_ticket is None:
         collecting_ticket = _create_collecting_ticket(db, contact.company_id, contact.client_id)
-    _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id, fallback_message_id=message_id if isinstance(message_id, int) else None)
-
+    if contact.active_menu_message_id == str(message_id):
+        collecting_ticket.menu_message_id = str(message_id)
     menu_name = menu_name_for_contact
     collecting_ticket.instruction_button_key = _resolve_instruction_button_key(db, menu_name, button.key)
     confirmation_enabled, confirmation_text = _resolve_effective_confirmation(collecting_ticket, button, db)
     if confirmation_enabled:
+        previous_button_key = collecting_ticket.button_config_key
         collecting_ticket.button_config_key = button.key
-        db.commit()
         if notify_client:
             if callback_id:
                 answer_callback_query(callback_id)
@@ -2299,14 +2321,27 @@ def _process_problem_type_callback(
                 confirmation_text,
                 default_confirmation_text,
             )
-            send_message(
+            response = send_message(
                 external_chat_id,
                 confirmation_payload_text,
                 parse_mode=confirmation_parse_mode,
                 reply_markup=_confirmation_markup(data),
             )
+            confirmation_id = _response_message_id(response)
+            if confirmation_id is not None:
+                old_ids = _start_menu_cleanup_ids(contact, collecting_ticket)
+                _store_menu_message_id(collecting_ticket, response)
+                _remember_contact_menu_message(contact, response)
+                _clear_client_menu_keyboards(db, contact, old_ids, keep_message_id=int(confirmation_id))
+            else:
+                collecting_ticket.button_config_key = previous_button_key
+        else:
+            # No confirmation was delivered; the selection is consumed nonetheless.
+            contact.active_menu_message_id = None
+        db.commit()
         return {"ok": True, "ticket_id": collecting_ticket.id, "awaiting_confirmation": True, "button": button.label}
 
+    _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id, fallback_message_id=message_id if isinstance(message_id, int) else None)
     _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
     origin_wait = _begin_client_origin_wait(db, collecting_ticket, external_chat_id, notify_client, callback_id)
     if origin_wait is not None:
@@ -2525,14 +2560,17 @@ def process_telegram_update(db: Session, payload: dict, notify_client: bool = Fa
         ).where(TelegramContact.external_chat_id == chat_id, Ticket.status != TicketStatus.CLOSED.value,
                 or_(Ticket.intake_state != TicketIntakeState.COLLECTING.value, Ticket.channel == "telegram"),
                 Ticket.intake_state.in_([TicketIntakeState.COLLECTING.value, TicketIntakeState.TELEGRAM_GROUP_COPYING.value]))).all()
-        if selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket) or telegram_bitrix_phone.waiting(ticket)
-            or (getattr(_button_setting_for_ticket(db, ticket), "automation_key", None) in telegram_bitrix_phone.KEYS) for ticket in candidates):
+        menu_transition = callback_data.startswith(("btnid:", "btn:", "menuid:", "menu:")) or confirmation is not None or str(message.get("text") or "").startswith("/start")
+        needs_recovery = selects_group or any(ticket.intake_state == TicketIntakeState.TELEGRAM_GROUP_COPYING.value or _is_group_automation(db, ticket) or telegram_client_origin.waiting(ticket) or telegram_bitrix_phone.waiting(ticket)
+            or (getattr(_button_setting_for_ticket(db, ticket), "automation_key", None) in telegram_bitrix_phone.KEYS) for ticket in candidates)
+        if menu_transition or needs_recovery:
             with telegram_group_automation.chat_lock(db, chat_id):
                 # End the read-only discovery snapshot before rechecking a concurrent update.
                 if not db.new and not db.dirty and not db.deleted:
                     db.rollback()
                 db.expire_all()
-                telegram_group_automation.recover(db, callbacks=_group_automation_callbacks(), chat_id=chat_id, already_locked=True)
+                if needs_recovery:
+                    telegram_group_automation.recover(db, callbacks=_group_automation_callbacks(), chat_id=chat_id, already_locked=True)
                 return _process_telegram_update(db, payload, notify_client)
     return _process_telegram_update(db, payload, notify_client)
 
@@ -2681,6 +2719,14 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
                 ticket_closed_client_text=_automatic_text(db, "telegram.ticket.close.client", TICKET_CLOSED_CLIENT_TEXT),
             )
         confirm = _parse_confirm_callback_data(data)
+        if data.startswith(("btnid:", "btn:", "menuid:", "menu:")):
+            contact = telegram_contact_by_chat_id(db, external_chat_id)
+            if not _is_current_menu_callback(db, contact, message.get("message_id")):
+                db.add(callback_update)
+                db.commit()
+                if notify_client and callback.get("id"):
+                    answer_callback_query(callback["id"], "Эта кнопка больше недоступна. Откройте меню заново.")
+                return {"ok": True, "ignored": "stale_menu"}
         if confirm is not None:
             button_ref, decision = confirm
             callback_id = str(callback.get("id", ""))
@@ -2714,36 +2760,44 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
             if not (button_callback_data.startswith("btn:") or button_callback_data.startswith("btnid:")):
                 button_callback_data = f"btn:{button_callback_data}"
             button = _button_from_callback(db, button_callback_data, menu_name_for_contact)
-            if collecting_ticket is None or button is None:
+            confirmation_buttons = (message.get("reply_markup") or {}).get("inline_keyboard") or []
+            confirmation_source = any(
+                item.get("callback_data") == data
+                for row in confirmation_buttons for item in row
+                if isinstance(item, dict)
+            )
+            if (collecting_ticket is None or button is None
+                    or not confirmation_source
+                    or not isinstance(message_id, int)
+                    or contact.active_menu_message_id != str(message_id)
+                    or collecting_ticket.menu_message_id != str(message_id)
+                    or collecting_ticket.button_config_key != button.key
+                    or _active_ticket_for_client(db, contact.company_id, contact.client_id) is not None):
                 db.commit()
                 if notify_client:
                     if callback_id:
                         answer_callback_query(callback_id, "Подтверждение устарело")
-                    if isinstance(message_id, int):
-                        _safe_remove_inline_keyboard(external_chat_id, message_id)
-                    if collecting_ticket is not None:
-                        _send_problem_menu_for_contact(db, contact, collecting_ticket)
                 return {"ok": True, "ignored": "stale_confirmation"}
 
             if decision == "no":
-                _reset_collecting_ticket(db, collecting_ticket)
                 _remove_menu_keyboard(
                     db,
                     collecting_ticket,
                     fallback_chat_id=external_chat_id,
                     fallback_message_id=message_id if isinstance(message_id, int) else None,
                 )
+                _reset_collecting_ticket(db, collecting_ticket)
                 db.commit()
                 if notify_client:
                     if callback_id:
                         answer_callback_query(callback_id, "Отменено")
-                    if isinstance(message_id, int):
-                        _safe_remove_inline_keyboard(external_chat_id, message_id)
                     _send_problem_menu_for_contact(db, contact, collecting_ticket)
+                    db.commit()
                 return {"ok": True, "ticket_id": collecting_ticket.id, "confirmation": "no"}
 
             if decision == "yes" and _is_hours_limited_button(button) and not is_telegram_intake_open():
                 return _block_button_after_hours(db, contact, collecting_ticket, callback_id, message_id, notify_client)
+            _remove_menu_keyboard(db, collecting_ticket, fallback_chat_id=external_chat_id)
             _prepare_collecting_ticket_for_button(db, collecting_ticket, button, menu_name_for_contact)
             origin_wait = _begin_client_origin_wait(db, collecting_ticket, external_chat_id, notify_client, callback_id)
             if origin_wait is not None:
@@ -2754,12 +2808,6 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
             group_wait = _begin_group_message_wait(db, collecting_ticket, button, external_chat_id, notify_client, callback_id)
             if group_wait is not None:
                 return group_wait
-            _remove_menu_keyboard(
-                db,
-                collecting_ticket,
-                fallback_chat_id=external_chat_id,
-                fallback_message_id=message_id if isinstance(message_id, int) else None,
-            )
             if button.kind == "auto":
                 collecting_ticket.intake_state = TicketIntakeState.READY.value
                 db.commit()
@@ -3159,19 +3207,7 @@ def _process_telegram_update(db: Session, payload: dict, notify_client: bool = F
         if notify_client:
             if ticket is None:
                 if collecting_ticket is not None:
-                    old_menu_message_ids = _start_menu_cleanup_ids(contact, collecting_ticket)
-                    response = _send_problem_menu_for_contact(db, contact, collecting_ticket)
-                    new_message_id_raw = _response_message_id(response)
-                    try:
-                        new_message_id = int(new_message_id_raw) if new_message_id_raw is not None else None
-                    except Exception:
-                        new_message_id = None
-                    _clear_client_menu_keyboards(
-                        db,
-                        contact,
-                        old_menu_message_ids,
-                        keep_message_id=new_message_id,
-                    )
+                    _send_problem_menu_for_contact(db, contact, collecting_ticket)
                     db.commit()
             else:
                 old_menu_message_ids = _start_menu_cleanup_ids(contact, ticket)

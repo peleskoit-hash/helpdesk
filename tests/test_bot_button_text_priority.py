@@ -10,6 +10,7 @@ from test_db_only_blockers import db, button, no_txt
 
 
 def setup_callback(db, monkeypatch, workflow, confirmation, automation="none", individual="Individual"):
+    monkeypatch.setattr(telegram, "is_telegram_intake_open", lambda: True)
     row = button(db, "Button", workflow=workflow, kind="group_parent" if workflow == "group_task" else "terminal",
                  client_text=individual, client_text_overridden=True, confirmation_enabled=confirmation,
                  confirmation_text="Confirm", automation_key=automation, automation_overridden=True)
@@ -17,7 +18,8 @@ def setup_callback(db, monkeypatch, workflow, confirmation, automation="none", i
     db.flush()
     db.add(Client(id="client", company_id="company", display_name="Client"))
     db.flush()
-    contact = TelegramContact(id="contact", company_id="company", client_id="client", external_user_id="123", external_chat_id="456")
+    contact = TelegramContact(id="contact", company_id="company", client_id="client", external_user_id="123", external_chat_id="456",
+                              active_menu_message_id="10", menu_message_ids_json=[10])
     db.add(contact)
     db.commit()
     monkeypatch.setattr(telegram, "_menu_name_for_contact", lambda *args: "menu-a")
@@ -40,6 +42,8 @@ def select(db, row, confirmation, sent):
     result = telegram.process_telegram_update(db, {"update_id": 1, "callback_query": callback}, notify_client=True)
     if confirmation:
         assert result["awaiting_confirmation"] is True
+        callback["message"]["message_id"] = int(db.get(TelegramContact, "contact").active_menu_message_id)
+        callback["message"]["reply_markup"] = telegram._confirmation_markup(f"btnid:{row.id}")
         sent.clear()
         callback["data"] = telegram._confirm_callback_data(f"btnid:{row.id}", "yes")
         result = telegram.process_telegram_update(db, {"update_id": 2, "callback_query": callback}, notify_client=True)

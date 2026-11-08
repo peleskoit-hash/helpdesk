@@ -21,6 +21,12 @@ from test_telegram_client_blocking import _seed_contact, _seed_ticket
 
 @pytest.fixture
 def flow(case, monkeypatch, tmp_path):
+    monkeypatch.setattr(automation, "is_telegram_intake_open", lambda: True)
+    monkeypatch.setattr(telegram, "is_telegram_intake_open", lambda: True)
+    from api.app.services import telegram_menu_flow, telegram_automation
+    monkeypatch.setattr(telegram_automation, "is_telegram_intake_open", lambda: True)
+    monkeypatch.setattr(telegram_menu_flow, "delete_message", Mock())
+    monkeypatch.setattr(telegram_menu_flow, "remove_inline_keyboard", Mock())
     group_id = register(case)["group_id"]
     company = case.db.get(Company, case.db.get(TelegramAutomationGroup, group_id).company_id)
     client, _, contact = _seed_contact(case.db, company=company)
@@ -31,6 +37,8 @@ def flow(case, monkeypatch, tmp_path):
                               automation_key="telegram_group", automation_overridden=True,
                               telegram_group_id=group_id, currently_present=True,
                               client_text="Пришлите одно сообщение", client_text_overridden=True)
+    contact.active_menu_message_id = ticket.menu_message_id = "10"
+    contact.menu_message_ids_json = [10]
     case.db.add(button)
     case.db.commit()
     copied = Mock(return_value={"ok": True, "result": {"message_id": 12345}})
@@ -58,11 +66,22 @@ def select_button(flow, workflow="auto", *, confirmation=False):
     flow.button.button_key = f"Menu|{workflow}|Request"
     flow.ticket.workflow_type = workflow
     flow.db.commit()
-    data = f"confirm:yes:{flow.button.button_key}" if confirmation else f"btn:{flow.button.button_key}"
+    mid = 10
+    if confirmation:
+        flow.button.confirmation_enabled = True
+        flow.button.confirmation_text = "Confirm"
+        flow.db.commit()
+        assert telegram.process_telegram_update(flow.db, {
+            "update_id": 9, "callback_query": {"id": "select-prompt", "data": f"btn:{flow.button.button_key}",
+                "from": {"id": int(flow.contact.external_user_id)},
+                "message": {"message_id": 10, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}}},
+        }, notify_client=True)["awaiting_confirmation"]
+        mid = int(flow.contact.active_menu_message_id)
+    data = f"confirm:yes:btn:{flow.button.button_key}" if confirmation else f"btn:{flow.button.button_key}"
     return telegram.process_telegram_update(flow.db, {
         "update_id": 10, "callback_query": {"id": "select", "data": data,
             "from": {"id": int(flow.contact.external_user_id)},
-            "message": {"message_id": 10, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}}},
+            "message": {"message_id": mid, "reply_markup": telegram._confirmation_markup(f"btn:{flow.button.button_key}") if confirmation else None, "chat": {"id": int(flow.contact.external_chat_id), "type": "private"}}},
     }, notify_client=True)
 
 

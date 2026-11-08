@@ -257,7 +257,7 @@ def test_other_bot_recheck_marks_group_unavailable_without_sending(case):
 def test_auto_button_callback_keeps_request_open_without_false_success(case, monkeypatch, confirmation):
     company = case.db.get(Company, registry.require_admin(case.db, case.admin.id).company_id)
     client, _, contact = _seed_contact(case.db, company=company)
-    _seed_client_ticket(case.db, company_id=company.id, client_id=client.id, workflow_type="auto",
+    ticket = _seed_client_ticket(case.db, company_id=company.id, client_id=client.id, workflow_type="auto",
                         intake_state="collecting", status="unassigned")
     row = BotButtonSetting(id="auto-group", button_key="Menu|auto|Request", menu_type="Menu", workflow_type="auto",
                            button_path="Request", button_label="Request", automation_key="telegram_group",
@@ -271,12 +271,19 @@ def test_auto_button_callback_keeps_request_open_without_false_success(case, mon
     monkeypatch.setattr(telegram, "send_message", sent)
     monkeypatch.setattr(telegram, "answer_callback_query", answered)
     monkeypatch.setattr(telegram, "_safe_remove_inline_keyboard", lambda *args: None)
+    contact.active_menu_message_id = ticket.menu_message_id = "1"
+    contact.menu_message_ids_json = [1]
+    if confirmation:
+        ticket.button_config_key = row.button_key
+    case.db.commit()
     data = f"btn:{row.button_key}"
     if confirmation:
         data = f"confirm:yes:{row.button_key}"
     update = {"update_id": 1, "callback_query": {"id": "cb", "data": data,
         "from": {"id": int(contact.external_user_id)},
         "message": {"message_id": 1, "chat": {"id": int(contact.external_chat_id), "type": "private"}}}}
+    if confirmation:
+        update["callback_query"]["message"]["reply_markup"] = telegram._confirmation_markup(row.button_key)
     result = telegram.process_telegram_update(case.db, update, notify_client=True)
     assert result.get("group_waiting") is True, result
     assert case.db.get(Ticket, result["ticket_id"]).status != "closed"
