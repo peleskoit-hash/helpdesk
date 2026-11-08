@@ -782,6 +782,7 @@
           state.selectedFiles = state.selectedFiles.filter((item) => item !== file);
           forgetPreloadState(state, file);
           renderSelectedFiles(ctx);
+          ctx.onMessageSent?.();
           await ctx.loadCard(true);
         }
       } else {
@@ -791,6 +792,7 @@
           body: JSON.stringify({ text, quote_message_id: quoteMessageId }),
         });
       }
+      ctx.onMessageSent?.();
       if (!taskReply || el.messageInput.value.trim() === text) el.messageInput.value = "";
       state.quoteMessageId = null;
       ctx.clearDraftAfterSuccessfulSend?.();

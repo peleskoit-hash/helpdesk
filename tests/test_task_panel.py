@@ -239,7 +239,7 @@ def test_ticket_view_lifecycle_tracks_agent_and_trainee_only_without_affecting_t
     get_ticket(ticket.id, db=session, user=_current_user(agent.id, "agent"))
     session.refresh(agent_view)
     assert agent_view.first_opened_at == original_agent_first
-    assert agent_view.last_opened_at > original_agent_first - timedelta(minutes=30)
+    assert agent_view.last_opened_at == original_agent_first - timedelta(minutes=30)
 
     get_ticket(trainee_ticket.id, db=session, user=_current_user(trainee.id, "trainee"))
     trainee_view = session.execute(
@@ -253,7 +253,7 @@ def test_ticket_view_lifecycle_tracks_agent_and_trainee_only_without_affecting_t
     get_ticket(trainee_ticket.id, db=session, user=_current_user(trainee.id, "trainee"))
     session.refresh(trainee_view)
     assert trainee_view.first_opened_at == original_trainee_first
-    assert trainee_view.last_opened_at > original_trainee_first - timedelta(minutes=20)
+    assert trainee_view.last_opened_at == original_trainee_first - timedelta(minutes=20)
 
     agent_first_before_admin = agent_view.first_opened_at
     agent_last_before_admin = agent_view.last_opened_at

@@ -33,6 +33,7 @@ from .automatic_messages import (
     get_notification_bot_basic_definition,
     render_notification_bot_basic_semantic_tags,
 )
+from .employee_notification_backlog import accumulate_delivery
 from .telegram_bot import send_message
 from .telegram_employee_binding import REQUEST_STATUS_APPROVED
 from .telegram_text_format import prepare_telegram_html_message
@@ -900,6 +901,8 @@ def resolve_media_group_new_message_telegram_delivery(
 
 
 def _send_delivery(delivery: EmployeeTelegramDelivery) -> None:
+    if accumulate_delivery(delivery, session_factory=SessionLocal):
+        return
     send_message(
         delivery.telegram_chat_id,
         delivery.text,
@@ -911,6 +914,8 @@ def _send_delivery(delivery: EmployeeTelegramDelivery) -> None:
 
 
 def _send_internal_task_completion_delivery(delivery: InternalTaskCompletionTelegramDelivery) -> None:
+    if accumulate_delivery(delivery, session_factory=SessionLocal):
+        return
     send_message(
         delivery.telegram_chat_id,
         delivery.text,

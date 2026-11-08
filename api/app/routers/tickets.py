@@ -30,7 +30,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketReadPayload, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message
@@ -88,6 +88,7 @@ from ..services.ticket_lifecycle import (
     unfreeze_ticket_on_message,
     update_ticket_auto_close,
 )
+from ..services.ticket_reading import readable_message_filters
 from ..services.ticket_numbering import ensure_ticket_number
 from ..services.ticket_problem_flow import (
     apply_wrong_problem,
@@ -1043,6 +1044,43 @@ def get_task_panel(db: Session = Depends(get_db), user: CurrentUser = Depends(ge
     ]
 
 
+@router.post("/{ticket_id}/read")
+def confirm_ticket_read(ticket_id: str, payload: TicketReadPayload,
+                        db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    ticket = _get_ticket_or_404(db, ticket_id, user)
+    if not is_support_user(user) or ticket.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the responsible agent can confirm reading")
+    message = db.scalar(select(TicketMessage).where(
+        TicketMessage.id == payload.message_id,
+        TicketMessage.ticket_id == ticket.id,
+        *readable_message_filters(user.id),
+        TicketMessage.created_at <= datetime.utcnow(),
+    ))
+    if message is None:
+        raise HTTPException(status_code=422, detail="Invalid read boundary message")
+    view = db.scalar(select(TicketView).where(
+        TicketView.ticket_id == ticket.id, TicketView.user_id == user.id,
+    ).with_for_update())
+    if view is None:
+        raise HTTPException(status_code=409, detail="Open the ticket before confirming reading")
+    missing = db.scalar(select(TicketMessage.id).where(
+        TicketMessage.ticket_id == ticket.id,
+        *readable_message_filters(user.id),
+        TicketMessage.created_at > view.last_opened_at,
+        TicketMessage.created_at <= message.created_at,
+        TicketMessage.id.not_in(payload.message_ids),
+    ).limit(1))
+    if missing is not None:
+        raise HTTPException(status_code=409, detail="Unread messages were not shown; refresh the card")
+    # An older tab or delayed request must never move the shared boundary backwards.
+    db.execute(update(TicketView).where(
+        TicketView.id == view.id, TicketView.last_opened_at < message.created_at,
+    ).values(last_opened_at=message.created_at))
+    db.commit()
+    db.refresh(view)
+    return {"last_opened_at": view.last_opened_at}
+
+
 @router.get("/{ticket_id}", response_model=TicketCard)
 def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     t = _get_ticket_or_404(db, ticket_id, user)
@@ -1073,12 +1111,21 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
                 ticket_id=t.id,
                 user_id=user.id,
                 first_opened_at=now,
-                last_opened_at=now,
+                # Opening is recorded separately from reading the first message.
+                last_opened_at=t.created_at - timedelta(microseconds=1),
             )
             db.add(view)
-        else:
-            view.last_opened_at = now
-        db.commit()
+            db.commit()
+
+    unread_message_ids = []
+    if is_support_user(user) and t.assignee_id == user.id:
+        unread_message_ids = list(db.scalars(
+            select(TicketMessage.id).where(
+                TicketMessage.ticket_id == t.id,
+                *readable_message_filters(user.id),
+                TicketMessage.created_at > view.last_opened_at,
+            ).order_by(TicketMessage.created_at, TicketMessage.id)
+        ))
 
     msg_stmt = select(TicketMessage).where(TicketMessage.ticket_id == t.id).order_by(asc(TicketMessage.created_at))
     messages = db.execute(msg_stmt).scalars().all()
@@ -1145,6 +1192,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
     instruction_title, instruction_text = _instruction_for_ticket(db, t)
 
     return TicketCard(
+        unread_message_ids=unread_message_ids,
         id=t.id,
         has_active_attachment_uploads=task_has_active_attachment_uploads(db, t),
         ticket_number=t.ticket_number,

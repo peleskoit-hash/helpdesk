@@ -718,6 +718,29 @@ class TelegramNotificationAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class EmployeeNotificationPeriod(Base):
+    __tablename__ = "employee_notification_periods"
+    __table_args__ = (UniqueConstraint("user_id", "work_date", name="uq_employee_notification_period_user_date"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    work_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    chat_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    offered: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+
+
+class EmployeeNotificationBacklog(Base):
+    __tablename__ = "employee_notification_backlog"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    period_id: Mapped[str] = mapped_column(ForeignKey("employee_notification_periods.id"), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    parse_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    disable_link_preview: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    send_silently: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
 class EmployeeNotificationPreference(Base):
     __tablename__ = "employee_notification_preferences"
 

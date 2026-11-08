@@ -306,7 +306,12 @@
 
     const visibleMessages = (card.messages || []).filter((message) =>
       message.message_type !== "internal" || message.message_status !== "deleted");
-    const wasNearBottom = el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 80;
+    const scrollTop = el.messages.scrollTop;
+    const top = el.messages.getBoundingClientRect().top;
+    const anchor = Array.from(el.messages.children).find(node => node.getBoundingClientRect().bottom > top);
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    const anchorId = anchor?.dataset.messageId;
+    const anchorPart = anchor ? Array.from(el.messages.children).filter(node => node.dataset.messageId === anchorId).indexOf(anchor) : 0;
     const currentSignature = messageRenderSignature(visibleMessages);
     if (currentSignature !== lastSignature) {
       const currentAttachmentIds = new Set();
@@ -351,6 +356,7 @@
       });
       for (const m of displayMessages) {
         const div = document.createElement("div");
+        div.dataset.messageId = m.id;
         const cls = m.message_type || "";
         const stickerOnly = isStickerOnlyMessage(m);
         div.className = `message ${cls} ${stickerOnly ? "message-sticker-only" : ""} ${m.message_status && m.message_status !== "normal" ? `message-${m.message_status}` : ""}`.trim();
@@ -403,17 +409,147 @@
         el.messages.appendChild(div);
       }
       cleanupStickerResources(currentAttachmentIds);
+      el.messages.scrollTop = scrollTop;
+      const restored = Array.from(el.messages.children).filter(node => node.dataset.messageId === anchorId)[anchorPart];
+      if (restored) el.messages.scrollTop += restored.getBoundingClientRect().top - el.messages.getBoundingClientRect().top - anchorOffset;
     }
 
     const quoteMissing = Boolean(quoteMessageId && !visibleMessages.some((m) => m.id === quoteMessageId && m.message_type !== "internal"));
     return {
       signature: currentSignature,
       quoteMissing,
-      wasNearBottom,
+    };
+  }
+
+  function createReadingController(container, confirmRead) {
+    let ticketId = null, card = null, canRead = false, timer = null, inFlight = false, destroyed = false;
+    let seenParts = new Set(), acknowledged = new Set();
+    let pendingInitialMedia = false, initialScrollTop = 0;
+
+    function mediaPending(node) {
+      return Array.from(node.querySelectorAll("img, video")).some(media =>
+        media.tagName === "IMG" ? !media.getAttribute("src") || !media.complete : media.readyState < 1);
+    }
+
+    function placeInitial(forceBottom = false) {
+      const unreadIds = new Set(card.unread_message_ids || []);
+      const first = canRead && !forceBottom
+        ? Array.from(container.children).find(node => unreadIds.has(node.dataset.messageId)) : null;
+      const firstTop = first ? first.getBoundingClientRect().top - container.getBoundingClientRect().top - container.clientTop + container.scrollTop : 0;
+      container.scrollTop = first && container.scrollHeight - firstTop > container.clientHeight
+        ? firstTop : container.scrollHeight;
+      initialScrollTop = container.scrollTop;
+    }
+
+    function onScroll() {
+      if (container.scrollTop !== initialScrollTop) pendingInitialMedia = false;
+      observe();
+    }
+
+    function onMediaReady() {
+      if (pendingInitialMedia) {
+        placeInitial();
+        pendingInitialMedia = mediaPending(container);
+      }
+      observe();
+    }
+
+    function messageParts() {
+      const groups = new Map();
+      for (const node of container.children) {
+        const id = node.dataset.messageId;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(node);
+      }
+      return groups;
+    }
+
+    function observe() {
+      if (destroyed || !canRead || document.hidden || !container.clientHeight) return;
+      const box = container.getBoundingClientRect();
+      const top = box.top + container.clientTop, bottom = top + container.clientHeight;
+      const groups = messageParts();
+      for (const id of card.unread_message_ids || []) {
+        (groups.get(id) || []).forEach((node, index) => {
+          const rect = node.getBoundingClientRect();
+          // A tall message is read on reaching its bottom, not merely its beginning.
+          if (!mediaPending(node) && rect.height > 0 && rect.bottom > top && rect.bottom <= bottom + 1 && rect.top < bottom) {
+            seenParts.add(`${id}:${index}`);
+          }
+        });
+      }
+      clearTimeout(timer);
+      timer = setTimeout(flush, 180);
+    }
+
+    async function flush() {
+      timer = null;
+      if (destroyed || inFlight || !canRead || document.hidden) return;
+      const messages = new Map((card.messages || []).map(message => [message.id, message]));
+      const ids = (card.unread_message_ids || []).filter(id => !acknowledged.has(id));
+      const groups = messageParts();
+      const shown = [];
+      let boundary = [];
+      for (let index = 0; index < ids.length; index++) {
+        const id = ids[index], nodes = groups.get(id) || [];
+        if (!nodes.length || !nodes.every((_, part) => seenParts.has(`${id}:${part}`))) break;
+        shown.push(id);
+        // One timestamp boundary covers all messages at that timestamp, including split task parts.
+        if (!ids[index + 1] || messages.get(id)?.created_at !== messages.get(ids[index + 1])?.created_at) {
+          boundary = shown.slice();
+        }
+      }
+      if (!boundary.length) return;
+      const currentTicket = ticketId;
+      inFlight = true;
+      try {
+        await confirmRead({ message_id: boundary[boundary.length - 1], message_ids: boundary });
+        if (!destroyed && currentTicket === ticketId) boundary.forEach(id => acknowledged.add(id));
+      } catch (error) {
+        // Keep the boundary unchanged; the next real view/scroll can confirm it again.
+        console.warn("Could not confirm visible ticket messages", error);
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    container.addEventListener("scroll", onScroll);
+    container.addEventListener("load", onMediaReady, true);
+    container.addEventListener("loadedmetadata", onMediaReady, true);
+    container.addEventListener("error", onMediaReady, true);
+    document.addEventListener("visibilitychange", observe);
+    return {
+      update(nextCard, options = {}) {
+        if (destroyed) return;
+        const initial = ticketId !== nextCard.id;
+        if (initial) {
+          clearTimeout(timer);
+          ticketId = nextCard.id;
+          seenParts = new Set();
+          acknowledged = new Set();
+        }
+        card = nextCard;
+        canRead = Boolean(options.canRead);
+        if (initial || options.forceBottom) {
+          placeInitial(options.forceBottom);
+          pendingInitialMedia = initial && canRead && !options.forceBottom && mediaPending(container);
+        }
+        observe();
+      },
+      destroy() {
+        destroyed = true;
+        clearTimeout(timer);
+        container.removeEventListener("scroll", onScroll);
+        container.removeEventListener("load", onMediaReady, true);
+        container.removeEventListener("loadedmetadata", onMediaReady, true);
+        container.removeEventListener("error", onMediaReady, true);
+        document.removeEventListener("visibilitychange", observe);
+      },
     };
   }
 
   global.TicketMessageView = {
+    createReadingController,
     renderQuote,
     renderMessages,
     showMessageContextMenu,

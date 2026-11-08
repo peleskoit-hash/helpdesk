@@ -5,7 +5,7 @@ const vm = require("node:vm");
 
 function element() {
   return {
-    children: [], className: "", scrollHeight: 0, scrollTop: 0, clientHeight: 0,
+    children: [], dataset: {}, className: "", scrollHeight: 0, scrollTop: 0, clientHeight: 0,
     append(...items) { this.children.push(...items); },
     appendChild(item) { this.children.push(item); },
     handlers: {}, style: {}, classList: { add() {}, remove() {} },

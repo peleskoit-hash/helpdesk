@@ -1321,6 +1321,11 @@ function renderAdminOnlyOptionFlags(container, options, selectedValues = []) {
   if (!container) return;
   const selected = new Set(selectedValues || []);
   container.innerHTML = "";
+  let tableBody = null;
+  if (container.id === "editFieldAdminOnlyValues") {
+    container.innerHTML = '<table class="client-card-option-table"><colgroup><col><col class="client-card-option-admin-column"></colgroup><thead><tr><th scope="col">Вариант</th><th scope="col">Только админ</th></tr></thead><tbody></tbody></table>';
+    tableBody = container.querySelector("tbody");
+  }
   for (const value of options || []) {
     const label = document.createElement("label");
     label.className = "checkbox-label client-card-option-flag";
@@ -1331,6 +1336,13 @@ function renderAdminOnlyOptionFlags(container, options, selectedValues = []) {
     checkbox.className = "desk-toggle";
     checkbox.dataset.adminOnlyValue = value;
     checkbox.checked = selected.has(value);
+    if (tableBody) {
+      const row = tableBody.insertRow();
+      row.insertCell().appendChild(text);
+      checkbox.setAttribute("aria-label", `Только админ: ${value}`);
+      row.insertCell().appendChild(checkbox);
+      continue;
+    }
     label.appendChild(text);
     label.appendChild(document.createTextNode(" Только админ "));
     label.appendChild(checkbox);

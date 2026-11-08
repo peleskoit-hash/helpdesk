@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import TelegramNotificationAccount, User
+from .employee_notification_backlog import handle_backlog_callback
 from .employee_telegram_access import (
     BOT_ROLE_ADMIN,
     BOT_ROLE_OWNER,
@@ -1017,6 +1018,8 @@ def _handle_callback_query(db: Session, callback_query: dict) -> dict:
     if telegram_user_id is None or chat_id is None:
         return {"ok": True, "ignored": True, "reason": "missing_callback_identity"}
     chat_id_str = str(chat_id)
+    if data.startswith("nb:"):
+        return handle_backlog_callback(db, callback_query)
     parsed = _parse_callback(data)
     if parsed is None:
         db.rollback()

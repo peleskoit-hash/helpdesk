@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -588,3 +590,12 @@ def test_internal_task_completion_notification_failure_does_not_break_close(monk
     _close(session, data.ticket, data.agent)
 
     assert data.ticket.status == TicketStatus.CLOSED.value
+
+
+@pytest.fixture(autouse=True)
+def _notification_work_hours(monkeypatch):
+    # Existing delivery tests cover daytime behavior independently of the wall clock.
+    from api.app.services import employee_notification_backlog as backlog
+
+    original = backlog._moscow_now
+    monkeypatch.setattr(backlog, "_moscow_now", lambda now=None: original(now or datetime(2026, 11, 9, 9)))

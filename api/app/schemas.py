@@ -77,6 +77,7 @@ class TicketListItem(BaseModel):
     status: str
     is_frozen: bool
     seen_by_agent: bool
+    unread_count: int = 0
     client_name: str
     requester_display_name: str = ""
     requester_department: str = ""
@@ -216,7 +217,13 @@ class ClientProfileUpdate(BaseModel):
     custom_fields: dict | None = None
 
 
+class TicketReadPayload(BaseModel):
+    message_id: str = Field(min_length=1, max_length=36)
+    message_ids: list[str] = Field(min_length=1)
+
+
 class TicketCard(BaseModel):
+    unread_message_ids: list[str] = Field(default_factory=list)
     has_active_attachment_uploads: bool = False
     id: str
     ticket_number: int | None = None

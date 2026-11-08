@@ -11,6 +11,7 @@ from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .temporary_rop import TEMPORARY_ROP_FIELD, TEMPORARY_ROP_SUFFIX, with_temporary_rop_suffix
 from .ticket_special import _display_assignee_name
 from .ticket_subject import build_ticket_subject_map
+from .ticket_reading import readable_message_filters
 from .button_config import button_key_matches
 
 
@@ -418,6 +419,28 @@ def seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
     return db.execute(stmt).first() is not None
 
 
+def _unread_message_counts(db: Session, tickets: list[Ticket], user: CurrentUser) -> dict[str, int]:
+    ticket_ids = [ticket.id for ticket in tickets if ticket.assignee_id == user.id]
+    if not is_support_user(user) or not ticket_ids:
+        return {}
+    rows = db.execute(
+        select(TicketMessage.ticket_id, func.count(TicketMessage.id))
+        .join(Ticket, Ticket.id == TicketMessage.ticket_id)
+        .outerjoin(TicketView, and_(TicketView.ticket_id == Ticket.id, TicketView.user_id == user.id))
+        .where(
+            Ticket.id.in_(ticket_ids),
+            Ticket.assignee_id == user.id,
+            *readable_message_filters(user.id),
+            or_(
+                TicketMessage.created_at > TicketView.last_opened_at,
+                and_(TicketView.last_opened_at.is_(None), TicketMessage.created_at >= Ticket.created_at),
+            ),
+        )
+        .group_by(TicketMessage.ticket_id)
+    ).all()
+    return dict(rows)
+
+
 def list_tickets_paginated(
     *,
     db: Session,
@@ -474,6 +497,7 @@ def list_tickets_paginated(
     subject_map = build_ticket_subject_map(db, tickets)
     internal_requester_map = _internal_task_requester_map(db, [ticket.id for ticket in tickets])
     profile_map = _client_profile_map(db, [ticket.client_id for ticket in tickets])
+    unread_counts = _unread_message_counts(db, tickets, user)
     for t in tickets:
         ticket_number = t.ticket_number
         if ticket_number is None and (t.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value and ensure_ticket_number_fn:
@@ -501,6 +525,7 @@ def list_tickets_paginated(
                 status=t.status,
                 is_frozen=t.is_frozen,
                 seen_by_agent=seen,
+                unread_count=unread_counts.get(t.id, 0),
                 client_name=internal_requester_name or (t.client.display_name if t.client else ""),
                 requester_display_name=visible_requester_name,
                 requester_department=_list_requester_department(requester_profile, is_internal_task),

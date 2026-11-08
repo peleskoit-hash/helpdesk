@@ -190,6 +190,9 @@ const TicketClientCard = window.TicketClientCard || {};
 const TicketComposer = window.TicketComposer || {};
 const TicketControls = window.TicketControls || {};
 const TicketMessageView = window.TicketMessageView || {};
+let scrollAfterLocalSend = false;
+const readingController = TicketMessageView.createReadingController?.(el.messages, payload =>
+  apiPost(`/api/v1/tickets/${state.ticketId}/read`, payload));
 
 let pollTimer = null;
 let unsubscribeSidebar = null;
@@ -384,6 +387,7 @@ function cleanupTicketCardPage() {
   }
   if (el.messages) {
     el.messages.removeEventListener("scroll", hideMessageContextMenu);
+    readingController?.destroy();
   }
   if (beforeUnloadHandler) {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
@@ -456,6 +460,7 @@ function clientCardCtx() {
 
 function composerCtx() {
   return {
+    onMessageSent: () => { scrollAfterLocalSend = true; },
     refreshTaskUploadControls: renderTicketStateControls,
     state,
     el,
@@ -1385,6 +1390,7 @@ function renderMessagesFallback(card) {
   for (const m of card.messages || []) {
     const div = document.createElement("div");
     div.className = `message ${m.message_type || ""}`.trim();
+    div.dataset.messageId = m.id;
     const headerEl = document.createElement("div");
     headerEl.className = "message-header";
     const strong = document.createElement("strong");
@@ -1431,16 +1437,19 @@ function renderCard() {
   }
   fillClientPanel(card.client_profile || {});
 
+  const previousScrollTop = el.messages.scrollTop;
   let renderResult;
   try {
     if (typeof TicketMessageView.renderMessages === "function") {
       renderResult = TicketMessageView.renderMessages(messageViewCtx(), card, state.lastMessagesSignature, state.quoteMessageId);
     } else {
       renderResult = renderMessagesFallback(card);
+      el.messages.scrollTop = previousScrollTop;
     }
   } catch (e) {
     console.error("renderMessages failed", e);
     renderResult = renderMessagesFallback(card);
+    el.messages.scrollTop = previousScrollTop;
   }
   state.lastMessagesSignature = renderResult.signature;
   if (renderResult.quoteMissing) {
@@ -1461,9 +1470,11 @@ function renderCard() {
   if (isClosed || isReadonly) closeQuickRepliesPanel();
 
   TicketControls.renderTicketControlsView(controlsCtx());
-  if (renderResult.wasNearBottom) {
-    el.messages.scrollTop = el.messages.scrollHeight;
-  }
+  readingController?.update(card, {
+    canRead: (state.role === "agent" || state.role === "trainee") && card.assignee_id === state.userId,
+    forceBottom: scrollAfterLocalSend,
+  });
+  scrollAfterLocalSend = false;
 }
 
 async function loadCard(options = {}) {

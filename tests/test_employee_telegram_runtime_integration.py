@@ -1729,3 +1729,12 @@ def test_special_transfers_send_no_duplicates_and_use_administrative_control_lab
     session.commit()
 
     assert sent == [("chat-b", "To Административный контроль", {"parse_mode": None, "bot_token": "employee-token", "disable_web_page_preview": False, "disable_notification": False})]
+
+
+@pytest.fixture(autouse=True)
+def _notification_work_hours(monkeypatch):
+    # Existing delivery tests cover daytime behavior independently of the wall clock.
+    from api.app.services import employee_notification_backlog as backlog
+
+    original = backlog._moscow_now
+    monkeypatch.setattr(backlog, "_moscow_now", lambda now=None: original(now or datetime(2026, 11, 9, 9)))

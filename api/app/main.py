@@ -158,7 +158,7 @@ async def on_startup():
         try:
             # Technical chat, composer drafts and persistent numbering schemas are applied explicitly.
             Base.metadata.create_all(bind=engine, tables=[
-                table for table in Base.metadata.sorted_tables if table.name not in {"web_chat_messages", "ticket_number_counter", "web_client_drafts"}
+                table for table in Base.metadata.sorted_tables if table.name not in {"web_chat_messages", "ticket_number_counter", "web_client_drafts", "employee_notification_periods", "employee_notification_backlog"}
             ])
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()

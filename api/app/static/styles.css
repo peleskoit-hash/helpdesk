@@ -8383,3 +8383,63 @@ body #appContent[data-shell-page="ticket-card"] .composer-enter-settings .status
 .personal-stats-dialog th:first-child { text-align: left; width: 36%; }
 .personal-stats-dialog p { margin-bottom: 0; overflow-wrap: anywhere; }
 .personal-stats-dialog :focus-visible { outline: 3px solid var(--desk-focus, #7760a8); outline-offset: 2px; }
+
+
+#editFieldAdminOnlyValues .client-card-option-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 8px 0 0;
+  color: var(--text);
+}
+
+#editFieldAdminOnlyValues .client-card-option-admin-column {
+  width: 132px;
+}
+
+#editFieldAdminOnlyValues .client-card-option-table th,
+#editFieldAdminOnlyValues .client-card-option-table td {
+  height: 40px;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+}
+
+#editFieldAdminOnlyValues .client-card-option-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+#editFieldAdminOnlyValues .client-card-option-table th:last-child,
+#editFieldAdminOnlyValues .client-card-option-table td:last-child {
+  text-align: center;
+}
+
+#editFieldAdminOnlyValues .client-card-option-table .desk-toggle {
+  display: block;
+  margin: 0 auto;
+}
+
+
+.ticket-unread-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-unread-count {
+  flex: 0 0 auto;
+  margin-left: 15px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #4338ca;
+  color: #fff;
+  font-size: calc(1em + 2px);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}

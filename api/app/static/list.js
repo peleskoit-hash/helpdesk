@@ -1350,8 +1350,15 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
   const key = column.key;
   if (key === "subject") {
     const subject = (ticket.subject || "") + intakeBadge(ticket);
+    const unreadBadge = (state.role === "agent" || state.role === "trainee")
+      && ticket.assignee_id === state.userId && Number.isInteger(ticket.unread_count) && ticket.unread_count > 0
+      ? `<span class="ticket-unread-count" aria-label="Непрочитанных сообщений: ${ticket.unread_count}">+${ticket.unread_count}</span>`
+      : "";
     if (ticket.task_kind === "group_parent") {
-      return linkedCell("ticket-subject-col", `<span class="ticket-main-badge">MAIN</span><span class="ticket-main-subject">${escapeHtml(subject)}</span>`, column.width, true);
+      return linkedCell("ticket-subject-col", `<span class="ticket-main-badge">MAIN</span><span class="ticket-main-subject">${escapeHtml(subject)}</span>${unreadBadge}`, column.width, true);
+    }
+    if (unreadBadge) {
+      return linkedCell("ticket-subject-col", `<span class="ticket-unread-subject">${escapeHtml(subject)}</span>${unreadBadge}`, column.width, true);
     }
     return linkedCell("ticket-subject-col", subject, column.width);
   }

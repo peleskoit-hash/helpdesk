@@ -231,3 +231,20 @@ test("ordinary tickets still send files individually; comments still wait for re
     assert.equal(comment.ctx.el.messageInput.value, "Task answer");
   }
 });
+
+
+test("local send requests bottom only after success and before reloading", async () => {
+  for (const mode of ["reply", "comment"]) {
+    const { ctx, errors } = context("ticket", mode);
+    const events = [];
+    ctx.onMessageSent = () => events.push("sent");
+    ctx.loadCard = async () => events.push("reload");
+    await composer.sendByMode(ctx);
+    assert.deepEqual(events, ["sent", "reload"]);
+    ctx.el.messageInput.value = "Failed message";
+    ctx.api = async () => { throw new Error("Save failed"); };
+    await composer.sendByMode(ctx);
+    assert.deepEqual(events, ["sent", "reload"]);
+    assert.deepEqual(errors, ["Save failed"]);
+  }
+});

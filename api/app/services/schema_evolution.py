@@ -2221,3 +2221,12 @@ def ensure_quick_reply_tables() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_replies_updated_at ON quick_replies(updated_at)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_quick_reply_usage_user_reply ON quick_reply_usage(user_id, quick_reply_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_quick_reply_usage_user_used ON quick_reply_usage(user_id, last_used_at)"))
+
+
+def ensure_employee_notification_backlog_tables() -> None:
+    """Explicit opt-in migration; never called by API startup."""
+    from ..models import EmployeeNotificationBacklog, EmployeeNotificationPeriod
+
+    with engine.begin() as conn:
+        EmployeeNotificationPeriod.__table__.create(conn, checkfirst=True)
+        EmployeeNotificationBacklog.__table__.create(conn, checkfirst=True)
