@@ -1364,36 +1364,43 @@ def download_attachment(
         return FileResponse(path, media_type=media_type, headers=headers)
 
     file_path = (attachment.telegram_file_path or "").strip()
-    if not file_path:
-        file_id = (attachment.telegram_file_id or "").strip()
-        if not file_id:
-            _error(404, "attachment_file_missing", "Файл недоступен для скачивания")
-        contact = _telegram_contact_for_client(db, ticket.client_id) if ticket.channel != "web" else None
-        chat_id = contact.external_chat_id if contact else None
+    saved_file_path = bool(file_path)
+    for attempt in range(2):
+        if not file_path:
+            file_id = (attachment.telegram_file_id or "").strip()
+            if not file_id:
+                _error(404, "attachment_file_missing", "Файл недоступен для скачивания")
+            contact = _telegram_contact_for_client(db, ticket.client_id) if ticket.channel != "web" else None
+            chat_id = contact.external_chat_id if contact else None
+            try:
+                file_response = get_file(file_id, chat_id=chat_id)
+                file_path = (((file_response or {}).get("result") or {}).get("file_path") or "").strip()
+                if not file_path:
+                    _error(404, "attachment_file_missing", "Telegram не вернул путь к файлу")
+                attachment.telegram_file_path = file_path
+                db.commit()
+            except TelegramApiError as exc:
+                db.rollback()
+                _error(404, "attachment_file_missing", f"Файл недоступен для скачивания: {exc}")
+
+        if not settings.telegram_bot_token:
+            _error(502, "telegram_token_missing", "Telegram bot token is not configured")
+
+        stream_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
+        request = UrlRequest(stream_url, method="GET")
         try:
-            file_response = get_file(file_id, chat_id=chat_id)
-            file_path = (((file_response or {}).get("result") or {}).get("file_path") or "").strip()
-            if not file_path:
-                _error(404, "attachment_file_missing", "Telegram не вернул путь к файлу")
-            attachment.telegram_file_path = file_path
-            db.commit()
-        except TelegramApiError as exc:
-            db.rollback()
-            _error(404, "attachment_file_missing", f"Файл недоступен для скачивания: {exc}")
-
-    if not settings.telegram_bot_token:
-        _error(502, "telegram_token_missing", "Telegram bot token is not configured")
-
-    stream_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
-    request = UrlRequest(stream_url, method="GET")
-    try:
-        telegram_response = urlopen(request, timeout=120)
-    except HTTPError as exc:
-        if exc.code == 404:
-            _error(404, "attachment_file_missing", "Telegram file is not available")
-        _error(502, "attachment_download_failed", f"Telegram file download failed: HTTP {exc.code}")
-    except URLError as exc:
-        _error(502, "attachment_download_failed", f"Файл временно недоступен: {exc}")
+            telegram_response = urlopen(request, timeout=120)
+            break
+        except HTTPError as exc:
+            if exc.code == 404 and attempt == 0 and saved_file_path and attachment.telegram_file_id:
+                exc.close()
+                file_path = ""
+                continue
+            if exc.code == 404:
+                _error(404, "attachment_file_missing", "Telegram file is not available")
+            _error(502, "attachment_download_failed", f"Telegram file download failed: HTTP {exc.code}")
+        except URLError as exc:
+            _error(502, "attachment_download_failed", f"Файл временно недоступен: {exc}")
 
     def _iter_stream():
         try:

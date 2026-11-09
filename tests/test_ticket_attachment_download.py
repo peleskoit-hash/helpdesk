@@ -5,7 +5,7 @@ from io import BytesIO
 from datetime import datetime
 from types import SimpleNamespace
 import uuid
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 from fastapi import HTTPException
@@ -71,10 +71,12 @@ def _seed_attachment(session, tmp_path, *, filename="report.pdf", local_exists=T
     return ticket, attachment
 
 
-def test_download_local_document_uses_attachment_disposition_and_original_filename(tmp_path):
+def test_download_local_document_uses_attachment_disposition_and_original_filename(tmp_path, monkeypatch):
     session = _session()
     ticket, attachment = _seed_attachment(session, tmp_path, filename="report.pdf")
 
+    monkeypatch.setattr(tickets_router, "get_file", lambda *args, **kwargs: pytest.fail("Local download must not call getFile"))
+    monkeypatch.setattr(tickets_router, "urlopen", lambda *args, **kwargs: pytest.fail("Local download must not contact Telegram"))
     response = tickets_router.download_attachment(ticket.id, attachment.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
 
     assert isinstance(response, FileResponse)
@@ -173,6 +175,7 @@ def test_download_telegram_http_errors_are_mapped_without_raw_500(monkeypatch, t
 
     monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "SECRET")
     monkeypatch.setattr(tickets_router, "urlopen", _raise_http_error)
+    monkeypatch.setattr(tickets_router, "get_file", lambda *args, **kwargs: {"result": {"file_path": "documents/refreshed.pdf"}})
 
     with pytest.raises(HTTPException) as exc:
         tickets_router.download_attachment(ticket.id, attachment.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
@@ -223,3 +226,100 @@ def test_download_telegram_stream_yields_chunks_and_closes_response(monkeypatch,
 
     assert chunks == [b"one", b"two", b"six"]
     assert events == [("read", 65536), ("read", 65536), ("read", 65536), ("read", 65536), ("close", None)]
+
+
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_stale_saved_path_refreshes_once_with_existing_bot_selection(monkeypatch, tmp_path, channel):
+    from api.app.services import telegram_bot
+
+    session = _session()
+    ticket, attachment = _seed_attachment(session, tmp_path, filename="договор.pdf", local_exists=False,
+        telegram_file_id="file-id", telegram_file_path="documents/old.pdf")
+    ticket.channel = channel
+    session.commit()
+    urls, refreshes, bot_calls = [], [], []
+    if channel == "telegram":
+        monkeypatch.setattr(tickets_router, "_telegram_contact_for_client",
+                            lambda *args: SimpleNamespace(external_chat_id="client-chat"))
+    else:
+        monkeypatch.setattr(tickets_router, "_telegram_contact_for_client",
+                            lambda *args: pytest.fail("WEB must not look up Telegram contact"))
+    def request(method, **kwargs):
+        bot_calls.append((method, kwargs))
+        return {"result": {"file_path": "documents/new.pdf"}}
+    monkeypatch.setattr(telegram_bot, "telegram_request", request)
+    def get_file(file_id, *, chat_id):
+        refreshes.append((file_id, chat_id))
+        return telegram_bot.get_file(file_id, chat_id=chat_id)
+    monkeypatch.setattr(tickets_router, "get_file", get_file)
+    body = BytesIO(b"fresh!")
+    body.headers = {"Content-Length": "6"}
+    def download(request, timeout):
+        urls.append(request.full_url)
+        if len(urls) == 1:
+            raise HTTPError(request.full_url, 404, "stale", {}, BytesIO())
+        return body
+    monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "download-token")
+    monkeypatch.setattr(tickets_router, "urlopen", download)
+    response = tickets_router.download_attachment(ticket.id, attachment.id, db=session,
+                                                  user=SimpleNamespace(id="admin", role="admin"))
+    assert urls == ["https://api.telegram.org/file/botdownload-token/documents/old.pdf",
+                    "https://api.telegram.org/file/botdownload-token/documents/new.pdf"]
+    assert refreshes == [("file-id", "client-chat" if channel == "telegram" else None)]
+    assert bot_calls == [("getFile", {"payload": {"file_id": "file-id"}})]
+    assert attachment.telegram_file_path == "documents/new.pdf"
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-length"] == "6"
+    assert response.headers["content-disposition"] == tickets_router._content_disposition_attachment("договор.pdf")
+    async def consume():
+        return b"".join([chunk async for chunk in response.body_iterator])
+    assert asyncio.run(consume()) == b"fresh!"
+    assert body.closed
+    assert not (tmp_path / "договор.pdf").exists()
+
+
+@pytest.mark.parametrize("failure,expected", [(404, 404), (500, 502), ("network", 502)])
+def test_stale_path_download_retry_is_bounded_and_errors_are_mapped(monkeypatch, tmp_path, failure, expected):
+    session = _session()
+    ticket, attachment = _seed_attachment(session, tmp_path, local_exists=False,
+        telegram_file_id="file-id", telegram_file_path="documents/old.pdf")
+    opens, refreshes = [], []
+    def download(request, timeout):
+        opens.append(request.full_url)
+        if len(opens) == 2 and failure == "network":
+            raise URLError("connection failed")
+        raise HTTPError(request.full_url, 404 if len(opens) == 1 else failure, "missing", {}, BytesIO())
+    def refresh(*args, **kwargs):
+        refreshes.append((args, kwargs))
+        return {"result": {"file_path": "documents/new.pdf"}}
+    monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "token")
+    monkeypatch.setattr(tickets_router, "urlopen", download)
+    monkeypatch.setattr(tickets_router, "get_file", refresh)
+    with pytest.raises(HTTPException) as error:
+        tickets_router.download_attachment(ticket.id, attachment.id, db=session, user=SimpleNamespace(id="admin", role="admin"))
+    assert error.value.status_code == expected
+    assert error.value.detail["error"]["code"] == ("attachment_file_missing" if expected == 404 else "attachment_download_failed")
+    assert len(opens) == 2 and len(refreshes) == 1
+
+
+@pytest.mark.parametrize("result", ["api_error", "empty_path"])
+def test_stale_path_refresh_failure_is_controlled(monkeypatch, tmp_path, result):
+    session = _session()
+    ticket, attachment = _seed_attachment(session, tmp_path, local_exists=False,
+        telegram_file_id="file-id", telegram_file_path="documents/old.pdf")
+    opens = []
+    def download(request, timeout):
+        opens.append(request.full_url)
+        raise HTTPError(request.full_url, 404, "missing", {}, BytesIO())
+    def refresh(*args, **kwargs):
+        if result == "api_error":
+            raise tickets_router.TelegramApiError("File unavailable")
+        return {"result": {}}
+    monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "token")
+    monkeypatch.setattr(tickets_router, "urlopen", download)
+    monkeypatch.setattr(tickets_router, "get_file", refresh)
+    with pytest.raises(HTTPException) as error:
+        tickets_router.download_attachment(ticket.id, attachment.id, db=session, user=SimpleNamespace(id="admin", role="admin"))
+    assert error.value.status_code == 404
+    assert error.value.detail["error"]["code"] == "attachment_file_missing"
+    assert len(opens) == 1
