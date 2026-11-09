@@ -16,8 +16,11 @@ for (const theme of ["light", "dark"]) test(`messenger preview toggle and naviga
   const me = { id: "admin", role: "admin", login: "admin", full_name: "Admin" };
   const leaf = (label, key, type = "ticket") => ({ kind: "terminal", label, technical_key: key,
     workflow_type: type, full_path: key, children_rows: [], is_enabled: true });
+  const nestedRows = [1, 2, 3].map(count => ({ columns: count,
+    buttons: Array.from({ length: count }, (_, index) => leaf(`Очень длинное название вложенной кнопки ${count}:${index}`, `nested-${count}-${index}`)) }));
+  const nested = { kind: "submenu", label: "Глубже", technical_key: "nested", level_key: "nested-level", full_path: "Раздел/Глубже", children_rows: nestedRows };
   const sub = { kind: "submenu", label: "Раздел", technical_key: "sub", level_key: "sub-level", full_path: "Раздел",
-    children_rows: [{ columns: 1, buttons: [leaf("Внутри подменю", "child")] }] };
+    children_rows: [{ columns: 1, buttons: [nested] }, ...nestedRows] };
   const rows = [{ columns: 1, buttons: [sub] }, { columns: 2, buttons: [
     leaf("Восстановить сделку", "primary"), leaf("Создать новую сделку", "success", "task")
   ] }, { columns: 3, buttons: [
@@ -91,8 +94,41 @@ for (const theme of ["light", "dark"]) test(`messenger preview toggle and naviga
   assert.equal(await list.locator('[data-button-color-key="long"] > span').first().evaluate(el =>
     getComputedStyle(el).textOverflow === "ellipsis" && getComputedStyle(el).whiteSpace === "nowrap" && el.scrollWidth > el.clientWidth), true);
   await page.locator(".bot-button-submenu").click();
-  assert.equal(await list.getAttribute("class").then(value => value.includes("bot-buttons-messenger-view")), true);
+  for (const deep of [false, true]) {
+    if (deep) await page.locator(".bot-button-submenu").click();
+    assert.equal(await toggle.count(), 1);
+    assert.equal(await toggle.evaluate(el => el.previousElementSibling.id), "addLevelItemBtn");
+    assert.equal(await toggle.getAttribute("aria-pressed"), "true");
+    assert.equal(await list.getAttribute("class").then(value => value.includes("bot-buttons-messenger-view")), true);
+    assert.equal((await metrics()).width, 390);
+    const countBeforeToggle = requests.length;
+    await toggle.click();
+    assert.equal(await toggle.getAttribute("aria-pressed"), "false");
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(180);
+    assert.ok(!(await toggle.evaluate(el => getComputedStyle(el).boxShadow)).includes("inset"));
+    await toggle.click();
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(180);
+    assert.match(await toggle.evaluate(el => getComputedStyle(el).boxShadow), /inset/);
+    assert.equal(requests.length, countBeforeToggle);
+    assert.equal(await list.locator(".bot-button-type-tag").evaluateAll(tags => tags.every(el => getComputedStyle(el).display === "none")), true);
+    assert.equal(await list.locator(".bot-buttons-row").evaluateAll(rows => rows.every(row => {
+      const cells = [...row.children].map(el => el.getBoundingClientRect());
+      return cells.every(cell => Math.abs(cell.top - cells[0].top) < 1 && Math.abs(cell.width - cells[0].width) < 1);
+    })), true);
+  }
+  assert.deepEqual(await list.locator(".bot-buttons-row").evaluateAll(rows => rows.map(row => row.children.length)), [1, 2, 3]);
+  await toggle.click();
   await page.locator("#botButtonsBackBtn").click();
+  assert.equal(await toggle.getAttribute("aria-pressed"), "false");
+  await page.locator("#editLayoutBtn").click();
+  assert.equal(await page.locator(".bot-layout-dialog #messengerViewBtn").count(), 0);
+  await page.locator("#cancelLayoutBtn").click();
+  await page.locator("#botButtonsBackBtn").click();
+  assert.equal(await toggle.getAttribute("aria-pressed"), "false");
+  assert.equal(await toggle.count(), 1);
+  await toggle.click();
   assert.equal(await toggle.getAttribute("aria-pressed"), "true");
   await toggle.click();
   await page.mouse.move(0, 0);

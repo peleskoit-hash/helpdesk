@@ -8494,7 +8494,7 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-v2-li
 
 
 body #appContent.main[data-shell-page="settings-bot-buttons"] {
-  & .bot-menu-bindings-actions > .bot-messenger-toggle {
+  & :is(.bot-menu-bindings-actions, .bot-layout-toolbar) > .bot-messenger-toggle {
     background: var(--desk-soft);
     color: var(--desk-text);
     border: 1px solid var(--desk-border);
@@ -8595,6 +8595,21 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-layout-dialog
     min-height: 44px;
     border: 2px dashed var(--desk-muted);
     padding: 10px 12px;
+  }
+  & .bot-move-root-context {
+    visibility: hidden;
+    pointer-events: none;
+    &.bot-root-drop-visible {
+      position: fixed;
+      top: var(--bot-root-drop-top);
+      left: var(--bot-root-drop-left);
+      width: var(--bot-root-drop-width);
+      margin: 0;
+      background: var(--desk-surface);
+      z-index: 3;
+      visibility: visible;
+      pointer-events: auto;
+    }
   }
   & .bot-layout-drop-active {
     outline: 3px solid var(--desk-accent);

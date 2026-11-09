@@ -115,6 +115,8 @@
     const dialog = ctx.el.content.querySelector(".bot-layout-dialog");
     const scroll = dialog.querySelector(".bot-layout-scroll-area");
     const zones = Array.from(dialog.querySelectorAll("[data-layout-scroll]"));
+    const rootDrop = dialog.querySelector(".bot-move-root-context");
+    let rootPlaceholder = null;
     let dragging = false, direction = 0, frame = 0, lastTime = 0;
     function updateZones() {
       for (const zone of zones) {
@@ -141,8 +143,29 @@
         stopScroll();
       } else frame = requestAnimationFrame(tick);
     }
-    dialog.addEventListener("dragstart", () => { dragging = !!ctx.state.layoutDragNode; updateZones(); });
-    const endDrag = () => { dragging = false; stopScroll(); };
+    dialog.addEventListener("dragstart", () => {
+      const node = ctx.state.layoutDragNode;
+      dragging = !!node;
+      if (rootDrop && canMoveNode(node) && node.parent_path !== "") {
+        const header = dialog.querySelector(".bot-layout-dialog-head").getBoundingClientRect();
+        rootPlaceholder = document.createElement("div");
+        rootPlaceholder.style.height = `${rootDrop.getBoundingClientRect().height}px`;
+        rootPlaceholder.style.margin = getComputedStyle(rootDrop).margin;
+        rootDrop.before(rootPlaceholder);
+        rootDrop.style.setProperty("--bot-root-drop-top", `${header.bottom - rootDrop.getBoundingClientRect().height - 8}px`);
+        rootDrop.style.setProperty("--bot-root-drop-left", `${header.left + 16}px`);
+        rootDrop.style.setProperty("--bot-root-drop-width", `${header.width - 32}px`);
+        rootDrop.classList.add("bot-root-drop-visible");
+      }
+      updateZones();
+    });
+    const endDrag = () => {
+      dragging = false;
+      rootDrop?.classList.remove("bot-root-drop-visible", "bot-layout-drop-active", "bot-layout-drop-forbidden");
+      rootPlaceholder?.remove();
+      rootPlaceholder = null;
+      stopScroll();
+    };
     dialog.addEventListener("dragend", endDrag, true);
     dialog.addEventListener("drop", endDrag, true);
     for (const zone of zones) {
@@ -166,9 +189,11 @@
     const resize = () => dialog.style.setProperty("--bot-layout-work-left", `${Math.max(12, ctx.el.content.closest("#appContent").getBoundingClientRect().left + 12)}px`);
     resize();
     window.addEventListener("resize", resize);
+    window.addEventListener("blur", endDrag);
     ctx.state.layoutModalCleanup = () => {
       endDrag();
       window.removeEventListener("resize", resize);
+      window.removeEventListener("blur", endDrag);
       if (dialog.open) dialog.close();
     };
     dialog.showModal();
@@ -193,11 +218,11 @@
     return "";
   }
 
-  function moveDropZone(ctx, parentPath, label) {
+  function moveDropZone(ctx, parentPath, label, contextualRoot = false) {
     const pending = ctx.state.layoutPendingMove;
-    return `<div class="bot-move-drop" data-move-parent="${ctx.escapeHtml(parentPath)}"
+    return `<div class="bot-move-drop${contextualRoot ? " bot-move-root-context" : ""}" data-move-parent="${ctx.escapeHtml(parentPath)}"
       data-move-label="${ctx.escapeHtml(label)}" aria-disabled="${!!pending || localLayoutChanged(ctx.state)}">
-      Перенести сюда: ${ctx.escapeHtml(label)}
+      ${contextualRoot ? "Переместить в корень меню" : `Перенести сюда: ${ctx.escapeHtml(label)}`}
       ${pending?.payload.parent_path === parentPath ? `<div class="bot-move-preview">После сохранения: ${ctx.escapeHtml(pending.label)}</div>` : ""}
     </div>`;
   }
@@ -322,6 +347,8 @@
     const isSubmenuLevel = String(current?.kind || "") === "submenu";
     const addButtonLabel = isGroupParentLevel ? "\u0421\u043e\u0437\u0434\u0430\u0442\u044c child task" : "\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c";
     const canEditLayout = canEditLayoutBase && !isGroupParentLevel;
+    const messengerToggle = isSubmenuLevel && !ctx.state.layoutEditMode
+      ? global.BotButtonsMenuView.renderMessengerToggle(ctx.state) : "";
     const toolbarHtml = canEditLayout
       ? `
         <div class="bot-layout-toolbar">
@@ -331,13 +358,13 @@
                <span class="bot-layout-help">\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043a\u043d\u043e\u043f\u043a\u0438, \u0447\u0442\u043e\u0431\u044b \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a. \u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0434\u043e 3 \u043a\u043d\u043e\u043f\u043e\u043a.</span>`
             : `<button type="button" id="editLayoutBtn" class="action">Изменить структуру</button>
                ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u0434\u043c\u0435\u043d\u044e</button>` : ""}
-               <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>`}
+               <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>${messengerToggle}`}
         </div>
       `
       : `<div class="bot-layout-toolbar">
            ${isGroupParentLevel ? `<button type="button" id="editParentTaskBtn" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043c\u0430\u0442\u0435\u0440\u0438\u043d\u0441\u043a\u0443\u044e \u0437\u0430\u0434\u0430\u0447\u0443</button>` : ""}
            ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u0434\u043c\u0435\u043d\u044e</button>` : ""}
-           <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>
+           <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>${messengerToggle}
          </div>`;
 
     const rowsForRender = ctx.state.layoutEditMode ? (ctx.state.layoutDraftRows || []) : visibleRows;
@@ -360,7 +387,7 @@
               ? `Черновик: ${ctx.escapeHtml(ctx.state.layoutPendingMove.label)} → ${ctx.escapeHtml(ctx.state.layoutPendingMove.targetLabel)}. Сохраните или отмените перенос; другие изменения заблокированы.`
               : "Один межуровневый перенос за сохранение. Кнопка добавится отдельным рядом в конец уровня."}</div>
             ${ctx.state.layoutError ? `<div class="bot-layout-error" role="alert">${ctx.escapeHtml(ctx.state.layoutError)} Можно повторить сохранение или отменить.</div>` : ""}
-            ${moveDropZone(ctx, current.fullPath || "", current.kind === "root" ? "Корень меню" : "Текущий уровень")}
+            ${current.kind === "root" ? moveDropZone(ctx, "", "Корень меню", true) : moveDropZone(ctx, current.fullPath || "", "Текущий уровень")}
             ${current.kind === "submenu" && typeof current.parentPath === "string" ? moveDropZone(ctx, current.parentPath, "На уровень выше") : ""}
           ` : ""}
           <div class="bot-buttons-level-list${ctx.state.messengerView && !ctx.state.layoutEditMode ? " bot-buttons-messenger-view" : ""}">
