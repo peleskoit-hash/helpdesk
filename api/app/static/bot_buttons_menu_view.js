@@ -165,6 +165,7 @@
             ${free.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}
           </select>
           <button type="button" id="addDestinationBtn" class="action">Добавить тип клиента</button>
+          <button type="button" id="messengerViewBtn" class="action bot-messenger-toggle" aria-pressed="${state.messengerView ? "true" : "false"}">Вид как в мессенджере</button>
           ${canDeleteMenu ? '<button type="button" id="deleteMenuTypeBtn" class="action action-danger">Удалить меню</button>' : ""}
         </div>
       </div>

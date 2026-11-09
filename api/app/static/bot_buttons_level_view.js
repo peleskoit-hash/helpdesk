@@ -100,6 +100,8 @@
 
   function cancelLayoutEdit(state) {
     if (!state) return false;
+    state.layoutModalCleanup?.();
+    state.layoutModalCleanup = null;
     state.layoutEditMode = false;
     state.layoutDraftRows = [];
     state.layoutPendingMove = null;
@@ -107,6 +109,70 @@
     state.layoutDragLocal = false;
     state.layoutError = "";
     return true;
+  }
+
+  function bindLayoutModal(ctx, previousScroll) {
+    const dialog = ctx.el.content.querySelector(".bot-layout-dialog");
+    const scroll = dialog.querySelector(".bot-layout-scroll-area");
+    const zones = Array.from(dialog.querySelectorAll("[data-layout-scroll]"));
+    let dragging = false, direction = 0, frame = 0, lastTime = 0;
+    function updateZones() {
+      for (const zone of zones) {
+        zone.hidden = !dragging || (Number(zone.dataset.layoutScroll) < 0
+          ? scroll.scrollTop <= 1 : scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 1);
+        zone.classList.toggle("bot-layout-auto-scroll-active", !zone.hidden && Number(zone.dataset.layoutScroll) === direction);
+      }
+    }
+    function stopScroll() {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      direction = 0;
+      lastTime = 0;
+      updateZones();
+    }
+    function tick(time) {
+      frame = 0;
+      if (!dragging || !direction || !dialog.isConnected) { stopScroll(); return; }
+      const before = scroll.scrollTop;
+      scroll.scrollTop += direction * Math.min(32, lastTime ? time - lastTime : 16) * .6;
+      lastTime = time;
+      updateZones();
+      if (scroll.scrollTop === before || zones.find(zone => Number(zone.dataset.layoutScroll) === direction)?.hidden) {
+        stopScroll();
+      } else frame = requestAnimationFrame(tick);
+    }
+    dialog.addEventListener("dragstart", () => { dragging = !!ctx.state.layoutDragNode; updateZones(); });
+    const endDrag = () => { dragging = false; stopScroll(); };
+    dialog.addEventListener("dragend", endDrag, true);
+    dialog.addEventListener("drop", endDrag, true);
+    for (const zone of zones) {
+      zone.addEventListener("dragover", event => {
+        event.preventDefault(); event.stopPropagation();
+        if (!dragging) return;
+        direction = Number(zone.dataset.layoutScroll);
+        updateZones();
+        if (!frame) frame = requestAnimationFrame(tick);
+      });
+      zone.addEventListener("dragleave", stopScroll);
+      zone.addEventListener("drop", event => { event.preventDefault(); event.stopPropagation(); });
+    }
+    scroll.addEventListener("scroll", updateZones);
+    // Opening a submenu can change whether there is room to scroll.
+    dialog.addEventListener("toggle", updateZones, true);
+    dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      if (!ctx.state.layoutSaving) dialog.querySelector("#cancelLayoutBtn").click();
+    });
+    const resize = () => dialog.style.setProperty("--bot-layout-work-left", `${Math.max(12, ctx.el.content.closest("#appContent").getBoundingClientRect().left + 12)}px`);
+    resize();
+    window.addEventListener("resize", resize);
+    ctx.state.layoutModalCleanup = () => {
+      endDrag();
+      window.removeEventListener("resize", resize);
+      if (dialog.open) dialog.close();
+    };
+    dialog.showModal();
+    scroll.scrollTop = previousScroll;
   }
 
   function localLayoutChanged(state) {
@@ -235,6 +301,10 @@
   }
 
   function renderLevel(ctx) {
+    const previousModal = ctx.el.content.querySelector(".bot-layout-dialog");
+    const previousScroll = previousModal?.querySelector(".bot-layout-scroll-area")?.scrollTop || 0;
+    ctx.state.layoutModalCleanup?.();
+    ctx.state.layoutModalCleanup = null;
     ctx.state.layoutOpenSubmenus = new Set(Array.from(ctx.el.content.querySelectorAll(".bot-structure-submenu[open]"), node => node.dataset.submenuKey));
     const current = currentLevel(ctx);
     const isArchiveLevel = String(current?.levelKey || "").includes("|level|__removed__");
@@ -277,11 +347,15 @@
         <div class="bot-buttons-split-left">
           ${ctx.renderMenuBindingsPanel()}
           ${ctx.state.layoutEditMode ? `
-          <div class="bot-layout-edit-shell">
-            <div class="bot-layout-mode-badge">Режим изменения структуры</div>
+          <dialog class="bot-layout-edit-shell bot-layout-dialog" aria-labelledby="botLayoutDialogTitle">
+            <header class="bot-layout-dialog-head">
+              <h2 id="botLayoutDialogTitle">Режим изменения структуры</h2>
           ` : ""}
           ${toolbarHtml}
           ${ctx.state.layoutEditMode ? `
+            </header>
+            <div class="bot-layout-scroll-frame">
+            <div class="bot-layout-scroll-area">
             <div class="bot-move-help" role="status">${ctx.state.layoutPendingMove
               ? `Черновик: ${ctx.escapeHtml(ctx.state.layoutPendingMove.label)} → ${ctx.escapeHtml(ctx.state.layoutPendingMove.targetLabel)}. Сохраните или отмените перенос; другие изменения заблокированы.`
               : "Один межуровневый перенос за сохранение. Кнопка добавится отдельным рядом в конец уровня."}</div>
@@ -289,7 +363,7 @@
             ${moveDropZone(ctx, current.fullPath || "", current.kind === "root" ? "Корень меню" : "Текущий уровень")}
             ${current.kind === "submenu" && typeof current.parentPath === "string" ? moveDropZone(ctx, current.parentPath, "На уровень выше") : ""}
           ` : ""}
-          <div class="bot-buttons-level-list">
+          <div class="bot-buttons-level-list${ctx.state.messengerView && !ctx.state.layoutEditMode ? " bot-buttons-messenger-view" : ""}">
             ${rowsForRender.length ? rowsForRender.map((row, rowIndex) => `
               ${ctx.state.layoutEditMode ? `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${rowIndex}">\u041d\u043e\u0432\u044b\u0439 \u0440\u044f\u0434 \u0437\u0434\u0435\u0441\u044c</div>` : ""}
               <div class="bot-buttons-row ${ctx.state.layoutEditMode ? "bot-layout-row-edit" : ""}" ${ctx.state.layoutEditMode ? `data-layout-drop-row="${rowIndex}"` : ""}>
@@ -312,7 +386,10 @@
             `).join("") : `<div class="status">\u041f\u0443\u0441\u0442\u043e</div>`}
             ${ctx.state.layoutEditMode ? `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${rowsForRender.length}">\u041d\u043e\u0432\u044b\u0439 \u0440\u044f\u0434 \u0437\u0434\u0435\u0441\u044c</div>` : ""}
           </div>
-          ${ctx.state.layoutEditMode ? "</div>" : ""}
+          ${ctx.state.layoutEditMode ? `</div>
+            <div class="bot-layout-auto-scroll" data-layout-scroll="-1" hidden>▲ Прокрутить вверх</div>
+            <div class="bot-layout-auto-scroll" data-layout-scroll="1" hidden>▼ Прокрутить вниз</div>
+            </div></dialog>` : ""}
           ${!ctx.state.layoutEditMode && !isArchiveLevel && removedCount > 0 ? `
             <div class="bot-buttons-archive-bottom">
               <button type="button" id="openRemovedArchiveBtn" class="bot-buttons-level-item bot-button-leaf-removed bot-button-archive-main">
@@ -326,6 +403,11 @@
     `;
 
     applyButtonColors(ctx);
+    document.getElementById("messengerViewBtn")?.addEventListener("click", event => {
+      ctx.state.messengerView = !ctx.state.messengerView;
+      event.currentTarget.setAttribute("aria-pressed", String(ctx.state.messengerView));
+      ctx.el.content.querySelector(".bot-buttons-split-left > .bot-buttons-level-list")?.classList.toggle("bot-buttons-messenger-view", ctx.state.messengerView);
+    });
     ctx.el.content.querySelectorAll(".bot-structure-submenu").forEach(container => {
       container.addEventListener("dragover", event => { event.stopPropagation(); });
       container.addEventListener("drop", event => { event.preventDefault(); event.stopPropagation(); });
@@ -360,6 +442,7 @@
 
     document.getElementById("editLayoutBtn")?.addEventListener("click", () => {
       cancelLayoutEdit(ctx.state);
+      ctx.state.messengerView = false;
       ctx.state.layoutEditMode = true;
       ctx.state.layoutDraftRows = normalizeDraftRows(
         visibleRows.map((r) => ({
@@ -456,10 +539,13 @@
 
     if (ctx.state.layoutEditMode) {
       bindLayoutEditing(ctx);
+      bindLayoutModal(ctx, previousScroll);
       for (const button of ctx.el.content.querySelectorAll("#saveLayoutBtn, #cancelLayoutBtn, .bot-menu-bindings-panel button, .bot-menu-bindings-panel select")) {
         button.disabled = !!ctx.state.layoutSaving || button.closest(".bot-menu-bindings-panel") !== null;
       }
     }
+
+    if (previousModal && !ctx.state.layoutEditMode) document.getElementById("editLayoutBtn")?.focus();
 
     document.getElementById("openRemovedArchiveBtn")?.addEventListener("click", () => {
       const rowsForArchive = buildArchiveRowsFromStructure(ctx);

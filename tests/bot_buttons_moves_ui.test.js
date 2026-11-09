@@ -129,7 +129,7 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
   await stage(a.full_path);
   assert.equal(moveCalls().length, 0);
   assert.equal(await keyButton('other-key').getAttribute('draggable'), 'false');
-  await page.locator('#botButtonsBackBtn').click();
+  assert.equal(await page.locator('.bot-layout-dialog').evaluate(dialog=>dialog.matches(':modal')), true, 'The modal blocks background navigation');
   assert.equal(await page.locator('#saveLayoutBtn').count(), 1, 'Navigation cannot discard a pending move');
   await page.locator('#cancelLayoutBtn').click();
   assert.equal(moveCalls().length, 0);
@@ -204,7 +204,10 @@ for (const theme of ['light', 'dark']) test(`V2 cross-level draft moves: ${theme
   await page.locator('#cancelLayoutBtn').click();
   assert.equal(calls.filter(call => call.method === 'PUT' && call.p.endsWith('/layout')).length, 0);
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css', 'app_shell.js', 'bot_buttons_level_view.js', 'settings_bot_buttons.js']) {
-    const version = file === 'app_shell.js' ? '20261106-table-shell-v1' : file === 'desk-v2.css' ? '20261106-ticket-table-v2' : file === 'styles.css' ? '20261106-ticket-table-v2' : ['styles.css','desk-v2.css','app_shell.js'].includes(file) ? '20261031-web-history-v1' : ['styles.css','desk-v2.css','app_shell.js','bot_buttons_level_view.js'].includes(file) ? '20261027-dialog-prompts-v4' : file === 'bot-buttons-browser-v2.css' ? '20261106-system-editors-v2' : '20261027-themed-dialogs-v1';
+    const declarations = ['api/app/templates/settings_bot_buttons.html', 'api/app/static/styles.css', 'api/app/static/desk-v2.css']
+      .map(file => fs.readFileSync(file, 'utf8')).join('\n');
+    const version = declarations.match(new RegExp(`/static/${file.replaceAll('.', '\\.')}\\?v=([^"'\\s)]+)`))?.[1];
+    assert.ok(version, `Declared asset: ${file}`);
     assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);

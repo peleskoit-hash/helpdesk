@@ -131,6 +131,7 @@ const state = {
   menuStructure: null,
   levelStack: [],
   layoutEditMode: false,
+  messengerView: false,
   layoutDraftRows: [],
   selectedLeaf: null,
   assignees: [],
@@ -979,6 +980,7 @@ function openCreateMenuTypeModal() {
 async function openMenu(menuName) {
   if (!menuName) return;
   setStatus(`Загрузка структуры "${menuName}"...`);
+  if (state.selectedMenu !== menuName) state.messengerView = false;
   state.selectedMenu = menuName;
   const info = (state.menuTypes || []).find((item) => item.menu_name === menuName);
   const displayName = info?.display_name || menuName;
@@ -1255,6 +1257,7 @@ async function handleBack() {
       return;
     }
     state.view = "menu_types";
+    state.messengerView = false;
     state.selectedMenu = null;
     state.menuStructure = null;
     state.levelStack = [];
@@ -1281,6 +1284,7 @@ function handleBeforeUnload(event) {
 }
 
 function cleanupBotButtonOverlays() {
+  BotButtonsLevelView.cancelLayoutEdit(state);
   if (window.BotButtonsEditorView?.cleanup) {
     window.BotButtonsEditorView.cleanup();
   }

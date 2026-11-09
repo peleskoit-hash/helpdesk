@@ -42,22 +42,32 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
   else if(p.endsWith('/item'))data={button_style:colors[u.searchParams.get('button_key')]||null,button_key:u.searchParams.get('button_key'),workflow_type:'task',button_label:'Задача',currently_present:true,files_effective:[],conditional_files_effective:[]};
   return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
  });
- const colorGeometry=new Map();
+ const colorGeometry=new Map(), normalColors=new Map();
  async function checkColors(){
+  const editing=await page.locator(".bot-layout-edit-shell").count()>0;
   const expected={'':null,primary:'rgb(47, 128, 237)',success:'rgb(39, 174, 96)',danger:'rgb(235, 87, 87)'};
   await page.waitForFunction(()=>document.querySelector('.bot-button-color-danger'));
   for(const [key,style] of Object.entries(colors)){
    const values=await page.locator('[data-button-color-key]').evaluateAll((nodes,key)=>{
     const el=nodes.find(n=>n.dataset.buttonColorKey===key),css=getComputedStyle(el),tag=el.querySelector('.bot-button-type-tag'),border=getComputedStyle(el,'::after');
-    const lum=color=>color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
+    const rgb=color=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return [...ctx.getImageData(0,0,1,1).data].slice(0,3);};
+    const lum=color=>rgb(color).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
     const contrast=(a,b)=>(Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
-    return {bg:css.backgroundColor,height:el.getBoundingClientRect().height,radius:css.borderRadius,contrast:contrast(css.color,css.backgroundColor),tagContrast:contrast(getComputedStyle(tag).color,getComputedStyle(tag).backgroundColor),border:border.borderWidth,style:border.borderStyle,pointer:border.pointerEvents};
+    return {bg:css.backgroundColor,height:el.getBoundingClientRect().height,radius:css.borderRadius,contrast:contrast(css.color,css.backgroundColor),tagContrast:contrast(getComputedStyle(tag).color,getComputedStyle(tag).backgroundColor),border:border.borderWidth,style:border.borderStyle,pointer:border.pointerEvents,rgb:rgb(css.backgroundColor),surface:rgb(css.getPropertyValue('--desk-surface')),filter:css.filter};
    },key);
    if(expected[style])assert.equal(values.bg,expected[style]);
+   if(editing)assert.equal(values.bg,normalColors.get(key),'Editor and normal view share the same background');
+   else normalColors.set(key,values.bg);
+   if(!style){
+    const tint=theme==='dark'?255:0;
+    values.rgb.forEach((value,i)=>assert.ok(Math.abs(value-(values.surface[i]*.8+tint*.2))<=1,JSON.stringify(values)));
+    assert.equal(values.filter,'none');
+   }
    assert.ok(values.contrast>=4.5,JSON.stringify({key,...values}));assert.ok(values.tagContrast>=4.5,JSON.stringify({key,...values}));
-   assert.equal(values.radius,'16px');assert.ok(values.height>=64);
-   if(colorGeometry.has(key))assert.equal(values.height,colorGeometry.get(key),'Colors and submenu outline preserve height');else colorGeometry.set(key,values.height);
-   if(key==='sub'){assert.equal(values.border,'5px');assert.equal(values.style,'dashed');assert.equal(values.pointer,'none');}
+   assert.equal(values.radius,'16px');assert.ok(values.height>=46 && values.height<64);
+   const geometryKey=`${editing}:${key}`;
+   if(colorGeometry.has(geometryKey))assert.equal(values.height,colorGeometry.get(geometryKey),'Colors and submenu outline preserve height');else colorGeometry.set(geometryKey,values.height);
+   if(key==='sub'){assert.equal(values.border,'1px');assert.equal(values.style,'solid');assert.equal(values.pointer,'none');}
   }
  }
  await page.goto('http://desk.test/settings/bot-buttons');await page.waitForSelector('[data-menu-name]');
@@ -73,8 +83,31 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  for(const width of [1920,768]){
   await page.setViewportSize({width,height:1080});
   assert.equal(await page.locator('.bot-buttons-level-item').first().evaluate(el=>getComputedStyle(el).fontSize),'21px');
-  assert.ok(await page.locator('.bot-buttons-level-item').first().evaluate(el=>el.getBoundingClientRect().height>=64));
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  const buttonHeight=await page.locator('.bot-buttons-level-item').first().evaluate(el=>el.getBoundingClientRect().height);
+  assert.ok(buttonHeight>=46 && (width<768 || buttonHeight<64),JSON.stringify({width,buttonHeight}));
+  await page.locator('.bot-buttons-row').nth(1).evaluate(row=>{
+   if(row.children.length===2){const third=row.firstElementChild.cloneNode(true);third.querySelector('.bot-button-type-tag').textContent='Групповая задача';row.appendChild(third);}
+  });
+  const geometry=await page.locator('.bot-buttons-split-left > .bot-buttons-level-list').evaluate(list=>{
+   const box=list.getBoundingClientRect(),parent=list.parentElement.getBoundingClientRect();
+   return {ratio:box.width/parent.width,left:box.left-parent.left,rows:[...list.querySelectorAll(':scope > .bot-buttons-row')].map(row=>{
+    const boxes=[...row.children].map(node=>node.getBoundingClientRect());
+    return boxes.every(b=>Math.abs(b.top-boxes[0].top)<1 && Math.abs(b.width-boxes[0].width)<1);
+   })};
+  });
+  assert.ok(Math.abs(geometry.ratio-(width>1100?.5:1))<.01);assert.equal(geometry.left,0);assert.ok(geometry.rows.every(Boolean));
+  await page.locator('.bot-buttons-row').first().locator('button > span').first().evaluate(label=>{label.textContent='Очень длинное название '.repeat(20)});
+  const labelStyle=await page.locator('.bot-buttons-row').first().locator('button').evaluate(button=>{
+   const label=button.firstElementChild,tag=button.lastElementChild,css=getComputedStyle(label),box=button.getBoundingClientRect(),t=tag.getBoundingClientRect();
+   return {ellipsis:css.textOverflow,nowrap:css.whiteSpace,clipped:label.scrollWidth>label.clientWidth,tagVisible:t.right<=box.right && t.left>=box.left};
+  });
+  assert.deepEqual(labelStyle,{ellipsis:'ellipsis',nowrap:'nowrap',clipped:true,tagVisible:true});
+  assert.equal(await page.locator('.bot-buttons-split-left > .bot-buttons-level-list button').evaluateAll(buttons=>buttons.every(button=>{
+   const b=button.getBoundingClientRect(),tag=button.querySelector('.bot-button-type-tag').getBoundingClientRect();
+   return tag.left>=b.left && tag.right<=b.right+1;
+  })),true);
+  assert.equal(await page.locator('.bot-buttons-split-left > .bot-buttons-level-list').evaluate(list=>list.scrollWidth<=list.clientWidth),true);
+  if(width>=768)assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  }
  await page.setViewportSize({width:1920,height:1080});
  await page.locator('.bot-button-submenu').click();await page.waitForSelector('#editSubmenuBtn');
