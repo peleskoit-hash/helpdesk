@@ -1169,3 +1169,14 @@ for (const all of [false, true]) for (const approved of [false, true]) {
     assert.equal(window.location.href, approved ? '/tickets?tab=active' : '/settings/bot-buttons');
   });
 }
+
+
+test("observer hides only notification entry and cannot activate it", async () => {
+  const { document } = buildSidebarDom();
+  const window = await loadSidebar(document, "chiki_piki");
+  const item = document.querySelector('[data-sidebar-user-menu-item="bot-notifications"]');
+  assert.equal(item.hidden, true);
+  item.dispatchEvent({ type: "click", target: item });
+  assert.equal(window.location.href, "/tickets");
+  for (const key of ["profile", "logout"]) assert.equal(document.querySelector(`[data-sidebar-user-menu-item="${key}"]`).hidden, false);
+});

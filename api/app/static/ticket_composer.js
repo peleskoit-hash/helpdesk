@@ -242,8 +242,14 @@
   function quoteMessage(ctx, message) {
     const { state, el } = ctx;
     state.quoteMessageId = message.id;
+    if (state.role === "chiki_piki") {
+      state.composeMode = "comment";
+      applyComposeModeUi(ctx);
+    }
     el.messageInput.focus();
-    if (message.telegram_message_id) {
+    if (state.role === "chiki_piki") {
+      ctx.setStatus("Цитата добавлена во внутренний комментарий");
+    } else if (message.telegram_message_id) {
       ctx.setStatus(`Ответ будет отправлен в Telegram как reply на сообщение: ${ctx.messageAuthorLabel(message)}`);
     } else {
       ctx.setStatus("Цитата выбрана только в helpdesk: у сообщения нет Telegram ID для reply в Telegram");
@@ -565,6 +571,7 @@
 
   function applyComposeModeUi(ctx) {
     const { state, el } = ctx;
+    if (state.role === "chiki_piki") state.composeMode = "comment";
     const isReply = state.composeMode === "reply";
     el.modeReplyBtn.classList.toggle("primary", isReply);
     el.modeCommentBtn.classList.toggle("primary", !isReply);
@@ -707,8 +714,7 @@
     const { state, el, api } = ctx;
     if (state.isSendingReply) return;
     if (state.role === "chiki_piki") {
-      ctx.showError("Роль Чики-пики работает только в режиме просмотра");
-      return;
+      state.composeMode = "comment";
     }
     const text = el.messageInput.value.trim();
     const hasFiles = state.selectedFiles.length > 0;
@@ -858,7 +864,7 @@
       listeners.push(() => node.removeEventListener(type, handler));
     };
     const canAddFiles = () => state.card && state.card.status !== "closed"
-      && state.role !== "chiki_piki" && !input.disabled && !input.readOnly && !el.addFilesBtn?.disabled;
+      && (state.role !== "chiki_piki" || state.composeMode === "comment") && !input.disabled && !input.readOnly && !el.addFilesBtn?.disabled;
     const hasFiles = (data) => Array.from(data?.types || []).includes("Files")
       || Array.from(data?.items || []).some((item) => item.kind === "file") || Boolean(data?.files?.length);
     const filesFrom = (data) => {
@@ -916,6 +922,7 @@
     const { state, el } = ctx;
     bindFileTransferHandlers(ctx);
     el.modeReplyBtn.addEventListener("click", () => {
+      if (state.role === "chiki_piki") return;
       state.composeMode = "reply";
       applyComposeModeUi(ctx);
       ctx.onComposeModeChanged?.();

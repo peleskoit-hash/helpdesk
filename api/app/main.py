@@ -1,10 +1,14 @@
 import asyncio
+import secrets
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -12,6 +16,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import (
     CurrentUser,
     authenticate_user,
+    hash_password,
+    verify_password,
     get_current_user,
     get_optional_current_user,
     is_admin,
@@ -21,6 +27,7 @@ from .auth import (
 from .config import settings
 from .db import Base, engine, get_db, SessionLocal
 from .models import User
+from .services.login_throttle import StaffLoginThrottle
 from .routers.background_contours import router as background_contours_router
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
 from .routers.integrations import router as integrations_router
@@ -97,6 +104,7 @@ from .services.telegram_polling import telegram_polling_loop
 
 
 BASE_DIR = Path(__file__).resolve().parent
+_STAFF_DUMMY_HASH = hash_password(secrets.token_urlsafe(32))
 
 app = FastAPI(title="Helpdesk MVP API", version="0.1.0")
 app.add_middleware(
@@ -293,15 +301,31 @@ def _require_page_auth(request: Request, db: Session) -> CurrentUser | None:
     return get_optional_current_user(request, db)
 
 
+def _safe_login_next(next_path: str) -> str:
+    decoded = next_path
+    while True:
+        if (
+            not decoded.startswith("/")
+            or decoded.startswith("//")
+            or "\\" in decoded
+            or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+        ):
+            return "/tickets"
+        unquoted = unquote(decoded)
+        if unquoted == decoded:
+            return next_path
+        decoded = unquoted
+
+
 @app.get("/login")
 def login_page(request: Request):
     if request.session.get("auth_user_id"):
         return RedirectResponse(url="/tickets", status_code=303)
-    next_path = request.query_params.get("next") or "/tickets"
+    next_path = _safe_login_next(request.query_params.get("next") or "/tickets")
     html = (BASE_DIR / "templates" / "login.html").read_text(encoding="utf-8")
     html = html.replace("{{LOGIN_ERROR}}", "")
     html = html.replace("{{LOGIN_VALUE}}", "")
-    html = html.replace("{{NEXT_VALUE}}", next_path if next_path.startswith("/") else "/tickets")
+    html = html.replace("{{NEXT_VALUE}}", escape(next_path, quote=True))
     return HTMLResponse(content=html)
 
 
@@ -315,17 +339,35 @@ def login_submit(
     next: str = Form(default="/tickets"),
 ):
     login_value = (login or username or "").strip()
-    user = authenticate_user(db, login_value, password)
+    safe_next = _safe_login_next(next or "/tickets")
+    throttle = StaffLoginThrottle(db, login_value.casefold(),
+                             request.client.host if request.client else "unknown",
+                             lambda: datetime.now(timezone.utc))
+    retry = throttle.retry_after
+    user = None
+    if retry:
+        db.rollback()
+    else:
+        # Keep the password checker unchanged; equalize missing/inactive identities.
+        candidate = db.scalar(select(User).where(User.login == login_value))
+        if candidate is None or not candidate.is_active or not candidate.password_hash:
+            verify_password(password, _STAFF_DUMMY_HASH)
+        user = authenticate_user(db, login_value, password)
+        if user is None:
+            retry = throttle.failure()
+            db.commit()
     if user is None:
         html = (BASE_DIR / "templates" / "login.html").read_text(encoding="utf-8")
         html = html.replace("{{LOGIN_ERROR}}", "Неверный логин или пароль, либо пользователь отключён.")
-        html = html.replace("{{LOGIN_VALUE}}", login_value)
-        html = html.replace("{{NEXT_VALUE}}", next or "/tickets")
-        return HTMLResponse(content=html, status_code=401)
+        html = html.replace("{{LOGIN_VALUE}}", escape(login_value, quote=True))
+        html = html.replace("{{NEXT_VALUE}}", escape(safe_next, quote=True))
+        return HTMLResponse(content=html, status_code=429 if throttle.retry_after else 401,
+                            headers={"Retry-After": str(retry), "Cache-Control": "no-store"}
+                            if retry else {"Cache-Control": "no-store"})
+    throttle.success()
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     login_user(request, user)
-    safe_next = next if next and next.startswith("/") else "/tickets"
     return RedirectResponse(url=safe_next, status_code=303)
 
 

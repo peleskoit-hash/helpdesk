@@ -165,7 +165,7 @@ def can_reply(user: CurrentUser) -> bool:
 
 
 def can_comment(user: CurrentUser) -> bool:
-    return is_admin(user) or is_support_user(user)
+    return is_admin(user) or is_support_user(user) or is_readonly_chiki_piki(user)
 
 
 def can_assign(user: CurrentUser) -> bool:

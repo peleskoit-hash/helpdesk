@@ -86,7 +86,7 @@ def _status_out(user: User) -> UserStatusOut:
     return UserStatusOut(
         id=user.id,
         role=user.role,
-        role_label={"admin": "Администратор", "agent": "Тех. поддержка", "trainee": "Стажёр", "chiki_piki": "Чики-пики"}.get(user.role, user.role),
+        role_label={"admin": "Администратор", "agent": "Тех. поддержка", "trainee": "Стажёр", "chiki_piki": "Call Center Observer"}.get(user.role, user.role),
         full_name=user.full_name,
         availability_status=user.availability_status or "offline",
     )
@@ -448,7 +448,7 @@ def list_users_by_role(
         "admin": "Администратор",
         "agent": "Тех. поддержка",
         "trainee": "Стажёр",
-        "chiki_piki": "Чики-пики",
+        "chiki_piki": "Call Center Observer",
     }
     return [
         AgentOut(
@@ -496,7 +496,7 @@ def update_my_status(
 ):
     user = _current_user_model(db, current_user)
     if is_readonly_chiki_piki(current_user):
-        _error(403, "readonly_role", "Роль Чики-пики не может менять статус")
+        _error(403, "readonly_role", "Роль Call Center Observer не может менять статус")
     set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow())
     if user.role == "agent" and payload.availability_status == "online":
         db.flush()

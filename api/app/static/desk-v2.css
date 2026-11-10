@@ -335,6 +335,8 @@ body #appContent.main:is([data-shell-page="ticket-card"], [data-shell-page="tick
 body #appContent.main[data-shell-page="ticket-card"] {
   & > .toolbar { padding-left: 16px; }
   & > .ticket-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr) minmax(230px, 260px); padding: 14px 16px 16px; gap: 12px; }
+  & > .ticket-layout.observer-layout { grid-template-columns: minmax(240px, 274px) minmax(0, 1fr); }
+  & > .ticket-layout.observer-layout > .ticket-side:not(.ticket-client-side) { display: none; }
   & .ticket-card > .ticket-card-wrap > .card-head { padding: 12px; }
   & .ticket-head-main { background: transparent; border: 0; border-radius: 0; padding: 0; contain: none; align-items: center; gap: 8px; }
   & .instruction-btn { flex: 0 0 auto; }
@@ -631,6 +633,7 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
 }
 @media (min-width: 1201px) and (max-width: 1500px) {
   body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 240px minmax(0, 1fr) 230px; gap: 8px; padding: 11px; }
+  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout.observer-layout { grid-template-columns: 240px minmax(0, 1fr); }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-status-badges { flex-direction: column; align-items: flex-start; gap: 4px; }
   body #appContent.main[data-shell-page="ticket-card"] .messages { padding: 22px 16px; }
 }
@@ -645,6 +648,7 @@ body #appearanceMenu.appearance-menu .appearance-status:empty { display: none; }
 }
 @media (max-width: 1200px) {
   body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout { grid-template-columns: 1fr; overflow-y: auto; grid-auto-rows: minmax(280px, auto); }
+  body #appContent.main[data-shell-page="ticket-card"] > .ticket-layout.observer-layout { grid-template-columns: 1fr; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-card { min-height: 640px; }
   body #appContent.main[data-shell-page="ticket-card"] .ticket-side { min-height: 320px; max-height: 600px; }
 }

@@ -173,3 +173,18 @@ test('drag highlight is limited to the active chat panel without changing layout
   assert.match(rule, /outline-offset: -2px/);
   assert.doesNotMatch(rule, /padding|margin|width|height|pointer-events/);
 });
+
+
+for (const method of ['drop','paste']) test(`observer comment ${method} reuses preload without sending`, async () => {
+  const f=fixture();
+  f.ctx.state.role='chiki_piki';
+  f.ctx.state.composeMode='comment';
+  f.ctx.canUseAttachmentPreload=() => true;
+  const transfer=f.transfer([f.file('observer.pdf')]);
+  const event=method==='drop' ? f.panel.emit('drop',{dataTransfer:transfer}) : f.input.emit('paste',{clipboardData:transfer});
+  assert.equal(event.prevented,true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.ctx.state.selectedFiles.length,1);
+  assert.equal(f.calls.filter(call => call.url.endsWith('/attachment-preloads')).length,1);
+  assert.equal(f.calls.filter(call => /\/(reply|comment)$/.test(call.url)).length,0);
+});

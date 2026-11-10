@@ -512,7 +512,7 @@ def test_real_freeze_and_unfreeze_close_and_reopen_work_interval():
     ]
 
 
-def test_real_unfreeze_on_message_opens_work_interval():
+def test_internal_comment_keeps_frozen_ticket_and_does_not_open_work_interval():
     session = _session()
     company = _company(session)
     agent = _user(session, company)
@@ -528,10 +528,8 @@ def test_real_unfreeze_on_message_opens_work_interval():
 
     assert result == {"ok": True}
     rows = _work_rows(session, ticket)
-    assert len(rows) == 1
-    assert rows[0].user_id == agent.id
-    assert rows[0].ended_at is None
-    assert rows[0].end_reason is None
+    assert ticket.is_frozen
+    assert rows == []
 
 
 def test_real_manual_close_closes_work_interval():

@@ -1207,6 +1207,30 @@ def deliver_ticket_attachment(*, attachment_id: str, message_id: str, ticket_id:
                 db.commit()
                 if row.telegram_delivery_status == "failed":
                     cleanup_failed_attachment_preloads(db, row.ticket_id)
+                elif row.telegram_delivery_status == "sent":
+                    # Apply only the unfreeze effect; delivery/attempt state is already committed.
+                    _, message, ticket = _load_entities(db, attachment_id=attachment_id,
+                        message_id=message_id, ticket_id=ticket_id)
+                    if (ticket is not None and message is not None and ticket.is_frozen
+                            and ticket.workflow_type == TicketWorkflowType.TICKET.value
+                            and message.message_type == MessageType.AGENT.value):
+                        from .ticket_lifecycle import unfreeze_ticket_on_message
+                        from .statistics_lifecycle import sync_work_interval_after_unfreeze
+                        from .auto_close import refresh_ticket_auto_close_timer
+
+                        ticket = upload_state.lock_row(db, Ticket, ticket.id)
+                        if (ticket is not None and ticket.is_frozen and message.author_user_id
+                                and ticket.assignee_id == message.author_user_id
+                                and not db.scalar(select(TicketAttachment.id).where(
+                                    TicketAttachment.message_id == message_id,
+                                    or_(TicketAttachment.telegram_delivery_status.is_(None),
+                                        TicketAttachment.telegram_delivery_status != "sent"),
+                                ).limit(1))):
+                            unfreeze_ticket_on_message(ticket)
+                            if not ticket.is_frozen:
+                                sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
+                                refresh_ticket_auto_close_timer(db, ticket, restart_from_now=True)
+                                db.commit()
 
 
 def _deliver_ticket_attachment(

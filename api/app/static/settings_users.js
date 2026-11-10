@@ -6,7 +6,7 @@ const state = {
   currentTelegramNotification: null,
 };
 
-const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", trainee: "Стажёр", chiki_piki: "Чики-пики" };
+const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", trainee: "Стажёр", chiki_piki: "Call Center Observer" };
 const statusLabels = { offline: "Не в сети", online: "В сети", on_ticket: "На заявке", waiting: "В ожидании", lunch: "Обед" };
 
 const el = {

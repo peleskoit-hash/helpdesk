@@ -401,7 +401,7 @@
     }
     const notificationItem = menu?.querySelector("[data-sidebar-user-menu-item='bot-notifications']");
     if (notificationItem) {
-      notificationItem.hidden = false;
+      notificationItem.hidden = state.role === "chiki_piki";
     }
   }
 
@@ -608,6 +608,7 @@
           return;
         }
         if (action === "bot-notifications") {
+          if (state.role === "chiki_piki") return;
           if (window.HelpdeskAppShell?.navigate) {
             window.HelpdeskAppShell.navigate("/profile/notification-bot");
           } else {

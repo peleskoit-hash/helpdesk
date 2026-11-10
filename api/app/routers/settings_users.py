@@ -21,7 +21,7 @@ ROLE_LABELS = {
     "admin": "Администратор",
     "agent": "Тех. поддержка",
     "trainee": "Стажёр",
-    "chiki_piki": "Чики-пики",
+    "chiki_piki": "Call Center Observer",
 }
 
 

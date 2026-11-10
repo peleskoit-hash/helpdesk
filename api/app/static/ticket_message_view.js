@@ -284,7 +284,7 @@
     const menu = el.messageContextMenu;
     menu.innerHTML = "";
     addContextMenuItem(ctx, menu, "Копировать", () => copyMessageText(ctx, message));
-    if (state.role !== "chiki_piki" && message.message_type !== "internal") {
+    if (message.message_type !== "internal") {
       addContextMenuItem(ctx, menu, "Цитировать", () => quoteMessage(message));
     }
 

@@ -8,7 +8,7 @@ from fastapi import Request, UploadFile
 from sqlalchemy import asc, func, select, update
 from sqlalchemy.orm import Session
 
-from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply
+from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply, is_readonly_chiki_piki
 from ..models import MessageType, Ticket, TicketAttachment, TicketAttachmentPreload, TicketMessage, TicketStatus, TicketTaskKind, TicketWorkflowType, User
 from ..schemas import TextPayload
 from ..services.employee_telegram_notifications import schedule_new_message_notification
@@ -319,6 +319,8 @@ async def reply_to_ticket(
         if not text:
             _error(400, "reply_payload_empty", "Текст сообщения не может быть пустым")
 
+    if is_readonly_chiki_piki(user) and quick_action:
+        _error(403, "readonly_role", "Нет прав на быстрые действия")
     if quick_action:
         ticket = _lock_ticket_for_quick_action(db, ticket)
     text = _prepare_quick_action(ticket, quick_action, text, is_internal_comment=is_internal_comment)
@@ -335,7 +337,9 @@ async def reply_to_ticket(
             if not is_internal_comment and quoted.message_type == MessageType.INTERNAL.value:
                 _error(409, "internal_quote_forbidden", "Нельзя цитировать внутренний комментарий в ответе клиенту")
             quote_telegram_message_id = quoted.telegram_message_id
-            if not is_internal_comment:
+            if is_readonly_chiki_piki(user) and quoted.message_type not in {MessageType.CLIENT.value, MessageType.AGENT.value}:
+                _error(409, "quote_forbidden", "Это сообщение нельзя цитировать")
+            if not is_internal_comment or is_readonly_chiki_piki(user):
                 saved_quote_message_id = quoted.id
 
     workflow_type = ticket.workflow_type or TicketWorkflowType.TICKET.value
@@ -416,10 +420,7 @@ async def reply_to_ticket(
                     }
                 )
 
-        was_frozen = bool(ticket.is_frozen)
-        unfreeze_ticket_on_message(ticket)
-        if was_frozen and not ticket.is_frozen:
-            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
+        # Delivery is queued here; only its confirmed result can unfreeze the ticket.
         if user.role == "agent" and _is_onsite_phrase(text):
             ticket.onsite_triggered = True
             actor_user = db.get(User, user.id)
@@ -541,10 +542,13 @@ async def reply_to_ticket(
                     )
                 raise
 
-    was_frozen = bool(ticket.is_frozen)
-    unfreeze_ticket_on_message(ticket)
-    if was_frozen and not ticket.is_frozen:
-        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
+    if (is_plain_ticket and message_type == MessageType.AGENT and user.id
+            and ticket.assignee_id == user.id
+            and (ticket.channel == "web" or sent_message_id)):
+        was_frozen = bool(ticket.is_frozen)
+        unfreeze_ticket_on_message(ticket)
+        if was_frozen and not ticket.is_frozen:
+            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     if is_plain_ticket and not is_internal_comment and user.role == "agent" and _is_onsite_phrase(text):
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
@@ -591,10 +595,6 @@ def comment_on_ticket(
         body=payload.text,
         author_user_id=user.id,
     )
-    was_frozen = bool(ticket.is_frozen)
-    unfreeze_ticket_on_message(ticket)
-    if was_frozen and not ticket.is_frozen:
-        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     db.commit()
     return {"ok": True}
 

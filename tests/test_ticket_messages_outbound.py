@@ -287,6 +287,14 @@ def test_text_channel_preserves_access_checks(text_channel_case, operation, reas
     else:
         case.ticket.assignee_id = "other-agent"
     case.db.commit()
+    if reason == "role" and operation == "comment":
+        assert _run_text_channel_operation(case, operation, message.id) == {"ok": True}
+        comments = [m for m in _messages(case.db, case.ticket.id) if m.message_type == MessageType.INTERNAL.value]
+        assert len(comments) == 1 and comments[0].body == "Answer"
+        assert case.calls == []
+        case.db.refresh(message)
+        assert message.body == "Original" and message.message_status == "normal"
+        return
     with pytest.raises(HTTPException) as exc:
         _run_text_channel_operation(case, operation, message.id)
     assert exc.value.status_code == status

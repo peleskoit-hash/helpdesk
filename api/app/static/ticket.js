@@ -558,7 +558,7 @@ function pendingQuickReplyStorageKey() {
 }
 
 function canWriteComposer() {
-  return Boolean(el.messageInput && !el.messageInput.disabled && !el.messageInput.readOnly && state.card?.status !== "closed");
+  return Boolean(state.role !== "chiki_piki" && el.messageInput && !el.messageInput.disabled && !el.messageInput.readOnly && state.card?.status !== "closed");
 }
 
 function canUseQuickRepliesEditor() {
@@ -761,6 +761,7 @@ async function downloadQuickReplyFiles(replyId, savedFiles) {
 }
 
 async function applyQuickReplyToComposer(payload, fallbackBody, token, cardId) {
+  if (state.role === "chiki_piki") return false;
   const replyId = payload?.id;
   const files = await downloadQuickReplyFiles(replyId, payload?.saved_files || []);
   if (destroyed || token !== state.quickReplyUseSeq || state.card?.id !== cardId || !canWriteComposer()) {
@@ -836,7 +837,7 @@ function applyServerDraft(card) {
   const revision = Number(card?.draft_revision || 0);
   if (!Number.isFinite(revision) || revision < state.draftAckRevision) return;
   const text = String(card?.draft_text || "");
-  const mode = normalizeDraftMode(card?.draft_mode);
+  const mode = state.role === "chiki_piki" ? "comment" : normalizeDraftMode(card?.draft_mode);
   const changed = revision > state.draftAckRevision
     || text !== state.draftLastSavedText
     || mode !== state.draftLastSavedMode;
@@ -1460,13 +1461,16 @@ function renderCard() {
   const isClosed = card.status === "closed";
   const isReadonly = state.role === "chiki_piki";
 
+  document.querySelector(".ticket-layout")?.classList.toggle("observer-layout", isReadonly);
+  if (isReadonly) state.composeMode = "comment";
   el.modeReplyBtn.disabled = isClosed || isReadonly;
-  el.modeCommentBtn.disabled = isClosed || isReadonly;
-  el.messageInput.disabled = isClosed || isReadonly;
-  el.messageInput.placeholder = isReadonly ? "Режим только для чтения" : "Текст ответа/комментария";
-  el.sendNowBtn.disabled = isClosed || isReadonly;
-  if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed || isReadonly;
+  el.modeCommentBtn.disabled = isClosed;
+  el.messageInput.disabled = isClosed;
+  el.messageInput.placeholder = "Текст ответа/комментария";
+  el.sendNowBtn.disabled = isClosed;
+  if (el.addFilesBtn) el.addFilesBtn.disabled = isClosed;
   if (el.quickRepliesBtn) el.quickRepliesBtn.disabled = isClosed || isReadonly;
+  if (el.quickRepliesBtn) el.quickRepliesBtn.classList.toggle("hidden", isReadonly);
   if (isClosed || isReadonly) closeQuickRepliesPanel();
 
   TicketControls.renderTicketControlsView(controlsCtx());

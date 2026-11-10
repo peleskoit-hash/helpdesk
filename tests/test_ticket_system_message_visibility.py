@@ -26,8 +26,9 @@ OTHER_HIDDEN_PREFIXES = (
 )
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "admin"])
-def test_history_exposes_old_and_new_wrong_problem_notices_only(role):
+@pytest.mark.parametrize("role", ["agent", "trainee", "admin", "chiki_piki"])
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_history_exposes_old_and_new_wrong_problem_notices_only(role, workflow):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     try:
         Base.metadata.create_all(engine)
@@ -38,7 +39,8 @@ def test_history_exposes_old_and_new_wrong_problem_notices_only(role):
             db.add(User(id="viewer", company_id="company", role=role, full_name="Viewer"))
             db.flush()
             db.add(Ticket(id="ticket", ticket_number=1, company_id="company", client_id="client",
-                          assignee_id="viewer", subject="Test", status="closed", agent_visible=True))
+                          assignee_id="viewer", subject="Test", status="closed", agent_visible=True,
+                          workflow_type=workflow, button_config_key="Колл Центр|Test"))
             db.flush()
             db.add(TicketMessage(id="old-notice", ticket_id="ticket", message_type="system", body=NOTICE,
                                  agent_visible=False, created_at=datetime(2025, 1, 1)))
@@ -49,6 +51,7 @@ def test_history_exposes_old_and_new_wrong_problem_notices_only(role):
                                  body="Другое видимое системное сообщение", agent_visible=True))
             db.add(TicketMessage(id="client-text", ticket_id="ticket", message_type="client",
                                  body="Клиент нажал /start", agent_visible=True))
+            db.add(TicketMessage(id="comment", ticket_id="ticket", message_type="internal", body="Комментарий агента"))
             db.commit()
             db.expunge_all()
             user = SimpleNamespace(id="viewer", role=role)
@@ -66,7 +69,7 @@ def test_history_exposes_old_and_new_wrong_problem_notices_only(role):
                     response = http.get("/api/v1/tickets/ticket")
                     assert response.status_code == 200, response.text
                     ids = {message["id"] for message in response.json()["messages"]}
-                    expected = {"old-notice", "other-visible", "client-text"}
+                    expected = {"old-notice", "other-visible", "client-text", "comment"}
                     if new_message:
                         expected.add("new-notice")
                     if role == "admin":

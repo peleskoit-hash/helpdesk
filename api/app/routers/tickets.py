@@ -1129,7 +1129,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
 
     msg_stmt = select(TicketMessage).where(TicketMessage.ticket_id == t.id).order_by(asc(TicketMessage.created_at))
     messages = db.execute(msg_stmt).scalars().all()
-    if user.role in {"agent", "trainee"}:
+    if user.role in {"agent", "trainee", "chiki_piki"}:
         messages = [
             message for message in messages
             if message.message_type != MessageType.SYSTEM.value
@@ -1602,7 +1602,7 @@ async def create_attachment_preload(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_manage_ticket(user):
+    if not (can_manage_ticket(user) or is_readonly_chiki_piki(user)):
         _error(403, "readonly_role", "Нет прав на отправку ответа")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
@@ -1677,7 +1677,7 @@ def retry_attachment_preload(ticket_id: str, preload_id: str, background_tasks: 
                              confirm_uncertain: bool = Form(False), db: Session = Depends(get_db),
                              user: CurrentUser = Depends(get_current_user)):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    if not can_manage_ticket(user):
+    if not (can_manage_ticket(user) or is_readonly_chiki_piki(user)):
         _error(403, "readonly_role", "Нет прав на отправку ответа")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
@@ -1818,10 +1818,11 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
             )
         raise
     _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
-    was_frozen = bool(ticket.is_frozen)
-    unfreeze_ticket_on_message(ticket)
-    if was_frozen and not ticket.is_frozen:
-        sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
+    if user.id and ticket.assignee_id == user.id and (ticket.channel == "web" or _telegram_message_id(response)):
+        was_frozen = bool(ticket.is_frozen)
+        unfreeze_ticket_on_message(ticket)
+        if was_frozen and not ticket.is_frozen:
+            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     _remove_client_close_button(db, ticket)
     if ticket.status == TicketStatus.NEW.value:
         ticket.status = TicketStatus.PENDING.value

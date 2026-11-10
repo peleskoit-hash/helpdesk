@@ -978,6 +978,10 @@
     if (fieldType === "url") {
       const urlText = String(value ?? "").trim();
       if (!urlText) return valueEl;
+      if (ctx?.state?.role === "chiki_piki") {
+        valueEl.textContent = urlText;
+        return valueEl;
+      }
       const link = document.createElement("a");
       link.href = urlText;
       link.target = "_blank";
@@ -1022,7 +1026,7 @@
 
   function renderClientFieldValueWithExternalLink(field, value, ctx) {
     const linkConfig = clientFieldExternalLinkConfig(field?.key);
-    if (!linkConfig) return renderClientFieldValue(field, value, ctx);
+    if (!linkConfig || ctx?.state?.role === "chiki_piki") return renderClientFieldValue(field, value, ctx);
 
     const valueRowEl = document.createElement("div");
     valueRowEl.className = "client-card-field-value-row";
@@ -1179,7 +1183,7 @@
           rowChildren.push(labelEl);
         }
 
-        const signature = JSON.stringify([field, value]);
+        const signature = JSON.stringify([field, value, ctx.state.role]);
         if (fieldEntry.signature !== signature) {
           fieldEntry.value = renderClientFieldValueWithExternalLink(field, value, ctx);
           fieldEntry.signature = signature;

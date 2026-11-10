@@ -308,10 +308,12 @@ def apply_wrong_problem(
                     body="Подсказку по неверной проблеме не удалось отправить клиенту в Telegram.",
                 )
             raise
-        was_frozen = bool(ticket.is_frozen)
-        unfreeze_ticket_on_message_fn(ticket)
-        if was_frozen and not ticket.is_frozen:
-            sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
+        if (actor_user_id and ticket.assignee_id == actor_user_id
+                and telegram_message_id_from_response_fn(response)):
+            was_frozen = bool(ticket.is_frozen)
+            unfreeze_ticket_on_message_fn(ticket)
+            if was_frozen and not ticket.is_frozen:
+                sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
         system_body = (
             f"Администратор {actor_display_name} подсказал клиенту правильный пункт меню: {target_label}"
             if actor_role == "admin"

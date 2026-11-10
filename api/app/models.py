@@ -230,6 +230,20 @@ class WebLoginLimit(Base):
     blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class StaffLoginThrottleBucket(Base):
+    __tablename__ = "login_throttle_buckets"
+
+    # Keep the existing DEV schema; STAFF always uses realm="staff".
+    realm: Mapped[str] = mapped_column(String(8), primary_key=True, default="staff")
+    scope: Mapped[str] = mapped_column(String(8), primary_key=True)
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # IP counters may be cleared by a success only if all failures concerned that login.
+    identity_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class TicketNumberCounter(Base):
     __tablename__ = "ticket_number_counter"
     __table_args__ = (
