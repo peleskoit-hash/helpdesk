@@ -351,7 +351,7 @@ test('status admin resource versions stay synchronized across templates and CSS 
     const cssVersion = file === 'settings_bot_buttons.html' ? '20261109-context-root-drop-v1' : version;
     for (const resource of ['styles.css', 'app_shell.js']) {
       const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
-      for (const url of urls) assert.equal(url, `/static/${resource}?v=${resource === 'app_shell.js' ? '20261111-requester-name-v1' : cssVersion}`, file);
+      for (const url of urls) assert.equal(url, `/static/${resource}?v=${resource === 'app_shell.js' ? '20261111-ticket-escape-v2' : cssVersion}`, file);
     }
   }
   assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes(`/static/desk-v2.css?v=${version}`));
@@ -363,7 +363,7 @@ test('status admin resource versions stay synchronized across templates and CSS 
 for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
   const { page } = await setup(t, 'light', 1440, start);
   assert.equal(await page.locator('link[href="/static/styles.css?v=20261106-status-admin-v1"]').count(), 1);
-  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261111-requester-name-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261111-ticket-escape-v2"]').count(), 1);
   await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
   if (start === '/tickets') {
     await page.locator('.sidebar a[href="/statuses"]').click();
@@ -380,6 +380,6 @@ for (const start of ['/statuses', '/tickets']) test(`status admin resources load
   for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
     const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
     assert.ok(matching.length > 0, resource);
-    assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + (resource === 'app_shell.js' ? '20261111-requester-name-v1' : '20261106-status-admin-v1')), matching.join(', '));
+    assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + (resource === 'app_shell.js' ? '20261111-ticket-escape-v2' : '20261106-status-admin-v1')), matching.join(', '));
   }
 });

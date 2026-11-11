@@ -147,7 +147,7 @@ test('direct and shell resources share new versions', () => {
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
       const cssVersion = file === 'settings_bot_buttons.html' ? '20261109-context-root-drop-v1' : '20261106-status-admin-v1';
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? cssVersion : '20261111-requester-name-v1'], `${file}: ${resource}`);
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? cssVersion : '20261111-ticket-escape-v2'], `${file}: ${resource}`);
     }
   }
 });

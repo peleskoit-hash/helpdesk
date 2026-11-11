@@ -2164,7 +2164,17 @@ for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticke
   assert.equal(await page.evaluate(() => localStorage.getItem('hd_admin_assignee_ids')), filter);
   assert.deepEqual(new URLSearchParams(requests.filter(r => r.path === '/api/v1/tickets/frozen').at(-1).query).getAll('assignee_ids'), filterQuery);
   await page.goForward(); await page.waitForSelector('.message'); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
-  await page.goBack(); await listReady('frozen', 2, 'почта');
+  await page.locator('#adminForceCloseBtn').click();
+  const modal = page.locator('#adminActionModal');
+  await modal.waitFor();
+  const cardUrl = page.url();
+  await page.keyboard.press('Escape');
+  await modal.waitFor({ state: 'hidden' });
+  assert.equal(page.url(), cardUrl);
+  await page.keyboard.press('Escape');
+  await listReady('frozen', 2, 'почта');
+  assert.equal(page.url(), listUrl);
+  assert.equal(await page.evaluate(() => history.length), historyLength + 1);
   await page.goBack(); await listReady('frozen', 1, 'почта');
   await page.goBack(); await listReady('frozen', 1);
   await page.goBack(); await listReady('active', 1);
@@ -2173,15 +2183,80 @@ for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticke
   assert.equal(await page.evaluate(() => sessionStorage.getItem('ticketListReturnUrl')), null);
 });
 
+for (const popup of ['message editor', 'global error', 'staff statistics', 'quick replies', 'task panel']) {
+  test(`card Escape closes ${popup} before returning to the list`, async t => {
+    const role = popup === 'message editor' ? 'admin' : 'agent';
+    const cardPatch = popup === 'message editor' ? { messages: [card.messages[1]] } : {};
+    const { page, requests } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role, cardPatch });
+    page.setDefaultTimeout(5000);
+    const listUrl = page.url();
+    await page.locator('.ticket-row-link').first().click();
+    await page.waitForSelector('.message');
+    const cardUrl = page.url();
+    await page.evaluate(() => {
+      const goBack = window.HelpdeskAppShell.goBack;
+      window.escapeBackCalls = 0;
+      window.HelpdeskAppShell.goBack = () => {
+        window.escapeBackCalls += 1;
+        return goBack();
+      };
+    });
+
+    let overlay;
+    const message = page.locator('.message.agent').first();
+    const originalText = popup === 'message editor' ? await message.locator('.message-body').textContent() : null;
+    if (popup === 'message editor') {
+      await message.click({ button: 'right' });
+      await page.locator('.message-context-menu').getByText('Редактировать', { exact: true }).click();
+      overlay = page.locator('.modal:has(.edit-message-dialog)');
+      await overlay.locator('textarea').fill('Unsaved edit');
+      await overlay.getByRole('button', { name: 'Сохранить' }).focus();
+    } else if (popup === 'global error') {
+      await page.evaluate(() => window.HelpdeskErrorDialog.show({ error: 'Test error' }));
+      overlay = page.locator('#appErrorDialog');
+      await overlay.locator('#appErrorDialogCloseBtn').focus();
+    } else if (popup === 'staff statistics') {
+      await page.locator('[data-sidebar-user-menu-toggle]').click();
+      await page.locator('[data-sidebar-user-menu-item="statistics"]').click();
+      overlay = page.locator('dialog.personal-stats-dialog[open]');
+      await overlay.evaluate(dialog => {
+        window.escapeCancelCalls = 0;
+        dialog.addEventListener('cancel', () => { window.escapeCancelCalls += 1; });
+      });
+    } else if (popup === 'quick replies') {
+      await page.locator('#quickRepliesBtn').click();
+      overlay = page.locator('#quickRepliesPanel');
+    } else {
+      await page.locator('#taskPanelMoreBtn').click();
+      overlay = page.locator('#taskPanelDropdown');
+    }
+    await overlay.waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => window.escapeBackCalls), 0);
+    await overlay.waitFor({ state: 'hidden' });
+    assert.equal(page.url(), cardUrl);
+    if (popup === 'message editor') {
+      assert.equal(await message.locator('.message-body').textContent(), originalText);
+      assert.ok(!requests.some(({ method, path }) => method === 'PATCH' && path.includes('/messages/')));
+    }
+    if (popup === 'staff statistics') assert.equal(await page.evaluate(() => window.escapeCancelCalls), 1);
+
+    await page.keyboard.press('Escape');
+    await page.waitForURL(listUrl);
+    await page.waitForSelector('.ticket-row');
+    assert.equal(await page.evaluate(() => window.escapeBackCalls), 1);
+  });
+}
+
 test('short task panel links use the previous card as Back destination', async t => {
-  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role: 'agent' });
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role: 'agent', workflowType: 'task' });
   const panelLinks = page.locator('#taskPanel a'); await panelLinks.first().waitFor();
   assert.ok((await panelLinks.evaluateAll(nodes => nodes.map(n => n.getAttribute('href')))).every(href => /^\/tickets\/[^/?#]+$/.test(href)));
   await panelLinks.first().click(); await page.waitForSelector('.message');
   await page.locator('#taskPanel a[href="/tickets/demo-1"]').click();
   await page.waitForFunction(() => location.pathname === '/tickets/demo-1' && !!document.querySelector('.message'));
   assert.equal(new URL(page.url()).search, '');
-  await page.locator('#backToListBtn').click();
+  await page.keyboard.press('Escape');
   await page.waitForFunction(() => location.pathname === '/tickets/demo-0' && !!document.querySelector('.message'));
   await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
   assert.equal(new URL(page.url()).pathname, '/tickets');

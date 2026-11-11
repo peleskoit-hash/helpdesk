@@ -1772,6 +1772,12 @@ async function updateAvailabilityStatus(status) {
 }
 
 // ===== init/events =====
+function backToList() {
+  if (window.history.length <= 1) shellNavigateOrReload("/tickets");
+  else if (window.HelpdeskAppShell?.goBack) void window.HelpdeskAppShell.goBack();
+  else window.history.back();
+}
+
 function bindPageHandlers() {
   if (pageHandlersBound) return;
   pageHandlersBound = true;
@@ -1785,11 +1791,7 @@ function bindPageHandlers() {
     return;
   });
 
-  el.backToListBtn.addEventListener("click", () => {
-    if (window.history.length <= 1) shellNavigateOrReload("/tickets");
-    else if (window.HelpdeskAppShell?.goBack) void window.HelpdeskAppShell.goBack();
-    else window.history.back();
-  });
+  el.backToListBtn.addEventListener("click", backToList);
 
   el.agentSelect.addEventListener("change", async () => {
     // TODO(remove-before-production): admin preview mode is temporarily disabled.
@@ -1911,7 +1913,27 @@ function bindPageHandlers() {
         return;
       }
     }
+    let hadPopup = false;
     if (e.key === "Escape") {
+      if (e.defaultPrevented) return;
+      const nativeDialogOpen = Boolean(document.querySelector("dialog[open]"));
+      const appErrorDialog = document.querySelector("#appErrorDialog:not(.hidden)");
+      const editMessageOpen = el.editMessageModal && !el.editMessageModal.classList.contains("hidden");
+      hadPopup = nativeDialogOpen || Boolean(appErrorDialog) || editMessageOpen ||
+        state.taskPanelDropdownOpen ||
+        [el.messageContextMenu, el.imagePreviewModal, el.errorModal, el.clientModal,
+          el.wrongProblemModal, el.specialConfirmModal, el.adminActionModal, el.instructionModal]
+          .some(popup => popup && !popup.classList.contains("hidden")) ||
+        Boolean(document.querySelector("[data-sidebar-user-menu]:not([hidden])"));
+      if (nativeDialogOpen) return;
+      if (appErrorDialog || editMessageOpen) {
+        e.preventDefault();
+        const closeButton = appErrorDialog
+          ? appErrorDialog.querySelector("#appErrorDialogCloseBtn")
+          : el.cancelEditMessageBtn;
+        closeButton?.click();
+        return;
+      }
       if (state.quickRepliesOpen) {
         closeQuickRepliesPanel({ focusComposer: true });
         return;
@@ -1932,11 +1954,18 @@ function bindPageHandlers() {
     if (e.key === "Escape" && !el.wrongProblemModal.classList.contains("hidden")) {
       closeWrongProblemModal();
     }
+    if (e.key === "Escape" && el.specialConfirmModal && !el.specialConfirmModal.classList.contains("hidden")) {
+      closeSpecialConfirmModal();
+    }
     if (e.key === "Escape" && el.adminActionModal && !el.adminActionModal.classList.contains("hidden")) {
       closeAdminActionModal();
     }
     if (e.key === "Escape" && el.instructionModal && !el.instructionModal.classList.contains("hidden")) {
       closeInstructionModal();
+    }
+    if (e.key === "Escape" && !hadPopup && !e.repeat) {
+      e.preventDefault();
+      backToList();
     }
   };
   document.addEventListener("keydown", keydownHandler);
