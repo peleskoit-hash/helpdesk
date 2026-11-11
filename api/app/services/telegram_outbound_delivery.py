@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import Select, asc, event, inspect, or_, select
+from sqlalchemy import Select, and_, asc, event, inspect, or_, select
 from sqlalchemy.orm import Session, object_session
 
 from ..config import settings
@@ -832,6 +832,10 @@ def recover_ticket_uploads(db, ticket_id):
             row = upload_state.lock_row(db, TicketAttachmentPreload, row.id)
             if row is None:
                 continue
+            if row.final_attachment_id:
+                ticket = db.get(Ticket, ticket_id)
+                if ticket is not None and ticket.status == "closed":
+                    continue
             attachment = db.get(TicketAttachment, row.final_attachment_id) if row.final_attachment_id else None
             staging_active = (upload_state.state(row).get("staging_attempt") or {}).get("active")
             delivery_active = attachment is not None and (upload_state.state(attachment).get("delivery_attempt") or {}).get("active")
@@ -865,65 +869,33 @@ def recover_ticket_uploads(db, ticket_id):
                 continue
         upload_state.patch(row, archive_reconcile_pending=False)
         db.commit()
-    cleanup_failed_attachment_preloads(db, ticket_id)
+    cleanup_closed_attachment_preloads(db, ticket_id)
     cleanup_stale_attachment_preloads(db, ticket_id=ticket_id)
 
 
-def cleanup_failed_attachment_preloads(db, ticket_id):
-    cleanup_client_preloads(db, ticket_id)
+def cleanup_closed_attachment_preloads(db, ticket_id):
     ticket = db.get(Ticket, ticket_id)
     if ticket is None or ticket.status != "closed":
-        return 0
-    ticket = upload_state.lock_row(db, Ticket, ticket_id)
-    if ticket is None or ticket.status != "closed":
-        return 0
-    rows = db.scalars(select(TicketAttachmentPreload).where(
-        TicketAttachmentPreload.ticket_id == ticket_id, TicketAttachmentPreload.status == "failed",
-        TicketAttachmentPreload.client_id.is_(None),
+        cleanup_client_preloads(db, ticket_id)
+        return
+
+    preload_ids = db.scalars(select(TicketAttachmentPreload.id).where(
+        TicketAttachmentPreload.ticket_id == ticket_id,
+        TicketAttachmentPreload.final_attachment_id.is_(None),
     ).order_by(TicketAttachmentPreload.id)).all()
-    paths = set()
-    ignored_attachment_ids = set()
-    removed = 0
-    for candidate in rows:
-        row = upload_state.lock_row(db, TicketAttachmentPreload, candidate.id)
-        if row is None or row.status != "failed":
+    for preload_id in preload_ids:
+        # Discard commits, so recheck the ticket under lock for every preload.
+        ticket = upload_state.lock_row(db, Ticket, ticket_id)
+        if ticket is None or ticket.status != "closed":
+            return
+        row = upload_state.lock_row(db, TicketAttachmentPreload, preload_id)
+        if row is None or row.ticket_id != ticket_id or row.final_attachment_id is not None:
             continue
-        attachment = db.get(TicketAttachment, row.final_attachment_id) if row.final_attachment_id else None
-        if ((upload_state.state(row).get("staging_attempt") or {}).get("active")
-                and not upload_state.attempt_expired(row, "staging_attempt")):
+        active = ((upload_state.state(row).get("staging_attempt") or {}).get("active")
+                  and not upload_state.attempt_expired(row, "staging_attempt"))
+        if active and row.status == "cancelled":
             continue
-        if attachment is not None and ((upload_state.state(attachment).get("delivery_attempt") or {}).get("active")
-                and not upload_state.attempt_expired(attachment, "delivery_attempt")):
-            continue
-        if attachment is not None and attachment.ticket_id == ticket_id and attachment.telegram_delivery_status == "failed":
-            info = upload_state.state(row)
-            saved = upload_state.state(attachment)
-            upload_state.patch(attachment, receipt=saved.get("receipt") or info.get("receipt"),
-                previous_receipts=[*saved.get("previous_receipts", []), *info.get("previous_receipts", [])])
-            if not attachment.telegram_archive_message_id:
-                attachment.telegram_archive_message_id = row.telegram_staging_file_message_id
-            ignored_attachment_ids.add(attachment.id)
-        paths.add(row.local_path)
-        db.delete(row)
-        removed += 1
-    # A parent's failed copy can outlive the child's preload and share its source.
-    client_bound_ids = select(TicketAttachmentPreload.final_attachment_id).where(
-        TicketAttachmentPreload.client_id.is_not(None), TicketAttachmentPreload.final_attachment_id.is_not(None))
-    for attachment in db.scalars(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id,
-            TicketAttachment.telegram_delivery_status == "failed", TicketAttachment.id.not_in(client_bound_ids))):
-        if (upload_state.state(attachment).get("delivery_attempt") or {}).get("active") and not upload_state.attempt_expired(attachment, "delivery_attempt"):
-            continue
-        paths.add(attachment.local_path)
-        ignored_attachment_ids.add(attachment.id)
-    if removed or paths:
-        db.commit()
-        for attachment in db.scalars(select(TicketAttachment).join(Ticket, TicketAttachment.ticket_id == Ticket.id).where(
-                TicketAttachment.local_path.in_(paths), TicketAttachment.telegram_delivery_status == "failed", Ticket.status == "closed")):
-            if not (upload_state.state(attachment).get("delivery_attempt") or {}).get("active") or upload_state.attempt_expired(attachment, "delivery_attempt"):
-                ignored_attachment_ids.add(attachment.id)
-        for path in paths:
-            _safe_unlink(path, db=db, ignored_attachment_ids=ignored_attachment_ids)
-    return removed
+        _discard_preload(db, row, delete_row=not active, unlink_local=not active)
 
 
 _FAILED_CLOSE_CLEANUP = "failed_attachment_close_cleanup"
@@ -951,7 +923,7 @@ def _cleanup_failed_after_close_commit(db):
     for ticket_id in ids:
         try:
             with SessionLocal(bind=db.get_bind()) as cleanup_db:
-                cleanup_failed_attachment_preloads(cleanup_db, ticket_id)
+                cleanup_closed_attachment_preloads(cleanup_db, ticket_id)
         except Exception:
             logger.warning("Failed preload cleanup deferred ticket=%s", ticket_id)
 
@@ -1206,7 +1178,7 @@ def deliver_ticket_attachment(*, attachment_id: str, message_id: str, ticket_id:
                 upload_state.end_attempt(row, "delivery_attempt", token)
                 db.commit()
                 if row.telegram_delivery_status == "failed":
-                    cleanup_failed_attachment_preloads(db, row.ticket_id)
+                    cleanup_closed_attachment_preloads(db, row.ticket_id)
                 elif row.telegram_delivery_status == "sent":
                     # Apply only the unfreeze effect; delivery/attempt state is already committed.
                     _, message, ticket = _load_entities(db, attachment_id=attachment_id,
@@ -1413,7 +1385,7 @@ def deliver_attachment_preload(*, preload_id: str) -> None:
                 if row.status == "failed":
                     ticket = db.get(Ticket, row.ticket_id) if row.ticket_id is not None else None
                     if ticket is not None and ticket.status == "closed":
-                        cleanup_failed_attachment_preloads(db, ticket.id)
+                        cleanup_closed_attachment_preloads(db, ticket.id)
                         return
                     if row.client_id is not None:
                         synchronize_web_preload_archives(db, [row.id])
@@ -1640,6 +1612,17 @@ def _deliver_attachment_preload(*, preload_id: str) -> None:
     )
 
 
+def staff_preload_scope(user_id: str, *, allow_shared: bool = False):
+    owned = and_(*owner_scope(user_id=user_id))
+    if not allow_shared:
+        return owned
+    staff_ids = select(User.id).where(User.role.in_(("admin", "agent", "trainee")))
+    return and_(
+        TicketAttachmentPreload.client_id.is_(None),
+        or_(owned, TicketAttachmentPreload.user_id.in_(staff_ids)),
+    )
+
+
 def claim_attachment_preload(
     db,
     *,
@@ -1647,16 +1630,20 @@ def claim_attachment_preload(
     ticket_id: str,
     user_id: str | None = None,
     client_id: str | None = None,
+    allow_shared_staff: bool = False,
 ) -> TicketAttachmentPreload | None:
     if client_id is not None:
         from .attachment_preload_owners import client_collecting_ticket
         if client_collecting_ticket(db, ticket_id, client_id) is None:
             return None
+    ownership = owner_scope(user_id=user_id, client_id=client_id)
+    if allow_shared_staff and user_id is not None and client_id is None:
+        ownership = (staff_preload_scope(user_id, allow_shared=True),)
     stmt = _lock_stmt(
         select(TicketAttachmentPreload).where(
             TicketAttachmentPreload.id == preload_id,
             TicketAttachmentPreload.ticket_id == ticket_id,
-            *owner_scope(user_id=user_id, client_id=client_id),
+            *ownership,
         ),
         db,
     )

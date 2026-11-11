@@ -40,6 +40,7 @@ const state = {
   draftAckRevision: 0,
   draftLastSavedText: "",
   draftLastSavedMode: "reply",
+  draftLastSavedQuoteMessageId: null,
   draftExitFlushSignature: "",
   initialComposerFocusApplied: false,
   quickRepliesOpen: false,
@@ -830,17 +831,21 @@ function reconcileCleanDraftState() {
   if (!state.draftDirty || state.draftSaveInFlight || state.draftSavePromise) return;
   if (currentDraftText() !== state.draftLastSavedText) return;
   if (normalizeDraftMode(state.composeMode) !== state.draftLastSavedMode) return;
+  if (state.quoteMessageId !== state.draftLastSavedQuoteMessageId) return;
   state.draftDirty = false;
 }
 
 function applyServerDraft(card) {
+  if (state.role === "chiki_piki") return;
   const revision = Number(card?.draft_revision || 0);
   if (!Number.isFinite(revision) || revision < state.draftAckRevision) return;
   const text = String(card?.draft_text || "");
-  const mode = state.role === "chiki_piki" ? "comment" : normalizeDraftMode(card?.draft_mode);
+  const mode = normalizeDraftMode(card?.draft_mode);
+  const quoteMessageId = card?.draft_quote_message_id ?? null;
   const changed = revision > state.draftAckRevision
     || text !== state.draftLastSavedText
-    || mode !== state.draftLastSavedMode;
+    || mode !== state.draftLastSavedMode
+    || quoteMessageId !== state.draftLastSavedQuoteMessageId;
   reconcileCleanDraftState();
   if (!changed || state.draftDirty || state.draftSaveInFlight) return;
   saveDraftSelection();
@@ -851,10 +856,12 @@ function applyServerDraft(card) {
     state.composeMode = mode;
     applyComposeModeUi();
   }
+  state.quoteMessageId = quoteMessageId;
   restoreDraftSelection();
   state.draftAckRevision = revision;
   state.draftLastSavedText = text;
   state.draftLastSavedMode = mode;
+  state.draftLastSavedQuoteMessageId = quoteMessageId;
 }
 
 function markDraftCleanFromServer(payload) {
@@ -864,6 +871,7 @@ function markDraftCleanFromServer(payload) {
   }
   state.draftLastSavedText = String(payload?.text || "");
   state.draftLastSavedMode = normalizeDraftMode(payload?.mode);
+  state.draftLastSavedQuoteMessageId = payload?.quote_message_id ?? null;
   state.draftDirty = false;
 }
 
@@ -871,11 +879,12 @@ function draftExitSignature() {
   return JSON.stringify({
     text: currentDraftText(),
     mode: normalizeDraftMode(state.composeMode),
+    quote_message_id: state.quoteMessageId,
   });
 }
 
 async function saveDraftNow({ keepalive = false } = {}) {
-  if (!el.messageInput || !state.ticketId) return null;
+  if (state.role === "chiki_piki" || !el.messageInput || !state.ticketId) return null;
   if (state.draftSaveTimer !== null) {
     window.clearTimeout(state.draftSaveTimer);
     state.draftSaveTimer = null;
@@ -884,7 +893,8 @@ async function saveDraftNow({ keepalive = false } = {}) {
     return state.draftSavePromise.then(() => {
       const latestText = currentDraftText();
       const latestMode = normalizeDraftMode(state.composeMode);
-      if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode) {
+      if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode
+          || state.quoteMessageId !== state.draftLastSavedQuoteMessageId) {
         return saveDraftNow();
       }
       return null;
@@ -892,8 +902,10 @@ async function saveDraftNow({ keepalive = false } = {}) {
   }
   const text = currentDraftText();
   const mode = normalizeDraftMode(state.composeMode);
-  if (!state.draftDirty && text === state.draftLastSavedText && mode === state.draftLastSavedMode) return null;
-  const body = JSON.stringify({ text, mode });
+  const quoteMessageId = state.quoteMessageId;
+  if (!state.draftDirty && text === state.draftLastSavedText && mode === state.draftLastSavedMode
+      && quoteMessageId === state.draftLastSavedQuoteMessageId) return null;
+  const body = JSON.stringify({ text, mode, quote_message_id: quoteMessageId });
   if (keepalive && window.fetch) {
     try {
       window.fetch(`/api/v1/tickets/${state.ticketId}/draft`, {
@@ -914,7 +926,8 @@ async function saveDraftNow({ keepalive = false } = {}) {
       headers: { "content-type": "application/json" },
       body,
     });
-    if (currentDraftText() === text && normalizeDraftMode(state.composeMode) === mode) {
+    if (currentDraftText() === text && normalizeDraftMode(state.composeMode) === mode
+        && state.quoteMessageId === quoteMessageId) {
       markDraftCleanFromServer(saved);
     } else {
       state.draftDirty = true;
@@ -945,6 +958,7 @@ function scheduleDraftSave(delayMs = 400) {
 }
 
 function handleComposerInput() {
+  if (state.role === "chiki_piki") return;
   state.draftDirty = true;
   state.draftExitFlushSignature = "";
   saveDraftSelection();
@@ -952,12 +966,14 @@ function handleComposerInput() {
 }
 
 function handleComposeModeChanged() {
+  if (state.role === "chiki_piki") return;
   state.draftDirty = true;
   state.draftExitFlushSignature = "";
   scheduleDraftSave(0);
 }
 
 async function flushDraftBeforeSend() {
+  if (state.role === "chiki_piki") return;
   if (state.draftSaveTimer !== null) {
     window.clearTimeout(state.draftSaveTimer);
     state.draftSaveTimer = null;
@@ -982,7 +998,8 @@ function flushDraftKeepalive() {
       .then(() => {
         const latestText = currentDraftText();
         const latestMode = normalizeDraftMode(state.composeMode);
-        if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode) {
+        if (state.draftDirty || latestText !== state.draftLastSavedText || latestMode !== state.draftLastSavedMode
+            || state.quoteMessageId !== state.draftLastSavedQuoteMessageId) {
           return saveDraftNow();
         }
         return null;
@@ -1001,6 +1018,7 @@ function clearDraftAfterSuccessfulSend() {
   state.draftDirty = false;
   state.draftLastSavedText = "";
   state.draftLastSavedMode = "reply";
+  state.draftLastSavedQuoteMessageId = null;
   clearDraftSelection();
 }
 

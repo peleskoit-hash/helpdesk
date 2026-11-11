@@ -1,11 +1,12 @@
 """Owner compatibility of the existing preload pipeline; isolated DBs only."""
+import asyncio
 from datetime import datetime, timedelta
 import io
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from api.app.routers import tickets
 from api.app.services import schema_evolution, telegram_outbound_delivery as pipeline, telegram_upload_state as state
 from api.app.services.attachment_preload_owners import owned_client_preload
 from api.app.services.ticket_attachments import _save_attachment_preload
+from test_ticket_messages_outbound import _multipart_request_with_preload
 from test_web_auth import engine
 
 
@@ -113,6 +115,69 @@ def test_claim_and_staff_api_cannot_cross_owner_types(case):
             with pytest.raises(HTTPException) as error:
                 owned_client_preload(db, row_id, ticket_id, client_id)
             assert error.value.status_code == 404
+
+
+
+@pytest.mark.parametrize("role,actor_id,owner_id,send", [
+    ("admin", "same", "staff2", "reply"),
+    ("agent", "staff2", "same", "reply"),
+    ("trainee", "staff2", "same", "comment"),
+])
+def test_shared_staff_preloads_follow_ticket_access(case, role, actor_id, owner_id, send):
+    shared = save(case, owner=owner_id, group="send")
+    removable = save(case, owner=owner_id, group="delete")
+    client = save(case, client=True)
+    with Session(case.engine) as db:
+        task = db.get(Ticket, "task")
+        task.intake_state = "ready"
+        task.status = "pending"
+        task.ticket_number = 1
+        task.assignee_id = "staff2"
+        task.agent_visible = True
+        task.button_config_key = "Колл Центр|test"
+        db.get(User, actor_id).role = role
+        db.add_all([
+            User(id="observer", company_id="co", login="observer", role="chiki_piki", full_name="Observer"),
+            User(id="other-agent", company_id="co", login="other-agent", role="agent", full_name="Other agent"),
+        ])
+        db.commit()
+    private = save(case, owner="observer")
+    for preload_id in (shared, removable):
+        pipeline.deliver_attachment_preload(preload_id=preload_id)
+
+    actor = SimpleNamespace(id=actor_id, role=role, company_id="co")
+    observer = SimpleNamespace(id="observer", role="chiki_piki", company_id="co")
+    other_agent = SimpleNamespace(id="other-agent", role="agent", company_id="co")
+    with Session(case.engine) as db:
+        card = tickets.get_ticket("task", db=db, user=actor)
+        assert {row["id"] for row in card.active_attachment_preloads} == {shared, removable}
+        assert {row["id"] for row in tickets.get_ticket("task", db=db, user=observer).active_attachment_preloads} == {private}
+        for forbidden in (client, private):
+            assert pipeline.claim_attachment_preload(
+                db, preload_id=forbidden, ticket_id="task", user_id=actor_id, allow_shared_staff=True
+            ) is None
+        for operation in (tickets.get_attachment_preload_status, tickets.delete_attachment_preload):
+            with pytest.raises(HTTPException) as denied:
+                operation("task", shared, db=db, user=observer)
+            assert denied.value.status_code == 404
+        with pytest.raises(HTTPException) as denied:
+            tickets.get_attachment_preload_status("task", shared, db=db, user=other_agent)
+        assert denied.value.status_code == 403
+
+        assert tickets.get_attachment_preload_status("task", shared, db=db, user=actor)["status"] == "ready"
+        assert tickets.retry_attachment_preload("task", shared, BackgroundTasks(), db=db, user=actor)["status"] == "ready"
+        assert tickets.delete_attachment_preload("task", removable, db=db, user=actor) == {"ok": True}
+        assert db.get(TicketAttachmentPreload, removable) is None
+
+        response = asyncio.run(getattr(tickets, send)(
+            "task", _multipart_request_with_preload(text="Shared file", preload_id=shared),
+            BackgroundTasks(), db=db, user=actor,
+        ))
+        assert response == {"ok": True}
+        row = db.get(TicketAttachmentPreload, shared)
+        assert row.user_id == owner_id
+        attachment = db.get(TicketAttachment, row.final_attachment_id)
+        assert db.get(TicketMessage, attachment.message_id).author_user_id == actor_id
 
 
 @pytest.mark.parametrize('change', [dict(intake_state='ready'), dict(intake_state='cancelled'), dict(workflow_type='ticket'),
@@ -302,16 +367,122 @@ def test_retirement_during_network_request_cleans_late_receipt(case, monkeypatch
     assert {str(args[1]) for args in case.deletes} == ({'101', '102'} if phase == 'send_document' else {'101'})
 
 
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_close_discards_only_unbound_preloads(case, workflow):
+    from api.app.services.ticket_messages import _attachment_from_preload
+
+    ready = save(case, group="ready")
+    queued = save(case, owner="staff2", group="queued")
+    failed = save(case, owner="staff2", group="failed")
+    bound = save(case, group="bound")
+    pipeline.deliver_attachment_preload(preload_id=ready)
+    pipeline.deliver_attachment_preload(preload_id=bound)
+    with Session(case.engine) as db:
+        ticket = db.get(Ticket, "task")
+        ticket.workflow_type = workflow
+        ticket.intake_state = "ready"
+        ticket.status = "pending"
+        db.get(TicketAttachmentPreload, failed).status = "failed"
+        message = TicketMessage(id="answer", ticket_id=ticket.id, message_type="agent", body="Answer")
+        db.add(message)
+        db.flush()
+        bound_row = db.get(TicketAttachmentPreload, bound)
+        attachment = _attachment_from_preload(
+            db=db, ticket=ticket, message=message, preload=bound_row, delivery_status="failed",
+        )
+        bound_row.status = "failed"
+        attachment_id = attachment.id
+        archive_id = bound_row.telegram_staging_file_message_id
+        paths = [Path(db.get(TicketAttachmentPreload, row_id).local_path) for row_id in (ready, queued, failed)]
+        db.commit()
+        ticket.status = "closed"
+        db.commit()
+
+    with Session(case.engine) as db:
+        assert all(db.get(TicketAttachmentPreload, row_id) is None for row_id in (ready, queued, failed))
+        pipeline.recover_ticket_uploads(db, "task")
+        assert db.get(TicketAttachmentPreload, bound).final_attachment_id == attachment_id
+        assert db.get(TicketAttachment, attachment_id).message_id == "answer"
+        assert db.get(TicketMessage, "answer").body == "Answer"
+    assert all(not path.exists() for path in paths)
+    assert archive_id not in {str(args[1]) for args in case.deletes}
+
+
+def test_close_cancels_active_staff_preload_until_worker_finishes(case, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    started, release = Event(), Event()
+    original = pipeline.send_document
+
+    def paused(*args, **kwargs):
+        response = original(*args, **kwargs)
+        started.set()
+        assert release.wait(10)
+        return response
+
+    monkeypatch.setattr(pipeline, "send_document", paused)
+    row_id = save(case)
+    with Session(case.engine) as db:
+        task = db.get(Ticket, "task")
+        task.intake_state = "ready"
+        task.status = "pending"
+        path = Path(db.get(TicketAttachmentPreload, row_id).local_path)
+        db.commit()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(pipeline.deliver_attachment_preload, preload_id=row_id)
+        try:
+            assert started.wait(10)
+            assert transition(case, "close") == []
+            with Session(case.engine) as db:
+                assert db.get(Ticket, "task").status == "closed"
+                pipeline.recover_ticket_uploads(db, "task")
+                assert db.get(TicketAttachmentPreload, row_id).status == "cancelled"
+                assert path.exists()
+        finally:
+            release.set()
+        worker.result(timeout=15)
+    with Session(case.engine) as db:
+        assert db.get(TicketAttachmentPreload, row_id) is None
+    assert not path.exists()
+    assert {str(args[1]) for args in case.deletes} == {"101", "102"}
+
+
+def test_group_close_guard_keeps_child_and_bound_upload_checks(case):
+    from api.app.services.ticket_lifecycle import task_has_active_attachment_uploads
+    from api.app.services.ticket_messages import _attachment_from_preload
+
+    own = save(case)
+    child = save(case, task="peer-task")
+    with Session(case.engine) as db:
+        ticket = db.get(Ticket, "task")
+        ticket.task_kind = "group_parent"
+        db.get(Ticket, "peer-task").parent_ticket_id = ticket.id
+        db.flush()
+        assert task_has_active_attachment_uploads(db, ticket)
+        db.get(TicketAttachmentPreload, child).status = "ready"
+        db.flush()
+        assert not task_has_active_attachment_uploads(db, ticket)
+
+        message = TicketMessage(id="answer", ticket_id=ticket.id, message_type="agent", body="Answer")
+        db.add(message)
+        db.flush()
+        _attachment_from_preload(db=db, ticket=ticket, message=message,
+                                 preload=db.get(TicketAttachmentPreload, own), delivery_status="uploading")
+        assert task_has_active_attachment_uploads(db, ticket)
+
+
 def test_cancel_preserves_staff_preloads_and_files(case):
     staff, client = save(case), save(case, client=True)
     with Session(case.engine) as db:
-        staff_path = Path(db.get(TicketAttachmentPreload, staff).local_path)
+        paths = [Path(db.get(TicketAttachmentPreload, row_id).local_path) for row_id in (staff, client)]
     pipeline.deliver_attachment_preload(preload_id=client)
     transition(case, 'cancel')
     with Session(case.engine) as db:
-        assert db.get(TicketAttachmentPreload, staff).status == 'uploading'
+        assert db.get(Ticket, 'task') is None
+        assert db.get(TicketAttachmentPreload, staff) is None
         assert db.get(TicketAttachmentPreload, client) is None
-    assert staff_path.read_bytes() == b'content'
+    assert all(not path.exists() for path in paths)
 
 
 def test_delete_rollback_keeps_preloads_and_external_resources(case):
@@ -328,22 +499,32 @@ def test_delete_rollback_keeps_preloads_and_external_resources(case):
 
 def test_telegram_delete_failure_is_recorded_and_cleanup_can_retry(case, monkeypatch, caplog):
     row_id = save(case, client=True)
+    with Session(case.engine) as db:
+        path = Path(db.get(TicketAttachmentPreload, row_id).local_path)
     pipeline.deliver_attachment_preload(preload_id=row_id)
     original = pipeline.delete_message
     def unavailable(*args, **kwargs):
         raise RuntimeError('temporary Telegram failure')
     monkeypatch.setattr(pipeline, 'delete_message', unavailable)
-    transition(case, 'cancel')
+    with Session(case.engine) as db:
+        task = db.get(Ticket, 'task')
+        task.intake_state = 'ready'
+        task.status = 'pending'
+        db.commit()
+    assert transition(case, 'close') == []
     with Session(case.engine) as db:
         row = db.get(TicketAttachmentPreload, row_id)
+        assert db.get(Ticket, 'task').status == 'closed'
         assert row.status == 'cancelled'
         assert set(state.state(row)['cleanup_failed_message_ids']) == {'101', '102'}
         assert state.state(row)['error_code'] == 'archive_cleanup_failed'
     assert '101' in caplog.text and '102' in caplog.text
     monkeypatch.setattr(pipeline, 'delete_message', original)
     with Session(case.engine) as db:
-        pipeline.cleanup_client_preloads(db, 'task')
+        pipeline.recover_ticket_uploads(db, 'task')
         assert db.get(TicketAttachmentPreload, row_id) is None
+    assert {str(args[1]) for args in case.deletes} == {'101', '102'}
+    assert not path.exists()
 
 
 def test_hard_delete_telegram_failure_returns_admin_warning(case, monkeypatch, caplog):
@@ -549,9 +730,15 @@ def test_failed_local_cleanup_keeps_retryable_cancelled_record(case, monkeypatch
             raise OSError('busy file')
         return original(target, *args, **kwargs)
     monkeypatch.setattr(Path, 'unlink', unavailable)
-    transition(case, 'cancel')
+    with Session(case.engine) as db:
+        task = db.get(Ticket, 'task')
+        task.intake_state = 'ready'
+        task.status = 'pending'
+        db.commit()
+    assert transition(case, 'close') == []
     with Session(case.engine) as db:
         row = db.get(TicketAttachmentPreload, row_id)
+        assert db.get(Ticket, 'task').status == 'closed'
         assert row.status == 'cancelled' and state.state(row)['cleanup_local_failed']
     assert path.exists() and str(path) in caplog.text
     monkeypatch.setattr(Path, 'unlink', original)

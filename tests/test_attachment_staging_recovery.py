@@ -117,7 +117,7 @@ def test_registration_error_reuses_accepted_receipt_and_same_preload(prepared, m
     p = prepared
     parse = outbound.upload_state.usable_receipt
     gate = {'fail': True}
-    monkeypatch.setattr(outbound.upload_state, 'usable_receipt', lambda value: False if gate['fail'] else parse(value))
+    monkeypatch.setattr(outbound.upload_state, 'usable_receipt', lambda value, **kwargs: False if gate['fail'] else parse(value, **kwargs))
     outbound.deliver_attachment_preload(preload_id=p.row.id)
     p.db.expire_all(); row = p.db.get(TicketAttachmentPreload, p.row.id)
     assert row.status == 'failed' and row.telegram_upload_state_json['receipt']['file_id'] == 'document-file'
@@ -291,12 +291,14 @@ def test_client_text_acknowledgement_survives_file_error_without_duplicate_retry
 
 def test_retry_rejects_other_owner_and_closed_ticket(prepared):
     p = prepared; upload.fail(p.row); p.db.commit(); key = p.row.id
-    with pytest.raises(HTTPException) as exc:
-        routes.retry_attachment_preload(p.ticket.id, key, BackgroundTasks(), False, db=p.db, user=SimpleNamespace(id='other', role='admin'))
-    assert exc.value.status_code == 404
+    admin = SimpleNamespace(id='other', role='admin')
+    background = BackgroundTasks()
+    result = routes.retry_attachment_preload(p.ticket.id, key, background, False, db=p.db, user=admin)
+    assert result['status'] == 'uploading' and len(background.tasks) == 1
+    assert p.db.get(TicketAttachmentPreload, key).user_id == p.user.id
     p.ticket.status = 'closed'; p.db.commit()
     with pytest.raises(HTTPException) as exc:
-        routes.retry_attachment_preload(p.ticket.id, key, BackgroundTasks(), False, db=p.db, user=SimpleNamespace(id=p.user.id, role='agent'))
+        routes.retry_attachment_preload(p.ticket.id, key, BackgroundTasks(), False, db=p.db, user=admin)
     assert exc.value.status_code == 409
 
 @pytest.mark.parametrize('method', ['sendMessage', 'sendDocument'])
@@ -772,8 +774,8 @@ def test_real_close_cleans_failed_only_and_preserves_archive(prepared,monkeypatc
     assert routes.close(ticket_id,db=p.db,user=SimpleNamespace(id=p.user.id,role='admin'))=={'ok':True}
     p.db.expire_all()
     assert p.db.get(TicketAttachmentPreload,key) is None and not p.path.exists()
-    assert p.db.get(TicketAttachmentPreload,ready_id).status=='ready' and ready_path.read_bytes()==b'ready'
-    assert not any(c[0]=='delete' for c in p.calls)
+    assert p.db.get(TicketAttachmentPreload,ready_id) is None and not ready_path.exists()
+    assert {str(args[1]) for kind, args, _ in p.calls if kind=='delete'} <= {'100', '301', '302'}
     if parent_key:
         assert p.db.get(Ticket,parent_id).status=='closed'
         assert p.db.get(TicketAttachmentPreload,parent_key) is None and not parent_path.exists()
@@ -796,10 +798,14 @@ def test_closed_failed_cleanup_preserves_published_attachment_and_identifiers(pr
     p.row.status='failed';p.row.telegram_staging_file_message_id='301'
     upload.patch(p.row,receipt=upload.receipt(media_response('sticker')),previous_receipts=[{'message_id':'300','media_type':'photo'}])
     p.db.commit();p.ticket.status='closed';p.db.commit();p.db.expire_all()
-    assert p.db.get(TicketAttachmentPreload,key) is None and not p.path.exists()
+    preload=p.db.get(TicketAttachmentPreload,key)
+    assert preload.status=='failed' and preload.final_attachment_id==attachment_id
+    assert Path(preload.local_path)==p.path and p.path.is_file()
+    assert preload.telegram_staging_file_message_id=='301'
+    assert upload.state(preload)['receipt']['media_type']=='sticker'
+    assert upload.state(preload)['previous_receipts'][0]['message_id']=='300'
     saved=p.db.get(TicketAttachment,attachment_id)
-    assert saved.telegram_archive_message_id=='301' and upload.state(saved)['receipt']['media_type']=='sticker'
-    assert upload.state(saved)['previous_receipts'][0]['message_id']=='300'
+    assert saved.message_id==message_id and saved.local_path==preload.local_path
     assert p.db.get(TicketMessage,message_id).message_status!='deleted'
     assert not any(c[0]=='delete' for c in p.calls)
 
@@ -841,10 +847,11 @@ def test_group_failed_attachment_copy_keeps_shared_source_until_parent_closes(pr
     copied=TicketAttachment(id=str(uuid4()),ticket_id=parent_id,message_id=parent_answer.id,source='helpdesk',local_path=str(p.path),telegram_delivery_status='failed',original_filename='copy.webp',created_at=datetime.utcnow())
     copied_id=copied.id;p.db.add(copied);p.db.commit()
     p.ticket.status='closed';p.db.commit();p.db.expire_all()
-    assert p.db.get(TicketAttachmentPreload,key) is None and p.path.exists()
+    assert p.db.get(TicketAttachmentPreload,key).final_attachment_id==child_id and p.path.exists()
     p.db.get(Ticket,parent_id).status='closed';p.db.commit();p.db.expire_all()
-    assert not p.path.exists()
-    assert p.db.get(TicketAttachment,copied_id) is not None and p.db.get(TicketAttachment,child_id) is not None
+    assert p.path.is_file()
+    assert p.db.get(TicketAttachment,copied_id).local_path==str(p.path)
+    assert p.db.get(TicketAttachment,child_id).local_path==str(p.path)
     assert not any(c[0]=='delete' for c in p.calls)
 
 

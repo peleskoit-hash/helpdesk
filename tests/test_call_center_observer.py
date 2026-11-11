@@ -101,10 +101,40 @@ def test_observer_access_and_closed_restrictions_are_preserved(case):
     assert case.http.post(case.base + "/comment", json={"text": "Private"}).status_code == 409
 
 
-def test_observer_can_save_only_comment_draft_and_cannot_use_quick_actions(case):
-    assert case.http.patch(case.base + "/draft", json={"text": "Draft", "mode": "comment"}).status_code == 200
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_observer_cannot_read_or_change_shared_draft(case, workflow):
+    case.ticket.auto_close_disabled = True
+    case.ticket.workflow_type = workflow
+    case.ticket.draft_text = "Shared draft"
+    case.ticket.draft_mode = "reply"
+    case.ticket.draft_quote_message_id = "source"
+    case.ticket.draft_revision = 7
+    case.db.commit()
+    response = case.http.get(case.base)
+    assert response.status_code == 200, response.text
+    card = response.json()
+    assert (card["draft_text"], card["draft_mode"], card["draft_revision"]) == ("", "comment", 0)
+    assert card["draft_quote_message_id"] is None
+    assert case.http.patch(case.base + "/draft", json={"text": "Draft", "mode": "comment"}).status_code == 403
     assert case.http.patch(case.base + "/draft", json={"text": "Draft", "mode": "reply"}).status_code == 403
     assert case.http.post(case.base + "/comment", json={"text": "Action", "quick_action": "greeting"}).status_code == 403
+    assert case.http.post(case.base + "/comment", json={"text": "Private comment"}).status_code == 200
+    case.db.refresh(case.ticket)
+    assert (case.ticket.draft_text, case.ticket.draft_mode, case.ticket.draft_revision) == ("Shared draft", "reply", 7)
+    assert case.ticket.draft_quote_message_id == "source"
+
+
+@pytest.mark.parametrize("role", ["agent", "admin"])
+def test_staff_can_read_and_save_shared_draft(case, role):
+    case.ticket.auto_close_disabled = True
+    case.user.role = role
+    response = case.http.patch(case.base + "/draft", json={"text": "Shared draft", "mode": "comment"})
+    assert response.status_code == 200, response.text
+    revision = response.json()["revision"]
+    response = case.http.get(case.base)
+    assert response.status_code == 200, response.text
+    card = response.json()
+    assert (card["draft_text"], card["draft_mode"], card["draft_revision"]) == ("Shared draft", "comment", revision)
 
 
 @pytest.mark.parametrize("kind", ["system", "internal"])

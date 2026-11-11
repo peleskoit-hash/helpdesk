@@ -1072,6 +1072,7 @@ def ensure_ticket_columns() -> None:
         "distribution_notice_sent_at": "TIMESTAMP",
         "draft_text": "TEXT",
         "draft_mode": "VARCHAR(20)",
+        "draft_quote_message_id": "VARCHAR(36)",
         "draft_revision": "INTEGER",
         "task_kind": "VARCHAR(30)",
         "parent_ticket_id": "VARCHAR(36)",

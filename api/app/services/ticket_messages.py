@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import HTTPException
 from fastapi import Request, UploadFile
-from sqlalchemy import asc, func, select, update
+from sqlalchemy import asc, event, func, inspect, select, update
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, can_comment, can_edit_messages, can_reply, is_readonly_chiki_piki
@@ -218,12 +218,33 @@ def clear_ticket_draft(db: Session, ticket: Ticket) -> None:
         .values(
             draft_text="",
             draft_mode="reply",
+            draft_quote_message_id=None,
             draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1,
             updated_at=datetime.utcnow(),
         )
     )
     db.flush()
     db.refresh(ticket)
+
+
+@event.listens_for(Session, "before_flush")
+def _clear_draft_on_ticket_close(db: Session, *_args) -> None:
+    for ticket in db.dirty:
+        if not isinstance(ticket, Ticket) or ticket in db.deleted:
+            continue
+        history = inspect(ticket).attrs.status.history
+        if not history.added or history.added[0] != TicketStatus.CLOSED.value:
+            continue
+        # An expired status has no previous value in ORM history.
+        previous_status = history.deleted[0] if history.deleted else db.scalar(
+            select(Ticket.status).where(Ticket.id == ticket.id)
+        )
+        if previous_status == TicketStatus.CLOSED.value:
+            continue
+        ticket.draft_text = ""
+        ticket.draft_mode = "reply"
+        ticket.draft_quote_message_id = None
+        ticket.draft_revision = func.coalesce(Ticket.draft_revision, 0) + 1
 
 
 def record_client_delivery_failure(
@@ -561,7 +582,7 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
-    if not quick_action:
+    if not quick_action and not is_readonly_chiki_piki(user):
         clear_ticket_draft(db, ticket)
     db.commit()
     if ticket.channel == "web" and workflow_type != TicketWorkflowType.TASK.value:

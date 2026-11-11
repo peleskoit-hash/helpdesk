@@ -58,10 +58,11 @@ def task_has_active_attachment_uploads(db: Session, ticket: Ticket) -> bool:
     return bool(db.scalar(select(or_(
         attachments.where(TicketAttachment.telegram_delivery_status.in_(["uploading", "sending"])).exists(),
         exists().where(TicketAttachmentPreload.ticket_id.in_(ticket_ids),
-                       or_(TicketAttachmentPreload.client_id.is_(None), TicketAttachmentPreload.final_attachment_id.is_not(None)),
                        TicketAttachmentPreload.status.in_(["uploading", "sending"]),
-                       or_(TicketAttachmentPreload.final_attachment_id.is_(None),
-                           TicketAttachmentPreload.final_attachment_id.in_(attachments))),
+                       or_(TicketAttachmentPreload.final_attachment_id.in_(attachments),
+                           and_(TicketAttachmentPreload.ticket_id != ticket.id,
+                                TicketAttachmentPreload.client_id.is_(None),
+                                TicketAttachmentPreload.final_attachment_id.is_(None)))),
     ))))
 
 

@@ -41,6 +41,7 @@ from ..services.telegram_outbound_delivery import (
     claim_attachment_preload,
     cleanup_stale_attachment_preloads,
     recover_ticket_uploads,
+    staff_preload_scope,
     deliver_attachment_preload,
     deliver_ticket_attachment,
 )
@@ -177,6 +178,20 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_
     return ticket
 
 
+def _can_share_staff_preloads(ticket: Ticket, user: CurrentUser) -> bool:
+    workflow = ticket.workflow_type or TicketWorkflowType.TICKET.value
+    return workflow in {TicketWorkflowType.TICKET.value, TicketWorkflowType.TASK.value} and (
+        user.role == "admin" or (user.role in {"agent", "trainee"} and user.id == ticket.assignee_id)
+    )
+
+
+def _ticket_preload_scope(ticket: Ticket, user: CurrentUser):
+    return (
+        TicketAttachmentPreload.ticket_id == ticket.id,
+        staff_preload_scope(user.id, allow_shared=_can_share_staff_preloads(ticket, user)),
+    )
+
+
 def _normalize_draft_mode(value: str | None) -> str:
     return "comment" if str(value or "").strip().lower() == "comment" else "reply"
 
@@ -185,6 +200,7 @@ def _draft_out(ticket: Ticket) -> TicketDraftOut:
     return TicketDraftOut(
         text=ticket.draft_text or "",
         mode=_normalize_draft_mode(ticket.draft_mode),
+        quote_message_id=ticket.draft_quote_message_id,
         revision=int(ticket.draft_revision or 0),
     )
 
@@ -197,13 +213,16 @@ def _ensure_draft_write_allowed(user: CurrentUser, mode: str) -> None:
         _error(403, "readonly_role", "Нет прав на отправку ответа")
 
 
-def _save_ticket_draft(db: Session, ticket: Ticket, text_value: str, mode: str) -> TicketDraftOut:
+def _save_ticket_draft(
+    db: Session, ticket: Ticket, text_value: str, mode: str, quote_message_id: str | None
+) -> TicketDraftOut:
     db.execute(
         update(Ticket)
         .where(Ticket.id == ticket.id)
         .values(
             draft_text=text_value,
             draft_mode=_normalize_draft_mode(mode),
+            draft_quote_message_id=quote_message_id,
             draft_revision=func.coalesce(Ticket.draft_revision, 0) + 1,
             updated_at=datetime.utcnow(),
         )
@@ -1179,8 +1198,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         for preload in db.execute(
             select(TicketAttachmentPreload)
             .where(
-                TicketAttachmentPreload.ticket_id == t.id,
-                TicketAttachmentPreload.user_id == user.id,
+                *_ticket_preload_scope(t, user),
                 or_(TicketAttachmentPreload.final_attachment_id.is_(None),
                     and_(t.workflow_type == TicketWorkflowType.TASK.value, TicketAttachmentPreload.status == "failed")),
                 TicketAttachmentPreload.status.in_(["uploading", "ready", "failed"]),
@@ -1192,6 +1210,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
     ]
     instruction_title, instruction_text = _instruction_for_ticket(db, t)
 
+    hide_draft = is_readonly_chiki_piki(user)
     return TicketCard(
         unread_message_ids=unread_message_ids,
         id=t.id,
@@ -1233,9 +1252,10 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         call_center_employee_last_name=t.call_center_employee_last_name,
         call_center_employee_id=t.call_center_employee_id,
         call_center_employee_bitrix_login=t.call_center_employee_bitrix_login,
-        draft_text=t.draft_text or "",
-        draft_mode=_normalize_draft_mode(t.draft_mode),
-        draft_revision=int(t.draft_revision or 0),
+        draft_text="" if hide_draft else (t.draft_text or ""),
+        draft_mode="comment" if hide_draft else _normalize_draft_mode(t.draft_mode),
+        draft_quote_message_id=None if hide_draft else t.draft_quote_message_id,
+        draft_revision=0 if hide_draft else int(t.draft_revision or 0),
         client_name=visible_client_name,
         client_profile=_profile_out(
             profile,
@@ -1278,11 +1298,13 @@ def update_ticket_draft(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
+    if is_readonly_chiki_piki(user):
+        _error(403, "readonly_role", "Нет прав на изменение общего черновика")
     mode = _normalize_draft_mode(payload.mode)
     _ensure_draft_write_allowed(user, mode)
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    result = _save_ticket_draft(db, ticket, payload.text or "", mode)
+    result = _save_ticket_draft(db, ticket, payload.text or "", mode, payload.quote_message_id)
     db.commit()
     return result
 
@@ -1582,6 +1604,7 @@ async def reply(
             preload_id=preload_id,
             ticket_id=expected_ticket_id,
             user_id=expected_user_id,
+            allow_shared_staff=_can_share_staff_preloads(ticket, user),
         ),
         schedule_attachment_delivery=lambda **kwargs: background_tasks.add_task(deliver_ticket_attachment, **kwargs),
         unfreeze_ticket_on_message=unfreeze_ticket_on_message,
@@ -1664,8 +1687,10 @@ def get_attachment_preload_status(
     user: CurrentUser = Depends(get_current_user),
 ):
     ticket = _get_ticket_or_404(db, ticket_id, user)
-    preload = db.get(TicketAttachmentPreload, preload_id)
-    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+    preload = db.scalar(select(TicketAttachmentPreload).where(
+        TicketAttachmentPreload.id == preload_id, *_ticket_preload_scope(ticket, user)
+    ))
+    if preload is None:
         _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
     preload = telegram_upload_state.expire_attempt(db, preload)
     if preload is None:
@@ -1682,8 +1707,10 @@ def retry_attachment_preload(ticket_id: str, preload_id: str, background_tasks: 
         _error(403, "readonly_role", "Нет прав на отправку ответа")
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    preload = db.get(TicketAttachmentPreload, preload_id)
-    if preload is None or preload.ticket_id != ticket.id or preload.user_id != user.id:
+    preload = db.scalar(select(TicketAttachmentPreload).where(
+        TicketAttachmentPreload.id == preload_id, *_ticket_preload_scope(ticket, user)
+    ))
+    if preload is None:
         _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
     preload, schedule = telegram_upload_state.retry_preload(db, preload, confirm_uncertain is True)
     if schedule:
@@ -1704,7 +1731,9 @@ def delete_attachment_preload(
     if preload is None:
         db.commit()
         return {"ok": True}
-    if preload.ticket_id != ticket.id or preload.user_id != user.id:
+    if db.scalar(select(TicketAttachmentPreload.id).where(
+        TicketAttachmentPreload.id == preload_id, *_ticket_preload_scope(ticket, user)
+    )) is None:
         _error(404, "attachment_preload_not_found", "Предзагруженный файл не найден")
     if preload.final_attachment_id:
         attachment = telegram_upload_state.recoverable_task_attachment(db, preload)
@@ -1752,6 +1781,7 @@ async def comment(
             preload_id=preload_id,
             ticket_id=expected_ticket_id,
             user_id=expected_user_id,
+            allow_shared_staff=_can_share_staff_preloads(ticket, user),
         ),
         schedule_attachment_delivery=lambda **kwargs: background_tasks.add_task(deliver_ticket_attachment, **kwargs),
         unfreeze_ticket_on_message=unfreeze_ticket_on_message,

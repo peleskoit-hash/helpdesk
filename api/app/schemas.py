@@ -261,6 +261,7 @@ class TicketCard(BaseModel):
     call_center_employee_bitrix_login: str | None = None
     draft_text: str = ""
     draft_mode: str = "reply"
+    draft_quote_message_id: str | None = None
     draft_revision: int = 0
     client_name: str
     client_profile: ClientProfileOut
@@ -277,11 +278,13 @@ class TextPayload(BaseModel):
 class TicketDraftPayload(BaseModel):
     text: str = ""
     mode: str = "reply"
+    quote_message_id: str | None = None
 
 
 class TicketDraftOut(BaseModel):
     text: str = ""
     mode: str = "reply"
+    quote_message_id: str | None = None
     revision: int = 0
 
 

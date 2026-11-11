@@ -307,6 +307,7 @@ class Ticket(Base):
     distribution_notice_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    draft_quote_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     draft_revision: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(20), default=TicketStatus.NEW.value)
     is_frozen: Mapped[bool] = mapped_column(Boolean, default=False)

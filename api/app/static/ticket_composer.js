@@ -242,6 +242,7 @@
   function quoteMessage(ctx, message) {
     const { state, el } = ctx;
     state.quoteMessageId = message.id;
+    ctx.onComposerInput?.();
     if (state.role === "chiki_piki") {
       state.composeMode = "comment";
       applyComposeModeUi(ctx);
@@ -258,7 +259,10 @@
   }
 
   function clearQuote(ctx) {
-    ctx.state.quoteMessageId = null;
+    if (ctx.state.quoteMessageId) {
+      ctx.state.quoteMessageId = null;
+      ctx.onComposerInput?.();
+    }
     refreshComposerActions(ctx);
   }
 

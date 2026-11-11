@@ -585,26 +585,36 @@ def test_ticket_draft_save_shared_revision_and_clear():
 
     saved = update_ticket_draft(
         ticket.id,
-        TicketDraftPayload(text="hello", mode="comment"),
+        TicketDraftPayload(text="hello", mode="comment", quote_message_id="source"),
         db=session,
         user=SimpleNamespace(id="agent-1", role="agent"),
     )
     assert saved.text == "hello"
     assert saved.mode == "comment"
+    assert saved.quote_message_id == "source"
     assert saved.revision == 1
 
     card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
     assert card.draft_text == "hello"
     assert card.draft_mode == "comment"
     assert card.draft_revision == 1
+    assert card.draft_quote_message_id == "source"
+    with _Session() as reopened_session:
+        reopened = get_ticket(ticket.id, db=reopened_session, user=SimpleNamespace(id="agent-1", role="agent"))
+        assert reopened.draft_quote_message_id == "source"
 
     changed = update_ticket_draft(
         ticket.id,
-        TicketDraftPayload(text="hello again", mode="reply"),
+        TicketDraftPayload(text="hello", mode="comment", quote_message_id=None),
         db=session,
         user=SimpleNamespace(id="admin-1", role="admin"),
     )
     assert changed.revision == 2
+    assert changed.quote_message_id is None
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="agent-1", role="agent"))
+    assert card.draft_text == "hello"
+    assert card.draft_quote_message_id is None
+    assert card.draft_revision == 2
 
     cleared = update_ticket_draft(
         ticket.id,
@@ -656,11 +666,50 @@ def test_ticket_draft_respects_ticket_access_rules():
     assert write_exc.value.status_code == 403
 
 
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_orm_close_clears_shared_draft(workflow):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.workflow_type = workflow
+    ticket.draft_text = "saved draft"
+    ticket.draft_mode = "comment"
+    ticket.draft_quote_message_id = "source"
+    ticket.draft_revision = 7
+    session.commit()
+
+    if workflow == "task":
+        session.expire(ticket, ["status"])
+    else:
+        assert ticket.status != "closed"
+    ticket.status = "closed"
+    session.commit()
+
+    assert (ticket.draft_text, ticket.draft_mode, ticket.draft_quote_message_id, ticket.draft_revision) == (
+        "", "reply", None, 8,
+    )
+
+
+def test_resaving_closed_ticket_does_not_clear_draft_again():
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    ticket.status = "closed"
+    session.commit()
+    revision = ticket.draft_revision
+
+    session.expire(ticket, ["status"])
+    ticket.status = "closed"
+    ticket.subject = "Updated subject"
+    session.commit()
+
+    assert ticket.draft_revision == revision
+
+
 def test_successful_reply_clears_ticket_draft_and_bumps_revision():
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
     ticket.draft_text = "saved draft"
     ticket.draft_mode = "comment"
+    ticket.draft_quote_message_id = "source"
     ticket.draft_revision = 7
     session.commit()
 
@@ -687,6 +736,7 @@ def test_successful_reply_clears_ticket_draft_and_bumps_revision():
     session.refresh(ticket)
     assert ticket.draft_text == ""
     assert ticket.draft_mode == "reply"
+    assert ticket.draft_quote_message_id is None
     assert ticket.draft_revision == 8
 
 
@@ -764,14 +814,18 @@ def test_successful_internal_comment_clears_ticket_draft_and_bumps_revision():
 def test_failed_internal_comment_keeps_ticket_draft():
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
-    ticket.status = TicketStatus.CLOSED.value
     ticket.draft_text = "comment draft"
     ticket.draft_mode = "comment"
+    ticket.draft_quote_message_id = "source"
     ticket.draft_revision = 10
     session.commit()
+    ticket.status = TicketStatus.CLOSED.value
+    session.commit()
+    closed_draft = (ticket.draft_text, ticket.draft_mode, ticket.draft_quote_message_id, ticket.draft_revision)
+    assert closed_draft == ("", "reply", None, 11)
 
     async def run():
-        with pytest.raises(HTTPException):
+        with pytest.raises(HTTPException) as rejected:
             await reply_to_ticket(
                 request=_JsonRequest({"text": "Internal note", "quote_message_id": None}),
                 db=session,
@@ -789,12 +843,12 @@ def test_failed_internal_comment_keeps_ticket_draft():
                 refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
             )
 
+        assert rejected.value.status_code == 409
+
     asyncio.run(run())
 
     session.refresh(ticket)
-    assert ticket.draft_text == "comment draft"
-    assert ticket.draft_mode == "comment"
-    assert ticket.draft_revision == 10
+    assert (ticket.draft_text, ticket.draft_mode, ticket.draft_quote_message_id, ticket.draft_revision) == closed_draft
 
 
 def test_comment_route_uses_reply_to_ticket_internal_path_contract():
@@ -1422,15 +1476,16 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261106-table-shell-v1"
+    app_shell_version = "20261111-shared-drafts-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
     ticket_message_view_version = "20261027-dialogs-complete-v3"
-    ticket_static_version = "20261029-staging-recovery-v1"
+    ticket_static_version = "20261111-shared-drafts-v1"
     ticket_attachments_template_version = "20261031-web-history-v1"
     ticket_attachments_shell_version = "20261031-web-history-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
-    ticket_page_version = "20261029-ticket-history-v1"
-    ticket_styles_version = "20261106-ticket-table-v2"
+    ticket_page_version = "20261111-shared-drafts-v1"
+    ticket_styles_version = "20261106-status-admin-v1"
+    bot_settings_styles_version = "20261109-context-root-drop-v1"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1463,8 +1518,10 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in app_shell
     assert f'/static/styles.css?v={ticket_styles_version}' in template
     assert f'/static/styles.css?v={ticket_styles_version}' in index_template
-    assert all(f"/static/styles.css?v={ticket_styles_version}" in source
-               for source in template_sources.values() if "/static/styles.css?v=" in source)
+    for name, source in template_sources.items():
+        if "/static/styles.css?v=" in source:
+            version = bot_settings_styles_version if name == "settings_bot_buttons.html" else ticket_styles_version
+            assert f"/static/styles.css?v={version}" in source
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():
