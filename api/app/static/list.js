@@ -1362,7 +1362,7 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
     }
     return linkedCell("ticket-subject-col", subject, column.width);
   }
-  if (key === "requester") return linkedCell("ticket-client-col", ticket.requester_display_name || ticket.client_name || "", column.width);
+  if (key === "requester") return linkedCell("ticket-client-col", ticket.requester_display_name ?? "", column.width);
   if (key === "department") return linkedCell("ticket-department-col", ticket.is_internal_task ? "Система" : (ticket.requester_department || "—"), column.width);
   if (key === "location") return linkedCell("ticket-location-col", ticket.is_internal_task ? "" : (ticket.requester_location_type || ""), column.width);
   if (key === "type") {

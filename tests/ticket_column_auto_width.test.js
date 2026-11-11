@@ -24,12 +24,12 @@ test('column scripts and the changed app shell use consistent resource versions 
   const tickets = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
   for (const source of [shell, tickets]) {
     assert.match(source, /ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1/);
-    assert.match(source, /\/static\/list\.js\?v=20261105-column-auto-width-v7/);
+    assert.match(source, /\/static\/list\.js\?v=20261111-requester-name-v1/);
   }
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/app_shell\.js\?v=([^"']+)/g)) {
-      assert.equal(version, '20261106-table-shell-v1', file);
+      assert.equal(version, '20261111-requester-name-v1', file);
     }
   }
 });

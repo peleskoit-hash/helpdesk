@@ -777,7 +777,7 @@ def test_empty_or_incorrect_response_fields_do_not_wipe_saved_snapshot(monkeypat
     assert ticket.call_center_employee_bitrix_login == "m.ivanova"
 
 
-def test_ticket_list_uses_ticket_specific_snapshot_fio_for_each_row():
+def test_ticket_list_uses_current_profile_fio_for_each_row():
     session = _session()
     client, profile, old_ticket = _seed_case(session)
     session.add(_telegram_contact(client.id, company_id=old_ticket.company_id, display_name="Telegram Мария", username="tg_maria"))
@@ -815,7 +815,7 @@ def test_ticket_list_uses_ticket_specific_snapshot_fio_for_each_row():
     )
     by_id = {item.id: item for item in payload.items}
 
-    assert by_id[old_ticket.id].requester_display_name == "Иванова Мария"
+    assert by_id[old_ticket.id].requester_display_name == "Петрова Анна"
     assert by_id[new_ticket.id].requester_display_name == "Петрова Анна"
     assert by_id[old_ticket.id].requester_display_name != by_id[old_ticket.id].client_name
     assert by_id[new_ticket.id].requester_display_name != "Анна"
@@ -933,7 +933,7 @@ def test_ticket_list_batches_internal_task_requester_lookup_without_per_row_quer
     assert by_subject["Internal 0"].is_internal_task is True
     assert by_subject["Internal 1"].requester_display_name == "Система"
     assert by_subject["Internal 1"].is_internal_task is True
-    assert by_subject[ordinary_ticket.subject].requester_display_name == "Client"
+    assert by_subject[ordinary_ticket.subject].requester_display_name == ""
     assert by_subject[ordinary_ticket.subject].task_kind == TicketTaskKind.NORMAL.value
     assert by_subject[ordinary_ticket.subject].is_internal_task is False
     assert len(occurrence_queries) == 1
@@ -1111,7 +1111,7 @@ def test_internal_task_display_author_false_like_values_hide_author():
         assert _display_author_enabled(value) is True
 
 
-def test_ticket_list_requester_display_name_keeps_old_snapshot_after_profile_change_and_close():
+def test_closed_ticket_list_requester_display_name_uses_current_profile():
     session = _session()
     client, profile, old_ticket = _seed_case(session)
     session.add(_telegram_contact(client.id, company_id=old_ticket.company_id, display_name="Telegram Мария"))
@@ -1136,7 +1136,7 @@ def test_ticket_list_requester_display_name_keeps_old_snapshot_after_profile_cha
         filter_admin_assignees=False,
     )
 
-    assert payload.items[0].requester_display_name == "Иванова Мария"
+    assert payload.items[0].requester_display_name == "Петрова Анна"
 
 
 def test_ticket_list_requester_display_name_fallback_prefers_profile_fio_then_telegram_name():
@@ -1396,8 +1396,8 @@ def test_call_center_sequence_a_empty_b_preserves_historical_snapshots(monkeypat
         filter_admin_assignees=False,
     )
     by_id = {item.id: item for item in payload.items}
-    assert by_id[ticket_a.id].requester_display_name == "Левшина Татьяна"
-    assert by_id[ticket_empty.id].requester_display_name == "Client"
+    assert by_id[ticket_a.id].requester_display_name == "Минигареева Сабрина"
+    assert by_id[ticket_empty.id].requester_display_name == "Минигареева Сабрина"
     assert by_id[ticket_b.id].requester_display_name == "Минигареева Сабрина"
 
 
@@ -1622,7 +1622,7 @@ def test_drop_call_center_snapshot_payload_protects_non_empty_snapshot_values():
     assert sanitized["custom_fields"] == {"favorite_color": "Green"}
 
 
-def test_requester_display_name_for_call_center_ticket_does_not_use_profile_fio():
+def test_requester_display_name_for_call_center_ticket_prefers_profile_fio():
     session = _session()
     client, profile, ticket = _seed_case(session)
     session.add(_telegram_contact(client.id, company_id=ticket.company_id, display_name="Telegram Анна", username="anna_user"))
@@ -1642,7 +1642,7 @@ def test_requester_display_name_for_call_center_ticket_does_not_use_profile_fio(
     }
     session.commit()
 
-    assert requester_display_name(session, ticket) == "Telegram Анна"
+    assert requester_display_name(session, ticket) == "Профильное ФИО"
 
 
 def test_requester_display_name_for_non_call_center_ticket_keeps_profile_fallback():

@@ -271,7 +271,7 @@ def test_internal_task_ticket_display_author_overrides_visible_requester_only_fo
     assert by_subject["Show author"].client_name == "Admin One"
     assert by_subject["Hide author"].requester_display_name == "Система"
     assert by_subject["Hide author"].client_name == "Система"
-    assert by_subject["Ordinary"].requester_display_name == "Ordinary Client"
+    assert by_subject["Ordinary"].requester_display_name == ""
     assert by_subject["Ordinary"].client_name == "Ordinary Client"
 
     card_show = _tickets_client(session, admin).get(f"/api/v1/tickets/{show_ticket.id}")

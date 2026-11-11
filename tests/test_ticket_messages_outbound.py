@@ -1476,7 +1476,7 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261111-shared-drafts-v1"
+    app_shell_version = "20261111-requester-name-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
     ticket_message_view_version = "20261027-dialogs-complete-v3"
     ticket_static_version = "20261111-shared-drafts-v1"

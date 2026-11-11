@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import operators
 
 from ..auth import CurrentUser, is_admin, is_readonly_chiki_piki, is_support_user
-from ..models import BotButtonSetting, Client, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, TicketIntakeState, User
+from ..models import BotButtonSetting, ClientProfile, InternalTaskOccurrence, MessageType, TelegramContact, Ticket, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, TicketIntakeState, User
 from ..schemas import TicketCountsOut, TicketListItem, TicketListResponse
 from .temporary_rop import TEMPORARY_ROP_FIELD, TEMPORARY_ROP_SUFFIX, with_temporary_rop_suffix
 from .ticket_special import _display_assignee_name
@@ -153,30 +153,14 @@ def _requester_search_expression(db: Session):
             else_=scalar,
         ))
 
-    snapshot = Ticket.call_center_profile_snapshot_json
-    delta = snapshot["profile_delta"]
-    delta_is_object = json_type(delta) == "object"
-    snapshot_fio = case(
-        (and_(delta_is_object, json_type(delta["custom_fields"]) == "object"), json_text(delta["custom_fields"]["custom_fio"])),
-        (json_type(snapshot["custom_fields"]) == "object", json_text(snapshot["custom_fields"]["custom_fio"])),
-    )
-    # The Python helper replaces a falsy snapshot with {}, but rejects truthy non-dicts.
-    object_or_empty = or_(json_type(snapshot) == "object", snapshot.is_(None),
-                         cast(snapshot, String).in_(["null", "false", "0", "0.0", '""', "[]"]))
-    last = case((delta_is_object, json_text(delta["last_name"])), else_=normalized(func.coalesce(
-        func.nullif(Ticket.call_center_employee_last_name, ""), snapshot["last_name"].as_string())))
-    first = case((delta_is_object, json_text(delta["contact_name"])), else_=normalized(func.coalesce(
-        func.nullif(Ticket.call_center_employee_first_name, ""), snapshot["first_name"].as_string())))
-    snapshot_name = case((object_or_empty, normalized(func.coalesce(last, "").concat(" ").concat(func.coalesce(first, "")))))
     profile_fio = case((json_type(ClientProfile.custom_fields) == "object", json_text(ClientProfile.custom_fields["custom_fio"])))
-    ordinary = func.coalesce(snapshot_fio, case(
-        (or_(Ticket.call_center_employee_lookup_at.is_not(None), json_type(snapshot) == "object"), snapshot_name),
-        else_=profile_fio,
-    ), normalized(TelegramContact.external_display_name), normalized(Client.display_name), normalized(TelegramContact.external_username))
+    ordinary = func.coalesce(
+        profile_fio, normalized(TelegramContact.external_display_name), normalized(TelegramContact.external_username),
+    )
     rop = ClientProfile.custom_fields[TEMPORARY_ROP_FIELD]
     rop_enabled = and_(json_type(rop).in_(["true", "boolean"]), rop.as_boolean().is_(True))
     ordinary = case((and_(rop_enabled, ~ordinary.endswith(TEMPORARY_ROP_SUFFIX)), ordinary.concat(TEMPORARY_ROP_SUFFIX)),
-                    else_=func.coalesce(ordinary, "Клиент"))
+                    else_=func.coalesce(ordinary, ""))
     return case((InternalTaskOccurrence.id.is_not(None), case(
         (func.lower(normalized(InternalTaskOccurrence.display_author)).in_(["1", "true", "t", "yes", "y", "on"]),
          func.coalesce(normalized(User.full_name), normalized(User.login), "Система")),
@@ -186,7 +170,6 @@ def _requester_search_expression(db: Session):
 
 def _requester_search_filter(db: Session, stmt: Select, query: str):
     names = (stmt.with_only_columns(Ticket.id, maintain_column_froms=True)
-             .outerjoin(Client, Client.id == Ticket.client_id)
              .outerjoin(ClientProfile, ClientProfile.client_id == Ticket.client_id)
              .outerjoin(TelegramContact, TelegramContact.client_id == Ticket.client_id)
              .outerjoin(InternalTaskOccurrence, InternalTaskOccurrence.ticket_id == Ticket.id)
@@ -260,24 +243,6 @@ def _normalized_text(value) -> str:
     return str(value or "").strip()
 
 
-def _snapshot_custom_fio(ticket: Ticket) -> str:
-    snapshot = ticket.call_center_profile_snapshot_json or {}
-    profile_delta = snapshot.get("profile_delta") if isinstance(snapshot, dict) else None
-    if isinstance(profile_delta, dict):
-        custom_fields = profile_delta.get("custom_fields")
-        if isinstance(custom_fields, dict):
-            return _normalized_text(custom_fields.get("custom_fio"))
-    custom_fields = snapshot.get("custom_fields") if isinstance(snapshot, dict) else None
-    if not isinstance(custom_fields, dict):
-        return ""
-    return _normalized_text(custom_fields.get("custom_fio"))
-
-
-def _profile_custom_fio(db: Session, ticket: Ticket) -> str:
-    profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
-    return _profile_custom_fio_value(profile)
-
-
 def _profile_custom_fio_value(profile: ClientProfile | None) -> str:
     if profile is None or not isinstance(profile.custom_fields, dict):
         return ""
@@ -288,24 +253,16 @@ def _telegram_contact(db: Session, ticket: Ticket) -> TelegramContact | None:
     return db.execute(select(TelegramContact).where(TelegramContact.client_id == ticket.client_id)).scalar_one_or_none()
 
 
-def _call_center_lookup_performed(ticket: Ticket) -> bool:
-    return ticket.call_center_employee_lookup_at is not None or isinstance(ticket.call_center_profile_snapshot_json, dict)
-
-
-def _snapshot_name_parts(ticket: Ticket) -> tuple[str, str]:
-    snapshot = ticket.call_center_profile_snapshot_json or {}
-    if not isinstance(snapshot, dict):
-        return "", ""
-    profile_delta = snapshot.get("profile_delta")
-    if isinstance(profile_delta, dict):
-        return (
-            _normalized_text(profile_delta.get("last_name")),
-            _normalized_text(profile_delta.get("contact_name")),
-        )
-    return (
-        _normalized_text(ticket.call_center_employee_last_name or snapshot.get("last_name")),
-        _normalized_text(ticket.call_center_employee_first_name or snapshot.get("first_name")),
-    )
+def telegram_contact_name(contact: TelegramContact | None, *, mention_username: bool = False) -> str:
+    if contact is None:
+        return ""
+    name = _normalized_text(contact.external_display_name)
+    if name:
+        return name
+    username = _normalized_text(contact.external_username)
+    if mention_username and username and not username.startswith("@"):
+        return f"@{username}"
+    return username
 
 
 def _ordinary_requester_display_name(db: Session, ticket: Ticket) -> str:
@@ -314,29 +271,14 @@ def _ordinary_requester_display_name(db: Session, ticket: Ticket) -> str:
 
 
 def _ordinary_requester_display_name_from_profile(db: Session, ticket: Ticket, profile: ClientProfile | None) -> str:
-    return _ordinary_requester_display_name_from_sources(ticket, profile, _telegram_contact(db, ticket))
+    return _ordinary_requester_display_name_from_sources(profile, _telegram_contact(db, ticket))
 
 
 def _ordinary_requester_display_name_from_sources(
-    ticket: Ticket, profile: ClientProfile | None, telegram_contact: TelegramContact | None,
+    profile: ClientProfile | None, telegram_contact: TelegramContact | None,
 ) -> str:
-    values = [_snapshot_custom_fio(ticket)]
-    if _call_center_lookup_performed(ticket):
-        last_name, first_name = _snapshot_name_parts(ticket)
-        values.append(_normalized_text(" ".join(part for part in (last_name, first_name) if part)))
-    else:
-        values.append(_profile_custom_fio_value(profile))
-    values.extend(
-        [
-            _normalized_text(telegram_contact.external_display_name if telegram_contact else ""),
-            _normalized_text(ticket.client.display_name if ticket.client else ""),
-            _normalized_text(telegram_contact.external_username if telegram_contact else ""),
-        ]
-    )
-    for value in values:
-        if value:
-            return with_temporary_rop_suffix(value, profile)
-    return "Клиент"
+    name = _profile_custom_fio_value(profile) or telegram_contact_name(telegram_contact)
+    return with_temporary_rop_suffix(name, profile)
 
 
 def _display_author_enabled(value) -> bool:

@@ -127,7 +127,7 @@ def test_profile_fio_is_searchable(case):
     assert result.total == 1 and result.items[0].id == ticket.id
 
 
-def test_closed_tickets_of_same_client_keep_their_own_snapshot_names(case):
+def test_closed_tickets_of_same_client_search_current_profile_fio(case):
     old = seed(case, fio="Петрова Анна", status="closed", closed_at=NOW,
                snapshot={"custom_fields": {"custom_fio": "Иванова Мария"}})
     new = Ticket(id=uuid.uuid4().hex, company_id="company", client_id=old.client_id,
@@ -136,8 +136,8 @@ def test_closed_tickets_of_same_client_keep_their_own_snapshot_names(case):
                  call_center_profile_snapshot_json={"profile_delta": {"custom_fields": {"custom_fio": "Петрова Анна"}}})
     case.db.add(new)
     case.db.commit()
-    assert {item.id for item in listing(case, "иВаНоВа", statuses=["closed"]).items} == {old.id}
-    assert {item.id for item in listing(case, "пЕтРоВа", statuses=["closed"]).items} == {new.id}
+    assert listing(case, "иВаНоВа", statuses=["closed"]).total == 0
+    assert {item.id for item in listing(case, "пЕтРоВа", statuses=["closed"]).items} == {old.id, new.id}
 
 
 def test_displayed_names_and_hidden_sources_follow_real_priority(case):
@@ -147,26 +147,18 @@ def test_displayed_names_and_hidden_sources_follow_real_priority(case):
         ticket = seed(case, **values)
         expected[ticket.id] = name
 
-    ordinary("Иванова Мария", snapshot={"custom_fields": {"custom_fio": " Иванова Мария "}},
-             fio="Вытесненное ФИО", display="Вытесненный Telegram", username="hidden_handle")
-    ordinary("Снимкова Алёна", snapshot={"custom_fields": {"custom_fio": "Вытесненное ФИО"},
-             "profile_delta": {"custom_fields": {"custom_fio": "Снимкова Алёна"},
-                               "last_name": "Вытесненная", "contact_name": "Вытесненное"}}, fio="Вытесненное ФИО")
-    ordinary("Орлова Ольга", lookup=True, cc_last="Орлова", cc_first="Ольга", fio="Вытесненное ФИО")
-    ordinary("Соколова Светлана",
-             snapshot={"last_name": "Соколова", "first_name": "Светлана"},
-             fio="Вытесненное ФИО")
-    ordinary("Дельтова Дарья", snapshot={"profile_delta": {"last_name": "Дельтова", "contact_name": "Дарья"}},
-             cc_last="Вытесненная", cc_first="Вытесненное", fio="Вытесненное ФИО")
+    for workflow in ("ticket", "task"):
+        ordinary("Курточка Кобейн", fio=" Курточка Кобейн ", display="Илья", username="hidden_handle",
+                 workflow_type=workflow, lookup=True, cc_first="Вытесненное",
+                 snapshot={"profile_delta": {"custom_fields": {"custom_fio": "Вытесненное ФИО"}}})
     ordinary("Петрова Анна", fio=" Петрова Анна ", display="Вытесненный Telegram", username="hidden_handle")
     ordinary("Telegram Ёлкина", display=" Telegram Ёлкина ", username="hidden_handle")
-    ordinary("Телеграм Без Снимка", display="Телеграм Без Снимка", fio="Вытесненное ФИО", lookup=True,
+    ordinary("Телеграм Без Снимка", display="Телеграм Без Снимка", lookup=True,
              cc_first="Вытесненное", cc_last="Вытесненная",
              snapshot={"custom_fields": {"custom_fio": "Вытесненное ФИО"},
                        "profile_delta": {"custom_fields": {"custom_fio": ""}, "contact_name": "", "last_name": ""}})
-    ordinary("Клиентов Кирилл", display=" ", client_name=" Клиентов Кирилл ", username="hidden_handle")
-    ordinary("visible_Username", display=" ", client_name=" ", username=" visible_Username ", profile=False)
-    ordinary("Клиент", client_name=" ", profile=False)
+    ordinary("visible_Username", display=" ", username=" visible_Username ", profile=False)
+    ordinary("", profile=False)
     ordinary("Иванов Иван ВРиО РОПа", fio="Иванов Иван", rop=True)
     for name, values in [("Создатель Мария", {}), ("visible_creator", {"full_name": " ", "login": "visible_creator"}),
                          ("Система", {"author": False, "full_name": "Скрытый Автор", "login": "hidden_author"}),
@@ -176,12 +168,12 @@ def test_displayed_names_and_hidden_sources_follow_real_priority(case):
     case.db.commit()
     assert {ticket_id: requester_display_name(case.db, case.db.get(Ticket, ticket_id))
             for ticket_id in expected} == expected
-    for query in [name[1:-1].swapcase() for name in expected.values()] + ["  аНнА  ", "ёлК", "врио ропа"]:
+    for query in [name[1:-1].swapcase() for name in expected.values() if name] + ["  аНнА  ", "ёлК", "врио ропа"]:
         result = listing(case, query)
         ids = {key for key, name in expected.items() if query.strip().casefold() in name.casefold()}
         assert {item.id for item in result.items} == ids, query
         assert result.total == len(ids)
-    for hidden in ["вЫтЕсНеН", "hidden_handle", "скрытый автор", "hidden_author"]:
+    for hidden in ["вЫтЕсНеН", "Илья", "hidden_handle", "скрытый автор", "hidden_author"]:
         assert listing(case, hidden).total == 0, hidden
 
 

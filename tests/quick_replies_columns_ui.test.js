@@ -100,10 +100,13 @@ for (const role of ['admin', 'agent']) for (const ticket of [false, true]) {
 }
 
 
-test('actions reserve only the available buttons; page bundles have versioned URLs', () => {
+test('actions reserve only the available buttons', () => {
   assert.ok(actionWidths['admin:true'] > actionWidths['admin:false']);
   assert.ok(actionWidths['admin:true'] > actionWidths['agent:true']);
   assert.ok(actionWidths['agent:true'] > actionWidths['agent:false']);
+});
+
+test('quick reply page bundles have versioned URLs', () => {
   const html = fs.readFileSync('api/app/templates/quick_replies.html', 'utf8');
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   const script = html.match(/\/static\/quick_replies\.js\?v=[^" ]+/)[0];
@@ -112,7 +115,7 @@ test('actions reserve only the available buttons; page bundles have versioned UR
   for (const file of fs.readdirSync('api/app/templates')) {
     if (!file.endsWith('.html')) continue;
     const content = fs.readFileSync('api/app/templates/' + file, 'utf8');
-    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261106-quick-replies-v1'), file);
+    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261111-requester-name-v1'), file);
   }
 });
 

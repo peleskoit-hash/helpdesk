@@ -120,7 +120,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261106-inline-panel-v1", "/static/list.js?v=20261106-closed-unseen-v1"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261106-inline-panel-v1", "/static/list.js?v=20261111-requester-name-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {

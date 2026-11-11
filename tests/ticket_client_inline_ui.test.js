@@ -369,7 +369,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261031-web-history-v1' : '20261105-field-config']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261111-requester-name-v1' : resource === 'ticket.js' ? '20261111-shared-drafts-v1' : '20261105-field-config']);
   }
 });
 

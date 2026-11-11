@@ -62,7 +62,8 @@ class _FixedDateTime(datetime):
         return cls.fixed_now
 
 
-def _seed_ticket(session, *, contact_name: str | None, telegram_username: str | None) -> Ticket:
+def _seed_ticket(session, *, contact_name: str | None, telegram_username: str | None,
+                 telegram_display_name: str | None = None) -> Ticket:
     company = Company(id=str(uuid.uuid4()), name="ACME")
     user = User(id="admin-1", company_id=company.id, full_name="Admin", role="admin")
     client = Client(id=str(uuid.uuid4()), company_id=company.id, display_name="Telegram Client")
@@ -70,6 +71,7 @@ def _seed_ticket(session, *, contact_name: str | None, telegram_username: str | 
         id=str(uuid.uuid4()),
         client_id=client.id,
         contact_name=contact_name,
+        custom_fields={"custom_fio": "Курточка Кобейн"},
         is_verified=True,
     )
     contact = TelegramContact(
@@ -79,7 +81,7 @@ def _seed_ticket(session, *, contact_name: str | None, telegram_username: str | 
         external_user_id=str(uuid.uuid4()),
         external_chat_id=str(uuid.uuid4()),
         external_username=telegram_username,
-        external_display_name="Telegram Client",
+        external_display_name=telegram_display_name,
     )
     ticket = Ticket(
         id=str(uuid.uuid4()),
@@ -175,9 +177,9 @@ def _endpoint_app(monkeypatch: pytest.MonkeyPatch, session, *, hour: int = 12) -
 
 def test_greeting_uses_client_name_first(monkeypatch):
     session = _session()
-    ticket = _seed_ticket(session, contact_name="Илья", telegram_username="belfiss")
+    ticket = _seed_ticket(session, contact_name="Курточка", telegram_username="ilya123", telegram_display_name="Илья")
 
-    assert _send_greeting(monkeypatch, session, ticket) == "Добрый день, Илья!"
+    assert _send_greeting(monkeypatch, session, ticket) == "Добрый день, Курточка!"
     session.refresh(ticket)
     assert ticket.quick_action_state_json == {"greeting": True}
 
@@ -198,6 +200,13 @@ def test_greeting_rechecks_quick_state_from_database_before_sending(monkeypatch)
 
     assert exc.value.detail["error"]["code"] == "greeting_already_sent"
     assert sent_texts == []
+
+
+def test_greeting_falls_back_to_telegram_display_name(monkeypatch):
+    session = _session()
+    ticket = _seed_ticket(session, contact_name=" ", telegram_username="ilya123", telegram_display_name=" Илья ")
+
+    assert _send_greeting(monkeypatch, session, ticket) == "Добрый день, Илья!"
 
 
 def test_greeting_falls_back_to_telegram_username(monkeypatch):

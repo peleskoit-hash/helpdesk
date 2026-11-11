@@ -77,7 +77,7 @@ from ..services.statistics_lifecycle import (
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, first_task_assignment_id, initial_task_description_ids, initial_task_message_ids, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
-from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated
+from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated, telegram_contact_name
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
     ensure_task_uploads_finished,
@@ -485,18 +485,9 @@ def _telegram_message_id(response: dict | None) -> str | None:
     return str(message_id) if message_id is not None else None
 
 
-def _format_greeting_text(greeting_text: str, contact_name: str | None, telegram_username: str | None) -> str:
-    name = (contact_name or "").strip()
-    if name:
-        return f"{greeting_text}, {name}!"
-
-    username = (telegram_username or "").strip()
-    if username:
-        if not username.startswith("@"):
-            username = f"@{username}"
-        return f"{greeting_text}, {username}!"
-
-    return greeting_text
+def _format_greeting_text(greeting_text: str, contact_name: str | None, contact: TelegramContact | None) -> str:
+    name = (contact_name or "").strip() or telegram_contact_name(contact, mention_username=True)
+    return f"{greeting_text}, {name}!" if name else greeting_text
 
 
 def _send_problem_menu_to_telegram_client(db: Session, ticket: Ticket):
@@ -1831,7 +1822,7 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
 
     profile = _get_or_create_client_profile(db, ticket.client_id)
     contact = _telegram_contact_for_client(db, ticket.client_id)
-    text = _format_greeting_text(greet, profile.contact_name, contact.external_username if contact else None)
+    text = _format_greeting_text(greet, profile.contact_name, contact)
     quick_state = dict(ticket.quick_action_state_json or {})
     quick_state["greeting"] = True
     ticket.quick_action_state_json = quick_state

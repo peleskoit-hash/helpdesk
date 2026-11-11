@@ -150,11 +150,19 @@ test('changed scripts and shell have matching versions in every direct and dynam
   const resources = ['settings_users', 'management_users', 'settings_client_card', 'ticket_client_card',
     'list', 'management_tasks', 'management_saved_files', 'settings_bot_buttons', 'bot_buttons_level_view',
     'ticket_message_view', 'app_shell', 'bot_buttons_editor', 'bot_buttons_editor_view'];
+  const versionsByScript = {
+    list: '20261111-requester-name-v1', app_shell: '20261111-requester-name-v1',
+    settings_users: '20261025-roles-editor-v2', management_users: '20261105-field-config',
+    settings_client_card: '20261027-dialogs-complete-v3', ticket_client_card: '20261105-field-config',
+    management_tasks: '20261027-dialogs-complete-v3', management_saved_files: '20261027-dialogs-complete-v3',
+    settings_bot_buttons: '20261109-structure-modal-v1', bot_buttons_level_view: '20261109-context-root-drop-v1',
+    ticket_message_view: '20261027-dialogs-complete-v3', bot_buttons_editor: '20261027-themed-dialogs-v1',
+    bot_buttons_editor_view: '20261027-dialog-prompts-v4',
+  };
   for (const name of resources) {
     const versions = files.flatMap(file => [...fs.readFileSync(file, 'utf8')
       .matchAll(new RegExp(`/static/${name}\\.js\\?v=([^"']+)`, 'g'))].map(match => match[1]));
     assert.ok(versions.length >= 2, name);
-    assert.deepEqual([...new Set(versions)],
-      [name === 'app_shell' ? '20261106-table-shell-v1' : ['app_shell','bot_buttons_editor_view','bot_buttons_level_view'].includes(name) ? '20261027-dialog-prompts-v4' : ['app_shell','management_users','ticket_client_card','settings_client_card','management_tasks','management_saved_files','ticket_message_view','bot_buttons_editor_view'].includes(name) ? '20261027-dialogs-complete-v3' : name === 'settings_users' ? '20261025-roles-editor-v2' : name === 'list' ? '20261105-column-auto-width-v7' : '20261027-themed-dialogs-v1'], name);
+    assert.deepEqual([...new Set(versions)], [versionsByScript[name]], name);
   }
 });

@@ -138,7 +138,7 @@ test('direct and shell resources share new versions', () => {
   for (const source of [shell, template]) assert.ok(source.includes(`settings_automatic_messages.js?v=${version}`));
   for (const file of ['quick_replies', 'settings_automatic_messages']) {
     const direct = fs.readFileSync(`api/app/templates/${file}.html`, 'utf8');
-    const fileVersion = file === 'quick_replies' ? '20261027-message-dialogs-v2' : version;
+    const fileVersion = file === 'quick_replies' ? '20261106-columns-v1' : version;
     assert.ok(direct.indexOf('/static/desk_dialogs.js?v=20261027-dialog-prompts-v4') < direct.indexOf(`/static/${file}.js?v=${fileVersion}`));
     assert.ok(shell.includes(`/static/${file}.js?v=${fileVersion}`));
   }
@@ -146,7 +146,8 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261106-ticket-table-v2' : '20261106-table-shell-v1'], `${file}: ${resource}`);
+      const cssVersion = file === 'settings_bot_buttons.html' ? '20261109-context-root-drop-v1' : '20261106-status-admin-v1';
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? cssVersion : '20261111-requester-name-v1'], `${file}: ${resource}`);
     }
   }
 });
