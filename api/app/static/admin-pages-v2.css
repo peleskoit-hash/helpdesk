@@ -175,19 +175,19 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .status-log-custom[hidden] { display: none; }
   & #statusLogMessage { padding: 0 21px; flex-shrink: 0; }
   & .status-log-viewport {
-    box-sizing: border-box; width: calc((100% - 42px) * 2 / 3); margin: 0 auto 21px 21px;
+    box-sizing: border-box; width: calc((100% - 42px) * 11 / 15); margin: 0 auto 21px 21px;
     min-width: 0; min-height: 240px; flex: 1 0 240px; overflow-y: auto; overflow-x: hidden;
     background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
     container-type: inline-size;
   }
   & .status-log-table { width: 100%; min-width: 0; margin: 0; table-layout: fixed; border-collapse: collapse; font-size: 21px; }
   & .status-log-table :is(th, td) { font-size: inherit; padding: 27px; border-bottom: 1px solid var(--desk-border); text-align: left; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
-  & .status-log-table :is(th, td):nth-child(1) { width: 22%; }
-  & .status-log-table :is(th, td):nth-child(2), & .status-log-table :is(th, td):nth-child(3) { width: 17%; }
-  & .status-log-table :is(th, td):nth-child(4) { width: 17%; }
-  & .status-log-table :is(th, td):nth-child(5) { width: 17%; }
-  & .status-log-table :is(th, td):nth-child(6) { width: 10%; padding-left: 8px; padding-right: 8px; }
-  & .status-log-table th.status-log-admin-heading { font-size: 23px; white-space: nowrap; }
+  & .status-log-table :is(th, td):nth-child(1) { width: 20%; }
+  & .status-log-table :is(th, td):nth-child(2), & .status-log-table :is(th, td):nth-child(3) { width: calc(17% / 1.1); }
+  & .status-log-table :is(th, td):nth-child(4) { width: calc(17% / 1.1); }
+  & .status-log-table :is(th, td):nth-child(5) { width: calc(17% / 1.1); }
+  & .status-log-table :is(th, td):nth-child(6) { width: calc(20% / 1.1); padding-left: 8px; padding-right: 8px; }
+  & .status-log-table th.status-log-admin-heading { font-size: 23px; }
   & .status-log-table .management-statistics-user-muted { font-size: 27px; }
   & .status-log-table th { font-size: 29.25px; color: var(--desk-muted); }
   & .status-log-sort { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
@@ -203,9 +203,8 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
     background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
   }
   & .management-statistics-table th { background: var(--desk-soft); }
-  @container (min-width: 601px) and (max-width: 1050px) {
-    & .status-log-table { table-layout: auto; }
-    & .status-log-table :is(th, td):nth-child(n) { width: auto; padding-left: 4px; padding-right: 4px; }
+  @container (min-width: 601px) and (max-width: 1155px) {
+    & .status-log-table :is(th, td):nth-child(n) { padding-left: 4px; padding-right: 4px; }
   }
   @container (max-width: 600px) {
     & .status-log-table { display: block; }

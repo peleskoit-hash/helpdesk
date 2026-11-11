@@ -71,6 +71,21 @@ def test_all_active_support_statuses_are_reset_with_history(case, role, status):
     assert intervals[1].started_at == intervals[0].ended_at
     assert intervals[1].ended_at is None
     assert intervals[1].status == "offline" and intervals[1].changed_by_admin is False
+    assert (intervals[1].change_source, intervals[1].change_source_time) == ("workday_end", "19:00")
+
+
+def test_custom_workday_time_is_recorded_only_on_status_change(case):
+    user = employee(case)
+    now = datetime(2026, 11, 2, 14, 31)
+    set_user_availability_status(case.db, user, "offline", now=now,
+                                 change_source="workday_end", change_source_time="17:30")
+    set_user_availability_status(case.db, user, "offline", now=now,
+                                 change_source="workday_end", change_source_time="20:00")
+    intervals = case.db.scalars(select(StatsUserStatusInterval).order_by(StatsUserStatusInterval.started_at)).all()
+    assert len(intervals) == 2
+    assert intervals[0].change_source is None and intervals[0].change_source_time is None
+    assert intervals[1].started_at == now
+    assert (intervals[1].change_source, intervals[1].change_source_time) == ("workday_end", "17:30")
 
 
 @pytest.mark.parametrize("status,role,active", [
@@ -183,7 +198,7 @@ def test_scheduler_runs_independent_job_and_survives_failure(monkeypatch):
     assert calls == names * 2
 
 
-def test_status_table_displays_all_three_change_origins():
+def test_status_table_displays_explicit_and_legacy_change_sources():
     path = Path(__file__).resolve().parents[1] / "api/app/static/status_transitions.js"
     script = r'''
 const fs = require('node:fs');
@@ -191,9 +206,19 @@ const assert = require('node:assert/strict');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const row = source.match(/function rowHtml\(item\) \{[\s\S]*?\n    \}/)[0];
 const render = new Function('item', 'timezone', 'LABELS', 'escapeHtml', row + '; return rowHtml(item);');
-for (const [value, label] of [[true, 'Да'], [false, 'Автом.'], [null, '']]) {
-  const html = render({changed_by_admin:value}, 'Europe/Moscow', {}, String);
-  assert.ok(html.includes('<td data-label="Изменено Админом">' + label + '</td>'));
+for (const [item, label] of [
+  [{changed_by_admin: true}, 'Да'],
+  [{changed_by_admin: false}, '19:00'],
+  [{changed_by_admin: null}, ''],
+  [{change_source: 'onsite_start', changed_by_admin: true}, 'Иду к Вам'],
+  [{change_source: 'onsite_resolved', changed_by_admin: false}, 'Решил на месте'],
+  [{change_source: 'workday_end', change_source_time: '17:30', changed_by_admin: true}, '17:30'],
+  [{change_source: 'workday_end', change_source_time: '24:00', changed_by_admin: false}, ''],
+  [{change_source: 'workday_end', change_source_time: '19:60', changed_by_admin: false}, ''],
+  [{change_source: 'workday_end', changed_by_admin: false}, ''],
+]) {
+  const html = render(item, 'Europe/Moscow', {}, String);
+  assert.ok(html.includes('<td data-label="Источник изменения">' + label + '</td>'));
 }
 '''
     subprocess.run(["node", "-e", script, str(path)], check=True, capture_output=True, text=True)

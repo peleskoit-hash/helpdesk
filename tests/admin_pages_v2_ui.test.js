@@ -82,7 +82,12 @@ async function setup(t, theme, width, target = '/statuses') {
     else if (p.endsWith('/statistics/work-time')) data = { total: { tickets: 2, tasks: 1, objects: 3, average_seconds: 1200, median_seconds: 1200 }, items: [{ user_id: employee.id, full_name: employee.full_name, is_active: true, tickets: 2, tasks: 1, objects: 3, average_seconds: 1200, median_seconds: 1200 }] };
     else if (p.endsWith('/statistics/statuses')) data = { total: { online_seconds: 3600, on_ticket_seconds: 1800, total_seconds: 5400 }, items: [{ user_id: employee.id, full_name: employee.full_name, is_active: true, online_seconds: 3600, on_ticket_seconds: 1800, total_seconds: 5400 }] };
     else if (p.endsWith('/statistics/status-transitions')) {
-      let items = Array.from({ length: 125 }, (_, i) => ({ user_id: employee.id, full_name: employee.full_name, is_active: true, from_status: 'online', to_status: 'on_ticket', changed_by_admin: [true, false, null, undefined][i % 4], changed_at: new Date(Date.UTC(2026, 9, 25, 10, i)).toISOString() }));
+      const sources = {
+        124: { change_source: 'onsite_start' },
+        123: { change_source: 'onsite_resolved' },
+        122: { change_source: 'workday_end', change_source_time: '17:30' },
+      };
+      let items = Array.from({ length: 125 }, (_, i) => ({ user_id: employee.id, full_name: employee.full_name, is_active: true, from_status: 'online', to_status: 'on_ticket', changed_by_admin: [true, false, null, undefined][i % 4], changed_at: new Date(Date.UTC(2026, 9, 25, 10, i)).toISOString(), ...sources[i] }));
       const q = url.searchParams;
       if (q.get('date_from')) items = items.filter(i => Date.parse(i.changed_at) >= Date.parse(q.get('date_from')));
       if (q.get('date_to')) items = items.filter(i => Date.parse(i.changed_at) < Date.parse(q.get('date_to')));
@@ -240,15 +245,15 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1280, 1920
     assert.equal(await page.locator('#statusLogPrev').isDisabled(), true);
     assert.equal(await page.locator('#statusLogTableBody tr').first().locator('td').count(), 6);
     assert.equal(await page.locator('.status-log-table th').count(), 6);
-    assert.equal(await page.locator('.status-log-admin-heading').innerHTML(), 'Изменено<br>Админом');
-    assert.deepEqual(await page.locator('#statusLogTableBody tr').evaluateAll(rows => rows.slice(0, 4).map(row => row.cells[5].textContent)), ['Да', '', '', '']);
+    assert.equal(await page.locator('.status-log-admin-heading').textContent(), 'Источник изменения');
+    assert.deepEqual(await page.locator('#statusLogTableBody tr').evaluateAll(rows => rows.slice(0, 4).map(row => row.cells[5].textContent)), ['Иду к Вам', 'Решил на месте', '17:30', '19:00']);
     assert.equal(await page.locator('.status-log-admin-heading').evaluate(el => getComputedStyle(el).fontSize), '23px');
     const presentation = await page.locator('#statusLogTableBody tr').first().evaluate(row => ({
       display: getComputedStyle(row).display,
       labels: [...row.cells].map(cell => cell.dataset.label),
       visibleLabels: [...row.cells].map(cell => getComputedStyle(cell, '::before').content),
     }));
-    const labels = ['Сотрудник', 'Был статус', 'Стал статус', 'Дата', 'Время', 'Изменено Админом'];
+    const labels = ['Сотрудник', 'Был статус', 'Стал статус', 'Дата', 'Время', 'Источник изменения'];
     assert.deepEqual(presentation.labels, labels);
     assert.equal(presentation.display, width >= 1280 ? 'table-row' : 'grid');
     if (width < 1280) assert.deepEqual(presentation.visibleLabels, labels.map(label => `"${label}"`));
@@ -284,7 +289,23 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1280, 1920
     await page.locator('[data-status-tab="log"]').click();
     assert.equal(requests().length, count);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    assert.deepEqual(await page.locator('.status-log-viewport').evaluate(el => el.scrollWidth > el.clientWidth ? { viewport: el.clientWidth, table: el.querySelector('table').offsetWidth, columns: [...el.querySelectorAll('th')].map(th => ({ width: th.offsetWidth, text: th.textContent })) } : false), false);
+    const tableWidths = await page.locator('.status-log-viewport').evaluate(el => ({
+      viewport: el.clientWidth, scroll: el.scrollWidth,
+      table: el.querySelector('table').getBoundingClientRect().width,
+      originalViewport: (el.parentElement.clientWidth - 42) * (innerWidth > 1000 ? 2 / 3 : 1),
+      columns: [...el.querySelectorAll('th')].map(th => th.getBoundingClientRect().width),
+      sourceHeadingFits: el.querySelector('.status-log-admin-heading').scrollWidth <= el.querySelector('.status-log-admin-heading').clientWidth + 1,
+    }));
+    assert.equal(tableWidths.scroll, tableWidths.viewport);
+    assert.ok(Math.abs(tableWidths.table - tableWidths.viewport) < 1);
+    const growth = width > 1000 ? 1.1 : 1;
+    assert.ok(Math.abs(tableWidths.viewport + 2 - tableWidths.originalViewport * growth) < 2);
+    if (presentation.display === 'table-row') {
+      for (const [i, ratio] of [.22, .17, .17, .17, .17, .20].entries()) {
+        assert.ok(Math.abs(tableWidths.columns[i] - tableWidths.viewport * ratio / 1.1) < 2, JSON.stringify(tableWidths));
+      }
+      assert.equal(tableWidths.sourceHeadingFits, true);
+    }
     assert.equal(await page.locator('.status-log-table td').first().evaluate(el => getComputedStyle(el).fontSize), '21px');
     const logGeometry = await page.locator('.status-log-viewport').evaluate(el => {
       const panel = el.closest('.panel').getBoundingClientRect(), rect = el.getBoundingClientRect();
@@ -292,7 +313,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1280, 1920
         clipped: [...el.querySelectorAll('td')].some(td => td.scrollWidth > td.clientWidth + 1) };
     });
     assert.equal(logGeometry.clipped, false);
-    if (width > 1000) { assert.ok(logGeometry.ratio > .6 && logGeometry.ratio < .68); assert.ok(logGeometry.right > logGeometry.left + 100); }
+    if (width > 1000) { assert.ok(logGeometry.ratio > .66 && logGeometry.ratio < .75); assert.ok(logGeometry.right > logGeometry.left + 100); }
     else assert.ok(logGeometry.ratio > .8);
 
     assert.equal(await page.locator('.status-log-table th').first().evaluate(el => getComputedStyle(el).fontSize), '29.25px');
@@ -345,25 +366,25 @@ test('status board disables rapid same-employee clicks while PATCH is pending', 
 
 
 test('status admin resource versions stay synchronized across templates and CSS imports', () => {
-  const version = '20261106-status-admin-v1';
+  const cssVersion = '20261111-status-layout-v1';
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const html = fs.readFileSync(path.join('api/app/templates', file), 'utf8');
-    const cssVersion = file === 'settings_bot_buttons.html' ? '20261109-context-root-drop-v1' : version;
     for (const resource of ['styles.css', 'app_shell.js']) {
       const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
-      for (const url of urls) assert.equal(url, `/static/${resource}?v=${resource === 'app_shell.js' ? '20261111-ticket-escape-v2' : cssVersion}`, file);
+      const version = resource === 'styles.css' ? cssVersion : '20261111-status-source-v1';
+      for (const url of urls) assert.equal(url, `/static/${resource}?v=${version}`, file);
     }
   }
-  assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes(`/static/desk-v2.css?v=${version}`));
-  assert.ok(fs.readFileSync('api/app/static/desk-v2.css', 'utf8').includes(`/static/admin-pages-v2.css?v=${version}`));
+  assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes(`/static/desk-v2.css?v=${cssVersion}`));
+  assert.ok(fs.readFileSync('api/app/static/desk-v2.css', 'utf8').includes(`/static/admin-pages-v2.css?v=${cssVersion}`));
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
-  assert.match(shell, /\["\/statuses",.*"\/static\/status_transitions.js\?v=20261106-status-admin-v1"/);
+  assert.match(shell, /\["\/statuses",.*"\/static\/status_transitions.js\?v=20261111-status-source-v1"/);
 });
 
 for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
   const { page } = await setup(t, 'light', 1440, start);
-  assert.equal(await page.locator('link[href="/static/styles.css?v=20261106-status-admin-v1"]').count(), 1);
-  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261111-ticket-escape-v2"]').count(), 1);
+  assert.equal(await page.locator('link[href="/static/styles.css?v=20261111-status-layout-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261111-status-source-v1"]').count(), 1);
   await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
   if (start === '/tickets') {
     await page.locator('.sidebar a[href="/statuses"]').click();
@@ -374,12 +395,13 @@ for (const start of ['/statuses', '/tickets']) test(`status admin resources load
   await page.waitForSelector('#statusLogTableBody tr');
   assert.equal(await page.locator('.status-log-table th').count(), 6);
   assert.equal(await page.locator('#statusLogTableBody tr').first().locator('td').count(), 6);
-  assert.equal(await page.locator('.status-log-admin-heading').innerHTML(), 'Изменено<br>Админом');
+  assert.equal(await page.locator('.status-log-admin-heading').textContent(), 'Источник изменения');
   assert.equal(await page.locator('.status-log-admin-heading').evaluate(el => getComputedStyle(el).fontSize), '23px');
   const resources = await page.evaluate(() => performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname + new URL(entry.name).search));
   for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
     const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
     assert.ok(matching.length > 0, resource);
-    assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + (resource === 'app_shell.js' ? '20261111-ticket-escape-v2' : '20261106-status-admin-v1')), matching.join(', '));
+    const version = resource.endsWith('.css') ? '20261111-status-layout-v1' : '20261111-status-source-v1';
+    assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + version), matching.join(', '));
   }
 });

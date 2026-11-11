@@ -446,7 +446,7 @@ async def reply_to_ticket(
             ticket.onsite_triggered = True
             actor_user = db.get(User, user.id)
             if actor_user is not None and actor_user.availability_status != "on_ticket":
-                set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
+                set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow(), change_source="onsite_start")
 
         if ticket.channel != "web" and not (is_plain_ticket and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value):
             remove_client_close_button(db, ticket)
@@ -574,7 +574,7 @@ async def reply_to_ticket(
         ticket.onsite_triggered = True
         actor_user = db.get(User, user.id)
         if actor_user is not None and actor_user.availability_status != "on_ticket":
-            set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow())
+            set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow(), change_source="onsite_start")
 
     if not is_internal_comment:
         if ticket.channel != "web" and not (is_plain_ticket and (ticket.task_kind or TicketTaskKind.NORMAL.value) == TicketTaskKind.NORMAL.value):

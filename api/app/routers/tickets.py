@@ -2054,7 +2054,7 @@ def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Dep
     ):
         actor_user = db.get(User, user.id)
         if actor_user is not None:
-            set_user_availability_status(db, actor_user, "online", now=datetime.utcnow())
+            set_user_availability_status(db, actor_user, "online", now=datetime.utcnow(), change_source="onsite_resolved")
     db.commit()
     return {"ok": True}
 

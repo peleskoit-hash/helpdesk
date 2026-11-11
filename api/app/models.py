@@ -674,6 +674,8 @@ class StatsUserStatusInterval(Base):
     company_id: Mapped[str] = mapped_column(String(36), nullable=False)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
     changed_by_admin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    change_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    change_source_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

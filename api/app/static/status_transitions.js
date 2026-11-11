@@ -43,7 +43,21 @@
       }
       const name = item.full_name == null ? "Удалённый сотрудник" : item.full_name;
       const meta = item.full_name == null ? item.user_id : item.is_active === false ? "Неактивен" : "";
-      return `<tr><td data-label="Сотрудник"><div class="management-statistics-user-name">${escapeHtml(name)}</div>${meta ? `<div class="management-statistics-user-muted">${escapeHtml(meta)}</div>` : ""}</td><td data-label="Был статус">${escapeHtml(LABELS[item.from_status] || item.from_status || "—")}</td><td data-label="Стал статус">${escapeHtml(LABELS[item.to_status] || item.to_status || "—")}</td><td data-label="Дата">${escapeHtml(day)}</td><td data-label="Время">${escapeHtml(time)}</td><td data-label="Изменено Админом">${item.changed_by_admin === true ? "Да" : item.changed_by_admin === false ? "Автом." : ""}</td></tr>`;
+      let source = "";
+      switch (item.change_source) {
+        case "onsite_start": source = "Иду к Вам"; break;
+        case "onsite_resolved": source = "Решил на месте"; break;
+        case "workday_end":
+          if (typeof item.change_source_time === "string" && /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(item.change_source_time)) {
+            source = item.change_source_time;
+          }
+          break;
+        case null:
+        case undefined:
+          source = item.changed_by_admin === true ? "Да" : item.changed_by_admin === false ? "19:00" : "";
+          break;
+      }
+      return `<tr><td data-label="Сотрудник"><div class="management-statistics-user-name">${escapeHtml(name)}</div>${meta ? `<div class="management-statistics-user-muted">${escapeHtml(meta)}</div>` : ""}</td><td data-label="Был статус">${escapeHtml(LABELS[item.from_status] || item.from_status || "—")}</td><td data-label="Стал статус">${escapeHtml(LABELS[item.to_status] || item.to_status || "—")}</td><td data-label="Дата">${escapeHtml(day)}</td><td data-label="Время">${escapeHtml(time)}</td><td data-label="Источник изменения">${source}</td></tr>`;
     }
 
     async function loadPage() {

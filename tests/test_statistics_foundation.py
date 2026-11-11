@@ -398,7 +398,7 @@ def test_bootstrap_does_not_backfill_historical_completion():
 
 
 
-def test_status_admin_flag_evolution_preserves_legacy_intervals(monkeypatch):
+def test_status_source_evolution_preserves_legacy_intervals(monkeypatch):
     from sqlalchemy import text
     engine = _engine()
     monkeypatch.setattr(schema_evolution, "engine", engine)
@@ -410,7 +410,9 @@ def test_status_admin_flag_evolution_preserves_legacy_intervals(monkeypatch):
     schema_evolution.ensure_stats_foundation_tables()
     with engine.connect() as conn:
         after = conn.execute(text("SELECT * FROM stats_user_status_intervals")).one()
-    assert tuple(after[:-1]) == tuple(before)
-    assert after[-1] is None
-    column = next(c for c in inspect(engine).get_columns("stats_user_status_intervals") if c["name"] == "changed_by_admin")
-    assert column["nullable"] and column["default"] is None
+    assert tuple(after) == (*before, None, None, None)
+    columns = {c["name"]: c for c in inspect(engine).get_columns("stats_user_status_intervals")}
+    for name in ("changed_by_admin", "change_source", "change_source_time"):
+        assert columns[name]["nullable"] and columns[name]["default"] is None
+    assert columns["change_source"]["type"].length == 40
+    assert columns["change_source_time"]["type"].length == 5

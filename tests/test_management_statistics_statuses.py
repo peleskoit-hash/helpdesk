@@ -343,6 +343,8 @@ def test_status_transitions_returns_adjacent_status_change():
             "to_status": "waiting",
             "changed_at": "2026-09-02T10:10:00",
             "changed_by_admin": None,
+            "change_source": None,
+            "change_source_time": None,
         }
     ]
 
@@ -431,20 +433,30 @@ def test_status_transitions_company_isolation_and_deleted_user_metadata():
     assert items[0]["is_active"] is None
 
 
-def test_status_transitions_ambiguous_previous_interval_is_skipped():
+@pytest.mark.parametrize("tied_start", [False, True])
+def test_status_transitions_selects_one_previous_interval(tied_start):
     session = _session()
     company, admin, agent = _seed_admin_context(session)
     changed_at = datetime(2026, 9, 2, 10, 10)
-    session.add_all(
-        [
-            _status_interval(company.id, user_id=agent.id, status="online", started_at=datetime(2026, 9, 2, 10, 0), ended_at=changed_at),
-            _status_interval(company.id, user_id=agent.id, status="lunch", started_at=datetime(2026, 9, 2, 10, 5), ended_at=changed_at),
-            _status_interval(company.id, user_id=agent.id, status="waiting", started_at=changed_at, ended_at=datetime(2026, 9, 2, 10, 20)),
-        ]
-    )
+    early = _status_interval(company.id, status="online", started_at=changed_at - timedelta(minutes=10), ended_at=changed_at)
+    late = _status_interval(company.id, status="lunch", started_at=changed_at - timedelta(minutes=5), ended_at=changed_at)
+    early.id, late.id = ("a", "z") if tied_start else ("z", "a")
+    if tied_start:
+        early.started_at = late.started_at
+    current = _status_interval(company.id, status="offline", started_at=changed_at, ended_at=None)
+    current.changed_by_admin = True
+    current.change_source = "workday_end"
+    current.change_source_time = "17:30"
+    session.add_all([early, late, current])
     session.commit()
 
-    assert _get_transitions(session, admin).json()["items"] == []
+    body = _get_transitions(session, admin, user_id=agent.id, include_total=True).json()
+
+    assert body["total_count"] == len(body["items"]) == 1
+    item = body["items"][0]
+    assert (item["from_status"], item["to_status"], item["changed_by_admin"]) == ("lunch", "offline", True)
+    assert (item["change_source"], item["change_source_time"]) == ("workday_end", "17:30")
+    assert session.query(StatsUserStatusInterval).count() == 3
 
 
 def test_status_transitions_loads_history_with_single_status_interval_select():

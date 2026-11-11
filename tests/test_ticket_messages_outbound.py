@@ -1476,7 +1476,7 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261111-ticket-escape-v2"
+    app_shell_version = "20261111-status-source-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
     ticket_message_view_version = "20261027-dialogs-complete-v3"
     ticket_static_version = "20261111-shared-drafts-v1"
@@ -1484,8 +1484,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_attachments_shell_version = "20261031-web-history-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
     ticket_page_version = "20261111-ticket-escape-v2"
-    ticket_styles_version = "20261106-status-admin-v1"
-    bot_settings_styles_version = "20261109-context-root-drop-v1"
+    ticket_styles_version = "20261111-status-layout-v1"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1518,10 +1517,9 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f"/static/ticket_controls.js?v={ticket_controls_version}" in app_shell
     assert f'/static/styles.css?v={ticket_styles_version}' in template
     assert f'/static/styles.css?v={ticket_styles_version}' in index_template
-    for name, source in template_sources.items():
+    for source in template_sources.values():
         if "/static/styles.css?v=" in source:
-            version = bot_settings_styles_version if name == "settings_bot_buttons.html" else ticket_styles_version
-            assert f"/static/styles.css?v={version}" in source
+            assert f"/static/styles.css?v={ticket_styles_version}" in source
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell
     for source in app_shell_entrypoints.values():
@@ -3667,7 +3665,8 @@ def test_task_async_preload_failure_preserves_claim_and_failed_status(monkeypatc
     engine.dispose()
 
 
-def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history():
+@pytest.mark.parametrize("with_attachment", [False, True])
+def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history(tmp_path, with_attachment):
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
     agent = User(
@@ -3697,18 +3696,24 @@ def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history():
     ])
     session.commit()
 
+    request = _JsonRequest({"text": "иду к вам"})
+    scheduled = []
+    if with_attachment:
+        upload = SimpleNamespace(filename="report.pdf", file=io.BytesIO(b"pdf"), content_type="application/pdf")
+        request = _MultipartRequest(_FormData(text="иду к вам", files=[upload]))
+
     async def run():
         result = await reply_to_ticket(
-            request=_JsonRequest({"text": "иду к вам"}),
+            request=request,
             db=session,
             user=SimpleNamespace(id=agent.id, role="agent"),
             ticket=ticket,
             send_to_telegram_client=lambda *_args, **_kwargs: {"ok": True, "result": {"message_id": 42}},
             telegram_message_id_from_response=lambda response: "42",
-            save_upload_attachment=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("upload should not be used")),
+            save_upload_attachment=_save_upload_attachment_factory(tmp_path),
             send_attachment_to_telegram_client=lambda *_args, **_kwargs: None,
             claim_attachment_preload=lambda *_args, **_kwargs: None,
-            schedule_attachment_delivery=lambda **_kwargs: None,
+            schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
             unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
             remove_client_close_button=lambda *_args, **_kwargs: None,
             refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
@@ -3725,6 +3730,37 @@ def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history():
     assert rows[1].status == "on_ticket"
     assert rows[1].started_at == rows[0].ended_at
     assert rows[1].ended_at is None
+    assert len(rows) == 2
+    assert rows[1].change_source == "onsite_start"
+    assert len(scheduled) == int(with_attachment)
+
+
+@pytest.mark.parametrize("onsite", [True, False])
+def test_close_records_onsite_resolved_only_for_onsite_ticket(onsite):
+    _engine, _Session, session = _session_bundle()
+    ticket = _seed_ticket(session)
+    agent = User(id="agent-1", company_id=ticket.company_id, role="agent", is_active=True,
+                 full_name="Agent One", availability_status="on_ticket")
+    ticket.channel = "web"
+    ticket.assignee_id = agent.id
+    ticket.onsite_triggered = onsite
+    session.add_all([
+        agent,
+        TicketMessage(id=str(uuid.uuid4()), ticket_id=ticket.id, message_type="agent",
+                      body="Resolved", author_user_id=agent.id),
+    ])
+    session.commit()
+
+    assert tickets_router.close(ticket.id, db=session, user=SimpleNamespace(id=agent.id, role="agent")) == {"ok": True}
+
+    assert ticket.status == "closed"
+    intervals = session.query(StatsUserStatusInterval).filter_by(user_id=agent.id).all()
+    if onsite:
+        interval, = intervals
+        assert (agent.availability_status, interval.status, interval.change_source) == ("online", "online", "onsite_resolved")
+    else:
+        assert intervals == []
+        assert agent.availability_status == "on_ticket"
 
 
 def test_plain_ticket_text_reply_persists_card_message_and_starts_auto_close_timer():

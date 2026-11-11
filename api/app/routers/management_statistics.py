@@ -8,7 +8,7 @@ from statistics import median
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from ..auth import CurrentUser, get_current_user, is_admin
@@ -373,7 +373,6 @@ def get_status_transitions(
 
     CurrentStatusInterval = aliased(StatsUserStatusInterval)
     PreviousStatusInterval = aliased(StatsUserStatusInterval)
-    OtherPreviousStatusInterval = aliased(StatsUserStatusInterval)
 
     filters = [CurrentStatusInterval.company_id == company_id]
     if user_id is not None:
@@ -392,29 +391,24 @@ def get_status_transitions(
             )
         )
 
-    other_previous_exists = exists(
-        select(OtherPreviousStatusInterval.id).where(
-            OtherPreviousStatusInterval.company_id == CurrentStatusInterval.company_id,
-            OtherPreviousStatusInterval.user_id == CurrentStatusInterval.user_id,
-            OtherPreviousStatusInterval.ended_at == CurrentStatusInterval.started_at,
-            OtherPreviousStatusInterval.id != CurrentStatusInterval.id,
-            OtherPreviousStatusInterval.id != PreviousStatusInterval.id,
+    previous_id = (
+        select(PreviousStatusInterval.id)
+        .where(
+            PreviousStatusInterval.company_id == CurrentStatusInterval.company_id,
+            PreviousStatusInterval.user_id == CurrentStatusInterval.user_id,
+            PreviousStatusInterval.ended_at == CurrentStatusInterval.started_at,
+            PreviousStatusInterval.id != CurrentStatusInterval.id,
+            PreviousStatusInterval.status != CurrentStatusInterval.status,
         )
+        .order_by(PreviousStatusInterval.started_at.desc(), PreviousStatusInterval.id.desc())
+        .limit(1)
+        .correlate(CurrentStatusInterval)
+        .scalar_subquery()
     )
-
     query = (
         select(CurrentStatusInterval, PreviousStatusInterval.status)
-        .join(
-            PreviousStatusInterval,
-            and_(
-                PreviousStatusInterval.company_id == CurrentStatusInterval.company_id,
-                PreviousStatusInterval.user_id == CurrentStatusInterval.user_id,
-                PreviousStatusInterval.ended_at == CurrentStatusInterval.started_at,
-                PreviousStatusInterval.id != CurrentStatusInterval.id,
-                PreviousStatusInterval.status != CurrentStatusInterval.status,
-            ),
-        )
-        .where(*filters, ~other_previous_exists)
+        .join(PreviousStatusInterval, PreviousStatusInterval.id == previous_id)
+        .where(*filters)
     )
     total_count = db.scalar(select(func.count()).select_from(query.subquery())) if include_total else None
     order = (CurrentStatusInterval.started_at.asc(), CurrentStatusInterval.id.asc()) if sort_order == "asc" else (CurrentStatusInterval.started_at.desc(), CurrentStatusInterval.id.desc())
@@ -448,6 +442,8 @@ def get_status_transitions(
                 to_status=current.status,
                 changed_at=current.started_at,
                 changed_by_admin=current.changed_by_admin,
+                change_source=current.change_source,
+                change_source_time=current.change_source_time,
             )
         )
     return ManagementStatusTransitionsOut(items=items, next_cursor=next_cursor, has_more=has_more, total_count=total_count)

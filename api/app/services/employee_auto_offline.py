@@ -30,7 +30,10 @@ def run_employee_auto_offline_once(*, at: datetime | None = None, session_factor
             User.is_active.is_(True), User.role.in_(["agent", "trainee"]), User.availability_status != "offline",
         )).all()
         for user in users:
-            set_user_availability_status(db, user, "offline", now=now, changed_by_admin=False)
+            set_user_availability_status(
+                db, user, "offline", now=now, changed_by_admin=False,
+                change_source="workday_end", change_source_time="19:00",
+            )
         db.commit()
     _last_processed_date = local.date()
     return len(users)

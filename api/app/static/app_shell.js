@@ -103,7 +103,7 @@
       ],
     }],
     ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }],
-    ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261106-status-admin-v1", "/static/statuses.js?v=20261025-status-log-v2"] }],
+    ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261025-stats-final-v2", "/static/status_transitions.js?v=20261111-status-source-v1", "/static/statuses.js?v=20261025-status-log-v2"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: ["/static/mass_notifications.js?v=20261105-field-config"] }],
     ["/quick-replies", { page: "quick-replies", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/quick_replies.js?v=20261106-columns-v1"] }],
     ["/management", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],

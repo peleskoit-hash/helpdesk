@@ -44,7 +44,16 @@ def _close_open_intervals(db: Session, user: User, ended_at: datetime) -> None:
         interval.ended_at = ended_at
 
 
-def _open_status_interval(db: Session, user: User, status: str, started_at: datetime, *, changed_by_admin: bool | None = None) -> None:
+def _open_status_interval(
+    db: Session,
+    user: User,
+    status: str,
+    started_at: datetime,
+    *,
+    changed_by_admin: bool | None = None,
+    change_source: str | None = None,
+    change_source_time: str | None = None,
+) -> None:
     db.add(
         StatsUserStatusInterval(
             id=str(uuid.uuid4()),
@@ -52,6 +61,8 @@ def _open_status_interval(db: Session, user: User, status: str, started_at: date
             user_id=user.id,
             status=_normalized_status(status),
             changed_by_admin=changed_by_admin,
+            change_source=change_source,
+            change_source_time=change_source_time,
             started_at=started_at,
             ended_at=None,
             created_at=started_at,
@@ -75,6 +86,8 @@ def set_user_availability_status(
     now: datetime | None = None,
     touch_updated_at: bool = True,
     changed_by_admin: bool | None = None,
+    change_source: str | None = None,
+    change_source_time: str | None = None,
 ) -> datetime:
     changed_at = _now(now)
     old_status = _normalized_status(user.availability_status)
@@ -82,7 +95,12 @@ def set_user_availability_status(
 
     if is_status_history_trackable(user.role, user.is_active) and old_status != new_status:
         _close_open_intervals(db, user, changed_at)
-        _open_status_interval(db, user, new_status, changed_at, changed_by_admin=changed_by_admin)
+        _open_status_interval(
+            db, user, new_status, changed_at,
+            changed_by_admin=changed_by_admin,
+            change_source=change_source,
+            change_source_time=change_source_time,
+        )
 
     user.availability_status = status
     if touch_updated_at:
