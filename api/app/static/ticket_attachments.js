@@ -270,6 +270,8 @@
 
     const modal = document.createElement("div");
     modal.className = "image-preview-modal hidden";
+    const container = document.createElement("div");
+    container.className = "image-preview-container";
     const dialog = document.createElement("div");
     dialog.className = "image-preview-dialog";
     const close = document.createElement("button");
@@ -300,8 +302,9 @@
     loading.className = "image-preview-avatar-loading hidden";
     loading.textContent = "Загрузка…";
     loading.setAttribute("role", "status");
-    dialog.append(iconFilter, open, download, close, img, loading);
-    modal.appendChild(dialog);
+    dialog.append(iconFilter, img, loading);
+    container.append(open, download, close, dialog);
+    modal.appendChild(container);
     document.body.appendChild(modal);
 
     function closePreview() {

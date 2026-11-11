@@ -1476,7 +1476,10 @@ function renderCard() {
   TicketControls.renderTicketControlsView(controlsCtx());
   readingController?.update(card, {
     canRead: (state.role === "agent" || state.role === "trainee") && card.assignee_id === state.userId,
-    forceBottom: scrollAfterLocalSend,
+    forceBottom: scrollAfterLocalSend || renderResult.followBottom,
+    userId: state.userId,
+    role: state.role,
+    incomingIds: renderResult.incomingIds,
   });
   scrollAfterLocalSend = false;
 }
@@ -1511,6 +1514,10 @@ async function loadCard(options = {}) {
       card.client_profile = {};
     }
     if (destroyed) return;
+    if (state.card?.id !== card.id) {
+      state.lastMessagesSignature = null;
+      scrollAfterLocalSend = false;
+    }
     state.card = card;
     if (!options.preserveComposerDraft) {
       applyServerDraft(card);

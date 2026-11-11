@@ -443,9 +443,9 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & select.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
   & .table-scroll { padding: 8px 12px 0; }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
-  & th { padding: 0 12px; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
+  & th { padding: 0 12px; vertical-align: middle; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
   & #ticketsTable thead { position: sticky; top: 6px; z-index: 3; background: var(--desk-surface); box-shadow: 0 -12px 0 12px var(--desk-surface); }
-  & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); }
+  & .table-sort-btn { color: var(--desk-muted); font: 600 16px var(--desk-font); vertical-align: middle; position: relative; top: -4px; }
   & button.mini-check-btn { display: inline-grid; place-items: center; padding: 0; line-height: 1; vertical-align: middle; }
   & td { font-size: 16px; padding: 8px 12px; line-height: 1.5; color: var(--desk-text); }
   & td.ticket-linked-cell { padding: 0; }
@@ -494,6 +494,7 @@ body.ticket-columns-auto #appContent.main[data-shell-page="tickets-list"] {
   & :is(.ticket-channel-col, .admin-select-col, .ticket-check-cell) { box-sizing: border-box; padding-inline: 4px; }
   & .ticket-channel-col { padding-inline: 8px; }
   & .table-sort-btn, & .ticket-row-link, & .ticket-main-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  & .table-sort-btn.active { text-underline-offset: 1px; }
 }
 body.ticket-column-resize-active.ticket-columns-auto #appContent.main[data-shell-page="tickets-list"] :is(th, td)[data-column-key] { border-right-color: transparent !important; }
 

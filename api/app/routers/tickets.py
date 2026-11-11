@@ -66,6 +66,7 @@ from ..schemas import WebCredentialsGeneratePayload
 from fastapi.responses import JSONResponse
 from ..services.ticket_special import _apply_move_to_special, _display_assignee_name, _handle_special_assignment
 from ..services.statistics_lifecycle import (
+    set_user_availability_status,
     sync_completion_after_reopen,
     sync_work_interval_after_assignment_change,
     sync_work_interval_after_close,
@@ -2024,6 +2025,15 @@ def close(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Dep
         ticket_closed_client_text=_ticket_closed_client_text(db, ticket),
         resolve_group_parent_client_text_fn=_group_parent_client_text_override,
     )
+    if (
+        (ticket.workflow_type or TicketWorkflowType.TICKET.value) == TicketWorkflowType.TICKET.value
+        and ticket.onsite_triggered
+        and user.role == "agent"
+        and user.id == ticket.assignee_id
+    ):
+        actor_user = db.get(User, user.id)
+        if actor_user is not None:
+            set_user_availability_status(db, actor_user, "online", now=datetime.utcnow())
     db.commit()
     return {"ok": True}
 

@@ -1051,8 +1051,6 @@ def close_ticket_by_actor(
             else "Заявка закрыта сотрудником" if not is_force_close_action else f"Заявка принудительно завершена администратором: {actor_display_name_fn(db, actor)}"
         )
         add_message_fn(db, ticket, MessageType.SYSTEM, close_text, None, agent_visible=True)
-        if bool(ticket.onsite_triggered):
-            add_message_fn(db, ticket, MessageType.SYSTEM, onsite_close_reminder_text, None, agent_visible=True)
         reply_markup = _post_close_markup_for_ticket(db, ticket, review_cycle)
         close_response = None if skip_client_notification else _send_optional_client_message(
             db,

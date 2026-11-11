@@ -13,6 +13,8 @@ async function setup(t, { total = 100, read = 0, canRead = true } = {}) {
   await page.addScriptTag({ content: fs.readFileSync("api/app/static/ticket_message_view.js", "utf8") });
   await page.evaluate(({ total, read, canRead }) => {
     window.calls = [];
+    window.focused = false;
+    document.hasFocus = () => window.focused;
     window.card = { id: "one", messages: Array.from({ length: total }, (_, i) => ({
       id: String(i + 1), message_type: "client", body: `Message ${i + 1}`, height: 50,
       created_at: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(), attachments: [],
@@ -231,3 +233,169 @@ test("initial image positioning survives polling before the image loads", async 
     node.getBoundingClientRect().top - node.parentElement.getBoundingClientRect().top);
   assert.ok(Math.abs(offset) < 1, "the expanded unread block starts at the first unread message");
 });
+
+
+test("admin bubble is session-only, paginates actual views and never confirms reads", async t => {
+  const page = await setup(t, { total: 100, read: 100, canRead: false });
+  await page.evaluate(() => {
+    controller.destroy();
+    const composer = document.createElement("div");
+    composer.className = "fixed-composer";
+    ctx.el.messages.after(composer);
+    ctx.state.role = "admin";
+    ctx.state.userId = "admin";
+    controller = TicketMessageView.createReadingController(ctx.el.messages, async payload => calls.push(payload));
+    render = () => {
+      const result = TicketMessageView.renderMessages(ctx, card, signature, null);
+      signature = result.signature;
+      controller.update(card, { role: "admin", userId: "admin", canRead: false,
+        incomingIds: result.incomingIds, forceBottom: result.followBottom });
+    };
+    render();
+    ctx.el.messages.scrollTop = 0;
+    for (let i = 0; i < 10; i++) card.messages.push({ ...card.messages[0], id: String(101 + i), height: 34 });
+    render();
+    render();
+  });
+  const bubble = page.locator(".ticket-unread-bubble");
+  assert.equal(await bubble.textContent(), "+10 ✉");
+  await bubble.click();
+  assert.equal(await bubble.textContent(), "+3 ✉");
+  await page.evaluate(() => render());
+  assert.equal(await bubble.textContent(), "+3 ✉");
+  await bubble.click();
+  assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), true);
+  await page.waitForTimeout(240);
+  assert.equal(await page.evaluate(() => calls.length), 0);
+  await page.evaluate(() => {
+    ctx.el.messages.scrollTop = 0;
+    card.messages.push({ ...card.messages[0], id: "111" });
+    render();
+  });
+  assert.equal(await bubble.textContent(), "+1 ✉");
+  await page.evaluate(() => { card.id = "reopened"; render(); });
+  assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), true);
+  assert.equal(await page.evaluate(() => ctx.el.messages.scrollTop === ctx.el.messages.scrollHeight - ctx.el.messages.clientHeight), true);
+  await page.evaluate(() => {
+    ctx.el.messages.scrollTop -= 20;
+    card.messages.push({ ...card.messages[0], id: "112", message_type: "agent", author_user_id: "admin" });
+    render();
+  });
+  assert.equal(await page.evaluate(() => ctx.el.messages.scrollTop === ctx.el.messages.scrollHeight - ctx.el.messages.clientHeight), true);
+  assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), true);
+  assert.equal(await page.evaluate(() => calls.length), 0);
+});
+
+
+test("media ready after a bubble click does not advance to the next unread page", async t => {
+  const page = await setup(t, { total: 20 });
+  await page.evaluate(() => {
+    controller.destroy();
+    const composer = document.createElement("div");
+    composer.className = "fixed-composer";
+    ctx.el.messages.after(composer);
+    const image = document.createElement("img");
+    ctx.el.messages.lastElementChild.appendChild(image);
+    controller = TicketMessageView.createReadingController(ctx.el.messages, async payload => calls.push(payload));
+    controller.update(card, { canRead: true, userId: "agent" });
+  });
+  await page.waitForTimeout(240);
+  await page.locator(".ticket-unread-bubble").click();
+  await page.waitForTimeout(240);
+  const before = await page.evaluate(() => ctx.el.messages.scrollTop);
+  assert.ok(before > 0);
+  await page.evaluate(() => ctx.el.messages.querySelector("img").dispatchEvent(new Event("load")));
+  assert.equal(await page.evaluate(() => ctx.el.messages.scrollTop), before);
+});
+
+test("agent bubble keeps unconfirmed reads after failure and shrinks only after success", async t => {
+  const page = await setup(t, { total: 10 });
+  await page.evaluate(() => {
+    controller.destroy();
+    calls = [];
+    const composer = document.createElement("div");
+    composer.className = "fixed-composer";
+    ctx.el.messages.after(composer);
+    controller = TicketMessageView.createReadingController(ctx.el.messages, payload => {
+      calls.push(payload);
+      return new Promise((resolve, reject) => { window.readSuccess = resolve; window.readFailure = reject; });
+    });
+    controller.update(card, { canRead: true, userId: "agent" });
+  });
+  const bubble = page.locator(".ticket-unread-bubble");
+  await page.waitForFunction(() => calls.length === 1);
+  assert.equal(await bubble.textContent(), "+10 ✉");
+  await page.evaluate(() => readFailure(new Error("Read API unavailable")));
+  assert.equal(await bubble.textContent(), "+10 ✉");
+  assert.equal(await page.evaluate(() => card.unread_message_ids.length), 10);
+  await page.evaluate(() => render({ userId: "agent" }));
+  await page.waitForFunction(() => calls.length === 2);
+  assert.equal(await bubble.textContent(), "+10 ✉");
+  const confirmed = await page.evaluate(() => { readSuccess(); return calls[1].message_ids.length; });
+  await page.waitForFunction(expected => document.querySelector(".ticket-unread-bubble").textContent === `+${expected} ✉`, 10 - confirmed);
+  assert.ok(confirmed > 0 && confirmed < 10);
+  assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), false);
+});
+
+
+for (const role of ["agent", "admin"]) {
+  test(`focused bottom clears pending messages for ${role}`, async t => {
+    const page = await setup(t, { total: 20, read: 20, canRead: false });
+    await page.evaluate(role => {
+      controller.destroy();
+      const el = ctx.el.messages;
+      const composer = document.createElement("div");
+      composer.className = "fixed-composer";
+      el.after(composer);
+      controller = TicketMessageView.createReadingController(el, payload => {
+        calls.push(payload);
+        return new Promise((resolve, reject) => { window.confirm = resolve; window.fail = reject; });
+      });
+      window.update = options => controller.update(card, { role, canRead: role === "agent", ...options });
+      update();
+      const ids = card.messages.slice(-11).map(message => message.id);
+      if (role === "agent") card.unread_message_ids = ids;
+      el.scrollTop = 0;
+      update({ incomingIds: ids });
+      focused = true;
+      window.dispatchEvent(new Event("focus"));
+    }, role);
+    const bubble = page.locator(".ticket-unread-bubble");
+    assert.equal(await bubble.textContent(), "+11 ✉");
+    assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), false);
+    assert.equal(await page.evaluate(() => calls.length), 0);
+
+    await page.evaluate(() => {
+      const el = ctx.el.messages;
+      el.scrollTop = el.scrollHeight;
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), true);
+    if (role === "admin") {
+      assert.equal(await page.evaluate(() => calls.length), 0);
+      return;
+    }
+    assert.equal(await page.evaluate(() => calls.length), 1);
+    assert.equal(await page.evaluate(() => calls[0].message_ids.length), 11);
+    await page.evaluate(() => fail(new Error("Read API unavailable")));
+    assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), false);
+    assert.equal(await bubble.textContent(), "+11 ✉");
+    await page.evaluate(() => { window.dispatchEvent(new Event("focus")); confirm(); });
+    assert.equal(await bubble.evaluate(node => node.classList.contains("hidden")), true);
+
+    const result = await page.evaluate(() => {
+      const message = { ...card.messages.at(-1), id: "21" };
+      card.messages.push(message);
+      card.unread_message_ids.push(message.id);
+      const rendered = TicketMessageView.renderMessages(ctx, card, signature, null);
+      update({ forceBottom: rendered.followBottom });
+      return {
+        followed: rendered.followBottom,
+        hidden: document.querySelector(".ticket-unread-bubble").classList.contains("hidden"),
+        ids: calls.at(-1).message_ids,
+      };
+    });
+    assert.deepEqual(result, { followed: true, hidden: true, ids: ["21"] });
+  });
+}

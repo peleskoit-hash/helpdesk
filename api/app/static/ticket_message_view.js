@@ -306,6 +306,15 @@
 
     const visibleMessages = (card.messages || []).filter((message) =>
       message.message_type !== "internal" || message.message_status !== "deleted");
+    const previousIds = new Set(Array.from(el.messages.children, node => node.dataset.messageId));
+    const last = el.messages.lastElementChild?.getBoundingClientRect();
+    const viewport = el.messages.getBoundingClientRect();
+    const viewportTop = viewport.top + el.messages.clientTop;
+    const incomingIds = lastSignature == null ? [] : visibleMessages.filter(message => !previousIds.has(message.id)
+      && message.message_type !== "system" && (state.role === "admin" || message.author_user_id !== state.userId))
+      .map(message => message.id);
+    const followBottom = Boolean(last && last.bottom > viewportTop && last.top < viewportTop + el.messages.clientHeight
+      && incomingIds.length);
     const scrollTop = el.messages.scrollTop;
     const top = el.messages.getBoundingClientRect().top;
     const anchor = Array.from(el.messages.children).find(node => node.getBoundingClientRect().bottom > top);
@@ -412,32 +421,73 @@
       el.messages.scrollTop = scrollTop;
       const restored = Array.from(el.messages.children).filter(node => node.dataset.messageId === anchorId)[anchorPart];
       if (restored) el.messages.scrollTop += restored.getBoundingClientRect().top - el.messages.getBoundingClientRect().top - anchorOffset;
+      if (followBottom) el.messages.scrollTop = el.messages.scrollHeight;
     }
 
     const quoteMissing = Boolean(quoteMessageId && !visibleMessages.some((m) => m.id === quoteMessageId && m.message_type !== "internal"));
     return {
       signature: currentSignature,
+      followBottom,
+      incomingIds,
       quoteMissing,
     };
   }
 
   function createReadingController(container, confirmRead) {
     let ticketId = null, card = null, canRead = false, timer = null, inFlight = false, destroyed = false;
-    let seenParts = new Set(), acknowledged = new Set();
-    let pendingInitialMedia = false, initialScrollTop = 0;
+    let seenParts = new Set(), acknowledged = new Set(), adminPending = new Set();
+    let isAdmin = false, pendingBottom = false;
+    let pendingInitialMedia = false, initialScrollTop = 0, pendingForceBottom = false, userId = null;
+    const bubble = document.createElement("button");
+    bubble.type = "button";
+    bubble.className = "ticket-unread-bubble hidden";
+    bubble.setAttribute("aria-label", "Перейти к непросмотренным сообщениям");
+    const composer = container.nextElementSibling;
+    if (composer?.matches(".fixed-composer")) composer.appendChild(bubble);
+
+    function remainingIds() {
+      const groups = messageParts();
+      const messages = new Map((card?.messages || []).map(message => [message.id, message]));
+      return (isAdmin ? [...adminPending] : card?.unread_message_ids || []).filter(id => {
+        const message = messages.get(id), nodes = groups.get(id) || [];
+        return message && message.message_type !== "system" && (isAdmin || message.author_user_id !== userId)
+          && !acknowledged.has(id) && (!isAdmin || !nodes.length || !nodes.every((_, part) => seenParts.has(`${id}:${part}`)));
+      });
+    }
+
+    function updateBubble() {
+      const count = canRead || isAdmin ? remainingIds().length : 0;
+      bubble.textContent = `+${count} ✉`;
+      bubble.classList.toggle("hidden", !count || pendingBottom);
+    }
+
+    bubble.addEventListener("click", () => {
+      observe();
+      placeInitial(false, true);
+      pendingForceBottom = false;
+      pendingInitialMedia = false;
+      observe();
+    });
 
     function mediaPending(node) {
       return Array.from(node.querySelectorAll("img, video")).some(media =>
         media.tagName === "IMG" ? !media.getAttribute("src") || !media.complete : media.readyState < 1);
     }
 
-    function placeInitial(forceBottom = false) {
-      const unreadIds = new Set(card.unread_message_ids || []);
-      const first = canRead && !forceBottom
-        ? Array.from(container.children).find(node => unreadIds.has(node.dataset.messageId)) : null;
+    function placeInitial(forceBottom = false, advance = false) {
+      const unreadIds = new Set(remainingIds());
+      const groups = messageParts();
+      const first = (canRead || isAdmin) && !forceBottom
+        ? Array.from(container.children).find(node => unreadIds.has(node.dataset.messageId)
+          && !seenParts.has(`${node.dataset.messageId}:${groups.get(node.dataset.messageId).indexOf(node)}`)) : null;
       const firstTop = first ? first.getBoundingClientRect().top - container.getBoundingClientRect().top - container.clientTop + container.scrollTop : 0;
-      container.scrollTop = first && container.scrollHeight - firstTop > container.clientHeight
-        ? firstTop : container.scrollHeight;
+      if (advance && first && firstTop <= container.scrollTop + 1 && first.getBoundingClientRect().height > container.clientHeight) {
+        container.scrollTop = Math.min(firstTop + first.getBoundingClientRect().height - container.clientHeight,
+          container.scrollTop + container.clientHeight);
+      } else {
+        container.scrollTop = first && container.scrollHeight - firstTop > container.clientHeight
+          ? firstTop : container.scrollHeight;
+      }
       initialScrollTop = container.scrollTop;
     }
 
@@ -448,7 +498,7 @@
 
     function onMediaReady() {
       if (pendingInitialMedia) {
-        placeInitial();
+        placeInitial(pendingForceBottom);
         pendingInitialMedia = mediaPending(container);
       }
       observe();
@@ -464,12 +514,29 @@
       return groups;
     }
 
+    function atActiveBottom() {
+      return !document.hidden && document.hasFocus() && container.clientHeight > 0
+        && container.scrollHeight - container.scrollTop - container.clientHeight <= 3;
+    }
+
     function observe() {
-      if (destroyed || !canRead || document.hidden || !container.clientHeight) return;
+      if (destroyed || !(canRead || isAdmin) || document.hidden || !container.clientHeight) return;
+      clearTimeout(timer);
+      if (atActiveBottom()) {
+        if (isAdmin) {
+          adminPending.clear();
+          updateBubble();
+        } else {
+          pendingBottom = true;
+          updateBubble();
+          void flush(true);
+        }
+        return;
+      }
       const box = container.getBoundingClientRect();
       const top = box.top + container.clientTop, bottom = top + container.clientHeight;
       const groups = messageParts();
-      for (const id of card.unread_message_ids || []) {
+      for (const id of isAdmin ? adminPending : card.unread_message_ids || []) {
         (groups.get(id) || []).forEach((node, index) => {
           const rect = node.getBoundingClientRect();
           // A tall message is read on reaching its bottom, not merely its beginning.
@@ -478,19 +545,19 @@
           }
         });
       }
-      clearTimeout(timer);
-      timer = setTimeout(flush, 180);
+      updateBubble();
+      if (canRead && !isAdmin) timer = setTimeout(flush, 180);
     }
 
-    async function flush() {
+    async function flush(readAll = false) {
       timer = null;
-      if (destroyed || inFlight || !canRead || document.hidden) return;
+      if (destroyed || inFlight || !canRead || isAdmin || document.hidden) return;
       const messages = new Map((card.messages || []).map(message => [message.id, message]));
       const ids = (card.unread_message_ids || []).filter(id => !acknowledged.has(id));
       const groups = messageParts();
       const shown = [];
-      let boundary = [];
-      for (let index = 0; index < ids.length; index++) {
+      let boundary = readAll ? ids : [];
+      for (let index = 0; !readAll && index < ids.length; index++) {
         const id = ids[index], nodes = groups.get(id) || [];
         if (!nodes.length || !nodes.every((_, part) => seenParts.has(`${id}:${part}`))) break;
         shown.push(id);
@@ -499,17 +566,33 @@
           boundary = shown.slice();
         }
       }
-      if (!boundary.length) return;
+      if (!boundary.length) {
+        pendingBottom = false;
+        updateBubble();
+        return;
+      }
       const currentTicket = ticketId;
       inFlight = true;
+      let succeeded = false;
       try {
         await confirmRead({ message_id: boundary[boundary.length - 1], message_ids: boundary });
-        if (!destroyed && currentTicket === ticketId) boundary.forEach(id => acknowledged.add(id));
+        if (!destroyed && currentTicket === ticketId) {
+          boundary.forEach(id => acknowledged.add(id));
+          succeeded = true;
+        }
       } catch (error) {
         // Keep the boundary unchanged; the next real view/scroll can confirm it again.
         console.warn("Could not confirm visible ticket messages", error);
       } finally {
         inFlight = false;
+        const confirmNew = succeeded && pendingBottom && canRead && !isAdmin && atActiveBottom()
+          && (card.unread_message_ids || []).some(id => !acknowledged.has(id));
+        if (confirmNew) {
+          void flush(true);
+        } else {
+          pendingBottom = false;
+          if (!destroyed) updateBubble();
+        }
       }
     }
 
@@ -518,6 +601,7 @@
     container.addEventListener("loadedmetadata", onMediaReady, true);
     container.addEventListener("error", onMediaReady, true);
     document.addEventListener("visibilitychange", observe);
+    global.addEventListener("focus", observe);
     return {
       update(nextCard, options = {}) {
         if (destroyed) return;
@@ -527,23 +611,34 @@
           ticketId = nextCard.id;
           seenParts = new Set();
           acknowledged = new Set();
+          adminPending = new Set();
+          pendingBottom = false;
         }
         card = nextCard;
         canRead = Boolean(options.canRead);
+        userId = options.userId ?? null;
+        isAdmin = options.role === "admin";
+        if (isAdmin && !initial && !options.forceBottom) {
+          (options.incomingIds || []).forEach(id => adminPending.add(id));
+        }
         if (initial || options.forceBottom) {
           placeInitial(options.forceBottom);
-          pendingInitialMedia = initial && canRead && !options.forceBottom && mediaPending(container);
+          pendingForceBottom = Boolean(options.forceBottom);
+          pendingInitialMedia = (canRead || isAdmin) && mediaPending(container);
         }
         observe();
+        updateBubble();
       },
       destroy() {
         destroyed = true;
+        bubble.remove();
         clearTimeout(timer);
         container.removeEventListener("scroll", onScroll);
         container.removeEventListener("load", onMediaReady, true);
         container.removeEventListener("loadedmetadata", onMediaReady, true);
         container.removeEventListener("error", onMediaReady, true);
         document.removeEventListener("visibilitychange", observe);
+        global.removeEventListener("focus", observe);
       },
     };
   }

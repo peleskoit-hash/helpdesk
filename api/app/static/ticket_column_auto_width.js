@@ -59,11 +59,22 @@
         }
         return content.getBoundingClientRect().width + (dataOnly ? -padding(content) : padding(cell));
       };
+      const sortButtons = [...probe.tHead.querySelectorAll(".table-sort-btn[data-sort-key]")];
+      sortButtons.forEach((button) => {
+        button.textContent = `${button.textContent.replace(/\s*[▲▼]\s*$/, "").trim()} ▲`;
+      });
+      const headerWidths = new Map(sortButtons.map((button) => {
+        const header = button.closest("th");
+        return [header, contentWidth(header)];
+      }));
+      sortButtons.forEach((button) => {
+        button.textContent = button.textContent.replace(/▲$/, "▼");
+      });
       const measured = columns.map((column) => {
         if (column.key === "subject") return { key: column.key, width: 180 };
         const selector = `[data-column-key="${CSS.escape(column.key)}"]`;
         const header = probe.tHead.querySelector(selector);
-        const minimum = Math.max(60, contentWidth(header));
+        const minimum = Math.max(60, headerWidths.get(header) || 0, contentWidth(header));
         const values = [...probe.tBodies[0].querySelectorAll(selector)].map((cell) => {
           const width = contentWidth(cell, true);
           return { width, extra: contentWidth(cell) - width };
