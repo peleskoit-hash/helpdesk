@@ -128,7 +128,11 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-app = FastAPI(title="Helpdesk MVP API", version="0.1.0")
+app = FastAPI(
+    title="Helpdesk MVP API",
+    version="0.1.0",
+    openapi_url=None if settings.is_prod else "/openapi.json",
+)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret_key,
