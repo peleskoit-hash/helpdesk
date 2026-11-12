@@ -11,7 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .auth import (
     CurrentUser,
@@ -106,6 +108,26 @@ from .services.telegram_polling import telegram_polling_loop
 BASE_DIR = Path(__file__).resolve().parent
 _STAFF_DUMMY_HASH = hash_password(secrets.token_urlsafe(32))
 
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("Referrer-Policy", "no-referrer")
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 app = FastAPI(title="Helpdesk MVP API", version="0.1.0")
 app.add_middleware(
     SessionMiddleware,
@@ -114,6 +136,7 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.session_cookie_secure,
 )
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(tickets_router)
 app.include_router(ticket_client_avatars_router)
 app.include_router(telegram_router)
