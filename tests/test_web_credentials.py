@@ -492,11 +492,30 @@ def test_password_reveal_http_permissions(case, password_http_case, monkeypatch,
     assert response.status_code == (200 if allowed else 403)
     if allowed:
         assert secret in response.json().values()
+        if path.endswith("/bitrix-password"):
+            assert response.headers["cache-control"] == "no-store"
     else:
         assert "Web-Secret" not in response.text and "Bitrix-Secret" not in response.text
         assert case.profile.web_password_encrypted not in response.text
         assert case.profile.bitrix_password not in response.text
         assert case.profile.web_password_hash not in response.text
+
+
+@pytest.mark.parametrize("path", [
+    "/api/v1/tickets/ticket/client-profile/bitrix-password",
+    "/api/v1/management/users/client/profile/bitrix-password",
+])
+def test_missing_bitrix_password_reveal_is_not_cached(case, password_http_case, path):
+    case.profile.bitrix_password = None
+    case.db.commit()
+    password_http_case.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="staff-admin", role="admin")
+
+    with TestClient(password_http_case) as client:
+        response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.json() == {"bitrix_password": None}
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize("path", [

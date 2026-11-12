@@ -9,7 +9,7 @@ import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, asc, desc, func, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -1335,6 +1335,7 @@ def generate_ticket_web_credentials(ticket_id: str, payload: WebCredentialsGener
 @router.get("/{ticket_id}/client-profile/bitrix-password", response_model=BitrixPasswordRevealOut)
 def reveal_ticket_client_bitrix_password(
     ticket_id: str,
+    response: Response,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -1344,6 +1345,7 @@ def reveal_ticket_client_bitrix_password(
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == ticket.client_id)).scalar_one_or_none()
     if profile is None:
         _error(404, "client_profile_not_found", "Профиль клиента не найден")
+    response.headers["Cache-Control"] = "no-store"
     encrypted_password = profile.bitrix_password
     if not encrypted_password or not str(encrypted_password).strip():
         return {"bitrix_password": None}

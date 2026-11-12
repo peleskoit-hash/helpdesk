@@ -5,7 +5,7 @@ import logging
 from typing import Annotated
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.orm import Session
 
@@ -350,6 +350,7 @@ def generate_management_web_credentials(client_id: str, payload: WebCredentialsG
 @router.get("/{client_id}/profile/bitrix-password", response_model=BitrixPasswordRevealOut)
 def reveal_management_user_bitrix_password(
     client_id: str,
+    response: Response,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -357,6 +358,7 @@ def reveal_management_user_bitrix_password(
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
     if profile is None:
         _error(404, "client_profile_not_found", "Профиль клиента не найден")
+    response.headers["Cache-Control"] = "no-store"
     encrypted_password = profile.bitrix_password
     if not encrypted_password or not str(encrypted_password).strip():
         return {"bitrix_password": None}

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import uuid
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -734,7 +734,9 @@ def test_ticket_bitrix_password_reveal_uses_ticket_access_and_decrypts(monkeypat
     session.commit()
     monkeypatch.setattr(tickets, "decrypt_secret", lambda value: "plain-password")
 
-    payload = tickets.reveal_ticket_client_bitrix_password(ticket.id, db=session, user=SimpleNamespace(id=agent.id, role="agent"))
+    payload = tickets.reveal_ticket_client_bitrix_password(
+        ticket.id, Response(), db=session, user=SimpleNamespace(id=agent.id, role="agent"),
+    )
 
     assert payload == {"bitrix_password": "plain-password"}
 
