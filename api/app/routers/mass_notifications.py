@@ -1,10 +1,13 @@
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from ..auth import CurrentUser, get_current_user, is_admin
+from ..config import settings
 from ..db import get_db
 from ..models import Client, ClientProfile, TelegramContact, ClientCardFieldConfig
 from ..services.client_card import _field_options_out
@@ -41,6 +44,30 @@ def _error(status_code: int, code: str, message: str):
 def _admin_only(current_user: CurrentUser) -> None:
     if not is_admin(current_user):
         _error(403, "forbidden", "Только администратор может делать массовую рассылку")
+
+
+def _trusted_send_origin(request: Request) -> str | None:
+    public_url = (settings.app_public_base_url or "").strip()
+    if not public_url and settings.is_prod:
+        return None
+
+    try:
+        url = urlsplit(public_url or str(request.base_url))
+        host, port = url.hostname, url.port
+    except ValueError:
+        return None
+
+    if url.scheme not in {"http", "https"} or not host or "@" in url.netloc:
+        return None
+    # A Host-derived origin is only suitable for direct local development.
+    if not public_url and host not in {"localhost", "127.0.0.1", "::1"}:
+        return None
+
+    authority = f"[{host}]" if ":" in host else host
+    default_port = 443 if url.scheme == "https" else 80
+    if port is not None and port != default_port:
+        authority = f"{authority}:{port}"
+    return f"{url.scheme}://{authority}"
 
 
 def _recipients_query(
@@ -147,6 +174,9 @@ async def send_mass_notification(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     _admin_only(current_user)
+    expected_origin = _trusted_send_origin(request)
+    if expected_origin is None or request.headers.getlist("origin") != [expected_origin]:
+        _error(403, "invalid_origin", "Недопустимый источник запроса")
 
     text: str = ""
     filter_field: str | None = None
