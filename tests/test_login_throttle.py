@@ -62,7 +62,7 @@ def bucket(flow, scope="account", value=None):
 def test_existing_policy_all_steps_cap_and_success_reset(flow):
     for count, delay in enumerate([0, 0, 0, 30, 60, 120, 240, 480, 960, 1920, 3840, 7680, 7680], 1):
         failed = attempt(flow)
-        assert failed.status_code == 401
+        assert failed.status_code == (429 if delay else 401)
         assert failed.headers.get("retry-after") == (str(delay) if delay else None)
         assert bucket(flow).failure_count == min(count, 12)
         if delay:
@@ -95,7 +95,7 @@ def test_rotating_one_dimension_cannot_bypass(flow, rotation):
     for i in range(4):
         options = {"ip": f"192.0.2.{i + 1}"} if rotation == "ip" else {"identity": f"unknown{i}"}
         response = attempt(flow, **options)
-        assert response.status_code == 401
+        assert response.status_code == (429 if i == 3 else 401)
         assert response.headers.get("retry-after") == ("30" if i == 3 else None)
     options = {"ip": "203.0.113.99"} if rotation == "ip" else {"identity": "another-unknown"}
     blocked = attempt(flow, **options)
@@ -112,7 +112,7 @@ def test_concurrent_requests_cannot_bypass_shared_buckets(flow, rotation):
 
     with ThreadPoolExecutor(max_workers=7) as pool:
         statuses = list(pool.map(concurrent, range(7)))
-    assert sorted(statuses) == [401] * 4 + [429] * 3
+    assert sorted(statuses) == [401] * 3 + [429] * 4
     state = bucket(flow, "ip" if rotation == "login" else "account")
     assert state.failure_count == 4
     assert login_throttle.as_utc(state.blocked_until) == flow.case.clock[0] + timedelta(seconds=30)
@@ -150,7 +150,7 @@ def test_blocked_requests_skip_password_check_and_retry_rounds_up(flow, monkeypa
 
 def test_inactivity_resets_even_maximum_block(flow):
     for delay in [0, 0, 0, 30, 60, 120, 240, 480, 960, 1920, 3840, 7680]:
-        assert attempt(flow).status_code == 401
+        assert attempt(flow).status_code == (429 if delay else 401)
         flow.case.clock[0] += timedelta(seconds=delay)
     flow.case.clock[0] += timedelta(seconds=2 * 7680)
     assert "retry-after" not in attempt(flow).headers
@@ -163,7 +163,7 @@ def test_success_cannot_wash_ip_spray_budget(flow):
     assert attempt(flow, password=PASSWORD).status_code == flow.success
     assert bucket(flow, "ip").failure_count == 3
     response = attempt(flow, identity="next-unknown")
-    assert response.status_code == 401 and response.headers["retry-after"] == "30"
+    assert response.status_code == 429 and response.headers["retry-after"] == "30"
     assert attempt(flow, password=PASSWORD).status_code == 429
 
 
@@ -189,7 +189,7 @@ def test_forwarded_headers_cannot_choose_limit_ip(flow):
             "X-Forwarded-For": f"203.0.113.{i}", "X-Real-IP": f"203.0.113.{i}",
             "Forwarded": f"for=203.0.113.{i}",
         })
-        assert response.status_code == (401 if i < 4 else 429)
+        assert response.status_code == (401 if i < 3 else 429)
     assert bucket(flow, "ip").failure_count == 4
 
 
@@ -204,9 +204,16 @@ def test_identity_existence_does_not_change_error_contract(flow, identity_kind):
             db.commit()
     for i in range(5):
         response = attempt(flow, identity=identity)
-        assert response.status_code == (401 if i < 4 else 429)
+        assert response.status_code == (401 if i < 3 else 429)
         assert response.headers.get("retry-after") == ("30" if i >= 3 else None)
-        assert "Неверный логин или пароль, либо пользователь отключён." in response.text
+        assert ("Неверный логин или пароль, либо пользователь отключён." in response.text) == (i < 3)
+        assert f'data-retry="{30 if i >= 3 else 0}"' in response.text
+        if i >= 3:
+            assert 'name="username" type="text" value=""' in response.text
+            assert f'value="{identity}"' not in response.text
+            assert 'id="loginError" role="alert"></div>' in response.text
+            assert response.text.count(' disabled') == 3
+            assert 'role="status">Вход временно заблокирован.' in response.text
         assert response.headers["cache-control"] == "no-store"
 
 
@@ -224,7 +231,7 @@ def test_web_and_staff_limit_states_are_independent(case, monkeypatch):
     for _ in range(4):
         assert attempt(web).status_code == 401
     assert attempt(web).status_code == 429
-    for _ in range(4):
+    for _ in range(3):
         assert attempt(staff).status_code == 401
     assert attempt(staff).status_code == 429
     with Session(case.engine) as db:

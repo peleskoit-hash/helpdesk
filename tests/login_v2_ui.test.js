@@ -8,8 +8,11 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 const template = fs.readFileSync('api/app/templates/login.html', 'utf8');
-const render = (error = '') => template.replace('{{NEXT_VALUE}}', '/profile').replace('{{LOGIN_VALUE}}', '').replace('{{LOGIN_ERROR}}', error);
-async function setup(t, options = {}) {
+const render = (error, retry) => template
+  .replace('{{NEXT_VALUE}}', '/profile').replace('{{LOGIN_VALUE}}', '').replace('{{LOGIN_ERROR}}', error)
+  .replace('{{LOGIN_RETRY}}', String(retry)).replaceAll('{{LOGIN_DISABLED}}', retry ? 'disabled' : '')
+  .replace('{{LOGIN_STATUS}}', retry ? 'Вход временно заблокирован.' : '');
+async function setup(t, { blockedRetry = 0, ...options } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce', ...options });
   t.after(() => page.close());
   const calls = [], assets = [], errors = [];
@@ -30,7 +33,10 @@ async function setup(t, options = {}) {
     }
     if (pathname === '/login') {
       calls.push({ method: request.method(), body: request.postData() });
-      return route.fulfill({ status: request.method() === 'POST' ? 401 : 200, contentType: 'text/html', body: render(request.method() === 'POST' ? 'Неверный логин или пароль, либо пользователь отключён.' : '') });
+      const posted = request.method() === 'POST';
+      const retry = posted ? blockedRetry : 0;
+      const error = posted && !retry ? 'Неверный логин или пароль, либо пользователь отключён.' : '';
+      return route.fulfill({ status: retry ? 429 : posted ? 401 : 200, contentType: 'text/html', body: render(error, retry) });
     }
     calls.push({ path: pathname, method: request.method() });
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ theme_preference: 'dark', accent_hue_dark: 153, accent_strength_dark: 80 }) });
@@ -256,6 +262,52 @@ test('real clipboard paste, native tab order, Enter submit and accessible server
     assert.equal(await page.locator('#passwordInput').getAttribute('aria-invalid'), 'true');
     assert.equal(await page.locator('#passwordInput').evaluate(el => el === document.activeElement), true);
   } finally { await page.evaluate(value => navigator.clipboard.writeText(value), clipboard); }
+});
+
+test('server lockout draws a countdown in the password canvas and survives a fresh GET', async t => {
+  const { page, calls } = await setup(t, { blockedRetry: 65, viewport: { width: 320, height: 568 } });
+  await page.clock.install();
+  const login = page.locator('#loginInput'), password = page.locator('#passwordInput');
+  const button = page.locator('.login-submit'), status = page.getByRole('status');
+  const emptyLogin = await canvasImage(matrix(page, 'login'));
+  const emptyPassword = await canvasImage(matrix(page, 'password'));
+  await login.fill('Сергей.Test');
+  await password.fill('test-secret');
+  await Promise.all([page.waitForNavigation(), button.click()]);
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 1));
+  assert.equal(await status.textContent(), 'Повторите через 01:05');
+  assert.equal(await page.getByRole('alert').isVisible(), false);
+  for (const input of [login, password]) {
+    assert.ok(await input.isDisabled());
+    assert.equal(await input.inputValue(), '');
+    assert.equal(await input.evaluate(el => getComputedStyle(el.parentElement, '::after').content), 'none');
+    await input.evaluate(el => { el.value = 'silent-autofill'; });
+  }
+  assert.ok(await button.isDisabled());
+  assert.equal(await canvasImage(matrix(page, 'login')), emptyLogin);
+  const initialTimer = await canvasImage(matrix(page, 'password'));
+  assert.notEqual(initialTimer, emptyPassword);
+  const glyphs = await page.evaluate(() => window.drawnGlyphs);
+  assert.ok(glyphs.includes('П') && glyphs.includes(':'));
+  assert.ok(!glyphs.includes('●'));
+  await page.locator('.login-form').evaluate(form => form.requestSubmit());
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+  await page.clock.runFor(1000);
+  assert.equal(await status.textContent(), 'Повторите через 01:04');
+  assert.notEqual(await canvasImage(matrix(page, 'password')), initialTimer);
+  for (const input of [login, password]) assert.equal(await input.inputValue(), '');
+  assert.deepEqual(await page.evaluate(() => sessionStorage.length), 1);
+  assert.match(await page.evaluate(() => Object.values(sessionStorage)[0]), /^\d+$/);
+  await page.goto('https://desk.test/login');
+  assert.equal(await status.textContent(), 'Повторите через 01:04');
+  for (const control of [login, password, button]) assert.ok(await control.isDisabled());
+  await page.clock.fastForward(64000);
+  assert.equal(await status.textContent(), '');
+  for (const control of [login, password, button]) assert.ok(await control.isEnabled());
+  for (const input of [login, password]) assert.equal(await input.inputValue(), '');
+  assert.equal(await canvasImage(matrix(page, 'login')), emptyLogin);
+  assert.equal(await canvasImage(matrix(page, 'password')), emptyPassword);
+  assert.equal(await page.evaluate(() => sessionStorage.length), 0);
 });
 
 test('browser autofill styling stays below the visible dot-matrix canvas', async t => {

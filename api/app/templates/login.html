@@ -13,17 +13,18 @@
       <img class="scene-layer scene-base" src="/static/неоновая_киберпанк_студия_es_desk.png?v=20261028-studio-final-v2" width="1672" height="941" alt="" fetchpriority="high" />
       <img class="scene-layer scene-people" src="/static/esdesk_light_people.png?v=20261028-studio-final-v2" width="1672" height="941" alt="" />
       <h1 id="loginTitle" class="visually-hidden">ES DESK</h1>
-      <form method="post" action="/login" class="login-form" autocomplete="on">
+      <form method="post" action="/login" class="login-form" autocomplete="on" data-retry="{{LOGIN_RETRY}}">
         <input type="hidden" name="next" value="{{NEXT_VALUE}}" />
         <div class="matrix-field matrix-login">
           <canvas aria-hidden="true"></canvas>
-          <input id="loginInput" name="username" type="text" value="{{LOGIN_VALUE}}" aria-label="Логин" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus />
+          <input id="loginInput" name="username" type="text" value="{{LOGIN_VALUE}}" aria-label="Логин" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus {{LOGIN_DISABLED}} />
         </div>
         <div class="matrix-field matrix-password">
           <canvas aria-hidden="true"></canvas>
-          <input id="passwordInput" name="password" type="password" aria-label="Пароль" autocomplete="current-password" required />
+          <input id="passwordInput" name="password" type="password" aria-label="Пароль" autocomplete="current-password" required {{LOGIN_DISABLED}} />
+          <span class="visually-hidden" id="loginStatus" role="status">{{LOGIN_STATUS}}</span>
         </div>
-        <button type="submit" class="login-submit">LOG IN</button>
+        <button type="submit" class="login-submit" {{LOGIN_DISABLED}}>LOG IN</button>
         <div class="login-error" id="loginError" role="alert">{{LOGIN_ERROR}}</div>
       </form>
       <button type="button" class="lamp-hotspot lamp-large" aria-label="Сменить освещение: включить светлую тему" aria-pressed="false" title="Сменить освещение"></button>
@@ -33,6 +34,6 @@
     </div>
   </main>
   <noscript><p class="login-noscript">Для отображения электронных табло включите JavaScript. Поля входа доступны в обычном виде.</p></noscript>
-  <script src="/static/login.js?v=20261028-studio-final-v2"></script>
+  <script src="/static/login.js?v=20261112-lockout"></script>
 </body>
 </html>

@@ -323,7 +323,8 @@ def login_page(request: Request):
         return RedirectResponse(url="/tickets", status_code=303)
     next_path = _safe_login_next(request.query_params.get("next") or "/tickets")
     html = (BASE_DIR / "templates" / "login.html").read_text(encoding="utf-8")
-    html = html.replace("{{LOGIN_ERROR}}", "")
+    html = html.replace("{{LOGIN_RETRY}}", "0").replace("{{LOGIN_DISABLED}}", "")
+    html = html.replace("{{LOGIN_STATUS}}", "").replace("{{LOGIN_ERROR}}", "")
     html = html.replace("{{LOGIN_VALUE}}", "")
     html = html.replace("{{NEXT_VALUE}}", escape(next_path, quote=True))
     return HTMLResponse(content=html)
@@ -358,10 +359,12 @@ def login_submit(
             db.commit()
     if user is None:
         html = (BASE_DIR / "templates" / "login.html").read_text(encoding="utf-8")
-        html = html.replace("{{LOGIN_ERROR}}", "Неверный логин или пароль, либо пользователь отключён.")
-        html = html.replace("{{LOGIN_VALUE}}", escape(login_value, quote=True))
+        html = html.replace("{{LOGIN_RETRY}}", str(retry)).replace("{{LOGIN_DISABLED}}", "disabled" if retry else "")
+        html = html.replace("{{LOGIN_STATUS}}", "Вход временно заблокирован." if retry else "")
+        html = html.replace("{{LOGIN_ERROR}}", "" if retry else "Неверный логин или пароль, либо пользователь отключён.")
+        html = html.replace("{{LOGIN_VALUE}}", "" if retry else escape(login_value, quote=True))
         html = html.replace("{{NEXT_VALUE}}", escape(safe_next, quote=True))
-        return HTMLResponse(content=html, status_code=429 if throttle.retry_after else 401,
+        return HTMLResponse(content=html, status_code=429 if retry else 401,
                             headers={"Retry-After": str(retry), "Cache-Control": "no-store"}
                             if retry else {"Cache-Control": "no-store"})
     throttle.success()

@@ -2,6 +2,21 @@
   const body = document.body;
   const hotspots = [...document.querySelectorAll(".lamp-hotspot")];
   const fields = [...document.querySelectorAll(".matrix-field")];
+  const form = document.querySelector(".login-form");
+  const submit = form.querySelector(".login-submit");
+  const error = document.getElementById("loginError");
+  const status = document.getElementById("loginStatus");
+  const retry = Number(form.dataset.retry);
+  const storageKey = "staff-login-retry-until";
+  let deadline = retry > 0 ? Date.now() + retry * 1000 : 0;
+  let countdown = "";
+  try {
+    if (deadline) sessionStorage.setItem(storageKey, String(deadline));
+    else deadline = Number(sessionStorage.getItem(storageKey)) || 0;
+  } catch {
+    // The server-provided timer also works without storage.
+  }
+
   // Deliberately in memory: the login scene never reads/writes application preferences.
   function switchTheme() {
     const theme = body.dataset.theme === "dark" ? "light" : "dark";
@@ -34,8 +49,11 @@
   function render(field, force = false) {
     const input = field.querySelector("input"), canvas = field.querySelector("canvas");
     const width = field.clientWidth, height = field.clientHeight;
-    const focused = document.activeElement === input;
-    const signature = [input.value, input.selectionStart, input.selectionEnd, input.selectionDirection, width, height, focused, body.dataset.theme, devicePixelRatio].join("\0");
+    if (countdown && input.value) input.value = "";
+    const message = input.type === "password" ? countdown : "";
+    const value = countdown ? message : input.value;
+    const focused = !countdown && document.activeElement === input;
+    const signature = [value, Boolean(countdown), input.selectionStart, input.selectionEnd, input.selectionDirection, width, height, focused, body.dataset.theme, devicePixelRatio].join("\0");
     if (!force && snapshots.get(field) === signature) return;
     snapshots.set(field, signature);
     const ratio = devicePixelRatio || 1;
@@ -43,9 +61,9 @@
     const context = canvas.getContext("2d");
     if (!context) return; // Native inputs stay visible if canvas is unavailable.
     context.scale(ratio, ratio);
-    const characters = Array.from(input.value), pad = 16;
+    const characters = Array.from(value), pad = 16;
     // Prefer fitting ordinary logins; bound shrinking so long values remain readable and scroll.
-    const pitch = Math.max(1.3, Math.min(2.6, height / 23, (width - pad * 2) / ((Math.min(characters.length, 24) + 1) * 8.5)));
+    const pitch = Math.max(message ? 0.1 : 1.3, Math.min(2.6, height / 23, (width - pad * 2) / ((Math.min(characters.length, 24) + 1) * 8.5)));
     const cell = pitch * 8.5, baseline = (height - pitch * 13) / 2;
     const start = Array.from(input.value.slice(0, input.selectionStart ?? 0)).length;
     const end = Array.from(input.value.slice(0, input.selectionEnd ?? 0)).length;
@@ -58,7 +76,7 @@
       const x = pad + (i - offset) * cell;
       if (focused && i >= start && i < end) { context.fillStyle = "#ffe4a545"; context.fillRect(x, baseline - 3, cell, pitch * 13 + 6); }
       // Never draw or cache the real password glyphs, including while composing.
-      const character = input.type === "password" && input.value ? "●" : characters[i];
+      const character = input.type === "password" && !message ? "●" : characters[i];
       context.fillStyle = ink;
       context.shadowColor = ink; context.shadowBlur = 6;
       for (const [dx, dy] of glyph(character)) {
@@ -69,6 +87,45 @@
     field.style.setProperty("--matrix-caret", `${Math.min(width - pad, pad + (caret - offset) * cell)}px`);
     field.classList.add("matrix-ready");
   }
+  function setLocked(locked) {
+    submit.disabled = locked;
+    for (const field of fields) {
+      const input = field.querySelector("input");
+      input.value = "";
+      input.disabled = locked;
+    }
+  }
+
+  function updateCountdown() {
+    const remaining = deadline - Date.now();
+    const seconds = Math.ceil(remaining / 1000);
+    if (seconds > 0) {
+      const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+      countdown = `Повторите через ${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+      setTimeout(updateCountdown, remaining - (seconds - 1) * 1000);
+    } else {
+      countdown = "";
+      setLocked(false);
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch {
+        // Storage may be unavailable.
+      }
+    }
+    status.textContent = countdown;
+    fields.forEach(field => render(field));
+  }
+  if (Number.isFinite(deadline) && deadline) {
+    if (deadline > Date.now()) {
+      error.textContent = "";
+      setLocked(true);
+    }
+    updateCountdown();
+  }
+  form.addEventListener("submit", event => {
+    if (countdown) event.preventDefault();
+  });
+
   const observer = new ResizeObserver(() => {
     fields.forEach(field => render(field, true));
     // Cropped lamps must not trap keyboard navigation outside the visible scene.
@@ -88,13 +145,12 @@
   setInterval(() => { if (!document.hidden) fields.forEach(field => render(field)); }, 150);
   window.addEventListener("pageshow", () => fields.forEach(field => render(field, true)));
 
-  const error = document.getElementById("loginError");
   if (error.textContent.trim()) {
     const password = document.getElementById("passwordInput");
     password.setAttribute("aria-invalid", "true"); password.setAttribute("aria-describedby", "loginError"); password.focus();
   }
   // Optional metallic sound can later subscribe to this local event without changing submit.
-  document.querySelector(".login-submit").addEventListener("pointerdown", () => {
-    document.querySelector(".login-submit").dispatchEvent(new CustomEvent("login-metal-press"));
+  submit.addEventListener("pointerdown", () => {
+    submit.dispatchEvent(new CustomEvent("login-metal-press"));
   });
 })();
