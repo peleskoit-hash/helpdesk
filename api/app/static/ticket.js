@@ -1405,6 +1405,9 @@ function hideMessageContextMenu() {
 }
 
 function renderMessagesFallback(card) {
+  const internalNumber = card.client_profile?.destination === "Колл Центр"
+    ? card.client_profile.internal_number?.trim()
+    : "";
   el.messages.innerHTML = "";
   for (const m of card.messages || []) {
     const div = document.createElement("div");
@@ -1414,6 +1417,7 @@ function renderMessagesFallback(card) {
     headerEl.className = "message-header";
     const strong = document.createElement("strong");
     strong.textContent = m.author_name || (m.message_type === "system" ? "ES DESK" : "Сообщение");
+    if (m.message_type === "client" && internalNumber) strong.textContent += ` ${internalNumber}`;
     const dateEl = document.createElement("div");
     dateEl.className = "message-date";
     dateEl.textContent = fmtMessageStamp(m.created_at);

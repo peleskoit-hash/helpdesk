@@ -321,7 +321,10 @@
     const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     const anchorId = anchor?.dataset.messageId;
     const anchorPart = anchor ? Array.from(el.messages.children).filter(node => node.dataset.messageId === anchorId).indexOf(anchor) : 0;
-    const currentSignature = messageRenderSignature(visibleMessages);
+    const internalNumber = card.client_profile?.destination === "Колл Центр"
+      ? card.client_profile.internal_number?.trim()
+      : "";
+    const currentSignature = JSON.stringify([messageRenderSignature(visibleMessages), internalNumber || ""]);
     if (currentSignature !== lastSignature) {
       const currentAttachmentIds = new Set();
       for (const message of visibleMessages) {
@@ -389,6 +392,7 @@
           headerEl.className = "message-header";
           const strong = document.createElement("strong");
           strong.textContent = messageAuthorLabel(state, card, m);
+          if (m.message_type === "client" && internalNumber) strong.textContent += ` ${internalNumber}`;
           const dateEl = document.createElement("div");
           dateEl.className = "message-date";
           dateEl.textContent = fmtMessageStamp(m.created_at);
