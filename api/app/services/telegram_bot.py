@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from ..config import settings
+from .telegram_http import open_telegram_url
 from .telegram_text_format import strip_telegram_html
 
 
@@ -88,7 +89,7 @@ def telegram_request(method: str, payload: dict | None = None, timeout: int = 30
 
     request = Request(_api_url(method, bot_token=bot_token), data=data, headers=headers, method="POST" if payload is not None else "GET")
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with open_telegram_url(urlopen, request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
@@ -136,7 +137,7 @@ def telegram_multipart_request(method: str, fields: dict, files: dict, timeout: 
         method="POST",
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with open_telegram_url(urlopen, request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
@@ -160,7 +161,7 @@ def get_updates(offset: int | None, timeout: int, *, bot_token: str | None = Non
 
     url = f"{_api_url('getUpdates', bot_token=bot_token)}?{urlencode(query)}"
     request = Request(url, method="GET")
-    with urlopen(request, timeout=timeout + 10) as response:
+    with open_telegram_url(urlopen, request, timeout=timeout + 10) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     if not payload.get("ok"):
@@ -502,7 +503,7 @@ def download_file(file_path: str, destination_path: str | Path, chat_id: str | i
     url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
     request = Request(url, method="GET")
     try:
-        with urlopen(request, timeout=60) as response:
+        with open_telegram_url(urlopen, request, timeout=60) as response:
             destination.write_bytes(response.read())
     except HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")

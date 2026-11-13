@@ -34,6 +34,7 @@ from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResu
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message
+from ..services.telegram_http import open_telegram_url
 from ..services.telegram_post_close import cleanup_feedback_flow_for_ticket_reopen, cleanup_review_flow_for_ticket_reopen
 from ..services.telegram_outbound_delivery import (
     _discard_preload,
@@ -1405,7 +1406,7 @@ def download_attachment(
         stream_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
         request = UrlRequest(stream_url, method="GET")
         try:
-            telegram_response = urlopen(request, timeout=120)
+            telegram_response = open_telegram_url(urlopen, request, timeout=120)
             break
         except HTTPError as exc:
             if exc.code == 404 and attempt == 0 and saved_file_path and attachment.telegram_file_id:

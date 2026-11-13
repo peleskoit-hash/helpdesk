@@ -12,6 +12,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import TelegramContact, Ticket
 from .telegram_bot import telegram_request
+from .telegram_http import open_telegram_url
 from .telegram_client_avatars import MAX_IMAGE_BYTES, needs_avatar_download, save_avatar
 
 
@@ -37,7 +38,7 @@ def _download(file_path: str, token: str) -> bytes:
     request = Request(f"https://api.telegram.org/file/bot{token}/{file_path}")
     deadline = monotonic() + 20
     content = bytearray()
-    with urlopen(request, timeout=_TIMEOUT) as response:
+    with open_telegram_url(urlopen, request, timeout=_TIMEOUT) as response:
         length = response.headers.get("Content-Length")
         if length is not None and int(length) > MAX_IMAGE_BYTES:
             raise ValueError("Telegram avatar exceeds the size limit")

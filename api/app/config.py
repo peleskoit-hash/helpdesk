@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +16,7 @@ class Settings(BaseSettings):
     web_public_base_url: str | None = None
     app_timezone: str = "Europe/Moscow"
     telegram_bot_token: str | None = None
+    telegram_http_proxy: str | None = Field(default=None, repr=False)
     employee_telegram_bot_token: str | None = None
     telegram_notification_bot_owner_id: str | None = None
     telegram_staging_chat_id: str | None = None
