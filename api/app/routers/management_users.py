@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.orm import Session
 
-from ..auth import CurrentUser, get_current_user, is_admin
+from ..auth import CurrentUser, can_edit_client_profile, get_current_user, is_admin
 from ..db import get_db
 from ..models import Client, ClientProfile, TelegramContact, Ticket
 from ..schemas import BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate
@@ -19,7 +19,11 @@ from ..services.client_card import (
     _normalize_custom_field_value,
     _profile_out,
 )
-from ..services.client_card_derivation import apply_client_card_profile_save_pipeline, apply_client_card_source_manual_run
+from ..services.client_card_derivation import (
+    apply_client_card_profile_save_pipeline,
+    apply_client_card_source_manual_run,
+    validate_client_card_direct_user_changes,
+)
 from ..services.encryption import SecretEncryptionConfigurationError, SecretEncryptionError, decrypt_secret
 from ..services import web_credentials
 from ..schemas import WebCredentialsGeneratePayload
@@ -41,6 +45,11 @@ def _error(status_code: int, code: str, message: str):
 def _require_admin(user: CurrentUser):
     if not is_admin(user):
         _error(403, "admin_only", "\u0414\u043e\u0441\u0442\u0443\u043f \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430")
+
+
+def _require_user_editor(user: CurrentUser):
+    if user.role != "agent":
+        _require_admin(user)
 
 
 def _get_or_create_client_profile(db: Session, client_id: str) -> ClientProfile:
@@ -246,7 +255,7 @@ def list_management_users(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_user_editor(user)
     last_ticket = (
         select(Ticket.client_id.label("client_id"), func.max(Ticket.updated_at).label("last_activity_at"))
         .group_by(Ticket.client_id)
@@ -308,7 +317,7 @@ def get_client_card_config(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_user_editor(user)
     return _client_card_view_config(db)
 
 
@@ -318,7 +327,7 @@ def get_management_user_profile(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_user_editor(user)
     client = db.get(Client, client_id)
     if client is None:
         _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
@@ -333,7 +342,7 @@ def get_management_user_profile(
 
 @router.get("/{client_id}/profile/web-password")
 def reveal_management_web_password(client_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    _require_admin(user)
+    _require_user_editor(user)
     web_credentials.authorize_fields(db, user, {"custom_web_password"})
     return JSONResponse(web_credentials.reveal(web_credentials.require_profile(db, client_id)), headers={"Cache-Control": "no-store"})
 
@@ -341,7 +350,9 @@ def reveal_management_web_password(client_id: str, db: Session = Depends(get_db)
 @router.post("/{client_id}/profile/web-credentials/generate")
 def generate_management_web_credentials(client_id: str, payload: WebCredentialsGeneratePayload,
                                         db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    _require_admin(user)
+    _require_user_editor(user)
+    if not can_edit_client_profile(user):
+        _error(403, "readonly_role", "Нет прав на редактирование карточки клиента")
     web_credentials.authorize_fields(db, user, web_credentials.WEB_KEYS, write=True)
     result = web_credentials.generate_draft(db, web_credentials.require_profile(db, client_id), payload)
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
@@ -354,7 +365,7 @@ def reveal_management_user_bitrix_password(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_user_editor(user)
     profile = db.execute(select(ClientProfile).where(ClientProfile.client_id == client_id)).scalar_one_or_none()
     if profile is None:
         _error(404, "client_profile_not_found", "Профиль клиента не найден")
@@ -431,7 +442,9 @@ def update_management_user_profile(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    _require_user_editor(user)
+    if not can_edit_client_profile(user):
+        _error(403, "readonly_role", "Нет прав на редактирование карточки клиента")
     client = db.get(Client, client_id)
     if client is None:
         _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
@@ -446,16 +459,24 @@ def update_management_user_profile(
     if "custom_fields" in data and data["custom_fields"] is not None:
         custom_fields = dict(merged_custom_fields)
         field_map = _custom_field_map(db)
+        if not is_admin(user):
+            unknown_keys = [key for key in data["custom_fields"] if key not in field_map]
+            if unknown_keys:
+                _error(400, "unknown_custom_field_keys", f"Неизвестные custom поля: {', '.join(unknown_keys)}")
         for key, value in data["custom_fields"].items():
             field = field_map.get(key)
             if not field:
                 continue
+            if not is_admin(user) and not field.is_editable:
+                _error(403, "readonly_custom_field", f"Поле '{field.label}' недоступно для редактирования")
             normalized = _normalize_custom_field_value(field, value)
             if normalized is None:
                 custom_fields.pop(key, None)
             else:
                 custom_fields[key] = normalized
         merged_custom_fields = custom_fields
+    if not is_admin(user):
+        validate_client_card_direct_user_changes(db, profile, data, merged_custom_fields, user=user)
     result = apply_client_card_profile_save_pipeline(db, profile, data, merged_custom_fields, client_id=client_id, user=user)
     profile = result.profile
     db.commit()
@@ -475,7 +496,8 @@ def run_management_user_profile_source(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    _require_admin(user)
+    if not can_edit_client_profile(user):
+        _error(403, "readonly_role", "\u041d\u0435\u0442 \u043f\u0440\u0430\u0432 \u043d\u0430 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438 \u043a\u043b\u0438\u0435\u043d\u0442\u0430")
     client = db.get(Client, client_id)
     if client is None:
         _error(404, "client_not_found", "\u041a\u043b\u0438\u0435\u043d\u0442 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")

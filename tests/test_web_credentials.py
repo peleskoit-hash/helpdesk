@@ -107,7 +107,7 @@ def test_web_field_permissions_on_both_save_paths(case, path, role, admin_only, 
         field.admin_only_edit, field.is_editable = admin_only, editable
     case.db.commit()
     payload = ClientProfileUpdate(custom_fields={"custom_web_login": "changed", "custom_web_password": "Changed-B2!"})
-    allowed = editable and (role == "admin" or (path == "ticket" and role in {"agent", "trainee"}))
+    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
     action = tickets.update_client_profile if path == "ticket" else management_users.update_management_user_profile
     args = ("ticket" if path == "ticket" else "client", payload)
     if allowed:
@@ -301,12 +301,13 @@ def test_collisions_manual_error_and_database_uniqueness(case, monkeypatch):
 
 
 def test_reveal_and_generate_authorization_and_missing_profile(case):
-    agent = SimpleNamespace(id="other-agent", role="agent")
+    trainee = SimpleNamespace(id="trainee", role="trainee")
     for action in (management_users.reveal_management_web_password, management_users.generate_management_web_credentials):
         kwargs = {"payload": WebCredentialsGeneratePayload()} if "generate" in action.__name__ else {}
         with pytest.raises(HTTPException) as exc:
-            action("client", db=case.db, user=agent, **kwargs)
+            action("client", db=case.db, user=trainee, **kwargs)
         assert exc.value.status_code == 403
+    agent = SimpleNamespace(id="other-agent", role="agent")
     with pytest.raises(HTTPException) as exc:
         tickets.reveal_ticket_web_password("ticket", db=case.db, user=agent)
     assert exc.value.status_code == 403
@@ -427,7 +428,7 @@ def test_web_generation_permissions_on_both_paths(case, path, role, admin_only, 
         field.admin_only_edit, field.is_editable = admin_only, editable
     case.db.commit()
     action = tickets.generate_ticket_web_credentials if path == "ticket" else management_users.generate_management_web_credentials
-    allowed = editable and (role == "admin" or (path == "ticket" and role in {"agent", "trainee"}))
+    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
     if allowed:
         response = action("ticket" if path == "ticket" else "client", WebCredentialsGeneratePayload(), db=case.db, user=user)
         draft = json.loads(response.body)
@@ -488,7 +489,7 @@ def test_password_reveal_http_permissions(case, password_http_case, monkeypatch,
             monkeypatch.setattr(module, "decrypt_secret", forbidden_decrypt)
     with TestClient(app) as client:
         response = client.get(path)
-    allowed = role != "chiki_piki" and ("/tickets/" in path or role == "admin")
+    allowed = role != "chiki_piki" and ("/tickets/" in path or role in {"admin", "agent"})
     assert response.status_code == (200 if allowed else 403)
     if allowed:
         assert secret in response.json().values()
@@ -626,7 +627,7 @@ def test_web_password_clear_requires_role_access_and_editable_field(case, path, 
     case.db.commit()
     original = case.profile.web_password_encrypted, case.profile.web_password_hash, case.profile.web_credentials_version
     action = tickets.update_client_profile if path == "ticket" else management_users.update_management_user_profile
-    allowed = editable and (role == "admin" or (path == "ticket" and role in {"agent", "trainee"}))
+    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
     if allowed:
         action("ticket" if path == "ticket" else "client", ClientProfileUpdate(clear_web_password=True), db=case.db, user=user)
         assert case.profile.web_password_encrypted is None and case.profile.web_password_hash is None

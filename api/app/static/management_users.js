@@ -330,7 +330,7 @@
   }
 
   async function toggleClientBlock(root) {
-    if (!state.selectedClientId) return;
+    if (state.role !== "admin" || !state.selectedClientId) return;
     const nextBlocked = !state.selectedClientBlocked;
     if (nextBlocked) {
       const ok = await window.HelpdeskDialogs.confirm("\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f? \u041e\u043d \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u0441\u043c\u043e\u0436\u0435\u0442 \u0432\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u0442\u044c \u0441 Telegram-\u0431\u043e\u0442\u043e\u043c \u0434\u043e \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043a\u0438.");
@@ -348,7 +348,7 @@
   }
 
   async function resetClientData(root) {
-    if (!state.selectedClientId || !window.TicketClientCard) return;
+    if (state.role !== "admin" || !state.selectedClientId || !window.TicketClientCard) return;
     const ok = await window.HelpdeskDialogs.confirm(
       "\u0421\u0442\u0435\u0440\u0435\u0442\u044c \u0432\u0441\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f?\n\n" +
       "\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f \u0438 \u0432\u0435\u0440\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044f \u0431\u0443\u0434\u0443\u0442 \u0443\u0434\u0430\u043b\u0435\u043d\u044b. \u041f\u0440\u0438 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0435\u043c \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0438 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043f\u0440\u043e\u0439\u0434\u0451\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439 \u043f\u0435\u0440\u0432\u043e\u0433\u043e \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u0437\u0430\u043d\u043e\u0432\u043e.\n\n" +
@@ -447,11 +447,14 @@
     (async () => {
       try {
         const sidebar = await window.HelpdeskSidebar?.init?.();
-        if (sidebar && sidebar.role !== "admin") {
-          setStatus(root, "\u0414\u043e\u0441\u0442\u0443\u043f \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0430");
+        if (sidebar?.role !== "admin" && sidebar?.role !== "agent") {
+          setStatus(root, "Нет доступа к редактору пользователей");
           return;
         }
-        state.role = sidebar?.role || "";
+        state.role = sidebar.role;
+        const { resetClientDataBtn, toggleClientBlockBtn } = els(root);
+        resetClientDataBtn?.classList.toggle("hidden", state.role !== "admin");
+        toggleClientBlockBtn?.classList.toggle("hidden", state.role !== "admin");
         state.clientCardViewConfig = await api("/api/v1/management/users/client-card-view-config").catch(() => null);
         await loadUsers(root);
       } catch (error) {

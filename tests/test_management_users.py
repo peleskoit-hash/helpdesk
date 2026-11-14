@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientProfile, Company, PendingTaskIntent, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
+from api.app.models import Client, ClientCardFieldConfig, ClientProfile, Company, PendingTaskIntent, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
 from api.app.routers import management_users, telegram
 from api.app.schemas import ClientProfileUpdate
 from api.app.services import telegram_onboarding
@@ -130,14 +130,69 @@ def test_management_users_blocked_filter_returns_only_blocked_contacts():
     assert payload["items"][0]["is_blocked"] is True
 
 
-def test_management_users_requires_admin():
+@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+def test_management_users_editor_access(role):
     session = _session()
-    _seed_user(session)
+    client, _, _ = _seed_user(session)
+    user = SimpleNamespace(id=role, role=role)
+    operations = [
+        lambda: management_users.list_management_users(db=session, user=user),
+        lambda: management_users.get_client_card_config(db=session, user=user),
+        lambda: management_users.get_management_user_profile(client.id, db=session, user=user),
+        lambda: management_users.update_management_user_profile(
+            client.id, ClientProfileUpdate(contact_name="Anna"), db=session, user=user,
+        ),
+    ]
+    if role in {"admin", "agent"}:
+        assert operations[0]()["items"][0]["client_id"] == client.id
+        operations[1]()
+        assert operations[2]().contact_name == "Ivan"
+        assert operations[3]().contact_name == "Anna"
+    else:
+        for operation in operations:
+            with pytest.raises(HTTPException) as exc:
+                operation()
+            assert exc.value.status_code == 403
 
-    with pytest.raises(HTTPException) as exc:
-        management_users.list_management_users(db=session, user=_agent())
 
-    assert exc.value.status_code == 403
+def test_agent_cannot_update_protected_fields():
+    session = _session()
+    client, profile, _ = _seed_user(session)
+    session.add_all([
+        ClientCardFieldConfig(id="destination", key="destination", label="Destination", field_type="select",
+                              block_key="profile", is_system=True, admin_only_edit=True),
+        ClientCardFieldConfig(id="custom_locked", key="custom_locked", label="Locked", field_type="text",
+                              block_key="profile", is_system=False, is_editable=False),
+    ])
+    session.commit()
+    for payload in (ClientProfileUpdate(destination="Other"),
+                    ClientProfileUpdate(custom_fields={"custom_locked": "Other"})):
+        with pytest.raises(HTTPException) as exc:
+            management_users.update_management_user_profile(client.id, payload, db=session, user=_agent())
+        assert exc.value.status_code == 403
+    assert profile.destination == "Support"
+    assert not profile.custom_fields
+
+
+@pytest.mark.parametrize("role, expected", [
+    ("admin", 200), ("agent", 200), ("trainee", 303), ("chiki_piki", 303), (None, 303),
+])
+def test_management_users_page_access(monkeypatch, role, expected):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.app import main
+    from api.app.db import get_db
+
+    user = None if role is None else SimpleNamespace(role=role, is_real_admin=role == "admin")
+    monkeypatch.setattr(main, "_require_page_auth", lambda request, db: user)
+    app = FastAPI()
+    app.add_api_route("/management/users", main.management_users_page, methods=["GET"])
+    app.dependency_overrides[get_db] = lambda: None
+    with TestClient(app) as client:
+        response = client.get("/management/users", follow_redirects=False)
+    assert response.status_code == expected
+    if expected == 303:
+        assert response.headers["location"] == ("/tickets" if role else "/login?next=/management/users")
 
 
 def test_management_page_route_is_admin_guarded_in_main():
@@ -388,12 +443,16 @@ def test_management_users_block_and_unblock_are_idempotent_and_sync_duplicates()
     assert duplicate_contact.is_blocked is False
 
 
-def test_management_users_block_requires_admin():
+@pytest.mark.parametrize("operation", [
+    management_users.block_management_user,
+    management_users.unblock_management_user,
+])
+def test_management_users_block_requires_admin(operation):
     session = _session()
     client, _, _ = _seed_user(session)
 
     with pytest.raises(HTTPException) as exc:
-        management_users.block_management_user(client.id, db=session, user=_agent())
+        operation(client.id, db=session, user=_agent())
 
     assert exc.value.status_code == 403
 

@@ -196,9 +196,12 @@
     }
   }
 
-  function renderAdminVisibility() {
+  function renderRoleVisibility() {
     qsa(".admin-only").forEach((node) => {
       node.classList.toggle("hidden", state.role !== "admin");
+    });
+    qsa(".agent-only").forEach((node) => {
+      node.classList.toggle("hidden", state.role !== "agent");
     });
   }
 
@@ -1029,7 +1032,7 @@
   function renderFromCurrentState() {
     ensureManagementSection();
     ensureAvailabilityStatusPanel();
-    renderAdminVisibility();
+    renderRoleVisibility();
     renderAvailabilityVisibility();
     renderCounts();
     renderUserDisplay();

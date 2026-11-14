@@ -633,6 +633,6 @@ def management_users_page(request: Request, db: Session = Depends(get_db)):
     user = _require_page_auth(request, db)
     if user is None:
         return _redirect_login("/management/users")
-    if not user.is_real_admin:
+    if not user.is_real_admin and user.role != "agent":
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "management_users.html"))
