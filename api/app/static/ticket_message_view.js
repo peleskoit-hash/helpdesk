@@ -313,9 +313,12 @@
     const incomingIds = lastSignature == null ? [] : visibleMessages.filter(message => !previousIds.has(message.id)
       && message.message_type !== "system" && (state.role === "admin" || message.author_user_id !== state.userId))
       .map(message => message.id);
-    const followBottom = Boolean(last && last.bottom > viewportTop && last.top < viewportTop + el.messages.clientHeight
-      && incomingIds.length);
     const scrollTop = el.messages.scrollTop;
+    const wasAtBottom = el.messages.scrollHeight - scrollTop - el.messages.clientHeight <= 1;
+    const newSystemMessageAtBottom = lastSignature != null && wasAtBottom && visibleMessages.some(message =>
+      message.message_type === "system" && !previousIds.has(message.id));
+    const followBottom = newSystemMessageAtBottom || Boolean(last && last.bottom > viewportTop
+      && last.top < viewportTop + el.messages.clientHeight && incomingIds.length);
     const top = el.messages.getBoundingClientRect().top;
     const anchor = Array.from(el.messages.children).find(node => node.getBoundingClientRect().bottom > top);
     const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;

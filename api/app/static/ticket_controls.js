@@ -339,7 +339,7 @@
           }
           quickActionInFlight = null;
           renderTicketControlsView(ctx);
-          loadCard({ preserveComposerDraft: true }).catch((loadError) => showError(loadError.message));
+          loadCard({ preserveComposerDraft: true, forceBottom: true }).catch((loadError) => showError(loadError.message));
           setStatus("Приветствие отправлено");
         } catch (e) {
           showError(e.message);
@@ -360,7 +360,7 @@
         renderTicketControlsView(ctx);
         setStatus("Отправляю быстрое сообщение...");
         await apiPost(`/api/v1/tickets/${state.ticketId}/reply`, { text, quick_action: actionName });
-        await loadCard({ preserveComposerDraft: true });
+        await loadCard({ preserveComposerDraft: true, forceBottom: true });
         setStatus("Сообщение отправлено");
       } catch (e) {
         showError(e.message);

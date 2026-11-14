@@ -1514,6 +1514,7 @@ async function loadCard(options = {}) {
         ? Boolean(state.pendingCardReloadOptions.silent) && Boolean(options.silent)
         : Boolean(options.silent),
       preserveComposerDraft: Boolean(state.pendingCardReloadOptions?.preserveComposerDraft) || Boolean(options.preserveComposerDraft),
+      forceBottom: Boolean(state.pendingCardReloadOptions?.forceBottom) || Boolean(options.forceBottom),
     };
     return;
   }
@@ -1550,6 +1551,7 @@ async function loadCard(options = {}) {
         ? cardConfig
         : defaultClientCardViewConfig();
     }
+    if (options.forceBottom) scrollAfterLocalSend = true;
     renderCard();
     applyComposeModeUi();
     if (!state.initialComposerFocusApplied) {
