@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import MetaData, select
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -19,9 +19,21 @@ from api.app.services import telegram_onboarding
 from scripts import merge_telegram_contact_duplicate
 
 
-def _session():
+def _session(*, legacy_telegram_duplicates=False):
     engine = create_engine("sqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
+    metadata = Base.metadata
+    if legacy_telegram_duplicates:
+        # Model a database from before Telegram identity uniqueness was enforced.
+        metadata = MetaData()
+        for table in Base.metadata.tables.values():
+            table.to_metadata(metadata)
+        contacts = metadata.tables[TelegramContact.__tablename__]
+        identity_constraint = next(
+            constraint for constraint in contacts.constraints
+            if constraint.name == "uq_telegram_contacts_company_external_user"
+        )
+        contacts.constraints.remove(identity_constraint)
+    metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     return Session()
 
@@ -246,7 +258,7 @@ def test_management_user_profile_patch_does_not_clear_unset_fields():
 
 
 def test_management_users_dedupes_same_external_user_id_and_picks_verified_canonical():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     duplicate_client, _, _ = _seed_user(
         session,
@@ -276,7 +288,7 @@ def test_management_users_dedupes_same_external_user_id_and_picks_verified_canon
 
 
 def test_management_users_dedupe_keeps_same_external_user_id_in_different_companies():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company_a = _company(session)
     company_b = _company(session)
     duplicate_client, _, _ = _seed_user(
@@ -364,7 +376,7 @@ def test_management_users_searches_full_result_set_before_pagination():
 
 
 def test_management_users_search_after_dedupe_by_username_user_id_and_profile():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, profile, _ = _seed_user(
         session,
@@ -397,7 +409,7 @@ def test_management_users_search_after_dedupe_by_username_user_id_and_profile():
 
 
 def test_management_users_block_and_unblock_are_idempotent_and_sync_duplicates():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, _, canonical_contact = _seed_user(
         session,
@@ -468,7 +480,7 @@ def test_management_users_reset_data_requires_admin():
 
 
 def test_management_users_dedupe_reports_blocked_when_duplicate_is_blocked():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, _, _ = _seed_user(
         session,
@@ -500,7 +512,7 @@ def test_management_users_dedupe_reports_blocked_when_duplicate_is_blocked():
 
 
 def test_management_users_search_preserves_blocked_state_across_hidden_duplicate():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, canonical_profile, canonical_contact = _seed_user(
         session,
@@ -536,7 +548,7 @@ def test_management_users_search_preserves_blocked_state_across_hidden_duplicate
 
 
 def test_management_users_blocked_state_stays_company_scoped_for_same_external_user_id():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company_a = _company(session)
     company_b = _company(session)
     client_a, profile_a, contact_a = _seed_user(
@@ -587,7 +599,7 @@ def test_management_users_blocked_state_stays_company_scoped_for_same_external_u
 
 
 def test_management_users_reset_data_clears_profiles_for_identity_and_preserves_tickets():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     client, profile, contact = _seed_user(
         session,
@@ -796,7 +808,8 @@ def test_management_users_reset_data_rejects_client_with_active_auto_task():
     assert session.execute(select(ClientProfile).where(ClientProfile.client_id == client.id)).scalar_one_or_none() is None
 
 
-def test_management_users_reset_data_is_idempotent_and_restores_first_connection_flow():
+def test_management_users_reset_data_is_idempotent_and_restores_first_connection_flow(monkeypatch):
+    monkeypatch.setattr(telegram, "is_telegram_intake_open", lambda: True)
     session = _session()
     company = _company(session)
     client, _, contact = _seed_user(
@@ -827,7 +840,7 @@ def test_management_users_reset_data_is_idempotent_and_restores_first_connection
             "update_id": 5001,
             "message": {
                 "message_id": 5001,
-                "chat": {"id": 7001},
+                "chat": {"id": 7001, "type": "private"},
                 "from": {"id": 7001, "first_name": "Ivan", "last_name": "Petrov"},
                 "text": "/start",
             },
@@ -907,7 +920,7 @@ def test_telegram_user_id_lookup_is_company_scoped():
 
 
 def test_merge_duplicate_plan_finds_canonical_and_duplicate():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, _, _ = _seed_user(
         session,
@@ -1000,7 +1013,7 @@ def test_merge_duplicate_preflight_fails_for_different_user_id():
 
 
 def test_merge_duplicate_preflight_fails_for_reversed_roles():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     _seed_user(
         session,
@@ -1042,7 +1055,7 @@ def test_merge_duplicate_preflight_fails_for_same_contact():
 
 
 def test_merge_duplicate_preflight_fails_for_same_client():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     client, _, canonical_contact = _seed_user(
         session,
@@ -1068,7 +1081,7 @@ def test_merge_duplicate_preflight_fails_for_same_client():
 
 
 def test_merge_duplicate_preflight_fails_when_canonical_positive_chat_does_not_match_user_id():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, _, canonical_contact = _seed_user(
         session,
@@ -1097,7 +1110,7 @@ def test_merge_duplicate_preflight_fails_when_canonical_positive_chat_does_not_m
 
 
 def test_merge_duplicate_preflight_passes_for_exact_private_canonical_and_negative_duplicate():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     _seed_user(
         session,
@@ -1121,7 +1134,7 @@ def test_merge_duplicate_preflight_passes_for_exact_private_canonical_and_negati
 
 
 def test_merge_duplicate_preflight_fails_for_arbitrary_positive_duplicate_chat():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     _seed_user(
         session,
@@ -1143,7 +1156,7 @@ def test_merge_duplicate_preflight_fails_for_arbitrary_positive_duplicate_chat()
 
 
 def test_merge_duplicate_plan_marks_delete_blocked_when_extra_contact_would_remain():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     _seed_user(
         session,
@@ -1177,7 +1190,7 @@ def test_merge_duplicate_plan_marks_delete_blocked_when_extra_contact_would_rema
 
 
 def test_merge_duplicate_plan_keeps_delete_allowed_when_only_supported_refs_will_be_relinked():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     _seed_user(
         session,
@@ -1211,7 +1224,7 @@ def test_merge_duplicate_plan_keeps_delete_allowed_when_only_supported_refs_will
 
 
 def test_merge_duplicate_apply_preserves_private_chat_and_relinks_tickets():
-    session = _session()
+    session = _session(legacy_telegram_duplicates=True)
     company = _company(session)
     canonical_client, _, canonical_contact = _seed_user(
         session,
