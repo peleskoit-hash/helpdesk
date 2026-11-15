@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261111-status-layout-v1");
+@import url("/static/desk-v2.css?v=20261115-statistics-layout-v1");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -741,27 +741,16 @@ body[data-sidebar-ready="0"] .admin-select-col {
   width: min(100%, 1160px);
 }
 
-.management-statistics-work-time-table th:nth-child(1),
-.management-statistics-work-time-table td:nth-child(1) {
-  width: 20%;
+.management-statistics-work-time-table .statistics-employee-column {
+  width: 23.34%;
 }
 
-.management-statistics-work-time-table th:nth-child(2),
-.management-statistics-work-time-table td:nth-child(2),
-.management-statistics-work-time-table th:nth-child(3),
-.management-statistics-work-time-table td:nth-child(3),
-.management-statistics-work-time-table th:nth-child(4),
-.management-statistics-work-time-table td:nth-child(4) {
-  width: 8.5%;
+.management-statistics-work-time-table .statistics-completed-column {
+  width: 11.44%;
 }
 
-.management-statistics-work-time-table th:nth-child(5),
-.management-statistics-work-time-table td:nth-child(5),
-.management-statistics-work-time-table th:nth-child(6),
-.management-statistics-work-time-table td:nth-child(6),
-.management-statistics-work-time-table th:nth-child(7),
-.management-statistics-work-time-table td:nth-child(7) {
-  width: 18.16%;
+.management-statistics-work-time-table .statistics-duration-column {
+  width: 21.17%;
 }
 
 .management-statistics-statuses-card .management-statistics-table-wrap,
@@ -821,6 +810,20 @@ body[data-sidebar-ready="0"] .admin-select-col {
 .management-statistics-table td:nth-child(n+2) {
   text-align: right;
   white-space: nowrap;
+}
+
+.management-statistics-work-time-table thead tr:nth-child(2) th,
+:is(.management-statistics-work-time-table, .management-statistics-statuses-table) :is(th, td):nth-child(n+2) {
+  text-align: center;
+}
+
+.management-statistics-work-time-table thead tr th {
+  white-space: normal;
+  vertical-align: middle;
+}
+
+.management-statistics-statuses-table th {
+  font-size: 16px;
 }
 
 .management-statistics-user-name {

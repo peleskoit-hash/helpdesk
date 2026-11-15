@@ -179,7 +179,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 640, 390, 320]
       } else if (template === 'management_statistics') {
         await page.waitForSelector('#managementStatisticsWorkTimeTableBody tr');
         assert.ok(await page.locator('.management-statistics-work-time-table').evaluate(el => el.getBoundingClientRect().width >= 1294));
-        assert.equal(await page.locator('.management-statistics-work-time-table th').count(), 6);
+        assert.equal(await page.locator('.management-statistics-work-time-table th').count(), 7);
         assert.doesNotMatch(await page.locator('#managementStatisticsWorkTimeSummary').innerText(), /Общее время/);
         for (const selector of ['.management-statistics-summary', '.management-statistics-table-wrap']) {
           assert.equal(await page.locator(selector).first().evaluate(el => getComputedStyle(el).borderRadius), '16px');
@@ -328,6 +328,36 @@ for (const theme of ['light', 'dark']) for (const width of [1920, 1440, 390]) {
       await page.locator(`[data-statistics-tab="${tab}"]`).click();
       const section = page.locator(`[data-statistics-panel="${tab}"]`);
       await section.locator('tbody tr').waitFor();
+      const table = section.locator('table');
+      const columns = await table.evaluate(el => {
+        const cells = [...el.tBodies[0].rows[0].cells];
+        const [first, second] = el.tHead.rows;
+        const headers = second
+          ? [first.cells[0], ...second.cells, ...Array.from(first.cells).slice(2)]
+          : [...first.cells];
+        const bounds = cell => {
+          const { left, right } = cell.getBoundingClientRect();
+          return [left, right];
+        };
+        return {
+          cells: cells.map(bounds), headers: headers.map(bounds),
+          cellAlignment: cells.map(cell => getComputedStyle(cell).textAlign),
+          headerAlignment: headers.map(cell => getComputedStyle(cell).textAlign),
+          group: second ? bounds(first.cells[1]) : null,
+          headerFontSize: getComputedStyle(headers[0]).fontSize,
+        };
+      });
+      const count = tab === 'work-time' ? 6 : 5;
+      const alignment = ['left', ...Array(count - 1).fill('center')];
+      assert.deepEqual(columns.cellAlignment, alignment);
+      assert.deepEqual(columns.headerAlignment, alignment);
+      assert.deepEqual(columns.headers, columns.cells);
+      if (tab === 'work-time') {
+        assert.deepEqual(columns.group, [columns.cells[1][0], columns.cells[3][1]]);
+      } else {
+        assert.equal(columns.headerFontSize, '23px');
+        assert.deepEqual(columns.cells.map(([left, right]) => right - left), Array(5).fill(228));
+      }
       const geometry = await section.locator('.management-statistics-table-wrap').evaluate(el => {
         const table = el.querySelector('table'), rect = el.getBoundingClientRect(), outer = el.closest('.panel').getBoundingClientRect();
         return { width: rect.width, table: table.getBoundingClientRect().width, available: outer.width - 44,
@@ -366,12 +396,12 @@ test('status board disables rapid same-employee clicks while PATCH is pending', 
 
 
 test('status admin resource versions stay synchronized across templates and CSS imports', () => {
-  const cssVersion = '20261111-status-layout-v1';
+  const cssVersion = '20261115-statistics-layout-v1';
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const html = fs.readFileSync(path.join('api/app/templates', file), 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
-      const version = resource === 'styles.css' ? cssVersion : '20261111-status-source-v1';
+      const version = resource === 'styles.css' ? cssVersion : '20261115-statistics-shell-v1';
       for (const url of urls) assert.equal(url, `/static/${resource}?v=${version}`, file);
     }
   }
@@ -383,8 +413,8 @@ test('status admin resource versions stay synchronized across templates and CSS 
 
 for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
   const { page } = await setup(t, 'light', 1440, start);
-  assert.equal(await page.locator('link[href="/static/styles.css?v=20261111-status-layout-v1"]').count(), 1);
-  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261111-status-source-v1"]').count(), 1);
+  assert.equal(await page.locator('link[href="/static/styles.css?v=20261115-statistics-layout-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261115-statistics-shell-v1"]').count(), 1);
   await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
   if (start === '/tickets') {
     await page.locator('.sidebar a[href="/statuses"]').click();
@@ -401,7 +431,7 @@ for (const start of ['/statuses', '/tickets']) test(`status admin resources load
   for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
     const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
     assert.ok(matching.length > 0, resource);
-    const version = resource.endsWith('.css') ? '20261111-status-layout-v1' : '20261111-status-source-v1';
+    const version = resource.endsWith('.css') ? '20261115-statistics-layout-v1' : resource === 'app_shell.js' ? '20261115-statistics-shell-v1' : '20261111-status-source-v1';
     assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + version), matching.join(', '));
   }
 });

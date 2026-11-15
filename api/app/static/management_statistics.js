@@ -300,7 +300,6 @@
       return `
         <tr>
           ${userCellHtml(item)}
-          <td>${escapeHtml(durationLabel(item.offline_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.online_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.on_ticket_seconds))}</td>
           <td>${escapeHtml(durationLabel(item.waiting_seconds))}</td>
@@ -334,7 +333,6 @@
       const items = Array.isArray(payload?.items) ? payload.items : [];
       el.statusesSummary.innerHTML = summaryHtml([
         `Учтено времени: ${durationLabel(total.total_seconds)}`,
-        `Не в сети: ${durationLabel(total.offline_seconds)}`,
         `В сети: ${durationLabel(total.online_seconds)}`,
         `На заявке: ${durationLabel(total.on_ticket_seconds)}`,
         `В ожидании: ${durationLabel(total.waiting_seconds)}`,

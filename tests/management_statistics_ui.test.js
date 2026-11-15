@@ -206,14 +206,25 @@ test("management statistics route and navigation are registered", () => {
   assert.match(template, /data-statistics-tab="work-time">Время выполнения Заявок\/Задач/);
   assert.match(template, /data-statistics-tab="statuses">Статусы сотрудников/);
   assert.match(template, /Медианное значение — время, которое находится посередине выборки/);
-  assert.doesNotMatch(template, /<th scope="col">Всего<\/th>/);
+  assert.doesNotMatch(template, /Не в сети/);
+  const workTimeHeader = template.match(/management-statistics-work-time-table">[\s\S]*?<thead>([\s\S]*?)<\/thead>/)[1];
+  const headerRows = [...workTimeHeader.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map(([, row]) => row.trim().split(/\s*\n\s*/));
+  assert.deepEqual(headerRows, [
+    [
+      '<th scope="col" rowspan="2">Сотрудник</th>',
+      '<th scope="colgroup" colspan="3">Выполнено</th>',
+      '<th scope="col" rowspan="2">Среднее время выполнения</th>',
+      '<th scope="col" rowspan="2">Медианное значение</th>',
+    ],
+    ['<th scope="col">Заявок</th>', '<th scope="col">Задач</th>', '<th scope="col">Всего</th>'],
+  ]);
   const styles = fs.readFileSync("api/app/static/styles.css", "utf8");
   const v2 = fs.readFileSync("api/app/static/admin-pages-v2.css", "utf8");
   assert.match(v2, /data-shell-page="management-statistics"/);
   assert.match(v2, /grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
   assert.match(v2, /padding:\s*14px 16px 16px/);
   assert.match(styles, /#managementStatisticsWorkTimePanel:not\(\[hidden\]\),\s*#managementStatisticsStatusesPanel:not\(\[hidden\]\)\s*{[^}]*grid-row:\s*4;[^}]*align-self:\s*stretch;/s);
-  assert.match(styles, /\.management-statistics-work-time-table th:nth-child\(5\),[\s\S]*\.management-statistics-work-time-table th:nth-child\(7\),[\s\S]*width:\s*18\.16%;/);
+  assert.match(v2, /\.management-statistics-work-time-table \.statistics-completed-column\s*{\s*width:\s*148px;/);
 });
 
 test("defaults load all employees and work-time statistics for last 30 days", async () => {
@@ -440,7 +451,7 @@ test("statuses response renders durations inactive deleted and backend total", a
   const ui = await load();
   ui.tabs[1].fire("click");
   await settle();
-  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 2 д 2 ч</span><span>| Не в сети: 0 сек</span><span>| В сети: 1 д 1 ч</span><span>| На заявке: 1 ч 1 мин</span><span>| В ожидании: 1 мин 30 сек</span><span>| Обед: 45 сек</span>");
+  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 2 д 2 ч</span><span>| В сети: 1 д 1 ч</span><span>| На заявке: 1 ч 1 мин</span><span>| В ожидании: 1 мин 30 сек</span><span>| Обед: 45 сек</span>");
   assert.match(ui.el.StatusesTableBody.innerHTML, /Agent A/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /1 мин 30 сек/);
   assert.match(ui.el.StatusesTableBody.innerHTML, /1 ч 1 мин/);
@@ -450,8 +461,9 @@ test("statuses response renders durations inactive deleted and backend total", a
   assert.match(ui.el.StatusesTableBody.innerHTML, /deleted-agent/);
   assert.equal(ui.el.StatusesEmpty.hidden, true);
 
-  const totalCells = ui.el.StatusesTableBody.innerHTML.match(/<td>2 д 2 ч<\/td>/g) || [];
-  assert.equal(totalCells.length, 0);
+  const rows = [...ui.el.StatusesTableBody.innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)];
+  assert.deepEqual(rows.map(([, row]) => (row.match(/<td>/g) || []).length), [5, 5, 5]);
+  assert.doesNotMatch(ui.el.StatusesTableBody.innerHTML, /<td>(?:2 д 2 ч|1 д 1 ч)<\/td>/);
 });
 
 
@@ -478,7 +490,7 @@ test("statuses empty response shows zero summary and empty state", async () => {
   } });
   ui.tabs[1].fire("click");
   await settle();
-  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 0 сек</span><span>| Не в сети: 0 сек</span><span>| В сети: 0 сек</span><span>| На заявке: 0 сек</span><span>| В ожидании: 0 сек</span><span>| Обед: 0 сек</span>");
+  assert.equal(ui.el.StatusesSummary.innerHTML, "<span>Учтено времени: 0 сек</span><span>| В сети: 0 сек</span><span>| На заявке: 0 сек</span><span>| В ожидании: 0 сек</span><span>| Обед: 0 сек</span>");
   assert.equal(ui.el.StatusesEmpty.hidden, false);
   assert.equal(ui.el.StatusesEmpty.textContent, "За выбранный период данных по статусам нет");
 });

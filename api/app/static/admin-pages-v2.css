@@ -162,11 +162,12 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .management-statistics-table-wrap { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; box-sizing: border-box; }
   & .management-statistics-table :is(th, td) { overflow-wrap: normal; word-break: normal; }
   & .management-statistics-work-time-table { width: 1294px; min-width: 1294px; table-layout: fixed; }
-  & .management-statistics-work-time-table :is(th, td):nth-child(1) { width: 302px; }
-  & .management-statistics-work-time-table :is(th, td):nth-child(n+2):nth-child(-n+4) { width: 148px; }
-  & .management-statistics-work-time-table :is(th, td):nth-child(n+5) { width: 274px; }
+  & .management-statistics-work-time-table .statistics-employee-column { width: 302px; }
+  & .management-statistics-work-time-table .statistics-completed-column { width: 148px; }
+  & .management-statistics-work-time-table .statistics-duration-column { width: 274px; }
   & .management-statistics-statuses-table { width: 1140px; min-width: 1140px; table-layout: fixed; }
-  & .management-statistics-statuses-table :is(th, td) { width: 190px; }
+  & .management-statistics-statuses-table :is(th, td) { width: 228px; }
+  & .management-statistics-statuses-table th { font-size: 23px; }
   & .status-page-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 21px; border-bottom: 1px solid var(--desk-border); flex-shrink: 0; }
   & .status-page-tabs .active { background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent); }
   & :is(#statusBoardPanel, #statusLogPanel)[hidden] { display: none; }
@@ -203,6 +204,10 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
     background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
   }
   & .management-statistics-table th { background: var(--desk-soft); }
+  & .management-statistics-work-time-table th[scope="colgroup"] {
+    background: var(--desk-tint);
+    color: var(--desk-on-tint);
+  }
   @container (min-width: 601px) and (max-width: 1155px) {
     & .status-log-table :is(th, td):nth-child(n) { padding-left: 4px; padding-right: 4px; }
   }
