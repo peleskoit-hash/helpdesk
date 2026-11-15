@@ -56,7 +56,7 @@ DELIVERY_KIND_NEW = "new_assignment"
 DELIVERY_KIND_TRANSFER_TO = "transfer_to_agent"
 DELIVERY_KIND_TRANSFER_FROM = "transfer_from_agent"
 ADMINISTRATIVE_CONTROL_LABEL = "Административный контроль"
-BUSINESS_RECIPIENT_ROLES = {"agent", "trainee"}
+BUSINESS_RECIPIENT_ROLES = {"agent"}
 _EMPTY = "не задано"
 _TOKEN_RE = re.compile(r"\[[^\[\]\n]+\]")
 
@@ -427,8 +427,9 @@ def _media_group_message_body(rows: list[tuple[TicketAttachment, TicketMessage]]
 def _message_author(db: Session, ticket: Ticket, message: TicketMessage | None, *, html_enabled: bool) -> str:
     if message is None:
         return _EMPTY
-    if message.author_user_id:
-        return _user_name(db.get(User, message.author_user_id), html_enabled=html_enabled)
+    if message.author_user_id or message.author_name_snapshot:
+        author = db.get(User, message.author_user_id) if message.author_user_id else None
+        return _value(author.full_name if author else message.author_name_snapshot, html_enabled=html_enabled)
     if message.message_type == MessageType.CLIENT.value:
         return _author_name(db, ticket, html_enabled=html_enabled)
     return "Система"

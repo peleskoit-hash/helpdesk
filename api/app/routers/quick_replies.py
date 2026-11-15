@@ -36,7 +36,7 @@ class QuickReplyOut(BaseModel):
     id: str
     short_title: str
     body: str
-    author_user_id: str
+    author_user_id: str | None
     author_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -131,7 +131,8 @@ def _reply_saved_file_ids(reply: QuickReply) -> list[str]:
     return _dedupe_saved_file_ids(reply.saved_file_ids_json if isinstance(reply.saved_file_ids_json, list) else [])
 
 
-def _authors_by_id(db: Session, author_ids: set[str]) -> dict[str, str]:
+def _authors_by_id(db: Session, author_ids: set[str | None]) -> dict[str, str]:
+    author_ids = {author_id for author_id in author_ids if author_id}
     if not author_ids:
         return {}
     users = db.execute(select(User).where(User.id.in_(author_ids))).scalars().all()
@@ -151,7 +152,7 @@ def _out(
         short_title=reply.short_title,
         body=reply.body,
         author_user_id=reply.author_user_id,
-        author_name=authors.get(reply.author_user_id),
+        author_name=authors.get(reply.author_user_id) or reply.author_name_snapshot,
         created_at=reply.created_at,
         updated_at=reply.updated_at,
         can_edit=_can_edit(user, reply),

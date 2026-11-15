@@ -26,7 +26,7 @@ OTHER_HIDDEN_PREFIXES = (
 )
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "admin", "chiki_piki"])
+@pytest.mark.parametrize("role", ["agent", "admin", "chiki_piki"])
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
 def test_history_exposes_old_and_new_wrong_problem_notices_only(role, workflow):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)

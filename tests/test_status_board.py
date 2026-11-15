@@ -151,8 +151,8 @@ def test_status_board_returns_avatar_contract_and_preserves_existing_fields():
     without_avatar = _user(
         session,
         company_id=company.id,
-        full_name="Tim Trainee",
-        role="trainee",
+        full_name="Tim second_agent",
+        role="agent",
         availability_status="lunch",
     )
 
@@ -170,9 +170,9 @@ def test_status_board_returns_avatar_contract_and_preserves_existing_fields():
         "avatar_present": True,
         "avatar_url": f"/api/v1/users/{with_avatar.id}/avatar",
     }
-    assert payload[1]["full_name"] == "Tim Trainee"
-    assert payload[1]["role"] == "trainee"
-    assert payload[1]["role_label"] == "Стажёр"
+    assert payload[1]["full_name"] == "Tim second_agent"
+    assert payload[1]["role"] == "agent"
+    assert payload[1]["role_label"] == "Тех. поддержка"
     assert payload[1]["availability_status"] == "lunch"
     assert payload[1]["updated_at"] == without_avatar.updated_at
     assert payload[1]["avatar_present"] is False
@@ -183,14 +183,14 @@ def test_status_board_employee_scope_rules_are_unchanged():
     session = _session()
     company = _company(session)
     agent = _user(session, company_id=company.id, full_name="Beta Agent", role="agent")
-    trainee = _user(session, company_id=company.id, full_name="Alpha Trainee", role="trainee")
+    second_agent = _user(session, company_id=company.id, full_name="Alpha second_agent", role="agent")
     _user(session, company_id=company.id, full_name="Admin User", role="admin")
     _user(session, company_id=company.id, full_name="Chiki User", role="chiki_piki")
     _user(session, company_id=company.id, full_name="Inactive Agent", role="agent", is_active=False)
 
     result = users_router.status_board(db=session, current_user=_admin_user())
 
-    assert [item.id for item in result] == [agent.id, trainee.id]
+    assert [item.id for item in result] == [second_agent.id, agent.id]
 
 
 def test_regular_agent_endpoint_does_not_expose_status_board_avatar_fields():
@@ -236,7 +236,7 @@ def test_agents_endpoint_orders_by_created_at_then_id():
         id="agent-a",
         company_id=company.id,
         full_name="Z Same",
-        role="trainee",
+        role="agent",
         created_at=datetime(2024, 1, 1, 10, 0, 0),
     )
 
@@ -251,7 +251,7 @@ def test_ticket_counts_preserve_global_semantics_and_return_admin_by_assignee():
     company = _company(session)
     client = _client_record(session, company_id=company.id)
     agent_a = _user(session, id="agent-a", company_id=company.id, full_name="Agent A", role="agent")
-    agent_b = _user(session, id="agent-b", company_id=company.id, full_name="Agent B", role="trainee")
+    agent_b = _user(session, id="agent-b", company_id=company.id, full_name="Agent B", role="agent")
     inactive = _user(session, id="agent-inactive", company_id=company.id, full_name="Inactive", role="agent", is_active=False)
     _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent_a.id, status=TicketStatus.NEW.value)
     _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent_a.id, status=TicketStatus.PENDING.value, is_frozen=True)
@@ -308,7 +308,7 @@ def test_ticket_counts_real_admin_impersonation_gets_unrestricted_by_assignee():
     client = _client_record(session, company_id=company.id)
     admin = _user(session, id="admin-user", company_id=company.id, full_name="Admin", role="admin")
     agent_a = _user(session, id="agent-a", company_id=company.id, full_name="Agent A", role="agent")
-    agent_b = _user(session, id="agent-b", company_id=company.id, full_name="Agent B", role="trainee")
+    agent_b = _user(session, id="agent-b", company_id=company.id, full_name="Agent B", role="agent")
     _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent_a.id, status=TicketStatus.NEW.value)
     _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent_b.id, status=TicketStatus.NEW.value)
     _ticket(session, company_id=company.id, client_id=client.id, assignee_id=agent_b.id, status=TicketStatus.PENDING.value, is_frozen=True)

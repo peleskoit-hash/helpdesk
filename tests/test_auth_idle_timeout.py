@@ -11,14 +11,32 @@ def session_case(monkeypatch):
     clock = [1_800_000_000]
     monkeypatch.setattr(auth, "time", SimpleNamespace(time=lambda: clock[0]))
     monkeypatch.setattr(auth.settings, "disable_admin_idle_timeout", False)
-    user = SimpleNamespace(id="staff", role="agent", is_active=True)
+    user = SimpleNamespace(id="staff", role="agent", is_active=True, auth_version=0)
     monkeypatch.setattr(auth, "_get_user_by_id", lambda db, user_id: user)
     request = Request({"type": "http", "session": {}})
     auth.login_user(request, user)
     return request, user, clock
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "admin", "chiki_piki"])
+@pytest.mark.parametrize("legacy", [True, False])
+def test_session_auth_version_revokes_old_cookie(session_case, legacy):
+    request, user, _ = session_case
+    assert request.session[auth.SESSION_AUTH_VERSION_KEY] == 0
+    if legacy:
+        del request.session[auth.SESSION_AUTH_VERSION_KEY]
+    assert auth.get_current_user(request, db=None).id == user.id
+    user.auth_version = 1
+    with pytest.raises(HTTPException) as exc:
+        auth.get_current_user(request, db=None)
+    assert exc.value.status_code == 401
+    assert exc.value.detail["error"]["code"] == "session_revoked"
+    assert request.session == {}
+    auth.login_user(request, user)
+    assert request.session[auth.SESSION_AUTH_VERSION_KEY] == 1
+    assert auth.get_current_user(request, db=None).id == user.id
+
+
+@pytest.mark.parametrize("role", ["agent", "admin", "chiki_piki"])
 @pytest.mark.parametrize("idle_seconds", [12 * 60 * 60 - 1, 12 * 60 * 60, 12 * 60 * 60 + 1])
 def test_staff_session_twelve_hour_idle_boundary(session_case, role, idle_seconds):
     request, user, clock = session_case
@@ -37,7 +55,7 @@ def test_staff_session_twelve_hour_idle_boundary(session_case, role, idle_second
         assert request.session[auth.SESSION_LOGIN_TS_KEY] == login_ts
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "admin", "chiki_piki"])
+@pytest.mark.parametrize("role", ["agent", "admin", "chiki_piki"])
 def test_idle_timeout_exemption_still_applies_only_to_admin(session_case, monkeypatch, role):
     request, user, clock = session_case
     user.role = role

@@ -100,3 +100,58 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
  }
  assert.deepEqual(errors,[]);
 });
+
+
+test('employee deletion starts only after the three dialogs', async t => {
+ const page = await browser.newPage();
+ t.after(() => page.close());
+ const calls = [];
+ let deleted = false;
+ await page.route('**/*', async route => {
+  const request = route.request();
+  const pathname = new URL(request.url()).pathname;
+  if (pathname === '/settings/users') {
+   return route.fulfill({contentType:'text/html', body:fs.readFileSync('api/app/templates/settings_users.html','utf8')});
+  }
+  if (pathname === '/static/sidebar.js') {
+   return route.fulfill({contentType:'text/javascript', body:'window.HelpdeskSidebar = {init: async () => {}};'});
+  }
+  if (pathname === '/static/settings_users.js') {
+   return route.fulfill({contentType:'text/javascript', body:fs.readFileSync('api/app/static/settings_users.js','utf8')});
+  }
+  if (pathname.startsWith('/static/')) {
+   const file = path.resolve('api/app', pathname.slice(1));
+   if (pathname.endsWith('.css') && fs.existsSync(file)) return route.fulfill({path:file,contentType:'text/css'});
+   return route.fulfill({contentType:'text/javascript', body:''});
+  }
+  calls.push([request.method(), pathname]);
+  let result = {};
+  if (pathname === '/api/v1/settings/users') result = deleted ? [] : [{id:'staff', full_name:'Иванов Иван', role:'agent'}];
+  if (pathname.endsWith('/staff/deletion')) result = {operation_id:'op', status:'queued', stage:'precheck'};
+  if (pathname.endsWith('/user-deletion-operations/op')) {
+   deleted = true;
+   result = {operation_id:'op', status:'succeeded', stage:'user_record'};
+  }
+  return route.fulfill({json:result});
+ });
+ await page.goto('http://desk.test/settings/users');
+ await page.locator('.settings-user-row').click();
+ await page.locator('#deleteUserBtn').click();
+ await page.getByRole('dialog', {name:'Вы уверены?', exact:true}).waitFor();
+ await page.locator('#continueDeleteUserBtn').click();
+ await page.getByRole('dialog', {name:'Вы точно уверены?', exact:true}).waitFor();
+ await page.locator('#confirmPermanentDeletionBtn').click();
+ await page.locator('#userDeletionProgressModal').waitFor();
+ assert.equal(await page.locator('#userDeletionName').textContent(), 'Иванов Иван');
+ assert.equal(await page.locator('#userDeletionStages li').count(), 5);
+ assert.equal(calls.filter(([method]) => method === 'POST').length, 0);
+ assert.equal(await page.locator('#startUserDeletionBtn').isVisible(), true);
+ await page.locator('#startUserDeletionBtn').click();
+ await page.getByText('Сотрудник удалён', {exact:true}).waitFor();
+ assert.equal(await page.locator('#startUserDeletionBtn').isVisible(), false);
+ assert.equal(await page.locator('#userDeletionDescription').textContent(), 'Операция завершена');
+ assert.deepEqual(await page.locator('#userDeletionStages li span').allTextContents(), ['✓', '✓', '✓', '✓', '✓']);
+ assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST','/api/v1/settings/users/staff/deletion']]);
+ assert.ok(calls.some(([method, url]) => method === 'GET' && url.endsWith('/user-deletion-operations/op')));
+ assert.equal(await page.locator('.settings-user-row').count(), 0);
+});

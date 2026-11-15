@@ -88,7 +88,7 @@ def test_admin_delivery_paths(monkeypatch, tmp_path, action, kind, with_reply, s
 
 
 @pytest.mark.parametrize("action", ["close", "delete"])
-@pytest.mark.parametrize("role", ["agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["agent", "chiki_piki"])
 def test_admin_delivery_flag_does_not_grant_access(action, role):
     db = _session()
     company = _company(db)

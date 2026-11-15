@@ -21,7 +21,7 @@
 1. Администратор создаёт определение (`Definition`) — немедленное, отложенное или повторяющееся.
 2. Немедленный API или планировщик выбирает **конкретный UTC-момент** запуска.
 3. Сервис `materialize_internal_task()` создаёт `Occurrence`, обычный `Ticket`, номер и начальные сообщения; выполняет назначение.
-4. Агент/стажёр обрабатывает `Ticket` обычными средствами staff-интерфейса.
+4. Агент обрабатывает `Ticket` обычными средствами staff-интерфейса.
 5. При штатном завершении при выполнении условий отправляется **сотрудническое** уведомление ответственному администратору, но не клиентское сообщение техническому клиенту.
 
 `Occurrence` — принципиальная граница идемпотентности и сохранности истории. Она хранит `title_snapshot`, `description_snapshot`, `creator_admin_id`, `responsible_admin_id`, `display_author`, `effective_assignment_mode`, `effective_assignee_user_id`, `notify_on_completion`, `deadline_at_utc`, `materialized_at_utc`. При редактировании `Definition` ранее созданные снимки не переписываются. При этом **текущий исполнитель** читается отдельно из `Ticket.assignee_id`: он может измениться после запуска и не обязан совпадать с `effective_assignee_user_id`.
@@ -59,7 +59,7 @@
 
 | Настройка `Definition` | Проверки при сохранении API | Поведение в момент **материализации** |
 |---|---|---|
-| `direct` | Обязателен `assignee_user_id` сотрудника **той же компании** с ролью `agent` или `trainee`; API не отвергает его лишь за `is_active=false`/offline | Если сотрудник существует, активен, роль и компания подходят — назначить напрямую **даже offline**. Иначе экземпляр переключается на `distribution`, **исходный `Definition` остаётся `direct`** |
+| `direct` | Обязателен `assignee_user_id` сотрудника **той же компании** с ролью `agent`; API не отвергает его лишь за `is_active=false`/offline | Если сотрудник существует, активен, роль и компания подходят — назначить напрямую **даже offline**. Иначе экземпляр переключается на `distribution`, **исходный `Definition` остаётся `direct`** |
 | `distribution` | `assignee_user_id` должен быть `null` | `choose_online_agent()` выбирает доступного online-агента по существующей логике назначения; если никого нет, задание остаётся `unassigned`, добавляется system-сообщение «На распределении» |
 
 При автоматическом распределении значение `Occurrence.effective_assignee_user_id` в данном коде остаётся `null`, даже если `Ticket.assignee_id` уже получил online-агента: `effective_assignee_user_id` отражает принятую при старте **прямую** кандидатуру, а не все последующие назначения. Для актуального адресата использовать `Ticket.assignee_id`/`current_assignee` из overview. Сервис распределяет **только вновь созданный** Ticket; он не запускает здесь массовую раздачу старой очереди (`test_distribution_assigns_only_new_internal_ticket_and_leaves_existing_queue_untouched`).
@@ -68,12 +68,12 @@
 
 ## 4. Административный API и обзор
 
-Общий префикс — `/api/v1/management/internal-tasks`. Все маршруты вызывают `_require_admin`, получают текущую запись администратора и ограничивают поиск компании `company_id`. Это **не** публичный API для агентов/стажёров.
+Общий префикс — `/api/v1/management/internal-tasks`. Все маршруты вызывают `_require_admin`, получают текущую запись администратора и ограничивают поиск компании `company_id`. Это **не** публичный API для агентов.
 
 | Метод и путь от префикса | Назначение и существенные условия |
 |---|---|
 | `POST /` (у роутера — пустой суффикс) | Немедленно создаёт `Definition` + `Occurrence` + `Ticket`; возвращает их ID, флаг `created`, исходный и эффективный режим назначения; без клиентского ключа идемпотентности |
-| `GET /options` | Списки `assignees` (`agent`, `trainee`) и `admins` **своей компании**, включая неактивных с атрибутами `is_active/availability_status`; `current_admin_id`, `app_timezone` |
+| `GET /options` | Списки `assignees` (`agent`) и `admins` **своей компании**, включая неактивных с атрибутами `is_active/availability_status`; `current_admin_id`, `app_timezone` |
 | `GET /overview?scope=all\|mine&limit=…` | Четыре независимых массива `active`, `scheduled`, `completed`, `recurring`; `scope` только `all/mine`, `limit` 1–300, по умолчанию 100 |
 | `POST /scheduled` | Сохранить будущий одноразовый запуск, без немедленного Ticket |
 | `PATCH /scheduled/{definition_id}` | Изменить **только активное ещё не материализованное** расписание; дата запуска должна остаться в будущем; creator сохраняется |

@@ -1,18 +1,19 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth import CurrentUser, get_current_user, hash_password, is_admin
+from ..auth import CurrentUser, get_current_user, hash_password, increment_auth_version, is_admin
 from ..db import get_db
-from ..models import Company, TelegramNotificationAccount, User
+from ..models import Company, TelegramNotificationAccount, User, UserDeletionOperation
 from ..schemas import SettingsUserCreate, SettingsUserOut, SettingsUserUpdate
 from ..services import telegram_employee_binding
 from ..services.statistics_lifecycle import initialize_user_status_history, sync_user_status_history_after_profile_update
 from ..services.telegram_employee_binding import TelegramBindingOperationError
+from ..services.user_deletion import format_deleted_employee_name, run_user_deletion_operation
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -20,7 +21,6 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 ROLE_LABELS = {
     "admin": "Администратор",
     "agent": "Тех. поддержка",
-    "trainee": "Стажёр",
     "chiki_piki": "Call Center Observer",
 }
 
@@ -287,6 +287,7 @@ def update_user(
     if target is None:
         _error(404, "user_not_found", "Пользователь не найден")
 
+    previous_login = target.login
     previous_role = target.role
     previous_is_active = target.is_active
     previous_availability_status = target.availability_status
@@ -303,14 +304,19 @@ def update_user(
         _ensure_unique_login(db, login, exclude_user_id=target.id)
         target.login = login
         target.email = f"{login}@local.helpdesk"
-    if payload.password is not None and payload.password.strip():
+    password_changed = bool(payload.password and payload.password.strip())
+    if password_changed:
         target.password_hash = hash_password(payload.password)
     if payload.role is not None:
         target.role = payload.role
     if payload.is_active is not None:
         target.is_active = payload.is_active
-    if payload.availability_status is not None:
+    if not previous_is_active or not target.is_active:
+        target.availability_status = "offline"
+    elif payload.availability_status is not None:
         target.availability_status = payload.availability_status
+    if target.login != previous_login or password_changed or (previous_is_active and not target.is_active):
+        increment_auth_version(target)
     if payload.legacy_ticket_count is not None:
         target.legacy_ticket_count = max(0, int(payload.legacy_ticket_count))
     sync_user_status_history_after_profile_update(
@@ -330,3 +336,74 @@ def update_user(
         select(TelegramNotificationAccount).where(TelegramNotificationAccount.bound_user_id == target.id)
     ).scalar_one_or_none()
     return _user_out_with_notification(target, notification_account)
+
+
+class UserDeletionOut(BaseModel):
+    operation_id: str
+    status: str
+    stage: str
+    error_message: str | None
+
+
+def _deletion_out(operation: UserDeletionOperation) -> UserDeletionOut:
+    return UserDeletionOut(
+        operation_id=operation.id, status=operation.status, stage=operation.stage,
+        error_message=operation.error_message,
+    )
+
+
+@router.post("/users/{user_id}/deletion", response_model=UserDeletionOut, status_code=202)
+def start_user_deletion(
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    admin = db.get(User, user.id)
+    admin_company_id = admin.company_id
+    target = db.scalar(
+        select(User)
+        .where(User.id == user_id, User.company_id == admin_company_id)
+        .with_for_update()
+    )
+    if target is None:
+        _error(404, "user_not_found", "Пользователь не найден")
+    if target.id == admin.id:
+        _error(409, "cannot_delete_self", "Нельзя удалить собственную учётную запись.")
+
+    active = db.scalar(select(UserDeletionOperation).where(
+        UserDeletionOperation.target_user_id == target.id,
+        UserDeletionOperation.company_id == admin_company_id,
+        UserDeletionOperation.status.in_(("queued", "running")),
+    ))
+    if active is not None:
+        return _deletion_out(active)
+
+    operation = UserDeletionOperation(
+        id=str(uuid.uuid4()), company_id=admin_company_id, target_user_id=target.id,
+        target_full_name=format_deleted_employee_name(target.full_name), requested_by_user_id=admin.id,
+        status="queued", stage="precheck",
+    )
+    db.add(operation)
+    response = _deletion_out(operation)
+    db.commit()
+    background_tasks.add_task(run_user_deletion_operation, operation.id)
+    return response
+
+
+@router.get("/user-deletion-operations/{operation_id}", response_model=UserDeletionOut)
+def get_user_deletion(
+    operation_id: str,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    admin = db.get(User, user.id)
+    operation = db.scalar(select(UserDeletionOperation).where(
+        UserDeletionOperation.id == operation_id,
+        UserDeletionOperation.company_id == admin.company_id,
+    ))
+    if operation is None:
+        _error(404, "operation_not_found", "Операция не найдена")
+    return _deletion_out(operation)

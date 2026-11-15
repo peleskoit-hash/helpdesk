@@ -75,7 +75,7 @@ def test_initial_message_at_ticket_creation_is_counted(case):
     assert listing(case).items[0].unread_count == 1
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_new_messages_after_previous_open_reappear_without_changing_seen_flag(case, role):
     user = _current_user(case.agent.id, role)
     routes.get_ticket(case.ticket.id, db=case.db, user=user)

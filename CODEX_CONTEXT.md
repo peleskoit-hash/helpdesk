@@ -66,7 +66,6 @@ python tools/check_staged_encoding.py
 
 - `admin` - полный доступ и настройки.
 - `agent` - рабочий доступ к своим заявкам/задачам, участвует в автоназначении.
-- `trainee` - как agent, но не автоназначается.
 - `chiki_piki` - read-only observer по `ClientProfile.destination == "Колл Центр"`.
 
 Подробнее: `docs/ROLES_AND_PERMISSIONS.md`.

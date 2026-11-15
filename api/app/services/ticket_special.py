@@ -78,7 +78,7 @@ def _handle_special_assignment(
     if not ticket.is_special:
         return False
 
-    if assignee.role in {"agent", "trainee"}:
+    if assignee.role == "agent":
         ticket.is_special = False
         ticket.special_assignee_id = None
         ticket.special_at = None
@@ -112,5 +112,5 @@ def _handle_special_assignment(
         )
         return True
 
-    error_fn(409, "special_invalid_assignee", "У особой заявки ответственный может быть только администратором, сотрудником или стажёром")
+    error_fn(409, "special_invalid_assignee", "У особой заявки ответственный может быть только администратором, сотрудником")
     return True

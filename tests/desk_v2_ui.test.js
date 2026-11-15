@@ -2049,7 +2049,7 @@ for (const theme of ['light', 'dark']) test(`type badge palette matches legend, 
   assert.equal(changed[0][1], 'rgb(17, 34, 51)'); assert.deepEqual(changed[0], changed[1], 'both locations use the same palette variable');
 });
 
-for (const theme of ['light', 'dark']) for (const role of ['agent', 'trainee']) test(`task panel uses shared V2 toggle and preserves preference lifecycle: ${theme}, ${role}`, async t => {
+for (const theme of ['light', 'dark']) for (const role of ['agent']) test(`task panel uses shared V2 toggle and preserves preference lifecycle: ${theme}, ${role}`, async t => {
   const {page, preferences, requests} = await setup(t, {width: 1366, height: 900, theme, role, pageName: 'tickets'});
   const columns = JSON.stringify(preferences.ticket_list_columns.filter(column => column.key !== 'assignee'));
   const toggle = page.locator('#taskPanelEnabledInput');
@@ -2402,7 +2402,7 @@ for (const theme of ['light', 'dark']) for (const tab of ['active', 'closed']) {
 }
 
 
-for (const role of ['agent', 'trainee']) for (const tab of ['active', 'closed', 'frozen']) {
+for (const role of ['agent']) for (const tab of ['active', 'closed', 'frozen']) {
   test(`closed unread list emphasis: ${role}, ${tab}`, async t => {
     const ticketRows = [];
     for (const workflow_type of ['ticket', 'task']) for (const assignee_id of [user.id, 'other-agent']) {
@@ -2458,7 +2458,7 @@ test('unread fix list resource loads on direct and SPA entry', async t => {
 });
 
 
-for (const role of ['admin', 'agent', 'trainee']) for (const width of [1920, 1366, 1024, 390]) for (const theme of ['light','dark']) for (const workflowType of ['ticket','task']) {
+for (const role of ['admin', 'agent']) for (const width of [1920, 1366, 1024, 390]) for (const theme of ['light','dark']) for (const workflowType of ['ticket','task']) {
   test(`inline task panel header: ${role} ${width} ${theme} ${workflowType}`, async t => {
     const items = Array.from({length: 12}, (_, i) => ({id:`demo-${i}`,subject:'Длинное название задачи '.repeat(8)+i,has_unread:i%2===0}));
     const {page,preferences,requests} = await setup(t, {width,height:1080,theme,role,workflowType,pageName:'tickets',taskPanelItems:items});
@@ -2601,7 +2601,7 @@ for(const width of [1920,1366,1024,390]) for(const workflowType of ['ticket','ta
 }
 
 
-for(const role of ['agent','trainee']) test(`task panel cache paints before slow SPA requests: ${role}`,async t=>{
+for(const role of ['agent']) test(`task panel cache paints before slow SPA requests: ${role}`,async t=>{
   const {page,requests}=await setup(t,{width:1366,height:900,theme:'dark',role,pageName:'tickets'});
   await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
   assert.equal(requests.filter(r=>r.path.endsWith('/task-panel')).length,1);

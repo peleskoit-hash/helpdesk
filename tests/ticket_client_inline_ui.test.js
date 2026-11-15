@@ -718,7 +718,7 @@ test('switching client creates its own mask and clears the previous reveal', asy
 });
 
 
-for (const role of ['admin', 'agent', 'trainee', 'chiki_piki']) {
+for (const role of ['admin', 'agent', 'chiki_piki']) {
   test(`${role}: Bitrix password focus respects reveal permission`, async () => {
     const f = fixture({ savedPassword: true });
     f.ctx.state.role = role;

@@ -85,7 +85,7 @@ def test_special_move_types_messages_and_links(monkeypatch, kind, status):
 
 
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
-@pytest.mark.parametrize("role", ["agent", "trainee", "chiki_piki", "admin"])
+@pytest.mark.parametrize("role", ["agent", "chiki_piki", "admin"])
 def test_special_permissions_and_closed_rejection(workflow, role):
     db = _session()
     company = _company(db)
@@ -101,7 +101,7 @@ def test_special_permissions_and_closed_rejection(workflow, role):
 
 
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
-@pytest.mark.parametrize("new_role", ["agent", "trainee", "admin"])
+@pytest.mark.parametrize("new_role", ["agent", "admin"])
 def test_special_assignment_messages_name_type(workflow, new_role):
     db = _session()
     company = _company(db)

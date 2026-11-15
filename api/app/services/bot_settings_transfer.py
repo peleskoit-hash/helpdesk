@@ -328,7 +328,7 @@ def _remap_button(row, files, users, staff):
         if row[field] is not None:
             row[field] = users[row[field]]
     fixed = staff.get(row["fixed_assignee_user_id"])
-    if fixed and (fixed.role not in {"admin", "agent", "trainee"} or row["fixed_assignee_enabled"] and not fixed.is_active):
+    if fixed and (fixed.role not in {"admin", "agent"} or row["fixed_assignee_enabled"] and not fixed.is_active):
         raise BotSettingsTransferError("invalid_fixed_assignee")
     return row
 

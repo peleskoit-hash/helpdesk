@@ -182,7 +182,7 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_
 def _can_share_staff_preloads(ticket: Ticket, user: CurrentUser) -> bool:
     workflow = ticket.workflow_type or TicketWorkflowType.TICKET.value
     return workflow in {TicketWorkflowType.TICKET.value, TicketWorkflowType.TASK.value} and (
-        user.role == "admin" or (user.role in {"agent", "trainee"} and user.id == ticket.assignee_id)
+        user.role == "admin" or (user.role == "agent" and user.id == ticket.assignee_id)
     )
 
 
@@ -764,7 +764,7 @@ def assign_tickets(payload: AssignTicketsPayload, db: Session = Depends(get_db),
             select(User).where(
                 and_(
                     User.id == payload.assignee_id,
-                    User.role.in_(["admin", "agent", "trainee"]),
+                    User.role.in_(["admin", "agent"]),
                     User.is_active.is_(True),
                 )
             )
@@ -1141,7 +1141,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
 
     msg_stmt = select(TicketMessage).where(TicketMessage.ticket_id == t.id).order_by(asc(TicketMessage.created_at))
     messages = db.execute(msg_stmt).scalars().all()
-    if user.role in {"agent", "trainee", "chiki_piki"}:
+    if user.role in {"agent", "chiki_piki"}:
         messages = [
             message for message in messages
             if message.message_type != MessageType.SYSTEM.value
@@ -1218,10 +1218,10 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         freeze_until=t.freeze_until,
         closed_at=t.closed_at,
         assignee_id=t.assignee_id,
-        assignee_name=assignee.full_name if assignee else None,
+        assignee_name=assignee.full_name if assignee else t.assignee_name_snapshot,
         is_special=bool(t.is_special),
         special_assignee_id=t.special_assignee_id,
-        special_assignee_name=special_assignee.full_name if special_assignee else None,
+        special_assignee_name=special_assignee.full_name if special_assignee else t.special_assignee_name_snapshot,
         instruction_title=None if user.role == "chiki_piki" else instruction_title,
         instruction_text=None if user.role == "chiki_piki" else instruction_text,
         wrong_problem_used=bool(t.wrong_problem_used_at),
@@ -1237,6 +1237,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         auto_close_due_at=t.auto_close_due_at,
         auto_closed_at=t.auto_closed_at,
         closed_by_user_id=t.closed_by_user_id,
+        closed_by_name_snapshot=t.closed_by_name_snapshot,
         onsite_triggered=bool(t.onsite_triggered),
         call_center_employee_lookup_at=t.call_center_employee_lookup_at,
         call_center_internal_number=t.call_center_internal_number,
@@ -1268,7 +1269,8 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
                 "message_type": m.message_type,
                 "body": m.body,
                 "author_user_id": m.author_user_id,
-                "author_name": authors.get(m.author_user_id) if m.author_user_id else None,
+                "author_name": authors.get(m.author_user_id) or m.author_name_snapshot,
+                "author_name_snapshot": m.author_name_snapshot,
                 "telegram_message_id": m.telegram_message_id,
                 "message_status": m.message_status or "normal",
                 "status_note": m.status_note,

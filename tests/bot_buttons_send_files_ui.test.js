@@ -243,12 +243,12 @@ test('ticket page task panel mirrors list behavior with short card links', () =>
   assert.match(stateSource, /taskPanelDropdownOpen: false/);
 
   const roleSource = sourceBetween(ticketPageSource, 'function canUseTaskPanel', 'function taskPanelTicketHref');
-  assert.match(roleSource, /return role === "agent" \|\| role === "trainee"/);
+  assert.match(roleSource, /return role === "agent"/);
   assert.doesNotMatch(roleSource, /admin|chiki_piki/);
   const roleContext = vm.createContext({ state: { role: 'agent' } });
   vm.runInContext(`${roleSource}\nglobalThis.canUseTaskPanel = canUseTaskPanel;`, roleContext);
   assert.equal(roleContext.canUseTaskPanel('agent'), true);
-  assert.equal(roleContext.canUseTaskPanel('trainee'), true);
+  assert.equal(roleContext.canUseTaskPanel('chiki_piki'), false);
   assert.equal(roleContext.canUseTaskPanel('admin'), false);
   assert.equal(roleContext.canUseTaskPanel('chiki_piki'), false);
 

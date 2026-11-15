@@ -201,7 +201,7 @@ def test_management_completed_stats_rejects_invalid_range_and_non_admin():
     session.add(company)
     admin = _user(session, company, "admin-a", role="admin")
     agent = _user(session, company, "agent-a")
-    trainee = _user(session, company, "trainee-a", role="trainee")
+    second_agent = _user(session, company, "second_agent-a", role="agent")
     readonly = _user(session, company, "chiki-a", role="chiki_piki")
     session.commit()
 
@@ -211,6 +211,6 @@ def test_management_completed_stats_rejects_invalid_range_and_non_admin():
     )
 
     assert invalid_range.status_code == 400
-    for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
+    for user, role in [(agent, "agent"), (second_agent, "agent"), (readonly, "chiki_piki")]:
         forbidden = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/completed")
         assert forbidden.status_code == 403

@@ -109,10 +109,10 @@ for (const name of ['list', 'ticket']) {
     assert.deepEqual(await page.evaluate(() => [...new Set(calls)]), ['/api/v1/tickets/task-panel']);
   });
 
-  test(`${name}: disabled preferences and disallowed roles stay hidden, agent and trainee retain access`, async t => {
+  test(`${name}: disabled preferences and disallowed roles stay hidden, agents retain access`, async t => {
     const page = await setup(t, name);
-    for (const [role, enabled, visible] of [['agent', false, false], ['trainee', false, false],
-      ['admin', true, false], ['chiki_piki', true, false], ['agent', true, true], ['trainee', true, true]]) {
+    for (const [role, enabled, visible] of [['agent', false, false],
+      ['admin', true, false], ['chiki_piki', true, false], ['agent', true, true]]) {
       await page.evaluate(({ role, enabled }) => {
         state.role = role; state.taskPanelEnabled = enabled; state.taskPanelStatus = 'ready';
         renderTaskPanel();
@@ -175,7 +175,7 @@ for (const name of ['list', 'ticket']) {
     });
   }
 
-  for (const role of ['agent','trainee']) test(`${name}: adaptive item counts retain every task for ${role}`, async t => {
+  for (const role of ['agent']) test(`${name}: adaptive item counts retain every task for ${role}`, async t => {
     const page=await setup(t,name);
     await page.evaluate(role=>state.role=role,role);
     for(const count of [0,1,5,8,12]) {
@@ -248,7 +248,7 @@ for(const name of ['list','ticket']) {
     assert.equal(result.before.items[0].id,'private-a');
     assert.equal(result.disabled.taskPanelEnabled,false);assert.deepEqual(result.disabled.taskPanelItems,[]);
   });
-  for(const change of [{userId:'other',role:'agent',sessionLoginTs:1},{userId:'agent',role:'trainee',sessionLoginTs:1},{userId:'agent',role:'agent',sessionLoginTs:2}]) {
+  for(const change of [{userId:'other',role:'agent',sessionLoginTs:1},{userId:'agent',role:'admin',sessionLoginTs:1},{userId:'agent',role:'agent',sessionLoginTs:2}]) {
     test(`${name}: cached data and pending replies cannot cross ${JSON.stringify(change)}`,async t=>{
       const page=await setup(t,name);
       await begin(page);await reply(page,[{id:'private-a',subject:'Private A'}]);

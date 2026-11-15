@@ -375,7 +375,7 @@ def test_scheduled_create_requires_admin_and_rejects_past_datetime():
     assert _error_code(past) == "scheduled_for_past"
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_scheduled_direct_accepts_same_company_support_roles_including_inactive(role):
     session = _session()
     company = _company(session)
@@ -474,7 +474,7 @@ def test_edit_scheduled_definition_persists_allowed_fields_and_keeps_creator():
     creator = _user(session, company, "admin")
     editor = _user(session, company, "admin")
     responsible = _user(session, company, "admin")
-    assignee = _user(session, company, "trainee")
+    assignee = _user(session, company, "agent")
     definition = _definition(session, company, creator, creator, title="Before")
     session.commit()
 
@@ -576,18 +576,18 @@ def test_create_recurring_validates_admin_company_users_and_allows_inactive_supp
     other = _company(session, "Other")
     admin = _user(session, company, "admin")
     agent = _user(session, company, "agent")
-    trainee = _user(session, company, "trainee", is_active=False)
+    second_agent = _user(session, company, "agent", is_active=False)
     inactive_responsible = _user(session, company, "admin", is_active=False)
     wrong_role = _user(session, company, "admin")
     other_agent = _user(session, other, "agent")
     session.commit()
 
     forbidden = _client(session, agent).post("/api/v1/management/internal-tasks/recurring", json=_recurring_payload())
-    trainee_ok = _client(session, admin).post(
+    second_agent_ok = _client(session, admin).post(
         "/api/v1/management/internal-tasks/recurring",
         json=_recurring_payload(
             assignment_mode="direct",
-            assignee_user_id=trainee.id,
+            assignee_user_id=second_agent.id,
             responsible_admin_id=inactive_responsible.id,
         ),
     )
@@ -602,9 +602,9 @@ def test_create_recurring_validates_admin_company_users_and_allows_inactive_supp
 
     assert forbidden.status_code == 403
     assert _error_code(forbidden) == "admin_only"
-    assert trainee_ok.status_code == 200
-    definition = session.get(InternalTaskDefinition, trainee_ok.json()["definition_id"])
-    assert definition.assignee_user_id == trainee.id
+    assert second_agent_ok.status_code == 200
+    definition = session.get(InternalTaskDefinition, second_agent_ok.json()["definition_id"])
+    assert definition.assignee_user_id == second_agent.id
     assert definition.responsible_admin_id == inactive_responsible.id
     assert wrong.status_code == 422
     assert _error_code(wrong) == "assignee_invalid_role"

@@ -160,17 +160,17 @@ def test_status_change_closes_multiple_open_intervals_and_leaves_one_current_int
     ]
 
 
-def test_initialize_status_history_opens_interval_for_active_agent_and_trainee_only():
+def test_initialize_status_history_opens_interval_for_active_agents_only():
     session = _session()
     company = _company(session)
     now = datetime(2026, 9, 11, 9, 0, 0)
     active_agent = _user(session, company, role="agent", availability_status="online")
-    active_trainee = _user(session, company, role="trainee", availability_status="waiting")
+    active_second_agent = _user(session, company, role="agent", availability_status="waiting")
     empty_status_agent = _user(session, company, role="agent", availability_status="")
     inactive_agent = _user(session, company, role="agent", is_active=False, availability_status="online")
     admin = _user(session, company, role="admin", availability_status="online")
 
-    for user in [active_agent, active_trainee, empty_status_agent, inactive_agent, admin]:
+    for user in [active_agent, active_second_agent, empty_status_agent, inactive_agent, admin]:
         initialize_user_status_history(session, user, now=now)
 
     assert {
@@ -178,7 +178,7 @@ def test_initialize_status_history_opens_interval_for_active_agent_and_trainee_o
         for row in session.execute(select(StatsUserStatusInterval)).scalars().all()
     } == {
         (active_agent.id, "online", now, None),
-        (active_trainee.id, "waiting", now, None),
+        (active_second_agent.id, "waiting", now, None),
         (empty_status_agent.id, "online", now, None),
     }
 
@@ -284,7 +284,7 @@ def test_role_change_from_admin_to_active_agent_opens_interval():
     ]
 
 
-def test_agent_to_trainee_without_status_change_does_not_split_interval():
+def test_agent_profile_update_without_status_change_does_not_split_interval():
     session = _session()
     company = _company(session)
     user = _user(session, company, role="agent", is_active=True, availability_status="online")
@@ -295,7 +295,7 @@ def test_agent_to_trainee_without_status_change_does_not_split_interval():
     previous_role = user.role
     previous_is_active = user.is_active
     previous_status = user.availability_status
-    user.role = "trainee"
+    user.full_name = "Renamed agent"
     sync_user_status_history_after_profile_update(
         session,
         user,

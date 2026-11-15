@@ -51,7 +51,7 @@ def _seed_users(db):
         User(id="admin-1", company_id=company.id, full_name="Admin", role="admin"),
         User(id="agent-1", company_id=company.id, full_name="Agent One", role="agent"),
         User(id="agent-2", company_id=company.id, full_name="Agent Two", role="agent"),
-        User(id="trainee-1", company_id=company.id, full_name="Trainee", role="trainee"),
+        User(id="second_agent-1", company_id=company.id, full_name="Second Agent", role="agent"),
         User(id="chiki-1", company_id=company.id, full_name="Chiki", role="chiki_piki"),
     ]
     db.add(company)
@@ -246,7 +246,7 @@ def test_quick_reply_file_upload_allowed_for_admin_and_agent_only(monkeypatch, t
 
     upload = SimpleNamespace(file=b"content", filename="no.txt", content_type="text/plain")
     with pytest.raises(HTTPException) as exc:
-        upload_quick_reply_file(file=upload, db=db, user=_user("trainee-1", "trainee"))
+        upload_quick_reply_file(file=upload, db=db, user=_user("chiki-1", "chiki_piki"))
     assert exc.value.status_code == 403
 
 
@@ -336,7 +336,7 @@ def test_all_authenticated_roles_can_list_search_and_use():
     _seed_users(db)
     reply = _create(db, "agent-1", "agent", "VPN", "Restart AnyDesk")
 
-    for user_id, role in [("admin-1", "admin"), ("agent-2", "agent"), ("trainee-1", "trainee"), ("chiki-1", "chiki_piki")]:
+    for user_id, role in [("admin-1", "admin"), ("agent-2", "agent"), ("second_agent-1", "agent"), ("chiki-1", "chiki_piki")]:
         user = _user(user_id, role)
         assert list_quick_replies(db=db, user=user)
         assert search_quick_replies(q="vpn", db=db, user=user)[0].id == reply.id

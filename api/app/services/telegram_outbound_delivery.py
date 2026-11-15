@@ -1616,7 +1616,7 @@ def staff_preload_scope(user_id: str, *, allow_shared: bool = False):
     owned = and_(*owner_scope(user_id=user_id))
     if not allow_shared:
         return owned
-    staff_ids = select(User.id).where(User.role.in_(("admin", "agent", "trainee")))
+    staff_ids = select(User.id).where(User.role.in_(("admin", "agent")))
     return and_(
         TicketAttachmentPreload.client_id.is_(None),
         or_(owned, TicketAttachmentPreload.user_id.in_(staff_ids)),

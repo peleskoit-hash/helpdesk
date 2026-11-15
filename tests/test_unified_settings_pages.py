@@ -18,7 +18,7 @@ DESTINATIONS = (
 )
 
 
-@pytest.mark.parametrize("role", [None, "admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", [None, "admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("path", ("/settings", "/management") + DESTINATIONS)
 def test_settings_entrypoints_and_existing_permissions(monkeypatch, role, path):
     user = None if role is None else CurrentUser(
@@ -36,7 +36,7 @@ def test_settings_entrypoints_and_existing_permissions(monkeypatch, role, path):
     if role is None:
         assert response.status_code == 303
         assert unquote(response.headers["location"]) == f"/login?next={path}"
-    elif role != "admin" and path != "/quick-replies":
+    elif role != "admin" and path != "/quick-replies" and (role, path) != ("agent", "/management/users"):
         assert response.status_code == 303
         assert response.headers["location"] == "/tickets"
     elif path == "/management":

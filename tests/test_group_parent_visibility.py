@@ -46,7 +46,7 @@ def database(request):
             admin.dispose()
 
 
-@pytest.fixture(params=["admin", "agent", "trainee", "chiki_piki", "future_role"])
+@pytest.fixture(params=["admin", "agent", "chiki_piki", "future_role"])
 def case(request, database):
     engine = database
     with Session(engine, autoflush=False) as db:
@@ -119,7 +119,7 @@ def test_lists_search_pagination_and_counts(case):
             assert {"normal-closed", "child-closed"} <= ids
         if tab == "active":
             assert {"normal-active", "child-active"} <= ids
-            if case.role in {"agent", "trainee"}:
+            if case.role == "agent":
                 assert not {"other-active", "hidden-active"} & ids
             if case.role == "chiki_piki":
                 assert "outside-call-center" not in ids

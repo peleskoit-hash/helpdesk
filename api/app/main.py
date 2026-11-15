@@ -67,6 +67,7 @@ from .services import telegram_client_avatar_cleanup  # Register post-commit cle
 from .services.bitrix_password_migration import migrate_legacy_bitrix_passwords
 from .services.call_center_employee_resolver import start_periodic_refresh_loop, stop_periodic_refresh_loop
 from .services.schema_evolution import (
+    ensure_user_deletion_schema,
     ensure_background_contours_table,
     ensure_web_task_results_tables,
     ensure_bot_menu_level_layouts_table,
@@ -222,6 +223,7 @@ async def on_startup():
             ensure_background_contours_table()
             ensure_stats_foundation_tables()
             ensure_quick_reply_tables()
+            ensure_user_deletion_schema()
             with SessionLocal() as db:
                 migrate_legacy_bitrix_passwords(db)
                 migrate_legacy_bot_button_pdf_saved_files(db)
@@ -532,7 +534,7 @@ def reviews_page(request: Request, db: Session = Depends(get_db)):
     user = _require_page_auth(request, db)
     if user is None:
         return _redirect_login("/reviews")
-    if user.is_real_admin or user.real_role not in {"agent", "trainee"}:
+    if user.is_real_admin or user.real_role != "agent":
         return RedirectResponse(url="/tickets", status_code=303)
     return FileResponse(str(BASE_DIR / "templates" / "reviews.html"))
 

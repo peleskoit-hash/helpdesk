@@ -212,7 +212,7 @@ def is_ordinary_review_ticket(ticket: Ticket | None) -> bool:
 
 
 def valid_review_agent(user: User | None) -> bool:
-    return user is not None and user.role in {"agent", "trainee"}
+    return user is not None and user.role == "agent"
 
 
 def attributable_review_agent_id_for_actor(db: Session, ticket: Ticket, actor) -> str | None:
@@ -220,7 +220,7 @@ def attributable_review_agent_id_for_actor(db: Session, ticket: Ticket, actor) -
         return None
     actor_role = getattr(actor, "role", None)
     actor_id = getattr(actor, "id", None)
-    if actor_role in {"agent", "trainee"}:
+    if actor_role == "agent":
         actor_user = db.get(User, actor_id) if actor_id else None
         if actor_user is None:
             return None

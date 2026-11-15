@@ -49,11 +49,11 @@ def _seed_base(session):
         User(id="admin-1", company_id=company.id, full_name="Admin User", role="admin", is_active=True),
         User(id="observer-1", company_id=company.id, full_name="Observer User", role="chiki_piki", is_active=True),
         User(id="agent-1", company_id=company.id, full_name="Agent Active", role="agent", is_active=True),
-        User(id="trainee-1", company_id=company.id, full_name="Trainee Active", role="trainee", is_active=True),
+        User(id="second_agent-1", company_id=company.id, full_name="Second Agent Active", role="agent", is_active=True),
         User(id="agent-old", company_id=company.id, full_name="Agent Old", role="agent", is_active=False),
-        User(id="trainee-old", company_id=company.id, full_name="Trainee Old", role="trainee", is_active=False),
+        User(id="second_agent-old", company_id=company.id, full_name="Second Agent Old", role="agent", is_active=False),
         User(id="agent-empty", company_id=company.id, full_name="Agent Empty", role="agent", is_active=False),
-        User(id="trainee-history", company_id=company.id, full_name="Trainee History", role="trainee", is_active=False),
+        User(id="second_agent-history", company_id=company.id, full_name="Second Agent History", role="agent", is_active=False),
     ]
     ticket = Ticket(id="ticket-1", company_id=company.id, client_id=client.id, assignee_id="agent-1", subject="Live Subject")
     session.add_all([company, client, *users, ticket])
@@ -125,12 +125,12 @@ def test_admin_gets_employee_selector_with_active_support_and_inactive_support_w
         agent_id="agent-old",
         rated_at=datetime(2026, 9, 1, 10, 0, 0),
     )
-    _add_ticket(session, "ticket-trainee-history")
+    _add_ticket(session, "ticket-second_agent-history")
     _add_review(
         session,
-        review_id="review-old-trainee",
-        ticket_id="ticket-trainee-history",
-        agent_id="trainee-history",
+        review_id="review-old-second_agent",
+        ticket_id="ticket-second_agent-history",
+        agent_id="second_agent-history",
         rated_at=datetime(2026, 9, 1, 10, 0, 0),
     )
 
@@ -140,11 +140,11 @@ def test_admin_gets_employee_selector_with_active_support_and_inactive_support_w
     items = response.json()
     ids = [item["employee_id"] for item in items]
     assert "agent-1" in ids
-    assert "trainee-1" in ids
+    assert "second_agent-1" in ids
     assert "agent-old" in ids
-    assert "trainee-history" in ids
+    assert "second_agent-history" in ids
     assert "agent-empty" not in ids
-    assert "trainee-old" not in ids
+    assert "second_agent-old" not in ids
     assert "admin-1" not in ids
     assert "observer-1" not in ids
     assert ids == sorted(ids, key=lambda item_id: next(item["display_name"] for item in items if item["employee_id"] == item_id))
@@ -170,9 +170,9 @@ def test_admin_without_employee_id_gets_all_support_reviews(employee_id):
     _seed_base(session)
     for index, (agent_id, rated_at, is_current) in enumerate([
         ("agent-1", datetime(2026, 9, 1, 10), True),
-        ("trainee-1", datetime(2026, 9, 3, 10), True),
+        ("second_agent-1", datetime(2026, 9, 3, 10), True),
         ("agent-old", datetime(2026, 9, 2, 10), True),
-        ("trainee-history", datetime(2026, 8, 1, 10), False),
+        ("second_agent-history", datetime(2026, 8, 1, 10), False),
         ("admin-1", datetime(2026, 7, 1, 10), True),
         ("observer-1", datetime(2026, 6, 1, 10), True),
         ("agent-1", datetime(2026, 9, 3, 10), True),
@@ -191,7 +191,7 @@ def test_admin_without_employee_id_gets_all_support_reviews(employee_id):
         "review-all-6", "review-all-1", "review-all-2", "review-all-0",
     ]
     assert {item["agent_id"]: item["agent_full_name"] for item in body["items"]} == {
-        "agent-1": "Agent Active", "trainee-1": "Trainee Active", "agent-old": "Agent Old",
+        "agent-1": "Agent Active", "second_agent-1": "Second Agent Active", "agent-old": "Agent Old",
     }
     assert body["total_count"] == 4
     assert body["average_rating"] == 2.0
@@ -243,9 +243,9 @@ def test_admin_gets_current_reviews_for_selected_employee_only():
     )
     _add_review(
         session,
-        review_id="review-trainee",
+        review_id="review-second_agent",
         ticket_id="ticket-2",
-        agent_id="trainee-1",
+        agent_id="second_agent-1",
         rated_at=datetime(2026, 9, 2, 11, 0, 0),
     )
 
@@ -260,7 +260,7 @@ def test_admin_gets_current_reviews_for_selected_employee_only():
     assert body["items"][0]["agent_full_name"] == "Agent Active"
 
 
-def test_agent_and_trainee_get_only_own_reviews_and_employee_id_cannot_switch_context():
+def test_agent_and_second_agent_get_only_own_reviews_and_employee_id_cannot_switch_context():
     Session = _session_factory()
     session = Session()
     _seed_base(session)
@@ -274,18 +274,18 @@ def test_agent_and_trainee_get_only_own_reviews_and_employee_id_cannot_switch_co
     )
     _add_review(
         session,
-        review_id="review-trainee",
+        review_id="review-second_agent",
         ticket_id="ticket-2",
-        agent_id="trainee-1",
+        agent_id="second_agent-1",
         rated_at=datetime(2026, 9, 2, 11, 0, 0),
     )
 
     agent_body = _client(session, _current_user("agent-1", "agent")).get(
         "/api/v1/reviews",
-        params={"employee_id": "trainee-1"},
+        params={"employee_id": "second_agent-1"},
     ).json()
-    trainee_body = _client(session, _current_user("trainee-1", "trainee")).get("/api/v1/reviews").json()
-    for role, own_id, foreign_id in [("agent", "agent-1", "trainee-1"), ("trainee", "trainee-1", "agent-1")]:
+    second_agent_body = _client(session, _current_user("second_agent-1", "agent")).get("/api/v1/reviews").json()
+    for role, own_id, foreign_id in [("agent", "agent-1", "second_agent-1"), ("agent", "second_agent-1", "agent-1")]:
         client = _client(session, _current_user(own_id, role))
         for params in [{}, {"employee_id": ""}, {"employee_id": foreign_id}, {"employee_id": "unknown"}]:
             response = client.get("/api/v1/reviews", params=params)
@@ -293,7 +293,7 @@ def test_agent_and_trainee_get_only_own_reviews_and_employee_id_cannot_switch_co
             assert [item["agent_id"] for item in response.json()["items"]] == [own_id]
 
     assert [item["review_id"] for item in agent_body["items"]] == ["review-agent"]
-    assert [item["review_id"] for item in trainee_body["items"]] == ["review-trainee"]
+    assert [item["review_id"] for item in second_agent_body["items"]] == ["review-second_agent"]
 
 
 def test_observer_gets_forbidden_for_review_api():
@@ -590,7 +590,7 @@ def test_review_text_preserves_line_breaks_and_ticket_subject_snapshot_is_return
     assert body["items"][0]["ticket_subject_snapshot"] == "Snapshot Subject"
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_history_of_other_employee_is_forbidden_for_support_user(role):
     Session = _session_factory()
     session = Session()
@@ -598,9 +598,9 @@ def test_history_of_other_employee_is_forbidden_for_support_user(role):
     _add_ticket(session, "ticket-2")
     current = _add_review(
         session,
-        review_id="review-trainee",
+        review_id="review-second_agent",
         ticket_id="ticket-2",
-        agent_id="trainee-1" if role == "agent" else "agent-1",
+        agent_id="second_agent-1" if role == "agent" else "agent-1",
         rated_at=datetime(2026, 9, 2, 10, 0, 0),
     )
 

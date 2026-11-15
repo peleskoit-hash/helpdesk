@@ -207,13 +207,13 @@ def test_task_panel_filters_orders_and_marks_unread_from_existing_ticket_views()
     assert "Hidden" not in by_subject
 
 
-def test_ticket_view_lifecycle_tracks_agent_and_trainee_only_without_affecting_task_panel():
+def test_ticket_view_lifecycle_tracks_agents_only_without_affecting_task_panel():
     session = _session()
     company, agent, _other, client = _seed_base(session)
-    trainee = User(id=str(uuid.uuid4()), company_id=company.id, full_name="Trainee", role="trainee", is_active=True, availability_status="online")
+    second_agent = User(id=str(uuid.uuid4()), company_id=company.id, full_name="Second Agent", role="agent", is_active=True, availability_status="online")
     admin = User(id=str(uuid.uuid4()), company_id=company.id, full_name="Admin", role="admin", is_active=True, availability_status="online")
     chiki = User(id=str(uuid.uuid4()), company_id=company.id, full_name="Readonly", role="chiki_piki", is_active=True, availability_status="online")
-    session.add_all([trainee, admin, chiki])
+    session.add_all([second_agent, admin, chiki])
     session.add(
         ClientProfile(
             id=str(uuid.uuid4()),
@@ -222,7 +222,7 @@ def test_ticket_view_lifecycle_tracks_agent_and_trainee_only_without_affecting_t
         )
     )
     ticket = _ticket(session, company=company, client=client, assignee=agent, subject="Lifecycle ticket")
-    trainee_ticket = _ticket(session, company=company, client=client, assignee=trainee, subject="Trainee lifecycle ticket")
+    second_agent_ticket = _ticket(session, company=company, client=client, assignee=second_agent, subject="second_agent lifecycle ticket")
     session.commit()
 
     get_ticket(ticket.id, db=session, user=_current_user(agent.id, "agent"))
@@ -241,37 +241,37 @@ def test_ticket_view_lifecycle_tracks_agent_and_trainee_only_without_affecting_t
     assert agent_view.first_opened_at == original_agent_first
     assert agent_view.last_opened_at == original_agent_first - timedelta(minutes=30)
 
-    get_ticket(trainee_ticket.id, db=session, user=_current_user(trainee.id, "trainee"))
-    trainee_view = session.execute(
-        select(TicketView).where(TicketView.ticket_id == trainee_ticket.id, TicketView.user_id == trainee.id)
+    get_ticket(second_agent_ticket.id, db=session, user=_current_user(second_agent.id, "agent"))
+    second_agent_view = session.execute(
+        select(TicketView).where(TicketView.ticket_id == second_agent_ticket.id, TicketView.user_id == second_agent.id)
     ).scalar_one()
-    assert trainee_view.user_id == trainee.id
-    original_trainee_first = trainee_view.first_opened_at
-    trainee_view.last_opened_at = original_trainee_first - timedelta(minutes=20)
+    assert second_agent_view.user_id == second_agent.id
+    original_second_agent_first = second_agent_view.first_opened_at
+    second_agent_view.last_opened_at = original_second_agent_first - timedelta(minutes=20)
     session.commit()
 
-    get_ticket(trainee_ticket.id, db=session, user=_current_user(trainee.id, "trainee"))
-    session.refresh(trainee_view)
-    assert trainee_view.first_opened_at == original_trainee_first
-    assert trainee_view.last_opened_at == original_trainee_first - timedelta(minutes=20)
+    get_ticket(second_agent_ticket.id, db=session, user=_current_user(second_agent.id, "agent"))
+    session.refresh(second_agent_view)
+    assert second_agent_view.first_opened_at == original_second_agent_first
+    assert second_agent_view.last_opened_at == original_second_agent_first - timedelta(minutes=20)
 
     agent_first_before_admin = agent_view.first_opened_at
     agent_last_before_admin = agent_view.last_opened_at
-    trainee_last_before_admin = trainee_view.last_opened_at
+    second_agent_last_before_admin = second_agent_view.last_opened_at
 
     get_ticket(ticket.id, db=session, user=_current_user(admin.id, "admin"))
     assert session.execute(
         select(TicketView).where(TicketView.ticket_id == ticket.id, TicketView.user_id == admin.id)
     ).scalar_one_or_none() is None
-    get_ticket(trainee_ticket.id, db=session, user=_current_user(admin.id, "admin"))
+    get_ticket(second_agent_ticket.id, db=session, user=_current_user(admin.id, "admin"))
     assert session.execute(
-        select(TicketView).where(TicketView.ticket_id == trainee_ticket.id, TicketView.user_id == admin.id)
+        select(TicketView).where(TicketView.ticket_id == second_agent_ticket.id, TicketView.user_id == admin.id)
     ).scalar_one_or_none() is None
     session.refresh(agent_view)
-    session.refresh(trainee_view)
+    session.refresh(second_agent_view)
     assert agent_view.first_opened_at == agent_first_before_admin
     assert agent_view.last_opened_at == agent_last_before_admin
-    assert trainee_view.last_opened_at == trainee_last_before_admin
+    assert second_agent_view.last_opened_at == second_agent_last_before_admin
 
     get_ticket(ticket.id, db=session, user=_current_user(chiki.id, "chiki_piki"))
     assert session.execute(

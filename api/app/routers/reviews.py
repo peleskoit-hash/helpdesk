@@ -23,7 +23,7 @@ from ..schemas import (
 
 router = APIRouter(prefix="/api/v1/reviews", tags=["reviews"])
 
-SUPPORT_ROLES = {"agent", "trainee"}
+SUPPORT_ROLES = {"agent"}
 
 
 def _error(status_code: int, code: str, message: str):

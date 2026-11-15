@@ -282,7 +282,7 @@ function shellNavigateOrReload(urlLike) {
 }
 
 function canUseTaskPanel(role = state.role) {
-  return role === "agent" || role === "trainee";
+  return role === "agent";
 }
 
 function taskPanelTicketHref(panelTicketId) {
@@ -1497,7 +1497,7 @@ function renderCard() {
 
   TicketControls.renderTicketControlsView(controlsCtx());
   readingController?.update(card, {
-    canRead: (state.role === "agent" || state.role === "trainee") && card.assignee_id === state.userId,
+    canRead: state.role === "agent" && card.assignee_id === state.userId,
     forceBottom: scrollAfterLocalSend || renderResult.followBottom,
     userId: state.userId,
     role: state.role,

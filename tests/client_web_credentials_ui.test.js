@@ -366,7 +366,7 @@ for (const contact of [false, true]) {
     assert.deepEqual(f.errors, []);
   });
 }
-for (const role of ['admin', 'agent', 'trainee', 'chiki_piki']) {
+for (const role of ['admin', 'agent', 'chiki_piki']) {
   test(`${role}: WEB permission matrix and observer masks remain intact`, async t => {
     const f = await fixture(t, false, { login: 'saved', saved: true });
     await f.page.evaluate(role => {

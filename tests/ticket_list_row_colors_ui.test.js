@@ -57,7 +57,7 @@ test("ticket list render uses api seen flag as a visual modifier only", () => {
   assert.match(rowClassSource, /rowClasses\.push\(ticketRowColorClass\(t, state\.tab\)\)/);
   assert.match(rowClassSource, /t\.seen_by_agent/);
   assert.match(rowClassSource, /rowClasses\.push\("ticket-row-seen"\)/);
-  assert.match(rowClassSource, /state\.role === "agent" \|\| state\.role === "trainee"/);
+  assert.match(rowClassSource, /state\.role === "agent"/);
   assert.match(rowClassSource, /t\.seen_by_agent === false/);
   assert.match(rowClassSource, /rowClasses\.push\("ticket-row-unseen"\)/);
   assert.doesNotMatch(rowClassSource, /state\.tab === "unassigned"[\s\S]*ticket-row-unassigned/);
@@ -238,12 +238,12 @@ test("ticket task panel is role-gated without clearing saved preference", () => 
   const roleSource = sourceBetween(listSource, "function canShowAssigneeColumn", "function allowedTicketColumnKeys");
   const taskPanelRoleSource = sourceBetween(listSource, "function canUseTaskPanel", "function allowedTicketColumnKeys");
   assert.match(roleSource, /function canUseTaskPanel\(role = state\.role\)/);
-  assert.match(taskPanelRoleSource, /return role === "agent" \|\| role === "trainee"/);
+  assert.match(taskPanelRoleSource, /return role === "agent"/);
   assert.doesNotMatch(taskPanelRoleSource, /admin|chiki_piki/);
   const roleContext = vm.createContext({ state: { role: "agent" } });
   vm.runInContext(`${roleSource}\nglobalThis.canUseTaskPanel = canUseTaskPanel;`, roleContext);
   assert.equal(roleContext.canUseTaskPanel("agent"), true);
-  assert.equal(roleContext.canUseTaskPanel("trainee"), true);
+  assert.equal(roleContext.canUseTaskPanel("chiki_piki"), false);
   assert.equal(roleContext.canUseTaskPanel("admin"), false);
   assert.equal(roleContext.canUseTaskPanel("chiki_piki"), false);
 
@@ -524,7 +524,7 @@ test("unread emphasis excludes either closed indicator and preserves seen and fr
     assert.equal(JSON.stringify(ticket), before, 'read flags remain untouched');
     return classes;
   };
-  for (const role of ['agent', 'trainee', 'admin']) for (const workflow_type of ['ticket', 'task']) {
+  for (const role of ['agent', 'admin']) for (const workflow_type of ['ticket', 'task']) {
     for (const assignee_id of ['self', 'other']) for (const seen_by_agent of [false, true, null, undefined]) {
       for (const [tab, status, is_frozen] of [['active', 'new', false], ['active', 'closed', false], ['closed', 'new', false], ['closed', 'closed', false], ['frozen', 'new', true], ['active', 'new', true]]) {
         const ticket = { workflow_type, assignee_id, seen_by_agent, status, is_frozen };

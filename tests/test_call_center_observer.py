@@ -50,7 +50,7 @@ def case(monkeypatch):
         engine.dispose()
 
 
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
 def test_comment_and_quote_permissions_are_scoped_to_observer(case, role, workflow):
     case.user.role = role
@@ -151,7 +151,7 @@ def test_role_label_changes_without_identifier_or_other_permissions(case):
     assert auth.can_comment(case.user)
     for check in [auth.can_reply, auth.can_manage_ticket, auth.can_assign, auth.can_edit_client_profile, auth.can_edit_messages]:
         assert not check(case.user), check.__name__
-    for role in ["admin", "agent", "trainee"]:
+    for role in ["admin", "agent"]:
         user = SimpleNamespace(role=role)
         assert auth.can_reply(user) and auth.can_comment(user) and auth.can_manage_ticket(user)
     assert not auth.can_comment(SimpleNamespace(role="unknown"))

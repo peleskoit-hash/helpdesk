@@ -66,10 +66,15 @@ def test_login_timestamp_schema_upgrade_is_nullable_and_idempotent(monkeypatch):
         conn.execute(text("INSERT INTO users (id,email) VALUES ('old','old@test')"))
     monkeypatch.setattr(schema_evolution, "engine", engine)
     schema_evolution.ensure_user_columns()
-    assert "last_login_at" in {col["name"] for col in inspect(engine).get_columns("users")}
+    columns = {col["name"]: col for col in inspect(engine).get_columns("users")}
+    assert "last_login_at" in columns
+    assert columns["auth_version"]["nullable"] is False
     with engine.begin() as conn:
         assert conn.execute(text("SELECT last_login_at FROM users WHERE id='old'")).scalar() is None
+        assert conn.execute(text("SELECT auth_version FROM users WHERE id='old'")).scalar_one() == 0
+        conn.execute(text("UPDATE users SET auth_version=1 WHERE id='old'"))
         conn.execute(text("UPDATE users SET last_login_at='2026-10-25 10:30:00' WHERE id='old'"))
     schema_evolution.ensure_user_columns()
     with engine.begin() as conn:
         assert conn.execute(text("SELECT last_login_at FROM users WHERE id='old'")).scalar() == "2026-10-25 10:30:00"
+        assert conn.execute(text("SELECT auth_version FROM users WHERE id='old'")).scalar_one() == 1

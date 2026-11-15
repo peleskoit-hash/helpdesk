@@ -59,7 +59,6 @@ Rule:
 
 Need periodic regression checks:
 - chiki_piki list/card/counts only for "Колл Центр";
-- trainee not autoassigned;
 - admin-only controls not visible to non-admin;
 - restore only by admin or closer where intended.
 

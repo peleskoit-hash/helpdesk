@@ -58,12 +58,12 @@ def page_client(monkeypatch, role):
     return TestClient(app)
 
 
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki", "observer"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki", "observer"])
 @pytest.mark.parametrize("path", PAGE_ROUTES)
 def test_review_page_roles_and_html(monkeypatch, role, path):
     client = page_client(monkeypatch, role)
     response = client.get(path, follow_redirects=False)
-    allowed = role == "admin" if path == "/management/reviews" else role in {"agent", "trainee"}
+    allowed = role == "admin" if path == "/management/reviews" else role in {"agent"}
     if not allowed:
         assert response.status_code == 303
         assert response.headers["location"] == "/tickets"

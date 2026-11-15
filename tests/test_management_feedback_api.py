@@ -124,12 +124,12 @@ def test_admin_gets_feedback_list_and_snapshots():
     }
 
 
-def test_agent_and_trainee_cannot_access_feedback():
+def test_agent_cannot_access_feedback():
     Session = _session_factory()
     session = Session()
     _seed_base(session)
 
-    for role in ("agent", "trainee"):
+    for role in ("agent", "chiki_piki"):
         response = _client(session, _current_user(role + "-1", role)).get("/api/v1/management/feedback")
         assert response.status_code == 403
 

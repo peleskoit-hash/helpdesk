@@ -15,8 +15,8 @@ function cell(role, count, assignee = "agent", subject = "Тема заявки"
   return context.ticketCellHtml({ key: "subject", width: 240 }, { subject, assignee_id: assignee, unread_count: count, task_kind: taskKind }, "/tickets/1", linked);
 }
 
-test("unread count appears only for the responsible agent or trainee", () => {
-  for (const role of ["agent", "trainee"]) {
+test("unread count appears only for the responsible agent", () => {
+  for (const role of ["agent"]) {
     for (const count of [1, 5, 12]) assert.match(cell(role, count), new RegExp(`>\\+${count}</span>`));
     for (const count of [0, -1, undefined]) assert.doesNotMatch(cell(role, count), /ticket-unread-count/);
     assert.doesNotMatch(cell(role, 5, "other"), /ticket-unread-count/);
@@ -78,7 +78,7 @@ for (const theme of ["light", "dark"]) {
 }
 
 
-for (const role of ["agent", "trainee", "admin"]) {
+for (const role of ["agent", "admin"]) {
   test(`full list preserves row emphasis and uses server counts: ${role}`, async t => {
     const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
     page.setDefaultTimeout(5000);

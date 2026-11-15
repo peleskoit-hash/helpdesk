@@ -20,7 +20,7 @@ from ..schemas import BackgroundContourComposition
 logger = logging.getLogger(__name__)
 MAX_BYTES = 2 * 1024 * 1024
 MAX_DIMENSION = 2048
-CREATE_ROLES = {"admin", "agent", "trainee"}
+CREATE_ROLES = {"admin", "agent"}
 
 
 class ContourError(ValueError):

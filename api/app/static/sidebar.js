@@ -397,10 +397,10 @@
 
   function renderUserMenuVisibility(menu) {
     const statisticsItem = menu?.querySelector("[data-sidebar-user-menu-item='statistics']");
-    if (statisticsItem) statisticsItem.hidden = state.role !== "agent" && state.role !== "trainee";
+    if (statisticsItem) statisticsItem.hidden = state.role !== "agent";
     const reviewItem = menu?.querySelector("[data-sidebar-user-menu-item='feedback']");
     if (reviewItem) {
-      reviewItem.hidden = state.role !== "agent" && state.role !== "trainee";
+      reviewItem.hidden = state.role !== "agent";
     }
     const notificationItem = menu?.querySelector("[data-sidebar-user-menu-item='bot-notifications']");
     if (notificationItem) {
@@ -455,7 +455,7 @@
   function renderAvailabilityVisibility() {
     const panel = ensureAvailabilityStatusPanel();
     if (!panel) return;
-    panel.classList.toggle("hidden", state.role !== "agent" && state.role !== "trainee");
+    panel.classList.toggle("hidden", state.role !== "agent");
   }
 
   let completionDialog = null;
@@ -588,7 +588,7 @@
         const action = item.dataset.sidebarUserMenuItem;
         closeMenu();
         if (action === "statistics") {
-          if (state.role === "agent" || state.role === "trainee") openCompletionStats();
+          if (state.role === "agent") openCompletionStats();
           return;
         }
         if (action === "logout") {
@@ -602,7 +602,7 @@
           return;
         }
         if (action === "feedback") {
-          if (state.role !== "agent" && state.role !== "trainee") return;
+          if (state.role !== "agent") return;
           if (window.HelpdeskAppShell?.navigate) {
             window.HelpdeskAppShell.navigate("/reviews");
           } else {

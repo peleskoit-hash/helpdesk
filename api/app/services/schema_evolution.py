@@ -1008,6 +1008,7 @@ def ensure_user_columns() -> None:
             "last_login_at": "TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP WITH TIME ZONE",
             "login": "VARCHAR(100)",
             "password_hash": "VARCHAR(255)",
+            "auth_version": "INTEGER NOT NULL DEFAULT 0",
             "avatar_path": "VARCHAR(500)",
             "created_at": "TIMESTAMP",
             "updated_at": "TIMESTAMP",
@@ -2236,3 +2237,52 @@ def ensure_employee_notification_backlog_tables() -> None:
     with engine.begin() as conn:
         EmployeeNotificationPeriod.__table__.create(conn, checkfirst=True)
         EmployeeNotificationBacklog.__table__.create(conn, checkfirst=True)
+
+
+def ensure_user_deletion_schema() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        has_special_assignee_fk = any(
+            fk["constrained_columns"] == ["special_assignee_id"]
+            and fk["referred_table"] == "users"
+            and fk["referred_columns"] == ["id"]
+            for fk in inspector.get_foreign_keys("tickets")
+        )
+        if not has_special_assignee_fk:
+            orphan_count = conn.scalar(text("""
+                SELECT count(*)
+                FROM tickets t LEFT JOIN users u ON u.id = t.special_assignee_id
+                WHERE t.special_assignee_id IS NOT NULL AND u.id IS NULL
+            """))
+            if orphan_count:
+                raise RuntimeError(
+                    f"Cannot add tickets.special_assignee_id FK: {orphan_count} orphan references"
+                )
+            conn.execute(text("""
+                ALTER TABLE tickets ADD CONSTRAINT tickets_special_assignee_id_fkey
+                FOREIGN KEY (special_assignee_id) REFERENCES users(id)
+            """))
+
+        snapshots = {
+            "tickets": ("assignee_name_snapshot", "special_assignee_name_snapshot", "closed_by_name_snapshot"),
+            "ticket_messages": ("author_name_snapshot",),
+            "quick_replies": ("author_name_snapshot",),
+            "internal_task_definitions": ("responsible_admin_name_snapshot",),
+            "internal_task_occurrences": ("responsible_admin_name_snapshot", "effective_assignee_name_snapshot"),
+        }
+        nullable = {
+            "quick_replies": {"author_user_id"},
+            "internal_task_definitions": {"creator_admin_id", "responsible_admin_id"},
+            "internal_task_occurrences": {"creator_admin_id", "responsible_admin_id"},
+        }
+        for table, names in snapshots.items():
+            columns = {column["name"]: column for column in inspector.get_columns(table)}
+            for name in names:
+                if name not in columns:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} TEXT"))
+            for name in nullable.get(table, ()):
+                if not columns[name]["nullable"]:
+                    conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL"))

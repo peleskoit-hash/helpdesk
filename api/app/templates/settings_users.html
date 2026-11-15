@@ -95,7 +95,6 @@
             <select id="fRole">
               <option value="admin">Администратор</option>
               <option value="agent">Тех. поддержка</option>
-              <option value="trainee">Стажёр</option>
               <option value="chiki_piki">Call Center Observer</option>
             </select>
           </label>
@@ -111,7 +110,52 @@
         </div>
       </div>
       <div class="modal-foot">
+        <button id="deleteUserBtn" type="button" class="action hidden">Удалить сотрудника</button>
         <button id="saveUserBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmDeleteUserModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmDeleteUserTitle">
+    <div class="modal-dialog">
+      <div class="modal-head"><strong id="confirmDeleteUserTitle">Вы уверены?</strong></div>
+      <div class="modal-foot">
+        <button type="button" class="action" data-cancel-user-deletion>Отмена</button>
+        <button id="continueDeleteUserBtn" type="button" class="action primary">Продолжить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmPermanentDeletionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmPermanentDeletionTitle">
+    <div class="modal-dialog">
+      <div class="modal-head"><strong id="confirmPermanentDeletionTitle">Вы точно уверены?</strong></div>
+      <div class="modal-body">Удаление необратимо. Персональные данные сотрудника будут удалены.</div>
+      <div class="modal-foot">
+        <button type="button" class="action" data-cancel-user-deletion>Отмена</button>
+        <button id="confirmPermanentDeletionBtn" type="button" class="action primary">Да, уверен</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="userDeletionProgressModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="userDeletionProgressTitle">
+    <div class="modal-dialog">
+      <div class="modal-head"><strong id="userDeletionProgressTitle">Удаление сотрудника</strong></div>
+      <div class="modal-body">
+        <p id="userDeletionName"></p>
+        <p id="userDeletionDescription">Операция выполняется в фоне.</p>
+        <ol id="userDeletionStages">
+          <li data-stage="precheck">Проверка ограничений <span></span></li>
+          <li data-stage="ticket_history">История заявок <span></span></li>
+          <li data-stage="internal_tasks">Внутренние задачи <span></span></li>
+          <li data-stage="personal_data">Персональные данные <span></span></li>
+          <li data-stage="user_record">Учётная запись <span></span></li>
+        </ol>
+        <progress id="userDeletionProgress" class="hidden" aria-label="Ход удаления"></progress>
+        <p id="userDeletionStatus" role="status"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="closeUserDeletionBtn" type="button" class="action" data-cancel-user-deletion>Отмена</button>
+        <button id="startUserDeletionBtn" type="button" class="action primary">Начать удаление</button>
       </div>
     </div>
   </div>
@@ -139,6 +183,6 @@
   <script src="/static/sidebar.js?v=20261106-personal-stats-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/app_shell.js?v=20261111-status-source-v1"></script>
-  <script src="/static/settings_users.js?v=20261025-roles-editor-v2"></script>
+  <script src="/static/settings_users.js?v=user-deletion-complete-v2"></script>
 </body>
 </html>

@@ -176,7 +176,7 @@ def test_recheck_updates_status_and_title_and_new_code_preserves_group_id(case):
     assert len(case.db.scalars(select(TelegramAutomationGroup)).all()) == 1
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["agent", "chiki_piki"])
 def test_registry_api_is_admin_only(case, role):
     case.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=case.admin.id, role=role)
     for method, url in [("get", ""), ("post", "/registration-code"), ("post", "/missing/check")]:

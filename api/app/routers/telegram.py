@@ -1784,7 +1784,7 @@ def _apply_fixed_assignee_from_setting(db: Session, ticket: Ticket) -> User | No
         append_system_message(db, ticket, f"Заявка назначена на администратора из настройки кнопки: {assignee_label(target)}", agent_visible=True)
         return target
 
-    if target.role in {"agent", "trainee"}:
+    if target.role == "agent":
         ticket.is_special = False
         ticket.special_assignee_id = None
         target.last_assigned_at = datetime.utcnow()

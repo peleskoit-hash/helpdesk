@@ -156,7 +156,7 @@ def test_completion_stats_survive_hard_deleted_source_ticket():
     (datetime(2026, 11, 6, 0, 15), ("2026-11-06", "2026-11-02", "2026-11-01", "2026-01-01")),
     (datetime(2027, 1, 1, 0, 15), ("2027-01-01", "2026-12-28", "2027-01-01", "2027-01-01")),
 ])
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_calendar_rolling_boundaries_all_history_and_legacy(monkeypatch, now, expected, role):
     msk = ZoneInfo("Europe/Moscow")
     now = now.replace(tzinfo=msk)

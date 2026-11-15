@@ -1,7 +1,7 @@
 (function () {
   const EMPTY = "\u2014";
   const DEFAULT_PERIOD = "30days";
-  const EMPLOYEE_FILTER_ROLES = new Set(["agent", "trainee"]);
+  const EMPLOYEE_FILTER_ROLES = new Set(["agent"]);
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")

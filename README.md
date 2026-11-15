@@ -33,7 +33,6 @@ docker compose up --build
 
 - `admin` — полный доступ
 - `agent` (`Сотрудник`) — рабочий доступ
-- `trainee` (`Стажёр`) — как сотрудник, но без автоназначения
 - `chiki_piki` — read-only наблюдатель по "Колл Центру"
 
 ## Telegram меню и DB-only
@@ -67,7 +66,7 @@ docker compose up --build
 
 ## Completion stats
 
-- В sidebar для `agent/trainee` отображается статистика выполненных заявок/задач:
+- В sidebar для `agent` отображается статистика выполненных заявок/задач:
   - всего;
   - год/месяц/неделя/день;
   - Legacy отдельно.

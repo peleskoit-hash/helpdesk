@@ -438,7 +438,7 @@ def test_replace_old_file_cleanup_failure_keeps_committed_new_file(monkeypatch, 
     assert client.get(f"/api/v1/management/saved-files/{saved.id}/download").content == b"new"
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["agent", "chiki_piki"])
 def test_replace_is_admin_only(monkeypatch, tmp_path, role):
     monkeypatch.setattr(saved_files.settings, "saved_file_storage_dir", str(tmp_path))
     session = _session_factory()()

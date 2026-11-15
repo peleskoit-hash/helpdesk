@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth import CurrentUser, get_current_user, hash_password, is_admin, is_readonly_chiki_piki, verify_password
+from ..auth import CurrentUser, get_current_user, hash_password, increment_auth_version, is_admin, is_readonly_chiki_piki, verify_password
 from ..db import get_db
 from ..models import StatsCompletion, TelegramNotificationAccount, User
 from ..routers.settings_users import _ensure_unique_login, _telegram_notification_display
@@ -86,7 +86,7 @@ def _status_out(user: User) -> UserStatusOut:
     return UserStatusOut(
         id=user.id,
         role=user.role,
-        role_label={"admin": "Администратор", "agent": "Тех. поддержка", "trainee": "Стажёр", "chiki_piki": "Call Center Observer"}.get(user.role, user.role),
+        role_label={"admin": "Администратор", "agent": "Тех. поддержка", "chiki_piki": "Call Center Observer"}.get(user.role, user.role),
         full_name=user.full_name,
         availability_status=user.availability_status or "offline",
     )
@@ -157,7 +157,9 @@ def update_my_login(
         if exc.status_code == 409:
             _error(409, "login_already_used", "Этот логин уже используется")
         raise
-    user.login = login
+    if user.login != login:
+        user.login = login
+        increment_auth_version(user)
     user.updated_at = datetime.utcnow()
     db.commit()
     return SelfAccountChangeOut(message="Данные изменены. Войдите снова.")
@@ -175,6 +177,7 @@ def update_my_password(
     if payload.new_password != payload.new_password_confirmation:
         _error(400, "password_confirmation_mismatch", "Новый пароль и подтверждение не совпадают")
     user.password_hash = hash_password(payload.new_password)
+    increment_auth_version(user)
     user.updated_at = datetime.utcnow()
     db.commit()
     return SelfAccountChangeOut(message="Данные изменены. Войдите снова.")
@@ -358,7 +361,7 @@ def get_my_completion_stats(
     display_name = (user.full_name or "").strip() or (user.login or "")
     role = user.role or current_user.role
 
-    if role not in {"agent", "trainee"}:
+    if role != "agent":
         return CompletionStatsOut(
             display_name=display_name,
             role=role,
@@ -418,14 +421,14 @@ def get_my_completion_stats(
 @router.get("/agents", response_model=list[AgentOut])
 def list_agents(db: Session = Depends(get_db), current_user: CurrentUser = Depends(get_current_user)):
     agents = db.execute(
-        select(User).where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True)).order_by(User.created_at.asc(), User.id.asc())
+        select(User).where(User.role == "agent", User.is_active.is_(True)).order_by(User.created_at.asc(), User.id.asc())
     ).scalars().all()
     return [
         AgentOut(
             id=agent.id,
             full_name=agent.full_name,
             role=agent.role,
-            role_label={"agent": "Тех. поддержка", "trainee": "Стажёр"}.get(agent.role, agent.role),
+            role_label="Тех. поддержка",
             availability_status=agent.availability_status or "offline",
             updated_at=agent.updated_at,
         )
@@ -435,7 +438,7 @@ def list_agents(db: Session = Depends(get_db), current_user: CurrentUser = Depen
 
 @router.get("/by-role", response_model=list[AgentOut])
 def list_users_by_role(
-    role: str = Query(..., pattern="^(admin|agent|trainee|chiki_piki)$"),
+    role: str = Query(..., pattern="^(admin|agent|chiki_piki)$"),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -447,7 +450,6 @@ def list_users_by_role(
     role_label_map = {
         "admin": "Администратор",
         "agent": "Тех. поддержка",
-        "trainee": "Стажёр",
         "chiki_piki": "Call Center Observer",
     }
     return [
@@ -469,16 +471,16 @@ def status_board(db: Session = Depends(get_db), current_user: CurrentUser = Depe
         _error(403, "forbidden", "Только администратор может просматривать доску статусов")
     users = db.execute(
         select(User)
-        .where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True))
+        .where(User.role == "agent", User.is_active.is_(True))
         .order_by(User.role.asc(), User.full_name.asc())
     ).scalars().all()
-    users.sort(key=lambda u: (0 if u.role == "agent" else 1, (u.full_name or "").lower()))
+    users.sort(key=lambda u: (u.full_name or "").lower())
     return [
         StatusBoardAgentOut(
             id=user.id,
             full_name=user.full_name,
             role=user.role,
-            role_label={"agent": "Тех. поддержка", "trainee": "Стажёр"}.get(user.role, user.role),
+            role_label="Тех. поддержка",
             availability_status=user.availability_status or "offline",
             updated_at=user.updated_at,
             avatar_present=bool((user.avatar_path or "").strip()),
@@ -520,7 +522,7 @@ def update_user_status(
         _error(404, "user_not_found", "Пользователь не найден")
     if not user.is_active:
         _error(400, "user_inactive", "Нельзя изменить статус неактивного пользователя")
-    if user.role not in {"agent", "trainee"}:
+    if user.role != "agent":
         _error(400, "invalid_role", "Статус можно менять только сотрудникам поддержки")
     set_user_availability_status(db, user, payload.availability_status, now=datetime.utcnow(), changed_by_admin=True)
     if user.role == "agent" and payload.availability_status == "online":

@@ -108,7 +108,7 @@ for (const scenario of [
   { appTimezone: "Asia/Tokyo", now: "2026-12-31T23:30:00Z", today: "2027-01-01", first: "2027-01-01" },
   { appTimezone: "America/Los_Angeles", now: "2027-01-01T00:30:00Z", today: "2026-12-31", first: "2026-12-01" },
 ]) {
-  for (const role of ["agent", "trainee", "admin"]) {
+  for (const role of ["agent", "admin"]) {
     test("application calendar controls period and max: " + scenario.appTimezone + " / " + role, async () => {
       assert.equal(new Date(scenario.now).getTimezoneOffset(), 0);
       const ui = await load(role, () => list(), scenario);
@@ -177,7 +177,7 @@ test("admin defaults to all employees, loads automatically and preserves API emp
   assert.equal(ui.el.Count.textContent, "1");
 });
 
-for (const role of ["agent", "trainee"]) {
+for (const role of ["agent"]) {
   test(role + " loads own reviews without employee_id and renders snapshots safely", async () => {
     const ui = await load(role);
     assert.equal(ui.el.EmployeeField.children.length, 0);
@@ -370,7 +370,7 @@ test("late all-employee and employee responses cannot replace a newer filter", a
   assert.equal(query.get("page"), "1");
 });
 
-for (const role of ["admin", "agent", "trainee"]) {
+for (const role of ["admin", "agent"]) {
   test(role + " employee name column and history width", async () => {
     const name = '<img src=x onerror=alert(1)>';
     const ui = await load(role, () => list([

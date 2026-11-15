@@ -346,12 +346,12 @@ def test_work_time_user_filter_keeps_only_requested_user():
 def test_work_time_rejects_non_admin_roles():
     session = _session()
     company, admin, agent = _seed_admin_context(session)
-    trainee = _user(session, company, "trainee-a", role="trainee")
+    second_agent = _user(session, company, "second_agent-a", role="agent")
     readonly = _user(session, company, "chiki-a", role="chiki_piki")
     session.add(_work_interval(company.id, "ticket-a", user_id=agent.id))
     session.commit()
 
     assert _get(session, admin).status_code == 200
-    for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
+    for user, role in [(agent, "agent"), (second_agent, "agent"), (readonly, "chiki_piki")]:
         response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/work-time")
         assert response.status_code == 403

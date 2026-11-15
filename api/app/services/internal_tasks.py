@@ -138,7 +138,7 @@ def _resolve_direct_assignee(db: Session, definition: InternalTaskDefinition) ->
     if not definition.assignee_user_id:
         raise ValueError("direct internal task definition requires assignee_user_id")
     assignee = db.get(User, definition.assignee_user_id)
-    if assignee is None or not assignee.is_active or assignee.role not in {"agent", "trainee"}:
+    if assignee is None or not assignee.is_active or assignee.role != "agent":
         return None
     if assignee.company_id != definition.company_id:
         return None

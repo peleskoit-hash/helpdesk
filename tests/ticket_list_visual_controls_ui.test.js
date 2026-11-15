@@ -16,8 +16,9 @@ async function setup(t, theme, width) {
   t.after(() => assert.deepEqual(errors, []));
   const kinds = ['request', 'task', 'group-task', 'internal-task', 'frozen', 'closed'];
   const items = Array.from({ length: 20 }, (_, i) => ({ id: String(i + 1), subject: `Заявка ${i + 1}`,
-    workflow_type: i % 6 === 0 ? 'ticket' : 'task', task_kind: i % 6 === 2 ? 'group_parent' : 'normal',
-    is_internal_task: i % 6 === 3, is_frozen: i % 6 === 4, status: i % 6 === 5 ? 'closed' : 'new',
+    workflow_type: i % 6 === 0 || i === 5 ? 'ticket' : 'task', task_kind: i % 6 === 2 ? 'group_parent' : 'normal',
+    is_internal_task: i % 6 === 3 || i === 11, is_frozen: i % 6 === 4, status: i % 6 === 5 ? 'closed' : 'new',
+    assignee_name: i % 6 === 5 ? 'Иванов И. (wasted)' : null,
     seen_by_agent: i >= 6, created_at: '2026-10-30T09:00:00Z' }));
   const preferences = { color_enabled: true, task_panel_enabled: false,
     ticket_list_columns: [{ key: 'subject', width: 300 }, { key: 'type', width: 150 }, { key: 'assignee', width: 170 }] };
@@ -46,10 +47,11 @@ async function setup(t, theme, width) {
     document.body.dataset.sidebarReady = '1';
     const sidebar = { role: 'admin', userId: 'admin', agents: [
       { id: 'agent', full_name: 'Сотрудник', role: 'agent' },
-      { id: 'trainee', full_name: 'Стажёр', role: 'trainee' }], counts: {} };
+      { id: 'second_agent', full_name: 'Second Agent', role: 'agent' }], counts: {} };
     window.HelpdeskSidebar = { init: async () => {}, getState: () => sidebar, onChange: () => () => {}, refreshCounts: async () => {} };
     window.HelpdeskAppShell = { registerPage: (_, init) => { window.initList = init; }, getCurrentPage: () => 'tickets-list' };
   }, theme);
+  await page.addScriptTag({ content: fs.readFileSync('api/app/static/task_panel_layout.js', 'utf8') });
   await page.addScriptTag({ content: fs.readFileSync('api/app/static/list.js', 'utf8') });
   await page.evaluate(() => { window.listPage = window.initList(); });
   await page.waitForFunction(() => document.querySelectorAll('.ticket-row').length === 20);
@@ -77,6 +79,13 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 700, 390]) {
       ctx.font = s.font;
       return ctx.measureText(n.options[0].text).width + parseFloat(s.paddingLeft) + parseFloat(s.paddingRight) + 24 <= n.clientWidth;
     }), true, 'the full (20) label leaves room for the native arrow');
+    const activeRow = page.locator('.ticket-row').filter({ has: page.locator('.ticket-check[data-ticket-id="1"]') });
+    assert.equal(await activeRow.locator('.row-assignee-select').count(), 1);
+    for (const id of [6, 12]) {
+      const closedRow = page.locator('.ticket-row').filter({ has: page.locator(`.ticket-check[data-ticket-id="${id}"]`) });
+      assert.equal(await closedRow.locator('.ticket-assignee-col .ticket-row-link').textContent(), 'Иванов И. (wasted)');
+      assert.equal(await closedRow.locator('.row-assignee-select').count(), 0);
+    }
     const rowOptions = await page.locator('.row-assignee-select').first().locator('option').evaluateAll(ns => ns.map(n => [n.value, n.textContent]));
     assert.deepEqual(await assign.locator('option').evaluateAll(ns => ns.slice(1).map(n => [n.value, n.textContent])), rowOptions);
     const ui = await page.evaluate(() => {
@@ -104,9 +113,9 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 700, 390]) {
       assert.ok(colors.gradient.endsWith('70%)'), colors.gradient);
       assert.ok(colors.cells.every(c => c === 'rgba(0, 0, 0, 0)'), JSON.stringify(colors));
     }
-    await assign.selectOption('trainee');
+    await assign.selectOption('second_agent');
     await page.waitForFunction(() => !document.querySelectorAll('.ticket-check:checked').length && document.querySelector('#bulkAssignBtn').disabled);
-    assert.deepEqual(writes[0], { path: '/api/v1/tickets/assign', body: { ticket_ids: Array.from({ length: 20 }, (_, i) => String(i + 1)), assignee_id: 'trainee' } });
+    assert.deepEqual(writes[0], { path: '/api/v1/tickets/assign', body: { ticket_ids: Array.from({ length: 20 }, (_, i) => String(i + 1)), assignee_id: 'second_agent' } });
     await page.locator('.ticket-check').first().check();
     await assign.selectOption('');
     await page.waitForFunction(() => !document.querySelectorAll('.ticket-check:checked').length && document.querySelector('#bulkAssignBtn').disabled);

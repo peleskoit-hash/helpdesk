@@ -268,7 +268,7 @@ def test_description_deadline_append_uses_app_timezone(monkeypatch):
     assert _messages(session, second.ticket, MessageType.CLIENT.value)[0].body == second.occurrence.description_snapshot
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_direct_active_support_user_is_assigned_even_when_not_online(role):
     session = _session()
     company = _company(session)
@@ -354,7 +354,7 @@ def test_direct_missing_user_falls_back_without_mutating_definition():
     assert result.ticket.assignee_id is None
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_direct_cross_company_support_user_falls_back_to_distribution(role):
     session = _session()
     company = _company(session, "Primary")

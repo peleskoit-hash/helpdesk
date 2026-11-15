@@ -36,7 +36,7 @@ def test_get_and_poll_keep_unread_and_first_open_fact(case):
     assert listing(case).items[0].unread_count == 2
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_partial_confirmation_reduces_count_and_cannot_move_backwards(case, role):
     ids = [message(case, minutes=i).id for i in range(1, 6)]
     card = open_card(case, role)

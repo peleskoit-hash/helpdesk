@@ -175,7 +175,7 @@ def _last_client_visible_support_message_author_id(db: Session, ticket: Ticket) 
                 TicketMessage.ticket_id == ticket.id,
                 TicketMessage.message_type == MessageType.AGENT.value,
                 _active_message_status_filter(),
-                User.role.in_(["agent", "trainee"]),
+                User.role == "agent",
             )
         )
         .order_by(desc(TicketMessage.created_at))
@@ -198,7 +198,7 @@ def _has_client_visible_support_message_by_user(db: Session, ticket: Ticket, use
                 TicketMessage.message_type == MessageType.AGENT.value,
                 _active_message_status_filter(),
                 TicketMessage.author_user_id == user_id,
-                User.role.in_(["agent", "trainee"]),
+                User.role == "agent",
                 or_(
                     TicketMessage.body != "",
                     TicketMessage.id.in_(
@@ -212,7 +212,7 @@ def _has_client_visible_support_message_by_user(db: Session, ticket: Ticket, use
 
 
 def _resolve_completed_by_user_id(db: Session, ticket: Ticket, actor: CurrentUser) -> str | None:
-    if actor.role in {"agent", "trainee"}:
+    if actor.role == "agent":
         return actor.id
     if actor.role != "admin":
         return None
@@ -220,7 +220,7 @@ def _resolve_completed_by_user_id(db: Session, ticket: Ticket, actor: CurrentUse
     assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
     if (
         assignee
-        and assignee.role in {"agent", "trainee"}
+        and assignee.role == "agent"
         and _has_client_visible_support_message_by_user(db, ticket, assignee.id)
     ):
         return assignee.id

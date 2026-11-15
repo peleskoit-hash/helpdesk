@@ -308,13 +308,13 @@ def test_status_stats_user_filter_missing_user_and_unknown_status():
 def test_status_stats_rejects_non_admin_roles():
     session = _session()
     company, admin, agent = _seed_admin_context(session)
-    trainee = _user(session, company, "trainee-a", role="trainee")
+    second_agent = _user(session, company, "second_agent-a", role="agent")
     readonly = _user(session, company, "chiki-a", role="chiki_piki")
     session.add(_status_interval(company.id, user_id=agent.id))
     session.commit()
 
     assert _get(session, admin).status_code == 200
-    for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
+    for user, role in [(agent, "agent"), (second_agent, "agent"), (readonly, "chiki_piki")]:
         response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/statuses")
         assert response.status_code == 403
 
@@ -619,7 +619,7 @@ def test_status_transitions_rejects_invalid_cursor_and_too_large_limit():
 def test_status_transitions_rejects_non_admin_roles():
     session = _session()
     company, admin, agent = _seed_admin_context(session)
-    trainee = _user(session, company, "trainee-a", role="trainee")
+    second_agent = _user(session, company, "second_agent-a", role="agent")
     readonly = _user(session, company, "chiki-a", role="chiki_piki")
     session.add_all(
         [
@@ -630,7 +630,7 @@ def test_status_transitions_rejects_non_admin_roles():
     session.commit()
 
     assert _get_transitions(session, admin).status_code == 200
-    for user, role in [(agent, "agent"), (trainee, "trainee"), (readonly, "chiki_piki")]:
+    for user, role in [(agent, "agent"), (second_agent, "agent"), (readonly, "chiki_piki")]:
         response = _api_client(session, _current_user(user.id, role=role)).get("/api/v1/management/statistics/status-transitions")
         assert response.status_code == 403
 

@@ -19,7 +19,7 @@ from ..models import (
 )
 
 
-SUPPORT_ROLES = {"agent", "trainee"}
+SUPPORT_ROLES = {"agent"}
 AVAILABILITY_STATUS_FALLBACK = "online"
 
 

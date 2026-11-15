@@ -130,7 +130,7 @@ def test_management_users_blocked_filter_returns_only_blocked_contacts():
     assert payload["items"][0]["is_blocked"] is True
 
 
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 def test_management_users_editor_access(role):
     session = _session()
     client, _, _ = _seed_user(session)
@@ -175,7 +175,7 @@ def test_agent_cannot_update_protected_fields():
 
 
 @pytest.mark.parametrize("role, expected", [
-    ("admin", 200), ("agent", 200), ("trainee", 303), ("chiki_piki", 303), (None, 303),
+    ("admin", 200), ("agent", 200), ("chiki_piki", 303), (None, 303),
 ])
 def test_management_users_page_access(monkeypatch, role, expected):
     from fastapi import FastAPI

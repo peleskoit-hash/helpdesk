@@ -26,7 +26,6 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 ROLE_LABELS = {
     "admin": "Администратор",
     "agent": "Сотрудник",
-    "trainee": "Стажёр",
     "chiki_piki": "Наблюдатель",
 }
 
@@ -81,7 +80,7 @@ def list_bot_button_assignees(
     _require_admin(user)
     users = db.execute(
         select(User)
-        .where(User.is_active.is_(True), User.role.in_(["admin", "agent", "trainee"]))
+        .where(User.is_active.is_(True), User.role.in_(["admin", "agent"]))
         .order_by(User.role.asc(), User.full_name.asc())
     ).scalars().all()
     return [

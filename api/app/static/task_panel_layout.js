@@ -15,7 +15,7 @@
     isCurrent(token) { return token === generation; },
     remember(state) {
       if (!scope || state.taskPanelScope !== generation) return;
-      const enabled = (state.role === "agent" || state.role === "trainee") && state.taskPanelEnabled;
+      const enabled = state.role === "agent" && state.taskPanelEnabled;
       cached = { enabled, items: enabled ? state.taskPanelItems : [], status: state.taskPanelStatus };
     },
     mount(panel, render) {

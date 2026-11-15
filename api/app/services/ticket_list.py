@@ -306,7 +306,7 @@ def internal_task_requester_display_name(db: Session, ticket: Ticket) -> str | N
         return None
     if not _display_author_enabled(occurrence.display_author):
         return "Система"
-    creator = db.get(User, occurrence.creator_admin_id)
+    creator = db.get(User, occurrence.creator_admin_id) if occurrence.creator_admin_id else None
     return _normalized_text(creator.full_name if creator else "") or _normalized_text(creator.login if creator else "") or "Система"
 
 
@@ -449,7 +449,9 @@ def list_tickets_paginated(
         seen = seen_by_agent(db, t.id, user)
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
-        display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
+        display_assignee_name = (
+            t.special_assignee_name_snapshot if t.is_special and special_assignee is None else None
+        ) or _display_assignee_name(t, assignee, special_assignee) or t.assignee_name_snapshot
         internal_requester_name = internal_requester_map.get(t.id)
         is_internal_task = t.id in internal_requester_map
         requester_profile = profile_map.get(t.client_id)
@@ -476,7 +478,7 @@ def list_tickets_paginated(
                 assignee_name=display_assignee_name,
                 is_special=bool(t.is_special),
                 special_assignee_id=t.special_assignee_id,
-                special_assignee_name=special_assignee.full_name if special_assignee else None,
+                special_assignee_name=special_assignee.full_name if special_assignee else t.special_assignee_name_snapshot,
                 last_reply_by=last_reply_by,
                 last_reply_at=last_reply_at,
                 created_at=t.created_at,
@@ -526,7 +528,9 @@ def list_special_tickets(
         last_reply_by, last_reply_at = last_reply_meta(db, t.id)
         assignee = db.get(User, t.assignee_id) if t.assignee_id else None
         special_assignee = db.get(User, t.special_assignee_id) if t.special_assignee_id else None
-        display_assignee_name = _display_assignee_name(t, assignee, special_assignee)
+        display_assignee_name = (
+            t.special_assignee_name_snapshot if t.is_special and special_assignee is None else None
+        ) or _display_assignee_name(t, assignee, special_assignee) or t.assignee_name_snapshot
         internal_requester_name = internal_requester_map.get(t.id)
         is_internal_task = t.id in internal_requester_map
         requester_profile = profile_map.get(t.client_id)
@@ -552,7 +556,7 @@ def list_special_tickets(
                 assignee_name=display_assignee_name,
                 is_special=True,
                 special_assignee_id=t.special_assignee_id,
-                special_assignee_name=special_assignee.full_name if special_assignee else None,
+                special_assignee_name=special_assignee.full_name if special_assignee else t.special_assignee_name_snapshot,
                 last_reply_by=last_reply_by,
                 last_reply_at=last_reply_at,
                 created_at=t.created_at,
@@ -598,7 +602,7 @@ def build_ticket_counts(
             return None
 
         agent_ids = db.execute(
-            select(User.id).where(User.role.in_(["agent", "trainee"]), User.is_active.is_(True))
+            select(User.id).where(User.role == "agent", User.is_active.is_(True))
         ).scalars().all()
         if not agent_ids:
             return {}

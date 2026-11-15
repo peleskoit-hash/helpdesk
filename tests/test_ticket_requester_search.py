@@ -259,13 +259,13 @@ def test_search_preserves_other_fields_and_role_visibility(case):
     hidden = seed(case, fio="Целевая Анна", assignee_id="other")
     invisible = seed(case, fio="Целевая Анна", agent_visible=False)
     case.db.commit()
-    for role in ["admin", "agent", "trainee", "chiki_piki"]:
+    for role in ["admin", "agent", "chiki_piki"]:
         user = SimpleNamespace(id="agent" if role != "admin" else "admin", role=role)
         baseline = listing(case, user=user)
         searched = listing(case, "цЕЛЕВАЯ", user=user)
         assert {item.id for item in searched.items} == {item.id for item in baseline.items}
         assert searched.total == baseline.total
-        if role in {"agent", "trainee", "chiki_piki"}:
+        if role in {"agent", "chiki_piki"}:
             assert {item.id for item in searched.items} == {named.id}
     named.subject = "legacy-topic"
     named.button_config_key = "legacy-key"

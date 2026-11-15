@@ -1,4 +1,4 @@
-﻿# PROJECT_CONTEXT
+# PROJECT_CONTEXT
 
 ## Project Purpose
 Локальный helpdesk для Telegram-обращений с web-интерфейсом операторов/админов. Архитектура рассчитана на дальнейшее разделение dev/prod (один Windows 10 ПК) и расширение каналов.
@@ -28,14 +28,14 @@
 
 ## Current Functional Scope
 - Реализованы login/logout/session auth (`/login`, `/logout`).
-- Роли: `admin`, `agent`, `trainee`, `chiki_piki`.
+- Роли: `admin`, `agent`, `chiki_piki`.
 - Очереди: Нераспределённые, Активные, Особые, Замороженные, Закрытые.
 - Attachments и stickers в карточке.
 - Special queue для admin.
 - Forced assignee, freeze_on_create, confirmation, system/client text, files, conditional files.
 - Настройки: пользователи, карточка клиента, кнопки бота.
 - Автоматизация `bitrix_deal_phone_lookup`.
-- Completion stats для agent/trainee.
+- Completion stats для agent.
 - Onsite trigger "Иду к вам" для ticket.
 
 ## Bot Menu Model

@@ -38,7 +38,7 @@ def test_other_system_message_filtering_is_unchanged(body, expected):
     assert tickets._is_support_visible_system_message(TicketMessage(body=body)) is expected
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee", "admin"])
+@pytest.mark.parametrize("role", ["agent", "admin"])
 def test_ticket_api_start_note_visibility_by_role(role):
     engine, _, db = _session_bundle()
     try:

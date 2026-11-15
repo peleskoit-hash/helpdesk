@@ -27,7 +27,7 @@ def page_client(monkeypatch, role):
     return TestClient(app)
 
 
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki", "observer"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki", "observer"])
 def test_management_feedback_page_is_admin_only(monkeypatch, role):
     response = page_client(monkeypatch, role).get(PAGE_ROUTE, follow_redirects=False)
     if role != "admin":

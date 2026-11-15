@@ -57,7 +57,7 @@ def test_exact_moscow_window_including_sunday(case, value, count):
     assert user.availability_status == ("offline" if count else "online")
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 @pytest.mark.parametrize("status", ["online", "on_ticket", "waiting", "lunch"])
 def test_all_active_support_statuses_are_reset_with_history(case, role, status):
     user = employee(case, status, role)
@@ -89,8 +89,8 @@ def test_custom_workday_time_is_recorded_only_on_status_change(case):
 
 
 @pytest.mark.parametrize("status,role,active", [
-    ("offline", "agent", True), ("offline", "trainee", True),
-    ("online", "agent", False), ("lunch", "trainee", False),
+    ("offline", "agent", True),
+    ("online", "agent", False), ("lunch", "agent", False),
     ("online", "admin", True), ("online", "chiki_piki", True),
 ])
 def test_offline_inactive_and_other_roles_are_untouched(case, status, role, active):

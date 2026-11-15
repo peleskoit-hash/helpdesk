@@ -32,7 +32,7 @@ def case(engine, monkeypatch, tmp_path):
     ticket=Ticket(id='ticket',company_id=company.id,client_id=client.id,subject='Test',status='pending')
     db.add(ticket);db.flush()
     users = {}
-    for role in ['agent','trainee','admin','chiki_piki']:
+    for role in ['agent','admin','chiki_piki']:
         user = User(id='actor-'+role,company_id=ticket.company_id,full_name=role,role=role,
                     is_active=True,availability_status='online')
         db.add(user)
@@ -88,7 +88,7 @@ def preload(c):
     return row.id
 
 
-@pytest.mark.parametrize('role',['agent','trainee','admin'])
+@pytest.mark.parametrize('role',['agent','admin'])
 @pytest.mark.parametrize('owner',[True,False])
 @pytest.mark.parametrize('channel',['telegram','web'])
 def test_only_actual_assignee_reply_unfreezes(case,role,owner,channel):
@@ -101,7 +101,7 @@ def test_only_actual_assignee_reply_unfreezes(case,role,owner,channel):
     assert (c.ticket.freeze_until is None) is owner
 
 
-@pytest.mark.parametrize('role',['agent','trainee','admin','chiki_piki'])
+@pytest.mark.parametrize('role',['agent','admin','chiki_piki'])
 @pytest.mark.parametrize('owner',[True,False])
 @pytest.mark.parametrize('with_file',[True,False])
 def test_internal_comments_never_unfreeze(case,role,owner,with_file):
@@ -119,7 +119,7 @@ def test_internal_comments_never_unfreeze(case,role,owner,with_file):
     assert c.db.scalar(select(StatsWorkInterval)) is None
 
 
-@pytest.mark.parametrize('role',['agent','trainee','admin','chiki_piki'])
+@pytest.mark.parametrize('role',['agent','admin','chiki_piki'])
 def test_legacy_comment_entry_point_does_not_unfreeze(case,role):
     c=case;c.ticket.assignee_id=c.users[role].id;c.db.commit()
     assert messages.comment_on_ticket(db=c.db,user=c.users[role],ticket=c.ticket,
@@ -155,7 +155,7 @@ def test_system_message_does_not_unfreeze(case):
     assert case.ticket.is_frozen
 
 
-@pytest.mark.parametrize('role',['agent','trainee','admin'])
+@pytest.mark.parametrize('role',['agent','admin'])
 @pytest.mark.parametrize('owner',[True,False])
 @pytest.mark.parametrize('text',['Text',''])
 @pytest.mark.parametrize('channel',['telegram','web'])
@@ -233,7 +233,7 @@ def test_hint_uses_actual_actor_ack_and_real_client_send(case,monkeypatch,owner,
     assert c.ticket.is_frozen is not (workflow=='ticket' and owner and ack)
 
 
-@pytest.mark.parametrize('role',['agent','trainee','admin'])
+@pytest.mark.parametrize('role',['agent','admin'])
 def test_manual_actions_remain_available_under_existing_permissions(case,role):
     c=case;actor=c.users[role]
     c.ticket.assignee_id=c.users['agent'].id if role=='admin' else actor.id;c.db.commit()

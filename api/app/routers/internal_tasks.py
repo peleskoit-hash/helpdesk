@@ -177,8 +177,8 @@ def _direct_assignee(db: Session, company_id: str, assignee_user_id: str | None)
     ).scalar_one_or_none()
     if assignee is None:
         _error(404, "assignee_not_found", "Исполнитель не найден")
-    if assignee.role not in {"agent", "trainee"}:
-        _error(422, "assignee_invalid_role", "Исполнителем может быть только агент или стажёр")
+    if assignee.role != "agent":
+        _error(422, "assignee_invalid_role", "Исполнителем может быть только агент")
     return assignee
 
 
@@ -375,6 +375,11 @@ def _user_out(user: User | None) -> dict | None:
     }
 
 
+def _historical_user_out(db: Session, user_id: str | None, snapshot: str | None = None) -> dict | None:
+    user = db.get(User, user_id) if user_id else None
+    return _user_out(user) if user else ({"full_name": snapshot} if snapshot else None)
+
+
 def _definition_has_occurrence(db: Session, definition_id: str) -> bool:
     return db.execute(
         select(InternalTaskOccurrence.id)
@@ -389,8 +394,8 @@ def _scheduled_definition_out(db: Session, definition: InternalTaskDefinition) -
         "definition_id": definition.id,
         "title": definition.title,
         "description": definition.description,
-        "creator_admin": _user_out(db.get(User, definition.creator_admin_id)),
-        "responsible_admin": _user_out(db.get(User, definition.responsible_admin_id)),
+        "creator_admin": _historical_user_out(db, definition.creator_admin_id),
+        "responsible_admin": _historical_user_out(db, definition.responsible_admin_id, definition.responsible_admin_name_snapshot),
         "assignment_mode": definition.assignment_mode,
         "assignee": _user_out(db.get(User, definition.assignee_user_id)) if definition.assignee_user_id else None,
         "display_author": bool(definition.display_author),
@@ -409,8 +414,8 @@ def _recurring_definition_out(db: Session, definition: InternalTaskDefinition) -
         "definition_id": definition.id,
         "title": definition.title,
         "description": definition.description,
-        "creator_admin": _user_out(db.get(User, definition.creator_admin_id)),
-        "responsible_admin": _user_out(db.get(User, definition.responsible_admin_id)),
+        "creator_admin": _historical_user_out(db, definition.creator_admin_id),
+        "responsible_admin": _historical_user_out(db, definition.responsible_admin_id, definition.responsible_admin_name_snapshot),
         "assignment_mode": definition.assignment_mode,
         "assignee": _user_out(db.get(User, definition.assignee_user_id)) if definition.assignee_user_id else None,
         "display_author": bool(definition.display_author),
@@ -447,10 +452,10 @@ def _materialized_task_out(
         "ticket_id": ticket.id,
         "title": occurrence.title_snapshot,
         "description": occurrence.description_snapshot,
-        "creator_admin": _user_out(db.get(User, occurrence.creator_admin_id)),
-        "responsible_admin": _user_out(db.get(User, occurrence.responsible_admin_id)),
+        "creator_admin": _historical_user_out(db, occurrence.creator_admin_id),
+        "responsible_admin": _historical_user_out(db, occurrence.responsible_admin_id, occurrence.responsible_admin_name_snapshot),
         "effective_assignment_mode": occurrence.effective_assignment_mode,
-        "effective_assignee": _user_out(db.get(User, occurrence.effective_assignee_user_id)) if occurrence.effective_assignee_user_id else None,
+        "effective_assignee": _historical_user_out(db, occurrence.effective_assignee_user_id, occurrence.effective_assignee_name_snapshot),
         "current_assignee": _user_out(current_assignee),
         "ticket_status": ticket.status,
         "materialized_at": occurrence.materialized_at_utc,
@@ -635,7 +640,7 @@ def internal_task_options(
     return {
         "current_admin_id": actor.id,
         "app_timezone": settings.app_timezone,
-        "assignees": [_user_out(item) for item in users if item.role in {"agent", "trainee"}],
+        "assignees": [_user_out(item) for item in users if item.role == "agent"],
         "admins": [_user_out(item) for item in users if item.role == "admin"],
     }
 

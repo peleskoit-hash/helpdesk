@@ -242,7 +242,7 @@ def resolve_forced_assignee(db: Session, forced_assignee_type: str, forced_assig
         return None, "not_found", None
     if not user.is_active:
         return None, "inactive", user
-    if user.role not in {"agent", "trainee"}:
+    if user.role != "agent":
         return None, "invalid_role", user
     return user, None, user
 

@@ -90,7 +90,7 @@ def test_web_direct_validator_recognizes_admin(case):
 
 
 @pytest.mark.parametrize("path", ["ticket", "management"])
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("admin_only", [False, True])
 @pytest.mark.parametrize("editable", [False, True])
 def test_web_field_permissions_on_both_save_paths(case, path, role, admin_only, editable):
@@ -107,7 +107,7 @@ def test_web_field_permissions_on_both_save_paths(case, path, role, admin_only, 
         field.admin_only_edit, field.is_editable = admin_only, editable
     case.db.commit()
     payload = ClientProfileUpdate(custom_fields={"custom_web_login": "changed", "custom_web_password": "Changed-B2!"})
-    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
+    allowed = editable and (role in {"admin", "agent"})
     action = tickets.update_client_profile if path == "ticket" else management_users.update_management_user_profile
     args = ("ticket" if path == "ticket" else "client", payload)
     if allowed:
@@ -128,7 +128,7 @@ def test_web_field_permissions_on_both_save_paths(case, path, role, admin_only, 
     assert case.profile.custom_fields == {"custom_other": "kept"}
 
 
-@pytest.mark.parametrize("role", [None, "agent", "trainee", "chiki_piki", "admin"])
+@pytest.mark.parametrize("role", [None, "agent", "chiki_piki", "admin"])
 @pytest.mark.parametrize("admin_only,editable", [(False, True), (True, True), (True, False)])
 def test_other_save_entry_points_cannot_bypass_web_permissions(case, role, admin_only, editable):
     user = SimpleNamespace(id="staff", role=role) if role else None
@@ -137,7 +137,7 @@ def test_other_save_entry_points_cannot_bypass_web_permissions(case, role, admin
         field.admin_only_edit, field.is_editable = admin_only, editable
     case.db.commit()
     changes = {"custom_web_login": "internal-call", "custom_web_password": "Internal-A1!"}
-    if editable and role in {"admin", "agent", "trainee"}:
+    if editable and role in {"admin", "agent"}:
         result = apply_client_card_profile_save_pipeline(
             case.db, case.profile, {"custom_fields": changes}, changes, user=user,
         )
@@ -172,7 +172,7 @@ def test_web_pipeline_rejects_unconfigured_fields_instead_of_skipping_validation
     assert case.profile.web_login is None
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 @pytest.mark.parametrize("operation", ["save", "generate", "reveal"])
 def test_web_operations_require_ticket_access(case, role, operation):
     user = SimpleNamespace(id="unassigned-staff", role=role)
@@ -301,11 +301,11 @@ def test_collisions_manual_error_and_database_uniqueness(case, monkeypatch):
 
 
 def test_reveal_and_generate_authorization_and_missing_profile(case):
-    trainee = SimpleNamespace(id="trainee", role="trainee")
+    observer = SimpleNamespace(id="observer", role="chiki_piki")
     for action in (management_users.reveal_management_web_password, management_users.generate_management_web_credentials):
         kwargs = {"payload": WebCredentialsGeneratePayload()} if "generate" in action.__name__ else {}
         with pytest.raises(HTTPException) as exc:
-            action("client", db=case.db, user=trainee, **kwargs)
+            action("client", db=case.db, user=observer, **kwargs)
         assert exc.value.status_code == 403
     agent = SimpleNamespace(id="other-agent", role="agent")
     with pytest.raises(HTTPException) as exc:
@@ -414,7 +414,7 @@ def test_general_import_refuses_credentials_instead_of_losing_or_copying_them(ca
 
 
 @pytest.mark.parametrize("path", ["ticket", "management"])
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("admin_only", [False, True])
 @pytest.mark.parametrize("editable", [False, True])
 def test_web_generation_permissions_on_both_paths(case, path, role, admin_only, editable):
@@ -428,7 +428,7 @@ def test_web_generation_permissions_on_both_paths(case, path, role, admin_only, 
         field.admin_only_edit, field.is_editable = admin_only, editable
     case.db.commit()
     action = tickets.generate_ticket_web_credentials if path == "ticket" else management_users.generate_management_web_credentials
-    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
+    allowed = editable and (role in {"admin", "agent"})
     if allowed:
         response = action("ticket" if path == "ticket" else "client", WebCredentialsGeneratePayload(), db=case.db, user=user)
         draft = json.loads(response.body)
@@ -459,7 +459,7 @@ def password_http_case(case):
     save(case, {"custom_web_login": "visible-login", "custom_web_password": "Web-Secret-A1!"},
          bitrix_password="Bitrix-Secret-B2!")
     case.profile.destination = "\u041a\u043e\u043b\u043b \u0426\u0435\u043d\u0442\u0440"
-    for role in ["admin", "agent", "trainee", "chiki_piki"]:
+    for role in ["admin", "agent", "chiki_piki"]:
         case.db.add(User(id=f"staff-{role}", company_id="company", full_name="Staff", role=role))
     case.db.commit()
     app = FastAPI()
@@ -469,7 +469,7 @@ def password_http_case(case):
     return app
 
 
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("path,secret", [
     ("/api/v1/tickets/ticket/client-profile/web-password", "Web-Secret-A1!"),
     ("/api/v1/tickets/ticket/client-profile/bitrix-password", "Bitrix-Secret-B2!"),
@@ -613,7 +613,7 @@ def test_explicit_web_password_clear_preserves_login_and_bitrix(case, path):
 
 
 @pytest.mark.parametrize("path", ["ticket", "management"])
-@pytest.mark.parametrize("role", ["admin", "agent", "trainee", "chiki_piki"])
+@pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
 @pytest.mark.parametrize("editable", [True, False])
 def test_web_password_clear_requires_role_access_and_editable_field(case, path, role, editable):
     save(case, {"custom_web_login": "keep", "custom_web_password": "Clear-Protected-A1!"})
@@ -627,7 +627,7 @@ def test_web_password_clear_requires_role_access_and_editable_field(case, path, 
     case.db.commit()
     original = case.profile.web_password_encrypted, case.profile.web_password_hash, case.profile.web_credentials_version
     action = tickets.update_client_profile if path == "ticket" else management_users.update_management_user_profile
-    allowed = editable and (role in {"admin", "agent"} or (path == "ticket" and role == "trainee"))
+    allowed = editable and (role in {"admin", "agent"})
     if allowed:
         action("ticket" if path == "ticket" else "client", ClientProfileUpdate(clear_web_password=True), db=case.db, user=user)
         assert case.profile.web_password_encrypted is None and case.profile.web_password_hash is None

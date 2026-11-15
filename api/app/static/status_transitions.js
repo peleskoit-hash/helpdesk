@@ -116,7 +116,7 @@
         timezone = sidebar.appTimezone || "UTC";
         const users = await api("/api/v1/settings/users", lifetime.signal);
         if (destroyed) return;
-        el.Employee.innerHTML = '<option value="">Все сотрудники</option>' + users.filter(user => ["agent", "trainee"].includes(user.role)).map(user => `<option value="${escapeHtml(user.id)}">${escapeHtml((user.full_name || user.login || user.id) + (user.is_active === false ? " (неактивен)" : ""))}</option>`).join("");
+        el.Employee.innerHTML = '<option value="">Все сотрудники</option>' + users.filter(user => user.role === "agent").map(user => `<option value="${escapeHtml(user.id)}">${escapeHtml((user.full_name || user.login || user.id) + (user.is_active === false ? " (неактивен)" : ""))}</option>`).join("");
         el.DateTo.value = dates.calendarDate(new Date(), timezone);
         el.DateFrom.value = dates.addCalendarDays(el.DateTo.value, -29);
         for (const control of [el.Employee, el.Period, el.DateFrom, el.DateTo, el.Order]) listen(control, "change", refresh);

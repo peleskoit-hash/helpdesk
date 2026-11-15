@@ -51,8 +51,8 @@ def case(tmp_path, monkeypatch):
         connection.execute("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
-    ids = {name: str(uuid4()) for name in ("author", "other", "admin", "trainee", "readonly", "disabled")}
-    roles = {"author": "agent", "other": "agent", "admin": "admin", "trainee": "trainee", "readonly": "chiki_piki", "disabled": "agent"}
+    ids = {name: str(uuid4()) for name in ("author", "other", "admin", "second_agent", "readonly", "disabled")}
+    roles = {"author": "agent", "other": "agent", "admin": "admin", "second_agent": "agent", "readonly": "chiki_piki", "disabled": "agent"}
     with factory() as db:
         db.add_all([Company(id="first", name="First"), Company(id="second", name="Second")])
         db.flush()
@@ -150,7 +150,7 @@ def test_list_is_global_newest_first_with_stable_id_tiebreak(case):
     assert case.client.get(first["image_url"]).status_code == 200
 
 
-@pytest.mark.parametrize("role,allowed", [("author", True), ("admin", True), ("trainee", True), ("readonly", False)])
+@pytest.mark.parametrize("role,allowed", [("author", True), ("admin", True), ("second_agent", True), ("readonly", False)])
 def test_creation_permissions(case, role, allowed):
     case.login(role)
     response = upload(case)
@@ -177,7 +177,7 @@ def test_author_identity_and_permissions_use_real_user_and_ignore_supplied_metad
         assert created["author_user_id"] == case.ids["other"]
 
 
-@pytest.mark.parametrize("role,status", [("author", 204), ("admin", 204), ("other", 403), ("trainee", 403), ("readonly", 403)])
+@pytest.mark.parametrize("role,status", [("author", 204), ("admin", 204), ("other", 403), ("second_agent", 403), ("readonly", 403)])
 def test_delete_permissions_and_repeated_delete(case, role, status):
     contour = saved(case)
     path, backup = stored_paths(case, contour)

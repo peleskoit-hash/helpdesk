@@ -249,6 +249,8 @@ def test_self_login_change_updates_only_current_user():
     assert result.ok is True
     assert result.message == "Данные изменены. Войдите снова."
     assert current.login == "ivan.new"
+    assert current.auth_version == 1
+    assert other.auth_version == 0
     assert current.email == original_email
     assert other.login == "other"
 
@@ -287,6 +289,7 @@ def test_self_login_change_allows_same_own_login():
     session.refresh(current)
     assert result.ok is True
     assert current.login == "ivan"
+    assert current.auth_version == 0
 
 
 def test_self_password_change_updates_hash_and_new_password_verifies():
@@ -308,6 +311,7 @@ def test_self_password_change_updates_hash_and_new_password_verifies():
     session.refresh(current)
     assert result.ok is True
     assert current.password_hash != old_hash
+    assert current.auth_version == 1
     assert verify_password("new", current.password_hash) is True
     assert verify_password("old", current.password_hash) is False
 

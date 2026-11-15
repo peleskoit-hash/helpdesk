@@ -132,7 +132,7 @@ for (const width of [1600,1366,1100]) test(`observer chat fills available space 
   if(width>1200) assert.ok(b.chatRight>a.chatRight+200);
 });
 
-for (const role of ['admin','agent','trainee']) test(`other roles retain controls, links and reply mode: ${role}`, async t => {
+for (const role of ['admin','agent']) test(`other roles retain controls, links and reply mode: ${role}`, async t => {
   const {page} = await setup(t,role);
   assert.equal(await page.locator('.ticket-side:not(.ticket-client-side)').isVisible(),true);
   assert.equal(await page.locator('#modeReplyBtn').isEnabled(),true);
@@ -205,7 +205,7 @@ test('observer cannot open quick replies by button, Ctrl+Q or pending editor use
   assert.deepEqual(uploads,[]);
 });
 
-for(const role of ['admin','agent','trainee']) test(`quick replies remain accessible by button and Ctrl+Q: ${role}`,async t => {
+for(const role of ['admin','agent']) test(`quick replies remain accessible by button and Ctrl+Q: ${role}`,async t => {
   const {page,quickRequests} = await setup(t,role);
   assert.equal(await page.locator('#quickRepliesBtn').isVisible(),true);
   await page.locator('#quickRepliesBtn').click();

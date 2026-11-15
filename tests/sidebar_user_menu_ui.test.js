@@ -386,7 +386,7 @@ function buildSidebarDom({ statusPanel = "empty" } = {}) {
 
 const DEFAULT_AGENTS = [
   { id: "a1", full_name: "Anna Agent" },
-  { id: "b2", full_name: "Boris Trainee" },
+  { id: "b2", full_name: "Boris second_agent" },
   { id: "c3", full_name: "Cara Agent" },
 ];
 
@@ -902,11 +902,11 @@ test("sidebar owns one shared poller and refreshes counts without rendering empl
   const { document } = buildSidebarDom();
   const initialAgents = [
     { id: "a1", full_name: "Anna Agent", availability_status: "online" },
-    { id: "b2", full_name: "Boris Trainee", availability_status: "waiting" },
+    { id: "b2", full_name: "Boris second_agent", availability_status: "waiting" },
   ];
   const refreshedAgents = [
     { id: "a1", full_name: "Anna Agent", availability_status: "on_ticket" },
-    { id: "b2", full_name: "Boris Trainee", availability_status: "lunch" },
+    { id: "b2", full_name: "Boris second_agent", availability_status: "lunch" },
   ];
   const window = await loadSidebar(document, "admin", {}, {
     agents: initialAgents,
@@ -1122,7 +1122,7 @@ test("sidebar status panel stays hidden for admin", async () => {
   assert.equal(document.querySelectorAll("[data-availability-status]").length, 5);
 });
 
-for (const role of ["admin", "agent", "trainee"]) {
+for (const role of ["admin", "agent"]) {
   test("notification bot menu entry is visible for role: " + role, async () => {
     const { document } = buildSidebarDom();
     const window = await loadSidebar(document, role);
@@ -1134,12 +1134,12 @@ for (const role of ["admin", "agent", "trainee"]) {
   });
 }
 
-for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
+for (const role of ["admin", "agent", "chiki_piki"]) {
   test("review profile entry follows role: " + role, async () => {
     const { document } = buildSidebarDom();
     const window = await loadSidebar(document, role);
     const item = document.querySelector('[data-sidebar-user-menu-item="feedback"]');
-    const allowed = role === "agent" || role === "trainee";
+    const allowed = role === "agent";
     assert.equal(item.hidden, !allowed);
     item.dispatchEvent({ type: "click", target: item });
     assert.equal(window.location.href, allowed ? "/reviews" : "/tickets");

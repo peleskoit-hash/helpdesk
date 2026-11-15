@@ -121,7 +121,7 @@ def test_claim_and_staff_api_cannot_cross_owner_types(case):
 @pytest.mark.parametrize("role,actor_id,owner_id,send", [
     ("admin", "same", "staff2", "reply"),
     ("agent", "staff2", "same", "reply"),
-    ("trainee", "staff2", "same", "comment"),
+    ("agent", "staff2", "same", "comment"),
 ])
 def test_shared_staff_preloads_follow_ticket_access(case, role, actor_id, owner_id, send):
     shared = save(case, owner=owner_id, group="send")

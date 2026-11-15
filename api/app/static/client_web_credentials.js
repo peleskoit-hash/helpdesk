@@ -2,7 +2,7 @@
   "use strict";
   const LOGIN = "custom_web_login", PASSWORD = "custom_web_password";
   function isWebField(key) { return key === LOGIN || key === PASSWORD; }
-  function canEdit(ctx) { return ["admin", "agent", "trainee"].includes(ctx.state.role); }
+  function canEdit(ctx) { return ["admin", "agent"].includes(ctx.state.role); }
   function owner(ctx) { return String(ctx.state.ticketId || ctx.state.selectedClientId || ""); }
   function presentation() { return global.TicketClientCard.passwordPresentation; }
   function endpoint(ctx, suffix) {

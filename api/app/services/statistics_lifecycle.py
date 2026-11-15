@@ -8,9 +8,9 @@ from ..models import StatsCompletion, StatsUserStatusInterval, StatsWorkInterval
 from .statistics_foundation import _object_identity
 
 
-STATUS_HISTORY_ROLES = {"agent", "trainee"}
+STATUS_HISTORY_ROLES = {"agent"}
 AVAILABILITY_STATUS_FALLBACK = "online"
-WORK_ROLES = {"agent", "trainee"}
+WORK_ROLES = {"agent"}
 WORK_END_REASSIGNMENT = "reassignment"
 WORK_END_UNASSIGNMENT = "unassignment"
 WORK_END_FREEZE = "freeze"

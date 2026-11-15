@@ -5,10 +5,12 @@ from types import SimpleNamespace
 import uuid
 
 import pytest
+from fastapi import HTTPException, Request
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from api.app import auth
 from api.app.db import Base
 from api.app.models import Company, StatsUserStatusInterval, TelegramNotificationAccount, User
 from api.app.routers import settings_users as settings_users_router
@@ -127,6 +129,18 @@ def test_list_users_returns_bound_notification_account_display_without_username(
     assert result[0].telegram_notification_display == "Без username (Tg ID: 123456789)"
 
 
+def test_settings_user_create_and_update_accept_exact_staff_roles():
+    expected = {"admin", "agent", "chiki_piki"}
+    for schema in (SettingsUserCreate, SettingsUserUpdate):
+        fields = {"login": "staff", "password": "test-password", "full_name": "Staff"}
+        for role in expected:
+            assert schema(role=role, **fields).role == role
+        for rejected_role in ("trainee", "unknown"):
+            with pytest.raises(ValidationError) as exc:
+                schema(role=rejected_role, **fields)
+            assert any(error["loc"] == ("role",) for error in exc.value.errors())
+
+
 def test_settings_user_create_schema_forbids_telegram_fields():
     with pytest.raises(ValidationError):
         SettingsUserCreate(
@@ -173,7 +187,7 @@ def test_create_user_still_works_without_telegram_fields():
     assert result.telegram_notification_display is None
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_create_active_support_user_opens_first_status_history_interval(role: str):
     session = _session()
     _company(session)
@@ -277,27 +291,65 @@ def test_update_user_with_role_and_status_closes_history_once_for_final_non_trac
     assert rows[0].ended_at is not None
 
 
-def test_update_user_with_activation_and_status_opens_single_history_interval_for_final_state():
+@pytest.mark.parametrize("changes", [
+    {"login": "changed"},
+    {"password": "new-password"},
+    {"is_active": False, "availability_status": "online"},
+    {"login": "changed", "password": "new-password", "is_active": False},
+    {"login": " ivan ", "password": "   "},
+])
+def test_admin_update_revokes_session_once_for_each_security_change(changes):
     session = _session()
     company = _company(session)
     user = _user(session, company_id=company.id, full_name="Ivan Petrov", login="ivan")
-    user.is_active = False
-    user.availability_status = "waiting"
+    request = Request({"type": "http", "session": {}})
+    auth.login_user(request, user)
+    settings_users_router.update_user(user.id, SettingsUserUpdate(**changes), db=session, user=_admin_user())
+
+    if changes.get("login") == " ivan ":
+        assert user.auth_version == 0
+        assert auth.get_current_user(request, db=session).id == user.id
+    else:
+        assert user.auth_version == 1
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_user(request, db=session)
+        assert exc.value.status_code == 401
+        assert exc.value.detail["error"]["code"] == "session_revoked"
+        assert request.session == {}
+
+
+def test_blocking_closes_status_interval_and_unblocking_keeps_offline():
+    session = _session()
+    company = _company(session)
+    user = _user(session, company_id=company.id, full_name="Ivan Petrov", login="ivan")
+    auth_request = Request({"type": "http", "session": {}})
+    auth.login_user(auth_request, user)
+    started_at = datetime(2026, 9, 11, 9)
+    session.add(StatsUserStatusInterval(
+        id=str(uuid.uuid4()), company_id=company.id, user_id=user.id,
+        status="online", started_at=started_at, created_at=started_at,
+    ))
     session.commit()
 
-    result = settings_users_router.update_user(
-        user.id,
-        SettingsUserUpdate(is_active=True, availability_status="online"),
-        db=session,
-        user=_admin_user(),
-    )
+    for changes in (
+        {"is_active": False, "availability_status": "online"},
+        {"full_name": "Renamed", "availability_status": "online"},
+        {"is_active": True, "availability_status": "online"},
+    ):
+        result = settings_users_router.update_user(
+            user.id, SettingsUserUpdate(**changes), db=session, user=_admin_user(),
+        )
+        assert result.availability_status == "offline"
+        assert user.auth_version == 1
 
     rows = _status_intervals(session, user.id)
     assert result.is_active is True
-    assert result.availability_status == "online"
-    assert len(rows) == 1
-    assert rows[0].status == "online"
-    assert rows[0].ended_at is None
+    assert len(rows) == 2
+    assert rows[0].status == "online" and rows[0].ended_at is not None
+    assert rows[1].status == "offline" and rows[1].ended_at is None
+    with pytest.raises(HTTPException) as exc:
+        auth.get_current_user(auth_request, db=session)
+    assert exc.value.detail["error"]["code"] == "session_revoked"
 
 
 def test_reject_telegram_binding_request_deletes_pending_account():

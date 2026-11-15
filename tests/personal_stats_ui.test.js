@@ -49,11 +49,11 @@ async function open(page) {
   await page.locator('[data-sidebar-user-menu-toggle]').click();
   await page.locator('[data-sidebar-user-menu-item="statistics"]').click();
 }
-for (const role of ['agent', 'trainee', 'admin', 'chiki_piki', 'client']) test(`statistics visibility: ${role}`, async t => {
+for (const role of ['agent', 'admin', 'chiki_piki', 'client']) test(`statistics visibility: ${role}`, async t => {
   const { page, calls, errors } = await setup(t, role);
   await page.locator('[data-sidebar-user-menu-toggle]').click();
   const item = page.locator('[data-sidebar-user-menu-item="statistics"]');
-  assert.equal(await item.isVisible(), ['agent', 'trainee'].includes(role));
+  assert.equal(await item.isVisible(), ['agent'].includes(role));
   assert.deepEqual(await page.locator('[data-sidebar-user-menu-item]').evaluateAll(items => items.map(item => item.dataset.sidebarUserMenuItem)), ['profile', 'bot-notifications', 'feedback', 'statistics', 'logout']);
   assert.equal(calls.length, 0);
   assert.deepEqual(errors, []);

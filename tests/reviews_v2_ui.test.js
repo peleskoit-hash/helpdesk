@@ -152,7 +152,7 @@ for (const theme of ['light', 'dark']) {
   }
 }
 
-for (const role of ['admin', 'agent', 'trainee']) {
+for (const role of ['admin', 'agent']) {
   test(`employee column intrinsic width and narrow scrolling: ${role}`, async t => {
     const { page } = await setup(t, 'light', role);
     const measure = () => page.locator('.reviews-table').evaluate(table => {

@@ -341,7 +341,7 @@ test("timer placeholder retains the old countdown and toggle availability rules"
 });
 
 test("visible restore and wrong-problem actions retain every previous availability condition", () => {
-  for (const role of ["admin", "agent", "trainee", "chiki_piki"])
+  for (const role of ["admin", "agent", "chiki_piki"])
   for (const workflow of ["ticket", "task", "auto"])
   for (const status of ["pending", "closed"])
   for (const owner of [null, "agent-1", "another-agent"])
@@ -492,7 +492,7 @@ test("successful greeting unlocks next quick actions before card reload finishes
 test("move to special stays visible for admin and disables closed, special or unsupported workflows", () => {
   for (const workflow of ["ticket", "task", "auto", "unsupported"]) {
     for (const kind of ["normal", "group_parent", "group_child", "internal"]) {
-      for (const role of ["admin", "agent", "trainee", "chiki_piki"]) {
+      for (const role of ["admin", "agent", "chiki_piki"]) {
         for (const status of ["unassigned", "new", "pending", "closed"]) {
           for (const special of [false, true]) {
             const { controls, ctx } = controlsRenderCtx();

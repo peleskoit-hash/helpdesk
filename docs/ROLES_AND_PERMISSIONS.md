@@ -5,7 +5,6 @@
 Роли заданы как строки:
 - `admin`
 - `agent`
-- `trainee`
 - `chiki_piki`
 
 Основные helpers: `api/app/auth.py`.
@@ -33,18 +32,7 @@
 - отвечает клиенту, комментирует, закрывает, freeze/unfreeze по правам.
 
 Важно:
-- `assignment.py` автоназначает только role `agent`, не `trainee`.
-
-## trainee
-
-Стажёр:
-- почти как `agent` в UI и карточке;
-- не участвует в автоназначении;
-- completion stats отображаются как у support user.
-
-Не ломать:
-- проверки `is_support_user` обычно включают `agent/trainee`;
-- автоназначение должно оставаться только для `agent`.
+- `assignment.py` автоназначает только ролью `agent`.
 
 ## chiki_piki
 

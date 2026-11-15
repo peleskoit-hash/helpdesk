@@ -138,6 +138,7 @@ class TicketMessageOut(BaseModel):
     body: str
     author_user_id: str | None
     author_name: str | None = None
+    author_name_snapshot: str | None = None
     telegram_message_id: str | None = None
     message_status: str = "normal"
     status_note: str | None = None
@@ -252,6 +253,7 @@ class TicketCard(BaseModel):
     auto_close_due_at: datetime | None = None
     auto_closed_at: datetime | None = None
     closed_by_user_id: str | None = None
+    closed_by_name_snapshot: str | None = None
     onsite_triggered: bool = False
     call_center_employee_lookup_at: datetime | None = None
     call_center_internal_number: str | None = None
@@ -434,7 +436,7 @@ SortOrder = Literal["asc", "desc"]
 
 
 AvailabilityStatus = Literal["offline", "online", "on_ticket", "waiting", "lunch"]
-UserRole = Literal["admin", "agent", "trainee", "chiki_piki"]
+UserRole = Literal["admin", "agent", "chiki_piki"]
 
 
 class UserStatusOut(BaseModel):

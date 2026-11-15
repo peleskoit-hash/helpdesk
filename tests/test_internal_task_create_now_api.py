@@ -145,7 +145,7 @@ def test_create_now_distribution_creates_definition_occurrence_and_assigned_inte
     assert ticket.status == TicketStatus.NEW.value
 
 
-@pytest.mark.parametrize("role", ["agent", "trainee"])
+@pytest.mark.parametrize("role", ["agent"])
 def test_create_now_direct_accepts_active_offline_support_user_and_keeps_author_flag_false(role):
     session = _session()
     company = _company(session)
@@ -322,13 +322,13 @@ def test_create_now_requires_admin():
     assert _error_code(response) == "admin_only"
 
 
-def test_create_now_rejects_non_admin_trainee():
+def test_create_now_rejects_non_admin_agent():
     session = _session()
     company = _company(session)
-    trainee = _user(session, company, "trainee")
+    agent = _user(session, company, "agent")
     session.commit()
 
-    response = _client(session, trainee).post("/api/v1/management/internal-tasks", json=_payload())
+    response = _client(session, agent).post("/api/v1/management/internal-tasks", json=_payload())
 
     assert response.status_code == 403
     assert _error_code(response) == "admin_only"

@@ -678,7 +678,7 @@ function canShowAssigneeColumn(role = state.role) {
 }
 
 function canUseTaskPanel(role = state.role) {
-  return role === "agent" || role === "trainee";
+  return role === "agent";
 }
 
 function allowedTicketColumnKeys(role = state.role) {
@@ -1350,7 +1350,7 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
   const key = column.key;
   if (key === "subject") {
     const subject = (ticket.subject || "") + intakeBadge(ticket);
-    const unreadBadge = (state.role === "agent" || state.role === "trainee")
+    const unreadBadge = state.role === "agent"
       && ticket.assignee_id === state.userId && Number.isInteger(ticket.unread_count) && ticket.unread_count > 0
       ? `<span class="ticket-unread-count" aria-label="Непрочитанных сообщений: ${ticket.unread_count}">+${ticket.unread_count}</span>`
       : "";
@@ -1372,6 +1372,9 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
   }
   if (key === "assignee") {
     if (state.role === "admin") {
+      if (ticket.status === "closed") {
+        return linkedCell("ticket-assignee-col", ticket.special_assignee_name || ticket.assignee_name || "Нераспределён", column.width);
+      }
       return `<td class="ticket-assignee-col" data-column-key="assignee" style="${columnStyle(column.width)}"><select class="row-assignee-select" data-ticket-id="${escapeHtml(ticket.id)}" data-selected-id="${escapeHtml(ticket.assignee_id || "")}" ${state.columnResizeActive ? "disabled" : ""}>${assigneeOptionsHtml(ticket.assignee_id, ticket.special_assignee_name || ticket.assignee_name || "")}</select></td>`;
     }
     if (state.role === "chiki_piki") {
@@ -1414,7 +1417,7 @@ function renderTable() {
     if (t.seen_by_agent && !(t.is_frozen || state.tab === "frozen") && !(t.status === "closed" || state.tab === "closed")) {
       rowClasses.push("ticket-row-seen");
     }
-    if ((state.role === "agent" || state.role === "trainee") && t.seen_by_agent === false && !(t.status === "closed" || state.tab === "closed")) {
+    if (state.role === "agent" && t.seen_by_agent === false && !(t.status === "closed" || state.tab === "closed")) {
       rowClasses.push("ticket-row-unseen");
     }
     tr.className = rowClasses.join(" ");

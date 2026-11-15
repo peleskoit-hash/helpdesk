@@ -15,11 +15,12 @@ from .models import User
 
 
 ADMIN_ROLE = "admin"
-SUPPORT_ROLES = {"agent", "trainee"}
+SUPPORT_ROLES = {"agent"}
 READONLY_CHIKI_ROLE = "chiki_piki"
 KNOWN_ROLES = {ADMIN_ROLE, READONLY_CHIKI_ROLE, *SUPPORT_ROLES}
 
 SESSION_USER_ID_KEY = "auth_user_id"
+SESSION_AUTH_VERSION_KEY = "auth_version"
 SESSION_LAST_ACTIVITY_KEY = "last_activity_ts"
 SESSION_LOGIN_TS_KEY = "login_ts"
 SESSION_IDLE_TIMEOUT_SECONDS = 12 * 60 * 60
@@ -76,8 +77,13 @@ def login_user(request: Request, user: User) -> None:
     request.session.clear()
     now_ts = int(time.time())
     request.session[SESSION_USER_ID_KEY] = user.id
+    request.session[SESSION_AUTH_VERSION_KEY] = user.auth_version
     request.session[SESSION_LAST_ACTIVITY_KEY] = now_ts
     request.session[SESSION_LOGIN_TS_KEY] = now_ts
+
+
+def increment_auth_version(user: User) -> None:
+    user.auth_version = User.auth_version + 1
 
 
 def logout_user(request: Request) -> None:
@@ -118,6 +124,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Current
         _auth_error(401, "unauthorized", "Требуется авторизация")
 
     real_user = _get_user_by_id(db, real_user_id)
+    if real_user is not None and request.session.get(SESSION_AUTH_VERSION_KEY, 0) != real_user.auth_version:
+        request.session.clear()
+        _auth_error(401, "session_revoked", "Сессия отозвана. Выполните вход заново.")
     if real_user is None or not real_user.is_active:
         request.session.clear()
         _auth_error(401, "unauthorized", "Пользователь недоступен. Выполните вход заново.")

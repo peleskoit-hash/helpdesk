@@ -19,8 +19,8 @@
     const messageType = typeof message === "string" ? message : message?.message_type;
     if (typeof message === "object" && message) {
       if (messageType === "client") return clientDisplayName(state, card);
-      if (messageType === "agent") return normalizeAgentLabel(message.author_name);
-      if (messageType === "internal") return normalizeAgentLabel(message.author_name);
+      if (messageType === "agent") return normalizeAgentLabel(message.author_name || message.author_name_snapshot);
+      if (messageType === "internal") return normalizeAgentLabel(message.author_name || message.author_name_snapshot);
       if (messageType === "system") return "ES DESK";
     }
 
@@ -49,7 +49,7 @@
   }
 
   function canEditAgentMessage(state, message) {
-    const canEdit = state.role === "admin" || (["agent", "trainee"].includes(state.role)
+    const canEdit = state.role === "admin" || (state.role === "agent"
       && Boolean(message.author_user_id) && message.author_user_id === state.userId);
     return canEdit && ["agent", "internal"].includes(message.message_type) && message.message_status !== "deleted" && state.card?.status !== "closed";
   }

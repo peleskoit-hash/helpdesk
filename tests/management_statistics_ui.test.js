@@ -47,9 +47,9 @@ class Element {
 
 const users = [
   { id: "agent-a", full_name: "Agent A", role: "agent", is_active: true },
-  { id: "trainee-a", full_name: "Trainee A", role: "trainee", is_active: true },
+  { id: "second_agent-a", full_name: "Second Agent A", role: "agent", is_active: true },
   { id: "inactive-agent", full_name: "Inactive Agent", role: "agent", is_active: false },
-  { id: "inactive-trainee", full_name: "Inactive Trainee", role: "trainee", is_active: false },
+  { id: "inactive-second_agent", full_name: "Inactive Second Agent", role: "agent", is_active: false },
   { id: "admin-a", full_name: "Admin A", role: "admin", is_active: true },
   { id: "chiki-a", full_name: "Chiki A", role: "chiki_piki", is_active: true },
 ];
@@ -222,9 +222,9 @@ test("defaults load all employees and work-time statistics for last 30 days", as
   assert.equal(ui.el.Period.value, "30days");
   assert.match(ui.el.Employee.innerHTML, />Все сотрудники</);
   assert.match(ui.el.Employee.innerHTML, /Agent A/);
-  assert.match(ui.el.Employee.innerHTML, /Trainee A/);
+  assert.match(ui.el.Employee.innerHTML, /Second Agent A/);
   assert.match(ui.el.Employee.innerHTML, /Inactive Agent \(неактивен\)/);
-  assert.match(ui.el.Employee.innerHTML, /Inactive Trainee \(неактивен\)/);
+  assert.match(ui.el.Employee.innerHTML, /Inactive Second Agent \(неактивен\)/);
   assert.doesNotMatch(ui.el.Employee.innerHTML, /Admin A/);
   assert.doesNotMatch(ui.el.Employee.innerHTML, /Chiki A/);
   const query = lastQuery(ui);

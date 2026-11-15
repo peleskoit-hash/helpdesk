@@ -3,10 +3,14 @@ function initSettingsUsersPage() {
 const state = {
   users: [],
   editingUserId: null,
+  deletionTarget: null,
+  deletionModal: null,
+  deletionPending: false,
+  disposed: false,
   currentTelegramNotification: null,
 };
 
-const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", trainee: "Стажёр", chiki_piki: "Call Center Observer" };
+const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", chiki_piki: "Call Center Observer" };
 const statusLabels = { offline: "Не в сети", online: "В сети", on_ticket: "На заявке", waiting: "В ожидании", lunch: "Обед" };
 
 const el = {
@@ -18,6 +22,19 @@ const el = {
   userModalTitle: document.getElementById("userModalTitle"),
   closeUserModalBtn: document.getElementById("closeUserModalBtn"),
   saveUserBtn: document.getElementById("saveUserBtn"),
+  deleteUserBtn: document.getElementById("deleteUserBtn"),
+  confirmDeleteUserModal: document.getElementById("confirmDeleteUserModal"),
+  confirmPermanentDeletionModal: document.getElementById("confirmPermanentDeletionModal"),
+  userDeletionProgressModal: document.getElementById("userDeletionProgressModal"),
+  continueDeleteUserBtn: document.getElementById("continueDeleteUserBtn"),
+  confirmPermanentDeletionBtn: document.getElementById("confirmPermanentDeletionBtn"),
+  startUserDeletionBtn: document.getElementById("startUserDeletionBtn"),
+  closeUserDeletionBtn: document.getElementById("closeUserDeletionBtn"),
+  userDeletionName: document.getElementById("userDeletionName"),
+  userDeletionDescription: document.getElementById("userDeletionDescription"),
+  userDeletionStages: document.querySelectorAll("#userDeletionStages [data-stage]"),
+  userDeletionStatus: document.getElementById("userDeletionStatus"),
+  userDeletionProgress: document.getElementById("userDeletionProgress"),
   fFullName: document.getElementById("fFullName"),
   fLogin: document.getElementById("fLogin"),
   fPassword: document.getElementById("fPassword"),
@@ -113,6 +130,7 @@ function syncTelegramNotificationBlock() {
 
 function openUserModal(user = null) {
   fillModal(user);
+  el.deleteUserBtn?.classList.toggle("hidden", !user);
   el.userModal.classList.remove("hidden");
   el.fFullName.focus();
 }
@@ -208,7 +226,90 @@ async function saveUser() {
   }
 }
 
-const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); closeError(); } };
+function showDeletionModal(modal) {
+  state.deletionModal?.classList.add("hidden");
+  state.deletionModal = modal;
+  modal?.classList.remove("hidden");
+  modal?.querySelector("button")?.focus();
+}
+
+function closeDeletionModal() {
+  if (state.deletionPending) return;
+  showDeletionModal(null);
+  if (!el.userModal.classList.contains("hidden")) el.deleteUserBtn.focus();
+}
+
+function renderDeletion(operation) {
+  const stages = [...el.userDeletionStages];
+  const current = stages.findIndex((row) => row.dataset.stage === operation.stage);
+  const running = operation.status === "running";
+  stages.forEach((row, index) => {
+    const done = operation.status === "succeeded" || (running && index < current);
+    row.querySelector("span").textContent = done ? "✓" : index === current && running ? "— выполняется" : "";
+    if (index === current && running) row.setAttribute("aria-current", "step");
+    else row.removeAttribute("aria-current");
+  });
+  el.userDeletionProgress.classList.toggle("hidden", !running && operation.status !== "queued");
+  if (operation.status === "succeeded") {
+    el.userDeletionDescription.textContent = "Операция завершена";
+    el.startUserDeletionBtn.classList.add("hidden");
+  }
+}
+
+function prepareDeletion() {
+  el.userDeletionName.textContent = state.deletionTarget.full_name;
+  el.userDeletionStatus.textContent = "";
+  el.userDeletionDescription.textContent = "Операция выполняется в фоне.";
+  el.startUserDeletionBtn.classList.remove("hidden");
+  el.startUserDeletionBtn.disabled = false;
+  el.closeUserDeletionBtn.textContent = "Отмена";
+  renderDeletion({});
+  showDeletionModal(el.userDeletionProgressModal);
+}
+
+async function startDeletion() {
+  if (state.deletionPending || el.startUserDeletionBtn.disabled) return;
+  state.deletionPending = true;
+  el.startUserDeletionBtn.disabled = true;
+  el.closeUserDeletionBtn.disabled = true;
+  el.userDeletionStatus.textContent = "Запуск удаления…";
+  try {
+    const target = state.deletionTarget;
+    let operation = await api(`/api/v1/settings/users/${encodeURIComponent(target.id)}/deletion`, { method: "POST" });
+    closeUserModal();
+    while (!state.disposed) {
+      renderDeletion(operation);
+      if (operation.status === "failed") {
+        el.userDeletionStatus.textContent = operation.error_message || "Не удалось удалить сотрудника.";
+        break;
+      }
+      if (operation.status === "succeeded") {
+        el.userDeletionStatus.textContent = "Сотрудник удалён";
+        state.users = state.users.filter((user) => user.id !== target.id);
+        renderUsers();
+        loadUsers().catch((error) => showError(error.message));
+        break;
+      }
+      el.userDeletionStatus.textContent = operation.status === "queued" ? "Ожидание запуска…" : "Выполняется удаление…";
+      await new Promise((resolve) => setTimeout(resolve, 1250));
+      if (state.disposed) return;
+      operation = await api(`/api/v1/settings/user-deletion-operations/${encodeURIComponent(operation.operation_id)}`);
+    }
+  } catch (error) {
+    renderDeletion({});
+    el.userDeletionStatus.textContent = error.message;
+  } finally {
+    state.deletionPending = false;
+    el.closeUserDeletionBtn.disabled = false;
+    el.closeUserDeletionBtn.textContent = "Закрыть";
+  }
+}
+
+const handlePageKeydown = (event) => {
+  if (event.key !== "Escape") return;
+  if (state.deletionModal) closeDeletionModal();
+  else { closeUserModal(); closeError(); }
+};
 
 (function init() {
   el.backToSettingsBtn.addEventListener("click", () => {
@@ -221,6 +322,16 @@ const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); c
   el.createUserBtn.addEventListener("click", () => openUserModal());
   el.closeUserModalBtn.addEventListener("click", closeUserModal);
   el.saveUserBtn.addEventListener("click", saveUser);
+  el.deleteUserBtn?.addEventListener("click", () => {
+    state.deletionTarget = state.users.find((user) => user.id === state.editingUserId);
+    if (state.deletionTarget) showDeletionModal(el.confirmDeleteUserModal);
+  });
+  el.continueDeleteUserBtn?.addEventListener("click", () => showDeletionModal(el.confirmPermanentDeletionModal));
+  el.confirmPermanentDeletionBtn?.addEventListener("click", prepareDeletion);
+  el.startUserDeletionBtn?.addEventListener("click", startDeletion);
+  document.querySelectorAll("[data-cancel-user-deletion]").forEach((button) => {
+    button.addEventListener("click", closeDeletionModal);
+  });
   el.fRole.addEventListener("change", syncTelegramNotificationBlock);
   closeOnBackdropClick(el.userModal, closeUserModal);
   el.closeErrorModalBtn.addEventListener("click", closeError);
@@ -241,6 +352,7 @@ const handlePageKeydown = (e) => { if (e.key === "Escape") { closeUserModal(); c
     });
 })();
 return () => {
+  state.disposed = true;
   document.removeEventListener("keydown", handlePageKeydown);
 };
 }

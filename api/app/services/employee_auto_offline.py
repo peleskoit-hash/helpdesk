@@ -27,7 +27,7 @@ def run_employee_auto_offline_once(*, at: datetime | None = None, session_factor
     now = local.astimezone(timezone.utc).replace(tzinfo=None)
     with session_factory() as db:
         users = db.scalars(select(User).where(
-            User.is_active.is_(True), User.role.in_(["agent", "trainee"]), User.availability_status != "offline",
+            User.is_active.is_(True), User.role == "agent", User.availability_status != "offline",
         )).all()
         for user in users:
             set_user_availability_status(

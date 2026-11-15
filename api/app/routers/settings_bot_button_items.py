@@ -834,8 +834,8 @@ def save_bot_button_instruction(
         target_user = db.execute(select(User).where(User.id == fixed_user_id)).scalar_one_or_none()
         if target_user is None or not target_user.is_active:
             _error(422, "fixed_assignee_invalid", "Выбранный фиксированный ответственный недоступен")
-        if target_user.role not in {"admin", "agent", "trainee"}:
-            _error(422, "fixed_assignee_role_invalid", "Можно выбрать только admin/agent/trainee")
+        if target_user.role not in {"admin", "agent"}:
+            _error(422, "fixed_assignee_role_invalid", "Можно выбрать только admin/agent")
 
     text_value = (payload.instruction_text or "").strip() or None
     if payload.client_text is not None:

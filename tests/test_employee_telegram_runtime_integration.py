@@ -282,27 +282,27 @@ def test_global_disabled_and_non_business_roles_do_not_resolve_delivery():
     ) == ()
 
 
-def test_agent_and_trainee_with_approved_binding_are_allowed_but_blocked_unavailable_pending_unbound_are_not():
+def test_agent_and_second_agent_with_approved_binding_are_allowed_but_blocked_unavailable_pending_unbound_are_not():
     session = _session()
     company = _company(session)
     client = _client(session, company.id)
     ticket = _ticket(session, company_id=company.id, client_id=client.id)
     _base(session, "new_assignment", "hello")
     agent = _user(session, company_id=company.id, full_name="Agent")
-    trainee = _user(session, company_id=company.id, full_name="Trainee", role="trainee")
+    second_agent = _user(session, company_id=company.id, full_name="Second Agent", role="agent")
     blocked = _user(session, company_id=company.id, full_name="Blocked")
     unavailable = _user(session, company_id=company.id, full_name="Unavailable")
     pending = _user(session, company_id=company.id, full_name="Pending")
     unbound = _user(session, company_id=company.id, full_name="Unbound")
     _account(session, user_id=agent.id, chat_id="chat-agent")
-    _account(session, user_id=trainee.id, chat_id="chat-trainee")
+    _account(session, user_id=second_agent.id, chat_id="chat-second_agent")
     _account(session, user_id=blocked.id, is_blocked=True)
     _account(session, user_id=unavailable.id, delivery_available=False)
     _account(session, user_id=pending.id, request_status=REQUEST_STATUS_PENDING)
     _account(session, user_id=None, request_status=REQUEST_STATUS_PENDING)
 
     assert len(notifications.resolve_assignment_telegram_deliveries(session, event=_assignment_event(agent.id), ticket=ticket)) == 1
-    assert len(notifications.resolve_assignment_telegram_deliveries(session, event=_assignment_event(trainee.id), ticket=ticket)) == 1
+    assert len(notifications.resolve_assignment_telegram_deliveries(session, event=_assignment_event(second_agent.id), ticket=ticket)) == 1
     for user in (blocked, unavailable, pending, unbound):
         assert notifications.resolve_assignment_telegram_deliveries(session, event=_assignment_event(user.id), ticket=ticket) == ()
 

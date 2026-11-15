@@ -299,7 +299,7 @@ def test_bootstrap_status_intervals_for_active_support_users_only_and_idempotent
     session = _session()
     company = _company(session)
     _user(session, company, "agent-a", role="agent", availability_status="waiting")
-    _user(session, company, "trainee-a", role="trainee", availability_status="lunch")
+    _user(session, company, "second_agent-a", role="agent", availability_status="lunch")
     _user(session, company, "admin-a", role="admin", availability_status="online")
     _user(session, company, "chiki-a", role="chiki_piki", availability_status="online")
     _user(session, company, "inactive-agent", role="agent", is_active=False, availability_status="offline")
@@ -317,7 +317,7 @@ def test_bootstrap_status_intervals_for_active_support_users_only_and_idempotent
     assert [(row.user_id, row.status, row.started_at, row.ended_at) for row in rows] == [
         ("agent-a", "waiting", now, None),
         ("empty-agent", AVAILABILITY_STATUS_FALLBACK, now, None),
-        ("trainee-a", "lunch", now, None),
+        ("second_agent-a", "lunch", now, None),
     ]
 
 
@@ -326,13 +326,13 @@ def test_bootstrap_work_intervals_for_current_assigned_work_objects_only_and_ide
     company = _company(session)
     client = _client(session, company)
     agent = _user(session, company, "agent-a", role="agent")
-    trainee = _user(session, company, "trainee-a", role="trainee")
+    second_agent = _user(session, company, "second_agent-a", role="agent")
     admin = _user(session, company, "admin-a", role="admin")
     _ticket(session, company, client, "ticket-open", assignee_id=agent.id)
     _ticket(session, company, client, "task-normal", assignee_id=agent.id, workflow_type=TicketWorkflowType.TASK.value)
     legacy_normal = _ticket(session, company, client, "task-null-kind", assignee_id=agent.id, workflow_type=TicketWorkflowType.TASK.value)
     legacy_normal.task_kind = None
-    _ticket(session, company, client, "task-child", assignee_id=trainee.id, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_CHILD.value)
+    _ticket(session, company, client, "task-child", assignee_id=second_agent.id, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_CHILD.value)
     _ticket(session, company, client, "task-parent", assignee_id=agent.id, workflow_type=TicketWorkflowType.TASK.value, task_kind=TicketTaskKind.GROUP_PARENT.value)
     _ticket(session, company, client, "ticket-frozen", assignee_id=agent.id, is_frozen=True)
     _ticket(session, company, client, "ticket-closed", assignee_id=agent.id, status=TicketStatus.CLOSED.value)
@@ -350,7 +350,7 @@ def test_bootstrap_work_intervals_for_current_assigned_work_objects_only_and_ide
     assert first.work_intervals_created == 4
     assert second.work_intervals_created == 0
     assert [(row.object_id, row.user_id, row.object_type, row.task_kind, row.started_at, row.ended_at) for row in rows] == [
-        ("task-child", trainee.id, "task", TicketTaskKind.GROUP_CHILD.value, now, None),
+        ("task-child", second_agent.id, "task", TicketTaskKind.GROUP_CHILD.value, now, None),
         ("task-normal", agent.id, "task", TicketTaskKind.NORMAL.value, now, None),
         ("task-null-kind", agent.id, "task", TicketTaskKind.NORMAL.value, now, None),
         ("ticket-open", agent.id, "ticket", None, now, None),
