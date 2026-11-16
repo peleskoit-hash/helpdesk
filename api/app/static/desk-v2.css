@@ -803,9 +803,8 @@ body #appContent.main:is([data-shell-page="tickets-list"], [data-shell-page="tic
   }
   & .task-panel-slots { display: flex; flex: 1; gap: 6px; min-width: 0; }
   & .task-panel-slots:empty { display: none; }
-  & .task-panel-chip { flex: 1; min-width: 0; max-width: 180px; }
-  & .task-panel-slots:has(> .task-panel-chip + .task-panel-chip) > .task-panel-chip { max-width: none; }
-  & .task-panel-more { flex: 0 0 44px; }
+  & .task-panel-chip { flex: 0 0 var(--task-panel-slot-width, 104px); min-width: 0; }
+  & .task-panel-more { flex: 0 0 44px; margin-left: auto; }
   & :is(.task-panel-chip, .task-panel-more, .task-panel-menu-item) {
     --task-chip-fill: color-mix(in srgb, var(--desk-surface) 90%, var(--desk-text));
     --task-chip-line: color-mix(in srgb, var(--desk-border) 65%, var(--desk-text));
@@ -816,9 +815,10 @@ body #appContent.main:is([data-shell-page="tickets-list"], [data-shell-page="tic
     --task-chip-fill: color-mix(in srgb, var(--desk-surface) 86%, var(--desk-text));
     --task-chip-line: var(--desk-accent);
   }
-  & :is(.task-panel-chip, .task-panel-menu-item)[aria-current="page"] {
+  & :is(.task-panel-chip, .task-panel-menu-item):has(> [aria-current="page"]) {
     --task-chip-fill: var(--desk-tint); --task-chip-line: var(--desk-accent);
     background: var(--desk-tint); color: var(--desk-on-tint); border-color: var(--desk-accent);
   }
+  & .task-panel :is(.task-panel-link, .task-panel-dismiss):focus-visible { outline-offset: -3px; }
   & .task-panel-dropdown { position: fixed; right: auto; width: min(420px, calc(100vw - 16px)); }
 }

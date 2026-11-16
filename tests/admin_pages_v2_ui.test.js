@@ -396,12 +396,12 @@ test('status board disables rapid same-employee clicks while PATCH is pending', 
 
 
 test('status admin resource versions stay synchronized across templates and CSS imports', () => {
-  const cssVersion = '20261116-bot-structure-layout-v2';
+  const cssVersion = '20261116-task-panel-v1';
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const html = fs.readFileSync(path.join('api/app/templates', file), 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
-      const version = resource === 'styles.css' ? cssVersion : '20261116-bot-structure-shell-v3';
+      const version = resource === 'styles.css' ? cssVersion : '20261116-task-panel-shell-v1';
       for (const url of urls) assert.equal(url, `/static/${resource}?v=${version}`, file);
     }
   }
@@ -413,8 +413,8 @@ test('status admin resource versions stay synchronized across templates and CSS 
 
 for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
   const { page } = await setup(t, 'light', 1440, start);
-  assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-bot-structure-layout-v2"]').count(), 1);
-  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261116-bot-structure-shell-v3"]').count(), 1);
+  assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261116-task-panel-shell-v1"]').count(), 1);
   await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
   if (start === '/tickets') {
     await page.locator('.sidebar a[href="/statuses"]').click();
@@ -431,7 +431,7 @@ for (const start of ['/statuses', '/tickets']) test(`status admin resources load
   for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
     const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
     assert.ok(matching.length > 0, resource);
-    const version = resource === 'admin-pages-v2.css' ? '20261115-statistics-layout-v1' : resource.endsWith('.css') ? '20261116-bot-structure-layout-v2' : resource === 'app_shell.js' ? '20261116-bot-structure-shell-v3' : '20261111-status-source-v1';
+    const version = resource === 'admin-pages-v2.css' ? '20261115-statistics-layout-v1' : resource.endsWith('.css') ? '20261116-task-panel-v1' : resource === 'app_shell.js' ? '20261116-task-panel-shell-v1' : '20261111-status-source-v1';
     assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + version), matching.join(', '));
   }
 });

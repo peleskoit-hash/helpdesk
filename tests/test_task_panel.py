@@ -179,7 +179,7 @@ def test_task_panel_filters_orders_and_marks_unread_from_existing_ticket_views()
         "Frozen pending",
         "Equal message",
         "No messages",
-        "Root → Display subject",
+        "Button",
         "Older opened",
         "Own agent message",
         "Other agent message",
@@ -197,7 +197,7 @@ def test_task_panel_filters_orders_and_marks_unread_from_existing_ticket_views()
     assert by_subject["Own agent message"].has_unread is False
     assert by_subject["Other agent message"].has_unread is True
     assert by_subject["Client message"].has_unread is True
-    assert by_subject["System message"].has_unread is True
+    assert by_subject["System message"].has_unread is False
     assert "Raw subject" not in by_subject
     assert "Closed" not in by_subject
     assert "Unassigned with agent" not in by_subject

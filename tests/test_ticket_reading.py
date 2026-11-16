@@ -2,11 +2,12 @@ from datetime import timedelta
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from api.app.models import TicketView
 from api.app.schemas import TicketReadPayload
 from api.app.routers import tickets as routes
+from api.app.services import schema_evolution
 from test_task_panel import _current_user
 from test_ticket_list_unread import case, listing, message
 
@@ -107,3 +108,56 @@ def test_admin_and_other_agent_cannot_confirm_responsible_agents_reading(case):
     case.db.refresh(view)
     assert view.last_opened_at == original
     assert listing(case).items[0].unread_count == 1
+
+
+
+def test_panel_unread_matches_list_for_ineligible_and_read_messages(case):
+    eligible = message(case)
+    message(case, "system", minutes=2)
+    message(case, "client", minutes=3, agent_visible=False)
+    message(case, "agent", case.other, minutes=4, message_status="deleted")
+    message(case, "agent", case.agent, minutes=5)
+    open_card(case)
+    user = _current_user(case.agent.id)
+
+    for count in (1, 0):
+        assert listing(case).items[0].unread_count == count
+        [item] = routes.get_task_panel(db=case.db, user=user)
+        assert item.has_unread is bool(count)
+        if count:
+            confirm(case, [eligible.id])
+
+
+def test_panel_dismiss_and_reopen_preserve_view_and_read_boundary(case):
+    read = message(case)
+    unread = message(case, minutes=2)
+    open_card(case)
+    confirm(case, [read.id])
+    view = case.db.scalar(select(TicketView))
+    original = (view.id, view.first_opened_at, view.last_opened_at, case.ticket.status)
+    user = _current_user(case.agent.id)
+
+    for action, expected in [(routes.dismiss_task_panel_ticket, False), (routes.reopen_task_panel_ticket, True)]:
+        for forbidden in [_current_user(case.other.id), _current_user(case.agent.id, "admin")]:
+            with pytest.raises(HTTPException) as exc:
+                action(case.ticket.id, db=case.db, user=forbidden)
+            assert exc.value.status_code == 403
+        action(case.ticket.id, db=case.db, user=user)
+        assert open_card(case).unread_message_ids == [unread.id]
+        assert bool(routes.get_task_panel(db=case.db, user=user)) is expected
+        item = listing(case).items[0]
+        assert item.seen_by_agent is expected
+        assert item.unread_count == 1
+        assert (view.id, view.first_opened_at, view.last_opened_at, case.ticket.status) == original
+
+
+def test_panel_schema_evolution_defaults_existing_views_to_visible(case, monkeypatch):
+    open_card(case)
+    engine = case.db.get_bind()
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ticket_views DROP COLUMN task_panel_dismissed"))
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    schema_evolution.ensure_ticket_columns()
+    schema_evolution.ensure_ticket_columns()
+    case.db.expire_all()
+    assert case.db.scalar(select(TicketView)).task_panel_dismissed is False

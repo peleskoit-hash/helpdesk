@@ -18,7 +18,15 @@
       const enabled = state.role === "agent" && state.taskPanelEnabled;
       cached = { enabled, items: enabled ? state.taskPanelItems : [], status: state.taskPanelStatus };
     },
-    mount(panel, render) {
+    itemHtml(item, className, href, escapeHtml, current = false) {
+      const unread = item.has_unread ? '<span class="task-panel-unread" role="img" aria-label="Новые сообщения"></span>' : "";
+      const subject = escapeHtml(item.subject || "");
+      return `<div class="${className}">
+        <a class="task-panel-link" ${current ? 'aria-current="page" ' : ""}href="${escapeHtml(href)}" title="${subject}"><span class="task-panel-subject">${subject}</span>${unread}</a>
+        <button type="button" class="task-panel-dismiss" data-ticket-id="${escapeHtml(item.id)}" aria-label="Скрыть заявку из панели задач" title="Скрыть заявку из панели задач">&times;</button>
+      </div>`;
+    },
+    mount(panel, render, { state, apiPost, showError }) {
       const toolbar = panel.closest(".toolbar");
       const search = toolbar.querySelector("#searchInput");
       const anchor = toolbar.querySelector(".search-input-wrap, #backToListBtn");
@@ -49,6 +57,26 @@
         setStyle(menu, "top", `${button.bottom + 6}px`);
         setStyle(menu, "maxHeight", `${Math.max(0, Math.min(360, innerHeight - button.bottom - 14))}px`);
       }
+      async function dismiss(event) {
+        const button = event.target.closest(".task-panel-dismiss");
+        if (!button || button.disabled) return;
+        const id = button.dataset.ticketId;
+        const token = state.taskPanelScope;
+        button.disabled = true;
+        try {
+          await apiPost(`/api/v1/tickets/${encodeURIComponent(id)}/task-panel/dismiss`, {});
+          if (destroyed || !window.HelpdeskTaskPanelLayout.isCurrent(token)) return;
+          state.taskPanelDismissRevision = (state.taskPanelDismissRevision || 0) + 1;
+          state.taskPanelItems = state.taskPanelItems.filter(item => String(item.id) !== id);
+          window.HelpdeskTaskPanelLayout.remember(state);
+          render();
+        } catch (error) {
+          if (!destroyed && window.HelpdeskTaskPanelLayout.isCurrent(token)) showError(error.message);
+        } finally {
+          button.disabled = false;
+        }
+      }
+      panel.addEventListener("click", dismiss);
       const observer = new ResizeObserver(schedule);
       [toolbar, anchor, settings].forEach(node => observer.observe(node));
       fitSearch();
@@ -71,6 +99,12 @@
           setStyle(panel, "width", `${width}px`);
           setStyle(panel, "visibility", width >= 44 ? "" : "hidden");
           const minimum = parseFloat(getComputedStyle(panel).getPropertyValue("--task-panel-chip-min")) || 104;
+          // Reserve room for the overflow button so slot widths stay stable as items disappear.
+          const slot = Math.min(width, Math.max(minimum, (width - 44 - maximum * 6) / maximum));
+          const slotWidth = `${slot}px`;
+          if (panel.style.getPropertyValue("--task-panel-slot-width") !== slotWidth) {
+            panel.style.setProperty("--task-panel-slot-width", slotWidth);
+          }
           if (count <= maximum && width >= count * minimum + Math.max(0, count - 1) * 6) return count;
           return Math.max(0, Math.min(maximum, Math.floor((width - 44) / (minimum + 6))));
         },
@@ -79,6 +113,7 @@
           destroyed = true;
           cancelAnimationFrame(frame);
           observer.disconnect();
+          panel.removeEventListener("click", dismiss);
           window.removeEventListener("resize", schedule);
           window.removeEventListener("scroll", positionDropdown, true);
         },

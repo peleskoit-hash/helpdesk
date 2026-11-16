@@ -275,12 +275,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261106-ticket-table-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261106-ticket-table-v2"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -467,7 +467,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.waitForSelector('.message');
     assert.equal(await wrong.isVisible(), true);
     assert.equal(await wrong.isDisabled(), true);
-    assert.equal(requests.filter(r => r.method === 'POST' || r.method === 'DELETE').length, 0);
+    assert.equal(requests.filter(r => (r.method === 'POST' || r.method === 'DELETE') && !r.path.endsWith('/task-panel/reopen')).length, 0);
     if (process.env.TICKET_ACTIONS_SCREENSHOT_DIR) {
       fs.mkdirSync(process.env.TICKET_ACTIONS_SCREENSHOT_DIR, { recursive: true });
       await page.locator('.ticket-control-wrap').evaluate(el => el.scrollTop = el.scrollHeight);
@@ -480,6 +480,7 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
   const page = await browser.newPage({ viewport: { width, height } });
   t.after(() => page.close());
   const errors = [], requests = [];
+  const dismissedTasks = new Set(), readTasks = new Set();
   page.on('pageerror', error => errors.push(error.message));
   const me = { ...user, role, full_name: fullName };
   const preferences = { appearance_revision: '0', theme_preference: theme, color_enabled: true, task_panel_enabled: taskPanelEnabled,
@@ -521,7 +522,18 @@ async function setup(t, { width, height, theme, pageName, role = 'admin', workfl
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me, { ...me, id: 'agent-2', full_name: 'Елена Александровна Волкова' }];
     else if (p.endsWith('/counts')) result = { active: 28, unassigned: 3, frozen: 4, closed: 158, special: 1,
       by_assignee: { 'agent-1': { active: 123, frozen: 12 }, 'agent-2': { active: 3, frozen: 456 } } };
-    else if (p.endsWith('/task-panel')) result = taskPanelItems;
+    else if (p.endsWith('/task-panel')) result = taskPanelItems.filter(item => !dismissedTasks.has(item.id))
+      .map(item => readTasks.has(item.id) ? { ...item, has_unread: false } : item);
+    else if (req.method() === 'POST' && p.endsWith('/read')) {
+      readTasks.add(p.split('/').at(-2));
+      result = { last_opened_at: stamp };
+    }
+    else if (req.method() === 'POST' && /\/task-panel\/(dismiss|reopen)$/.test(p)) {
+      const id = p.split('/').at(-3);
+      if (p.endsWith('/dismiss')) dismissedTasks.add(id);
+      else dismissedTasks.delete(id);
+      result = { ok: true };
+    }
     else if (/tickets\/(active|closed|frozen|special|unassigned)$/.test(p)) result = { items: ticketRows, total: 56, pages: 2, page: Number(url.searchParams.get('page') || 1), limit: 28 };
     else if (p.endsWith('/client-card-view-config')) result = null;
     else if (p.endsWith('/problem-menu')) result = { rows: [{ buttons: [{ id: 'p1', kind: 'submenu', label: 'Почта', children: [{ buttons: [{ id: 'p2', label: 'Доступ к почте', kind: 'final' }] }] }] }] };
@@ -2453,7 +2465,7 @@ test('unread fix list resource loads on direct and SPA entry', async t => {
     const urls = await page.evaluate(() => performance.getEntriesByType('resource')
       .filter(entry => new URL(entry.name).pathname === '/static/list.js').map(entry => new URL(entry.name).search));
     assert.ok(urls.length > 0);
-    assert.ok(urls.every(query => query === '?v=20261111-requester-name-v1'), urls.join(', '));
+    assert.ok(urls.every(query => query === '?v=20261116-task-panel-v1'), urls.join(', '));
   }
 });
 
@@ -2537,26 +2549,42 @@ test('compact search remains available to the read-only role',async t=>{
 });
 
 
-for (const pageName of ['tickets','ticket']) for (const theme of ['light','dark']) for (const count of [0,1,4,8,12]) {
-  test(`compact task chips at 1920: ${pageName} ${theme} ${count}`,async t=>{
+for (const pageName of ['tickets','ticket']) for (const theme of ['light','dark']) for (const count of [0,1,2,3,4,8,12]) {
+  test(`compact task chips at 2400: ${pageName} ${theme} ${count}`,async t=>{
     const items=Array.from({length:count},(_,i)=>({id:`demo-${i}`,subject:'Длинное название задачи '.repeat(8)+i,has_unread:i===0}));
-    const {page}=await setup(t,{width:1920,height:1080,theme,role:'agent',pageName,taskPanelItems:items});
+    const {page}=await setup(t,{width:2400,height:1080,theme,role:'agent',pageName,taskPanelItems:items});
     await page.waitForFunction(count=>document.querySelectorAll('#taskPanel a').length===count &&
       (count>0 || document.querySelector('#taskPanelSlots').textContent.includes('Нет заявок')),count);
     const metrics=await page.evaluate(()=>{
       const panel=document.querySelector('#taskPanel'), toolbar=document.querySelector('.toolbar');
-      return {height:toolbar.getBoundingClientRect().height,panelWidth:panel.getBoundingClientRect().width,
-        chips:[...panel.querySelectorAll('.task-panel-chip')].map(el=>({width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height})),
+      const panelRect = panel.getBoundingClientRect();
+      return { height: toolbar.getBoundingClientRect().height, panel: panelRect.toJSON(),
+        slots: panel.querySelector('#taskPanelSlots').getBoundingClientRect().toJSON(),
+        more: panel.querySelector('#taskPanelMoreBtn').getBoundingClientRect().toJSON(),
+        chips: [...panel.querySelectorAll('.task-panel-chip')].map(el => el.getBoundingClientRect().toJSON()),
         links:[...panel.querySelectorAll('a')].map(el=>el.getAttribute('href')),
         active:[...panel.querySelectorAll('[aria-current="page"]')].map(el=>el.getAttribute('href'))};
     });
     assert.equal(metrics.height,57);
-    assert.equal(metrics.chips.length,Math.max(1,Math.min(pageName==='tickets'?6:7,count)));
-    for(const chip of metrics.chips){assert.ok(chip.width>0);if(count<=1)assert.ok(chip.width<=180.01);assert.equal(chip.height,30);}
-    const widths=metrics.chips.map(chip=>chip.width);
-    assert.ok(Math.max(...widths)-Math.min(...widths)<1);
+    const maximum = pageName === 'tickets' ? 6 : 7;
+    const slotWidth = (metrics.panel.width - 44 - maximum * 6) / maximum;
+    assert.ok(slotWidth > 180);
+    assert.equal(metrics.chips.length, Math.max(1, Math.min(maximum, count)));
+    assert.equal(metrics.chips[0].left, metrics.panel.left);
+    for (const chip of metrics.chips) {
+      assert.ok(Math.abs(chip.width - slotWidth) < 1, JSON.stringify(metrics));
+      assert.equal(chip.height, 30);
+    }
+    const lastChip = metrics.chips.at(-1);
+    if (count > maximum) {
+      assert.ok(Math.abs(lastChip.right - metrics.slots.right) < 1);
+      assert.equal(metrics.more.left - metrics.slots.right, 6);
+      assert.equal(metrics.more.right, metrics.panel.right);
+    } else {
+      assert.equal(metrics.more.width, 0);
+      assert.ok(metrics.panel.right - lastChip.right >= slotWidth);
+    }
     assert.deepEqual(metrics.links,items.map(item=>`/tickets/${item.id}`));
-    if(count<=1)assert.ok(metrics.chips[0].width<metrics.panelWidth/2);
     if(pageName==='ticket')assert.deepEqual(metrics.active,count?['/tickets/demo-0']:[]);
     if(count===0)assert.equal(await page.locator('#taskPanelSlots').textContent(),'Нет заявок');
   });
@@ -2574,7 +2602,7 @@ for(const width of [1920,1366,1024,390]) for(const workflowType of ['ticket','ta
     const rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,height:r.height};};
     const anchor=document.querySelector('.toolbar .search-input-wrap, #backToListBtn'),panel=document.querySelector('#taskPanel'),settings=document.querySelector('.toolbar>.display-settings');
     const a=rect(anchor),p=rect(panel),r=rect(settings),toolbar=rect(document.querySelector('.toolbar'));
-    const chips=[...document.querySelectorAll('#taskPanelSlots a')].map(rect),more=document.querySelector('#taskPanelMoreBtn');
+    const chips=[...document.querySelectorAll('#taskPanelSlots .task-panel-chip:has(a)')].map(rect),more=document.querySelector('#taskPanelMoreBtn');
     const back=document.querySelector('#backToListBtn');
     return {anchor:a,panel:p,right:r,toolbar,chips,more:rect(more),visibility:getComputedStyle(panel).visibility,
       backClickable:!back||back.contains(document.elementFromPoint((a.left+a.right)/2,a.top+a.height/2)),
@@ -2584,7 +2612,13 @@ for(const width of [1920,1366,1024,390]) for(const workflowType of ['ticket','ta
    if(result.visibility!=='hidden') {
     assert.ok(result.panel.left>=result.anchor.right+6,JSON.stringify(result));
     if(result.sameRow)assert.ok(result.panel.right<=result.right.left-6,JSON.stringify(result));
-    if(result.chips.length>1)assert.ok(Math.abs(result.chips.at(-1).right+6-result.more.left)<1.5,JSON.stringify(result));
+    assert.ok(result.panel.right <= result.toolbar.right);
+    assert.equal(result.more.right, result.panel.right);
+    for (const [index, chip] of result.chips.entries()) {
+     const previous = result.chips[index - 1];
+     assert.ok(chip.left >= (previous ? previous.right + 6 : result.panel.left));
+     assert.ok(chip.right + 6 <= result.more.left + 1);
+    }
    }
    if(width>=1024)assert.equal(result.toolbar.height,57);
    return result;
@@ -2662,4 +2696,46 @@ for(const theme of ['light','dark']) test(`task chip theme fill and inward doubl
   assert.equal((await page.locator('#taskPanelMoreBtn').evaluate(el=>getComputedStyle(el).boxShadow).then(s=>s.match(/inset/g)||[])).length,2);
   await page.locator('.ticket-row-link').first().click();await page.waitForSelector('.message');
   assert.equal(await page.locator('#taskPanel a[aria-current="page"]').count(),1);
+});
+
+
+
+test('task panel card entry reopens once and polling leaves a dismissed task hidden', async t => {
+  const { page, requests } = await setup(t, { width: 1600, height: 900, theme: 'light', pageName: 'ticket',
+    role: 'agent', taskPanelItems: [{ id: 'demo-0', subject: 'Current task' }] });
+  const reopen = '/api/v1/tickets/demo-0/task-panel/reopen';
+  const panel = '/api/v1/tickets/task-panel';
+  const chip = page.locator('#taskPanel .task-panel-chip:has(a[aria-current="page"])');
+  await chip.waitFor();
+  assert.equal(requests.filter(r => r.path === reopen && r.method === 'POST').length, 1);
+  assert.ok(requests.findIndex(r => r.path === reopen) < requests.findIndex(r => r.path === panel));
+
+  const url = page.url();
+  const dismiss = chip.getByRole('button');
+  await dismiss.focus();
+  await dismiss.press('Enter');
+  await chip.waitFor({ state: 'detached' });
+  await page.waitForResponse(response => new URL(response.url()).pathname === panel);
+  assert.equal(await chip.count(), 0);
+  assert.equal(page.url(), url);
+  assert.equal(requests.filter(r => r.path === reopen).length, 1);
+
+  await page.reload();
+  await chip.waitFor();
+  assert.equal(requests.filter(r => r.path === reopen).length, 2);
+});
+
+
+
+test('task panel refreshes after the card acknowledges reading', async t => {
+  const { page, requests } = await setup(t, { width: 1600, height: 900, theme: 'light', pageName: 'ticket',
+    role: 'agent', taskPanelItems: [{ id: 'demo-0', subject: 'Current task', has_unread: true }],
+    cardPatch: { messages: [card.messages[0]], unread_message_ids: ['m-0'] } });
+  await page.locator('#taskPanel a[aria-current="page"]').waitFor();
+  await page.waitForFunction(() => !document.querySelector('#taskPanel .task-panel-unread'));
+  const read = requests.findIndex(r => r.path === '/api/v1/tickets/demo-0/read' && r.method === 'POST');
+  assert.ok(read >= 0);
+  const refresh = requests.findIndex((r, i) => i > read && r.path === '/api/v1/tickets/task-panel');
+  assert.ok(refresh > read);
+  assert.equal(requests.slice(0, refresh).filter(r => r.path === '/api/v1/tickets/demo-0').length, 1);
 });

@@ -642,6 +642,7 @@ class TicketView(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     first_opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     last_opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    task_panel_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=text("false"))
 
 
 class StatsCompletion(Base):

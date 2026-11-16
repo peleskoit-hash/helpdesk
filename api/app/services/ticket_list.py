@@ -356,7 +356,9 @@ def seen_by_agent(db: Session, ticket_id: str, user: CurrentUser) -> bool:
     if not is_support_user(user):
         return False
     stmt = select(TicketView.id).where(
-        and_(TicketView.ticket_id == ticket_id, TicketView.user_id == user.id)
+        TicketView.ticket_id == ticket_id,
+        TicketView.user_id == user.id,
+        TicketView.task_panel_dismissed.is_(False),
     ).limit(1)
     return db.execute(stmt).first() is not None
 

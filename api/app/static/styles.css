@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261116-bot-structure-layout-v2");
+@import url("/static/desk-v2.css?v=20261116-task-panel-v1");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -1645,6 +1645,44 @@ body[data-sidebar-ready="0"] .admin-select-col {
   background: #e7f1ff;
 }
 
+.task-panel-chip:has(.task-panel-link),
+.task-panel-menu-item {
+  padding: 0;
+}
+
+.task-panel-link {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding-left: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.task-panel-dismiss {
+  flex: 0 0 24px;
+  align-self: stretch;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  line-height: 1;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+:is(.task-panel-chip, .task-panel-menu-item):is(:hover, :focus-within) .task-panel-dismiss {
+  opacity: 1;
+}
+
+.task-panel :is(.task-panel-link, .task-panel-dismiss):focus-visible {
+  outline-offset: -3px;
+}
+
 .task-panel-subject {
   min-width: 0;
   overflow: hidden;
@@ -1652,10 +1690,9 @@ body[data-sidebar-ready="0"] .admin-select-col {
   white-space: nowrap;
 }
 
-.task-panel-unread {
-  position: absolute;
-  top: 5px;
-  right: 6px;
+.task-panel-unread,
+.task-panel-more.has-unread::after {
+  flex: 0 0 8px;
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -1663,7 +1700,16 @@ body[data-sidebar-ready="0"] .admin-select-col {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
 }
 
+.task-panel-more.has-unread::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .task-panel-more {
+  position: relative;
   width: 44px;
   height: 30px;
   border: 1px solid rgba(15, 108, 191, 0.22);
@@ -5279,7 +5325,8 @@ body[data-theme="dark"] .task-panel-more.active {
   background: #334155;
 }
 
-body[data-theme="dark"] .task-panel-unread {
+body[data-theme="dark"] .task-panel-unread,
+body[data-theme="dark"] .task-panel-more.has-unread::after {
   box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.95);
 }
 

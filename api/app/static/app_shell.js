@@ -120,7 +120,7 @@
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261106-inline-panel-v1", "/static/list.js?v=20261111-requester-name-v1"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261116-task-panel-v2", "/static/list.js?v=20261116-task-panel-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {
@@ -128,7 +128,7 @@
       test: (url) => /^\/tickets\/[^/]+$/.test(url.pathname),
       scripts: [
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
-        "/static/task_panel_layout.js?v=20261106-inline-panel-v1",
+        "/static/task_panel_layout.js?v=20261116-task-panel-v2",
         "/static/ticket_api.js?v=20261102-error-status-v1",
         "/static/ticket_attachments.js?v=20261031-web-history-v1",
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
@@ -136,7 +136,7 @@
         "/static/ticket_composer.js?v=20261111-shared-drafts-v1",
         "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_message_view.js?v=20261027-dialogs-complete-v3",
-        "/static/ticket.js?v=20261111-ticket-escape-v2",
+        "/static/ticket.js?v=20261116-task-panel-v1",
       ],
     },
   ];

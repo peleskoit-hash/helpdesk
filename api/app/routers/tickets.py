@@ -78,7 +78,7 @@ from ..services.statistics_lifecycle import (
 from ..services.template_fields import render_template_text
 from ..services.ticket_messages import add_message as add_ticket_message
 from ..services.ticket_messages import comment_on_ticket, delete_agent_message, edit_agent_message, first_task_assignment_id, initial_task_description_ids, initial_task_message_ids, persist_client_delivery_failure, record_client_delivery_failure, reply_to_ticket
-from ..services.ticket_list import apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated, telegram_contact_name
+from ..services.ticket_list import _unread_message_counts, apply_group_parent_visibility_filter, build_ticket_counts, internal_task_requester_display_name, list_special_tickets, list_tickets_paginated, telegram_contact_name
 from ..services.ticket_lifecycle import (
     close_ticket_by_actor,
     ensure_task_uploads_finished,
@@ -147,7 +147,7 @@ def _content_disposition_attachment(filename: str) -> str:
     return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
 
 
-def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_preliminary_close: bool = False) -> Ticket:
+def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_preliminary_close: bool = False, assign_number: bool = True) -> Ticket:
     if ticket_id.isdigit():
         stmt = select(Ticket).where(Ticket.ticket_number == int(ticket_id))
     else:
@@ -155,7 +155,7 @@ def _get_ticket_or_404(db: Session, ticket_id: str, user: CurrentUser, *, allow_
     ticket = db.execute(apply_group_parent_visibility_filter(stmt, user)).scalar_one_or_none()
     if not ticket:
         _error(404, "ticket_not_found", "Тикет не найден")
-    if ticket.ticket_number is None and (ticket.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value:
+    if assign_number and ticket.ticket_number is None and (ticket.intake_state or TicketIntakeState.READY.value) == TicketIntakeState.READY.value:
         ensure_ticket_number(db, ticket)
         db.commit()
     if is_support_user(user):
@@ -1017,43 +1017,53 @@ def admin_delete_tickets(payload: AdminBulkTicketsPayload, db: Session = Depends
 
 @router.get("/task-panel", response_model=list[TaskPanelItem])
 def get_task_panel(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
-    latest_message = (
-        select(
-            TicketMessage.ticket_id.label("ticket_id"),
-            func.max(TicketMessage.created_at).label("last_message_at"),
-        )
-        .where(or_(TicketMessage.author_user_id.is_(None), TicketMessage.author_user_id != user.id))
-        .group_by(TicketMessage.ticket_id)
-        .subquery()
-    )
-    rows = db.execute(
-        apply_group_parent_visibility_filter(select(
-            Ticket,
-            TicketView.last_opened_at,
-            latest_message.c.last_message_at,
-        )
+    stmt = (
+        select(Ticket)
         .join(TicketView, and_(TicketView.ticket_id == Ticket.id, TicketView.user_id == user.id))
-        .join(latest_message, latest_message.c.ticket_id == Ticket.id, isouter=True)
         .where(
-            and_(
-                Ticket.assignee_id == user.id,
-                Ticket.agent_visible.is_(True),
-                Ticket.status.in_([TicketStatus.NEW.value, TicketStatus.PENDING.value]),
-                Ticket.is_special.is_(False),
-            )
+            Ticket.assignee_id == user.id,
+            Ticket.agent_visible.is_(True),
+            Ticket.status.in_([TicketStatus.NEW.value, TicketStatus.PENDING.value]),
+            Ticket.is_special.is_(False),
+            TicketView.task_panel_dismissed.is_(False),
         )
-        .order_by(desc(TicketView.first_opened_at)), user)
-    ).all()
-    tickets = [ticket for ticket, _last_opened_at, _last_message_at in rows]
+        .order_by(desc(TicketView.first_opened_at))
+    )
+    tickets = list(db.scalars(apply_group_parent_visibility_filter(stmt, user)))
+    unread_counts = _unread_message_counts(db, tickets, user)
     subject_map = build_ticket_subject_map(db, tickets)
     return [
         TaskPanelItem(
             id=ticket.id,
             subject=subject_map.get(ticket.id, ticket.subject),
-            has_unread=bool(last_message_at and last_opened_at and last_message_at > last_opened_at),
+            has_unread=unread_counts.get(ticket.id, 0) > 0,
         )
-        for ticket, last_opened_at, last_message_at in rows
+        for ticket in tickets
     ]
+
+
+def _set_task_panel_dismissed(db: Session, ticket_id: str, user: CurrentUser, dismissed: bool):
+    if user.role != "agent":
+        raise HTTPException(status_code=403, detail="Only the responsible agent can update the task panel")
+    ticket = _get_ticket_or_404(db, ticket_id, user, assign_number=False)
+    if ticket.assignee_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the responsible agent can update the task panel")
+    db.execute(update(TicketView).where(
+        TicketView.ticket_id == ticket.id,
+        TicketView.user_id == user.id,
+    ).values(task_panel_dismissed=dismissed))
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{ticket_id}/task-panel/dismiss")
+def dismiss_task_panel_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    return _set_task_panel_dismissed(db, ticket_id, user, dismissed=True)
+
+
+@router.post("/{ticket_id}/task-panel/reopen")
+def reopen_task_panel_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    return _set_task_panel_dismissed(db, ticket_id, user, dismissed=False)
 
 
 @router.post("/{ticket_id}/read")

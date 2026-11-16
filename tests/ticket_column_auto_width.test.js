@@ -10,11 +10,11 @@ test('ticket header overflow decoration is removed and CSS cache versions match 
   const css = fs.readFileSync('api/app/static/desk-v2.css', 'utf8');
   assert.doesNotMatch(css, /#ticketsTable\s+thead::after/);
   assert.match(css, /#ticketsTable thead \{ position: sticky; top: 6px; z-index: 3; background: var\(--desk-surface\); box-shadow: 0 -12px 0 12px var\(--desk-surface\); \}/);
-  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261106-ticket-table-v2/);
+  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261116-task-panel-v1/);
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/styles\.css\?v=([^"']+)/g)) {
-      assert.equal(version, '20261106-ticket-table-v2', file);
+      assert.equal(version, '20261116-task-panel-v1', file);
     }
   }
 });
@@ -24,12 +24,12 @@ test('column scripts and the changed app shell use consistent resource versions 
   const tickets = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
   for (const source of [shell, tickets]) {
     assert.match(source, /ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1/);
-    assert.match(source, /\/static\/list\.js\?v=20261111-requester-name-v1/);
+    assert.match(source, /\/static\/list\.js\?v=20261116-task-panel-v1/);
   }
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/app_shell\.js\?v=([^"']+)/g)) {
-      assert.equal(version, '20261111-requester-name-v1', file);
+      assert.equal(version, '20261116-task-panel-shell-v1', file);
     }
   }
 });

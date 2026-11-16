@@ -40,6 +40,7 @@ async function setup(t, name) {
     window.showError = message => errors.push(message);
     window.escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
     window.ticketHref = window.taskPanelTicketHref = id => `/tickets/${id}`;
+    window.apiPost = async url => { calls.push(url); };
     window.api = url => {
       calls.push(url);
       return new Promise((resolve, reject) => { window.resolveRequest = resolve; window.rejectRequest = reject; });
@@ -143,7 +144,7 @@ for (const name of ['list', 'ticket']) {
           taskPanelLayout.positionDropdown();
         }
         window.savedChip = el.taskPanelSlots.firstElementChild;
-        window.savedLink = el.taskPanelDropdown.firstElementChild;
+        window.savedLink = el.taskPanelDropdown.querySelector("a");
         window.mutations = [];
         window.observer = new MutationObserver(records => mutations.push(...records));
         observer.observe(el.taskPanel, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -156,7 +157,7 @@ for (const name of ['list', 'ticket']) {
       assert.equal(await page.evaluate(() => mutations.length), 0);
       assert.equal(await page.evaluate(() => savedChip === el.taskPanelSlots.firstElementChild), true);
       if (populated) {
-        assert.equal(await page.evaluate(() => savedLink === el.taskPanelDropdown.firstElementChild && document.activeElement === savedLink), true);
+        assert.equal(await page.evaluate(() => savedLink === el.taskPanelDropdown.querySelector("a") && document.activeElement === savedLink), true);
         assert.equal(await page.locator('#taskPanelDropdown').isVisible(), true);
         assert.equal(await page.evaluate(() => state.taskPanelDropdownOpen), true);
         await begin(page, true);
@@ -276,3 +277,59 @@ for(const name of ['list','ticket']) test(`${name}: replies from a destroyed pag
   const items=await page.evaluate(()=>{const next={role:'agent'};HelpdeskTaskPanelLayout.restore(next,{userId:'agent',role:'agent',sessionLoginTs:1});return next.taskPanelItems;});
   assert.equal(items[0].id,'current');
 });
+
+
+for (const name of ['list', 'ticket']) {
+  test(name + ': fixed-width chips and a dismiss button for visible and overflow tasks', async t => {
+    const page = await setup(t, name);
+    const max = name === 'list' ? 6 : 7;
+    const items = Array.from({ length: max + 2 }, (_, i) => ({
+      id: String(i), subject: 'Task ' + i, has_unread: i === 0 || i === max,
+    }));
+    await page.evaluate(() => { state.ticketId = '0'; });
+    await begin(page);
+    await reply(page, items.slice(0, 1));
+    const width = (await page.locator('.task-panel-chip').first().boundingBox()).width;
+    await begin(page);
+    await reply(page, items);
+    const chips = page.locator('.task-panel-chip');
+    const more = page.locator('#taskPanelMoreBtn');
+    assert.equal(await chips.count(), max);
+    assert.deepEqual(await chips.evaluateAll(nodes => nodes.map(node => node.offsetWidth)), Array(max).fill(width));
+    assert.deepEqual(await chips.evaluateAll(nodes => nodes.map(node => node.offsetHeight)), Array(max).fill(30));
+    assert.equal(await chips.first().locator('.task-panel-subject + .task-panel-unread').count(), 1);
+    assert.equal(await more.evaluate(node => getComputedStyle(node, '::after').content), '""');
+    const moreBox = await more.boundingBox();
+
+    await page.evaluate(() => {
+      state.taskPanelDropdownOpen = true;
+      el.taskPanelDropdown.classList.remove('hidden');
+      taskPanelLayout.positionDropdown();
+    });
+    const overflowClose = page.locator('.task-panel-menu-item > a + button').first();
+    await overflowClose.hover();
+    assert.equal(await overflowClose.evaluate(node => getComputedStyle(node).opacity), '1');
+    await overflowClose.click();
+    assert.equal(await more.evaluate(node => getComputedStyle(node, '::after').content), 'none');
+    assert.deepEqual(await more.boundingBox(), moreBox);
+
+    const currentClose = chips.first().locator('a + button');
+    assert.equal(await currentClose.evaluate(node => getComputedStyle(node).opacity), '0');
+    await currentClose.focus();
+    assert.equal(await currentClose.evaluate(node => getComputedStyle(node).opacity), '1');
+    await begin(page, true);
+    const url = page.url();
+    await currentClose.press('Enter');
+    await reply(page, items);
+    assert.equal(page.url(), url);
+    assert.equal(await page.locator('#taskPanel a[href="/tickets/0"]').count(), 0);
+    assert.equal(await page.evaluate(() => {
+      const next = { role: 'agent' };
+      HelpdeskTaskPanelLayout.restore(next, { userId: 'agent', role: 'agent', sessionLoginTs: 1 });
+      return next.taskPanelItems.some(item => item.id === '0');
+    }), false);
+    assert.deepEqual(await page.evaluate(() => calls.filter(url => url.endsWith('/dismiss'))), [
+      '/api/v1/tickets/' + max + '/task-panel/dismiss', '/api/v1/tickets/0/task-panel/dismiss',
+    ]);
+  });
+}

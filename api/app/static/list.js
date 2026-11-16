@@ -434,8 +434,7 @@ function ticketHref(ticketId) {
 }
 
 function taskPanelItemHtml(item, className) {
-  const unread = item?.has_unread ? '<span class="task-panel-unread" aria-label="Новые сообщения"></span>' : "";
-  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" href="${escapeHtml(ticketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
+  return window.HelpdeskTaskPanelLayout.itemHtml(item, className, ticketHref(item.id), escapeHtml);
 }
 
 function closeTaskPanelDropdown() {
@@ -452,7 +451,7 @@ function renderTaskPanel() {
   el.taskPanel.parentElement.classList.toggle("task-panel-eligible", canUse);
   const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
   const shouldShow = canUse && state.taskPanelEnabled;
-  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel);
+  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel, { state, apiPost, showError });
   const capacity = taskPanelLayout.capacity(items.length);
   const visibleItems = items.slice(0, capacity);
   const overflowItems = items.slice(capacity);
@@ -467,6 +466,7 @@ function renderTaskPanel() {
   if (!shouldShow) {
     el.taskPanelSlots.innerHTML = "";
     el.taskPanelMoreBtn.classList.add("hidden");
+    el.taskPanelMoreBtn.classList.remove("has-unread");
     el.taskPanelDropdown.innerHTML = "";
     closeTaskPanelDropdown();
     return;
@@ -474,6 +474,7 @@ function renderTaskPanel() {
   el.taskPanel.classList.toggle("has-overflow", overflowItems.length > 0);
   el.taskPanelSlots.innerHTML = slotsHtml;
   el.taskPanelMoreBtn.classList.toggle("hidden", overflowItems.length === 0);
+  el.taskPanelMoreBtn.classList.toggle("has-unread", overflowItems.some(item => item.has_unread));
   el.taskPanelDropdown.innerHTML = dropdownHtml;
   if (overflowItems.length === 0) closeTaskPanelDropdown();
 }
@@ -485,6 +486,7 @@ async function loadTaskPanel(options = {}) {
 
 async function fetchTaskPanelItems(options = {}) {
   const scope = state.taskPanelScope;
+  const dismissRevision = state.taskPanelDismissRevision;
   if (!canUseTaskPanel() || !state.taskPanelEnabled) {
     state.taskPanelItems = [];
     window.HelpdeskTaskPanelLayout.remember(state);
@@ -493,12 +495,14 @@ async function fetchTaskPanelItems(options = {}) {
   renderTaskPanel();
   try {
     const items = await api("/api/v1/tickets/task-panel");
-    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted) return;
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted
+        || dismissRevision !== state.taskPanelDismissRevision) return;
     state.taskPanelItems = items;
     state.taskPanelStatus = "ready";
     window.HelpdeskTaskPanelLayout.remember(state);
   } catch (e) {
-    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted) return;
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || !pageEventController || pageEventController.signal.aborted
+        || dismissRevision !== state.taskPanelDismissRevision) return;
     state.taskPanelItems = [];
     state.taskPanelStatus = "error";
     window.HelpdeskTaskPanelLayout.remember(state);

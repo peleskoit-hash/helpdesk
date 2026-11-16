@@ -192,8 +192,10 @@ const TicketComposer = window.TicketComposer || {};
 const TicketControls = window.TicketControls || {};
 const TicketMessageView = window.TicketMessageView || {};
 let scrollAfterLocalSend = false;
-const readingController = TicketMessageView.createReadingController?.(el.messages, payload =>
-  apiPost(`/api/v1/tickets/${state.ticketId}/read`, payload));
+const readingController = TicketMessageView.createReadingController?.(el.messages, async payload => {
+  await apiPost(`/api/v1/tickets/${state.ticketId}/read`, payload);
+  if (!destroyed) void loadTaskPanel({ silent: true });
+});
 
 let pollTimer = null;
 let unsubscribeSidebar = null;
@@ -290,8 +292,7 @@ function taskPanelTicketHref(panelTicketId) {
 }
 
 function taskPanelItemHtml(item, className) {
-  const unread = item?.has_unread ? '<span class="task-panel-unread" aria-label="Новые сообщения"></span>' : "";
-  return `<a class="${className}${item?.has_unread ? " has-unread" : ""}" ${item.id === state.ticketId ? 'aria-current="page" ' : ""}href="${escapeHtml(taskPanelTicketHref(item.id))}" title="${escapeHtml(item.subject || "")}">${unread}<span class="task-panel-subject">${escapeHtml(item.subject || "")}</span></a>`;
+  return window.HelpdeskTaskPanelLayout.itemHtml(item, className, taskPanelTicketHref(item.id), escapeHtml, item.id === state.ticketId);
 }
 
 function closeTaskPanelDropdown() {
@@ -308,7 +309,7 @@ function renderTaskPanel() {
   el.taskPanel.parentElement.classList.toggle("task-panel-eligible", canUse);
   const items = canUse && state.taskPanelEnabled ? (state.taskPanelItems || []) : [];
   const shouldShow = canUse && state.taskPanelEnabled;
-  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel);
+  if (!taskPanelLayout) taskPanelLayout = window.HelpdeskTaskPanelLayout.mount(el.taskPanel, renderTaskPanel, { state, apiPost, showError });
   const capacity = taskPanelLayout.capacity(items.length);
   const visibleItems = items.slice(0, capacity);
   const overflowItems = items.slice(capacity);
@@ -323,6 +324,7 @@ function renderTaskPanel() {
   if (!shouldShow) {
     el.taskPanelSlots.innerHTML = "";
     el.taskPanelMoreBtn.classList.add("hidden");
+    el.taskPanelMoreBtn.classList.remove("has-unread");
     el.taskPanelDropdown.innerHTML = "";
     closeTaskPanelDropdown();
     return;
@@ -330,12 +332,14 @@ function renderTaskPanel() {
   el.taskPanel.classList.toggle("has-overflow", overflowItems.length > 0);
   el.taskPanelSlots.innerHTML = slotsHtml;
   el.taskPanelMoreBtn.classList.toggle("hidden", overflowItems.length === 0);
+  el.taskPanelMoreBtn.classList.toggle("has-unread", overflowItems.some(item => item.has_unread));
   el.taskPanelDropdown.innerHTML = dropdownHtml;
   if (overflowItems.length === 0) closeTaskPanelDropdown();
 }
 
 async function loadTaskPanel(options = {}) {
   const scope = state.taskPanelScope;
+  const dismissRevision = state.taskPanelDismissRevision;
   if (!canUseTaskPanel() || !state.taskPanelEnabled) {
     state.taskPanelItems = [];
     window.HelpdeskTaskPanelLayout.remember(state);
@@ -345,13 +349,15 @@ async function loadTaskPanel(options = {}) {
   renderTaskPanel();
   try {
     const items = await api("/api/v1/tickets/task-panel");
-    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed
+        || dismissRevision !== state.taskPanelDismissRevision) return;
     state.taskPanelItems = items;
     state.taskPanelStatus = "ready";
     window.HelpdeskTaskPanelLayout.remember(state);
     renderTaskPanel();
   } catch (e) {
-    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed) return;
+    if (!window.HelpdeskTaskPanelLayout.isCurrent(scope) || destroyed
+        || dismissRevision !== state.taskPanelDismissRevision) return;
     state.taskPanelItems = [];
     state.taskPanelStatus = "error";
     window.HelpdeskTaskPanelLayout.remember(state);
@@ -1541,6 +1547,10 @@ async function loadCard(options = {}) {
       state.lastMessagesSignature = null;
       scrollAfterLocalSend = false;
     }
+    if (options.onInitialCardLoaded) {
+      await options.onInitialCardLoaded(card);
+      if (destroyed) return;
+    }
     state.card = card;
     if (!options.preserveComposerDraft) {
       applyServerDraft(card);
@@ -2050,7 +2060,19 @@ function startPolling() {
     console.error("loadMe failed", e);
   }
   if (destroyed) return;
-  await Promise.all([loadCard(), loadTabCounts()]);
+  await Promise.all([
+    loadCard({
+      async onInitialCardLoaded(card) {
+        if (!canUseTaskPanel() || card.assignee_id !== state.userId) return;
+        try {
+          await apiPost(`/api/v1/tickets/${state.ticketId}/task-panel/reopen`, {});
+        } catch (error) {
+          if (!destroyed) showError(error.message);
+        }
+      },
+    }),
+    loadTabCounts(),
+  ]);
   startPolling();
 })();
 

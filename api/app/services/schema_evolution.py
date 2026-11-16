@@ -1108,6 +1108,9 @@ def ensure_ticket_columns() -> None:
     }
 
     with engine.begin() as conn:
+        if "task_panel_dismissed" not in {column["name"] for column in inspect(conn).get_columns("ticket_views")}:
+            conn.execute(text("ALTER TABLE ticket_views ADD COLUMN task_panel_dismissed BOOLEAN NOT NULL DEFAULT false"))
+
         dialect = conn.dialect.name
         existing: set[str] = set()
 
