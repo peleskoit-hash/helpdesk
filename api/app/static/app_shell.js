@@ -1,4 +1,11 @@
 (function () {
+  document.documentElement.spellcheck = true;
+  document.addEventListener("focusin", ({ target }) => {
+    if (target instanceof HTMLInputElement && target.matches('input[type="email"], input[type="url"], input[type="password"]')) {
+      target.spellcheck = false;
+    }
+  });
+
   const registry = new Map();
   const saveConfirmations = new Map();
 
@@ -136,7 +143,7 @@
         "/static/ticket_composer.js?v=20261111-shared-drafts-v1",
         "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_message_view.js?v=20261027-dialogs-complete-v3",
-        "/static/ticket.js?v=20261116-task-panel-v1",
+        "/static/ticket.js?v=20261116-spellcheck-v1",
       ],
     },
   ];

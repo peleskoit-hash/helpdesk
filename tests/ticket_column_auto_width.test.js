@@ -29,7 +29,7 @@ test('column scripts and the changed app shell use consistent resource versions 
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/app_shell\.js\?v=([^"']+)/g)) {
-      assert.equal(version, '20261116-task-panel-shell-v1', file);
+      assert.equal(version, '20261116-spellcheck-v1', file);
     }
   }
 });

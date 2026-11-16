@@ -2080,7 +2080,6 @@ document.querySelectorAll("#appContent input, #appContent textarea").forEach((fi
   field.setAttribute("autocomplete", "off");
   field.setAttribute("autocorrect", "off");
   field.setAttribute("autocapitalize", "off");
-  field.setAttribute("spellcheck", "false");
 });
 
 return {

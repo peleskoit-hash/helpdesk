@@ -2739,3 +2739,43 @@ test('task panel refreshes after the card acknowledges reading', async t => {
   assert.ok(refresh > read);
   assert.equal(requests.slice(0, refresh).filter(r => r.path === '/api/v1/tickets/demo-0').length, 1);
 });
+
+
+
+for (const entry of ['direct', 'SPA']) {
+  test(`browser spellcheck on ${entry} ticket entry`, async t => {
+    const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', role: 'agent',
+      pageName: entry === 'direct' ? 'ticket' : 'tickets' });
+    if (entry === 'SPA') {
+      await page.evaluate(() => { window.originalDocument = document; });
+      assert.equal(await page.locator('#searchInput').evaluate(field => field.spellcheck), true);
+      await page.locator('.ticket-row-link').first().click();
+      await page.waitForSelector('.message');
+      assert.equal(await page.evaluate(() => document === window.originalDocument), true);
+    }
+
+    const existing = await page.evaluate(() => ({
+      root: document.documentElement.getAttribute('spellcheck'),
+      name: document.getElementById('fContactName').spellcheck,
+      composer: document.getElementById('ticketMessageBody').spellcheck,
+    }));
+    assert.deepEqual(existing, { root: 'true', name: true, composer: true });
+
+    const dynamic = await page.evaluate(() => {
+      const fixture = document.createElement('div');
+      fixture.innerHTML = `<input type="text"><textarea></textarea><div contenteditable="true"></div>
+        <input type="email"><input type="url"><input type="password"><input type="text" spellcheck="false">`;
+      document.querySelector('#appContent').append(fixture);
+      return [...fixture.children].map(field => {
+        const before = field.getAttribute('spellcheck');
+        field.focus();
+        return [before, field.getAttribute('spellcheck'), field.spellcheck];
+      });
+    });
+    assert.deepEqual(dynamic, [
+      [null, null, true], [null, null, true], [null, null, true],
+      [null, 'false', false], [null, 'false', false], [null, 'false', false],
+      ['false', 'false', false],
+    ]);
+  });
+}
