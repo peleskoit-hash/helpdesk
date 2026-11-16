@@ -1,4 +1,4 @@
-@import url("/static/desk-v2.css?v=20261115-statistics-layout-v1");
+@import url("/static/desk-v2.css?v=20261116-bot-structure-layout-v2");
 
 /* ===== base/layout/sidebar ===== */
 :root {
@@ -8516,7 +8516,7 @@ body[data-theme="dark"] #appContent.main[data-shell-page="settings-bot-buttons"]
 }
 
 body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-v2-list :is(.bot-buttons-split-left > .bot-buttons-level-list, .bot-layout-dialog) {
-  & .bot-buttons-level-item:not([class*="bot-button-color-"]):not(:hover):not(:active):not(.bot-layout-drop-active):not(.bot-layout-dragging):not(.bot-move-source-pending) {
+  & .bot-buttons-level-item:not([class*="bot-button-color-"]):not(:hover):not(:active):not(.bot-layout-drop-active):not(.bot-layout-dragging) {
     background: color-mix(in srgb, var(--desk-surface) 80%, var(--bot-level-neutral-tint, #000) 20%);
   }
   & .bot-button-submenu::after { border: 1px solid var(--desk-border); }
@@ -8524,7 +8524,7 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-v2-li
 
 
 body #appContent.main[data-shell-page="settings-bot-buttons"] {
-  & :is(.bot-menu-bindings-actions, .bot-layout-toolbar) > .bot-messenger-toggle {
+  & :is(.bot-menu-management-actions, .bot-layout-toolbar) > .bot-messenger-toggle {
     background: var(--desk-soft);
     color: var(--desk-text);
     border: 1px solid var(--desk-border);
@@ -8585,9 +8585,11 @@ body:has(.bot-layout-dialog[open]) #appContent.main[data-shell-page="settings-bo
 }
 body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-layout-dialog {
   position: fixed;
-  inset: 12px 12px 12px var(--bot-layout-work-left, 12px);
+  inset: 12px var(--bot-layout-work-right, 12px) 12px var(--bot-layout-work-left, 12px);
   margin: auto;
-  width: calc((100vw - var(--bot-layout-work-left, 12px) - 12px) * .6667);
+  box-sizing: border-box;
+  --bot-layout-work-width: calc(100vw - var(--bot-layout-work-left, 12px) - var(--bot-layout-work-right, 12px));
+  width: calc(var(--bot-layout-work-width) * .6667);
   max-width: none;
   height: calc(100dvh - 24px);
   max-height: none;
@@ -8607,11 +8609,11 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-layout-dialog
     border-bottom: 1px solid var(--desk-border);
     background: var(--desk-surface);
   }
-  & h2 { margin: 0; font-size: 21px; }
-  & .bot-layout-toolbar { margin-bottom: 0; }
+  & h2 { margin: 0; font-size: 21px; text-align: center; }
+  & .bot-layout-toolbar { margin-bottom: 0; justify-content: center; }
   & .bot-layout-scroll-frame { position: relative; flex: 1; min-height: 0; }
-  & .bot-layout-scroll-area { height: 100%; overflow-y: auto; overflow-x: hidden; padding: 16px; scrollbar-gutter: stable; scroll-padding-block: 56px; }
-  & .bot-buttons-level-list { grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
+  & .bot-layout-scroll-area { height: 100%; overflow-y: auto; overflow-x: hidden; padding: 16px; scrollbar-gutter: stable both-edges; scroll-padding-block: 56px; }
+  & .bot-buttons-level-list { grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; padding: 6px 8px 8px; }
   & .bot-buttons-row { flex-wrap: nowrap; }
   & .bot-buttons-level-item {
     min-height: 46px;
@@ -8621,25 +8623,10 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-layout-dialog
     & > span:first-child { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     & > .bot-button-type-tag { max-width: calc(100% - 8px); overflow-wrap: anywhere; }
   }
-  & :is(.bot-layout-new-row-drop, .bot-move-drop) {
+  & .bot-layout-new-row-drop {
     min-height: 44px;
     border: 2px dashed var(--desk-muted);
     padding: 10px 12px;
-  }
-  & .bot-move-root-context {
-    visibility: hidden;
-    pointer-events: none;
-    &.bot-root-drop-visible {
-      position: fixed;
-      top: var(--bot-root-drop-top);
-      left: var(--bot-root-drop-left);
-      width: var(--bot-root-drop-width);
-      margin: 0;
-      background: var(--desk-surface);
-      z-index: 3;
-      visibility: visible;
-      pointer-events: auto;
-    }
   }
   & .bot-layout-drop-active {
     outline: 3px solid var(--desk-accent);
@@ -8664,5 +8651,5 @@ body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-layout-dialog
     &[hidden] { display: none; }
     &.bot-layout-auto-scroll-active { background: var(--desk-tint); }
   }
-  @media (max-width: 1100px) { inset: 12px; width: calc(100vw - 24px); }
+  @media (max-width: 1100px) { width: var(--bot-layout-work-width); }
 }

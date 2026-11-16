@@ -172,7 +172,7 @@ def test_moves_preserve_every_setting_order_and_uuid_callbacks(db, http, no_txt,
     right = button(db, "Right", parent=source)
     first = button(db, "First", parent=target)
     last = button(db, "Last", parent=target)
-    source_rows, target_rows = [[left, row, right]], [[first, last]]
+    source_rows, target_rows = [[left, row, right]], [[first], [last]]
     if not source:
         source_rows += [[parents[1]], [parents[0]]]
     elif not target:
@@ -189,10 +189,10 @@ def test_moves_preserve_every_setting_order_and_uuid_callbacks(db, http, no_txt,
     db.expire_all()
     assert {name: getattr(row, name) for name in settings} == settings
     assert row.parent_path == target and row.button_path == (f"{target}/Move" if target else "Move")
-    assert src.layout_json[0] == {"columns": 2, "button_keys": [left.button_key, right.button_key]}
-    expected_tail = [[p.button_key] for p in reversed(parents)] if not source else []
+    assert src.layout_json[0] == {"columns": 1, "button_keys": [left.button_key]}
+    expected_tail = [[right.button_key]] + ([[p.button_key] for p in reversed(parents)] if not source else [])
     assert [item["button_keys"] for item in src.layout_json[1:]] == expected_tail
-    before_target[0] = {"columns": 3, "button_keys": [first.button_key, row.button_key, last.button_key]}
+    before_target[0] = {"columns": 2, "button_keys": [first.button_key, row.button_key]}
     assert dst.layout_json == before_target
     assert db.query(BotButtonSetting).count() == 7
     assert button_key_aliases(row) == aliases
@@ -322,6 +322,95 @@ def test_old_layout_api_and_implicit_order_survive_move(db, http):
     db.rollback()
     assert layouts(db) == before
 
+
+
+def test_legacy_layout_splits_in_place_and_single_layout_rejects_three(db, http):
+    a, _ = folders(db)
+    items = [button(db, label, parent=a.button_path) for label in ("One", "Two", "Three", "Last")]
+    layout(db, a.button_path, [items[:3], items[3:]])
+    db.commit()
+    before = layouts(db)
+    key = build_level_layout_key("menu-a", a.button_path)
+    params = {"menu_type": "menu-a", "level_key": key}
+    expected = [[items[0].button_key, items[1].button_key], [items[2].button_key], [items[3].button_key]]
+    response = http.get("/api/v1/settings/bot-buttons/layout", params=params)
+    assert [row["button_keys"] for row in response.json()["rows"]] == expected
+    tree = http.get("/api/v1/settings/bot-buttons/menu-types/menu-a/structure").json()["tree_rows"]
+    submenu = next(node for row in tree for node in row["buttons"] if node["technical_key"] == a.button_key)
+    assert [[node["technical_key"] for node in row["buttons"]] for row in submenu["children_rows"]] == expected
+    response = http.put("/api/v1/settings/bot-buttons/layout", params=params,
+                        json={"rows": [[item.button_key for item in items[:3]], expected[-1]]})
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"]["code"] == "layout_row_too_wide"
+    db.rollback()
+    assert layouts(db) == before
+
+
+@pytest.mark.parametrize("failure", [None, "move", "layout", "too_wide", "membership", "commit"])
+def test_batch_moves_then_applies_all_final_layouts(db, http, monkeypatch, failure):
+    from sqlalchemy.exc import IntegrityError
+
+    a, b = folders(db)
+    outgoing = button(db, "Outgoing", button_style="success")
+    incoming = button(db, "Incoming", parent="A")
+    remaining = button(db, "Remaining", parent="B")
+    layout(db, "", [[a, b], [outgoing]])
+    layout(db, "A", [[incoming]])
+    layout(db, "B", [[remaining]])
+    db.commit()
+    before = layouts(db)
+    root, level_a, level_b = (build_level_layout_key("menu-a", parent) for parent in ("", "A", "B"))
+    payload = {
+        "menu_type": "menu-a",
+        "moves": [
+            {"button_id": outgoing.id, "parent_path": "A"},
+            {"button_id": outgoing.id, "parent_path": "B"},
+            {"button_id": incoming.id, "parent_path": ""},
+        ],
+        "layouts": {
+            root: [[incoming.button_key], [b.button_key, a.button_key]],
+            level_a: [],
+            level_b: [[outgoing.button_key, remaining.button_key]],
+        },
+    }
+    if failure == "move":
+        payload["moves"][1]["parent_path"] = "Missing"
+    elif failure == "layout":
+        payload["layouts"][level_b] = [["foreign-key"]]
+    elif failure == "too_wide":
+        payload["layouts"][root] = [[incoming.button_key, b.button_key, a.button_key]]
+    elif failure == "membership":
+        payload["layouts"][level_b] = [[outgoing.button_key]]
+
+    commit = db.commit
+    attempts = []
+
+    def record_commit():
+        attempts.append(True)
+        if failure == "commit":
+            raise IntegrityError("forced conflict after flush", {}, Exception("conflict"))
+        commit()
+
+    monkeypatch.setattr(db, "commit", record_commit)
+    response = http.post("/api/v1/settings/bot-buttons/structure-layout", json=payload)
+    db.expire_all()
+    if failure:
+        assert response.status_code == (409 if failure in {"membership", "commit"} else 422), response.text
+        assert outgoing.parent_path == "" and incoming.parent_path == "A"
+        assert layouts(db) == before
+        assert len(attempts) == (1 if failure == "commit" else 0)
+        return
+
+    assert response.status_code == 200, response.text
+    assert len(attempts) == 1
+    assert outgoing.parent_path == "B" and outgoing.button_style == "success"
+    assert incoming.parent_path == "" and incoming.button_path == "Incoming"
+    assert layouts(db) == {key: [{"columns": len(row), "button_keys": row} for row in rows]
+                           for key, rows in payload["layouts"].items()}
+    tree = response.json()["structure"]["tree_rows"]
+    assert [[node["technical_key"] for node in row["buttons"]] for row in tree] == payload["layouts"][root]
+    nested = tree[1]["buttons"][0]["children_rows"]
+    assert [node["button_id"] for node in nested[0]["buttons"]] == [outgoing.id, remaining.id]
 
 def test_commit_failure_rolls_back_paths_and_both_layouts(db, http, monkeypatch):
     from sqlalchemy.exc import IntegrityError

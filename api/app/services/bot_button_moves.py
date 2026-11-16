@@ -13,6 +13,9 @@ from .button_config import ORDINARY_WORKFLOW_TYPES, build_level_layout_key
 from .system_tickets import is_system_menu_type
 
 
+MAX_LAYOUT_ROW_BUTTONS = 2
+
+
 def _error(status_code: int, code: str, message: str):
     raise HTTPException(status_code, detail={"error": {"code": code, "message": message, "details": {}}})
 
@@ -79,8 +82,8 @@ def move_button_between_levels(db: Session, payload: BotButtonMovePayload, load_
         keys = target[index]["button_keys"]
         if payload.target_index > len(keys):
             _error(422, "invalid_target_position", "Target index is outside the row")
-        if len(keys) >= 3:
-            _error(422, "layout_row_too_wide", "A layout row can contain at most 3 buttons")
+        if len(keys) >= MAX_LAYOUT_ROW_BUTTONS:
+            _error(422, "layout_row_too_wide", "A layout row can contain at most 2 buttons")
         keys.insert(payload.target_index, row.button_key)
         target[index]["columns"] = len(keys)
     now = datetime.utcnow()

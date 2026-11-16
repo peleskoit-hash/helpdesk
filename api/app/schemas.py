@@ -1115,6 +1115,17 @@ class BotButtonMovePayload(BaseModel):
     new_row: bool = True
 
 
+class BotButtonLayoutMove(BaseModel):
+    button_id: str = Field(min_length=1)
+    parent_path: str = ""
+
+
+class BotButtonStructureLayoutPayload(BaseModel):
+    menu_type: str = Field(min_length=1)
+    moves: list[BotButtonLayoutMove] = Field(default_factory=list)
+    layouts: dict[str, list[list[str]]]
+
+
 class BotButtonStructureLeafOut(BaseModel):
     label: str
     workflow_type: Literal["ticket", "task", "auto", "group_task_child"]

@@ -132,7 +132,7 @@ const state = {
   levelStack: [],
   layoutEditMode: false,
   messengerView: false,
-  layoutDraftRows: [],
+  layoutChanged: new Set(),
   selectedLeaf: null,
   assignees: [],
   availableFiles: [],
@@ -319,8 +319,8 @@ function hasUnsavedChanges() {
 }
 
 function confirmDiscard() {
-  if (state.layoutPendingMove || state.layoutSaving) {
-    setStatus("Сохраните или отмените перенос перед выходом с уровня.");
+  if (state.layoutChanged.size || state.layoutSaving) {
+    setStatus("Сохраните или отмените изменения структуры перед выходом с уровня.");
     return false;
   }
   return BotButtonsEditor.confirmDiscard(editorCtx());
@@ -1143,10 +1143,7 @@ function openCreateItemModal({ isChildTaskLevel = false } = {}) {
       overlay.remove();
       resolve(result);
     };
-    overlay.querySelector("#cancelCreateItemBtn")?.addEventListener("click", () => close(null));
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) close(null);
-    });
+    BotButtonsMenuView.bindCreateFormDismiss(overlay, "#cancelCreateItemBtn", close);
 
     const labelInput = overlay.querySelector("#botCreateLabelInput");
     const enabledInput = overlay.querySelector("#botCreateEnabledInput");
@@ -1212,8 +1209,8 @@ async function createLevelItem() {
 }
 
 async function handleBack() {
-  if (state.layoutPendingMove || state.layoutSaving) {
-    setStatus("Сохраните или отмените перенос перед выходом с уровня.");
+  if (state.layoutChanged.size || state.layoutSaving) {
+    setStatus("Сохраните или отмените изменения структуры перед выходом с уровня.");
     return;
   }
   if (state.view === "system_editor") {
@@ -1278,7 +1275,7 @@ async function handleBack() {
 }
 
 function handleBeforeUnload(event) {
-  if (!hasUnsavedChanges() && !state.layoutPendingMove && !state.layoutSaving) return;
+  if (!hasUnsavedChanges() && !state.layoutChanged.size && !state.layoutSaving) return;
   event.preventDefault();
   event.returnValue = "";
 }

@@ -1,9 +1,9 @@
 (function initBotButtonsLevelView(global) {
-  const MAX_LAYOUT_ROW_BUTTONS = 3;
+  const MAX_LAYOUT_ROW_BUTTONS = 2;
 
   function layoutColumns(value, fallback = 1) {
     const number = Number(value || fallback);
-    return [1, 2, 3].includes(number) ? number : fallback;
+    return Number.isInteger(number) && number > 0 ? Math.min(number, MAX_LAYOUT_ROW_BUTTONS) : fallback;
   }
 
   function nodeClass(ctx, node) {
@@ -30,21 +30,12 @@
     const normalized = [];
     for (const row of rows || []) {
       const buttons = Array.isArray(row?.buttons) ? row.buttons.filter(Boolean) : [];
-      if (!buttons.length) continue;
-      normalized.push({
-        columns: Math.max(1, Math.min(MAX_LAYOUT_ROW_BUTTONS, layoutColumns(row?.columns, buttons.length), buttons.length)),
-        buttons,
-      });
+      for (let start = 0; start < buttons.length; start += MAX_LAYOUT_ROW_BUTTONS) {
+        const chunk = buttons.slice(start, start + MAX_LAYOUT_ROW_BUTTONS);
+        normalized.push({ columns: Math.min(layoutColumns(row?.columns, chunk.length), chunk.length), buttons: chunk });
+      }
     }
-    if (!normalized.length) normalized.push({ columns: 1, buttons: [] });
     return normalized;
-  }
-
-  function cleanupDraftRows(draft) {
-    for (let idx = draft.length - 1; idx >= 0; idx -= 1) {
-      if (!Array.isArray(draft[idx]?.buttons) || draft[idx].buttons.length === 0) draft.splice(idx, 1);
-    }
-    if (!draft.length) draft.push({ columns: 1, buttons: [] });
   }
 
   function serializeLayoutRows(rows) {
@@ -61,40 +52,42 @@
     return result;
   }
 
-  function moveDraftButton(draft, fromRow, fromIndex, toRow, toIndex = null) {
-    if (!Array.isArray(draft)) return false;
+  function removeDraftButton(draft, rowIndex, nodeIndex) {
+    const row = draft[rowIndex];
+    const [node] = row.buttons.splice(nodeIndex, 1);
+    row.columns = row.buttons.length;
+    if (!row.columns) draft.splice(rowIndex, 1);
+    return node;
+  }
+
+  function moveDraftButton(draft, fromRow, fromIndex, toRow, toIndex = null, targetDraft = draft) {
     const source = draft[fromRow];
-    const target = draft[toRow];
-    const item = source?.buttons?.[fromIndex];
-    if (!source || !target || !item) return false;
-    source.buttons.splice(fromIndex, 1);
-    if (target.buttons.length >= MAX_LAYOUT_ROW_BUTTONS) {
-      source.buttons.splice(fromIndex, 0, item);
-      return false;
-    }
-    let insertIndex = Number.isFinite(toIndex) ? Number(toIndex) : target.buttons.length;
-    if (source === target && insertIndex > fromIndex) insertIndex -= 1;
-    insertIndex = Math.max(0, Math.min(insertIndex, target.buttons.length));
-    target.buttons.splice(insertIndex, 0, item);
-    source.columns = Math.max(1, Math.min(MAX_LAYOUT_ROW_BUTTONS, source.buttons.length || 1));
-    target.columns = Math.max(1, Math.min(MAX_LAYOUT_ROW_BUTTONS, target.buttons.length || 1));
-    cleanupDraftRows(draft);
+    const target = targetDraft[toRow];
+    if (!source?.buttons[fromIndex] || !target) return false;
+    if (source !== target && target.buttons.length >= MAX_LAYOUT_ROW_BUTTONS) return false;
+    let index = Number.isFinite(toIndex) ? toIndex : target.buttons.length;
+    if (source === target && index > fromIndex) index -= 1;
+    index = Math.max(0, Math.min(index, target.buttons.length));
+    if (source === target && index === fromIndex) return false;
+    // Keep the row in place when reordering its own buttons.
+    const node = source === target ? source.buttons.splice(fromIndex, 1)[0] : removeDraftButton(draft, fromRow, fromIndex);
+    target.buttons.splice(index, 0, node);
+    target.columns = target.buttons.length;
     return true;
   }
 
-  function moveDraftButtonToNewRow(draft, fromRow, fromIndex, beforeRow) {
-    if (!Array.isArray(draft)) return false;
-    const source = draft[fromRow];
-    const item = source?.buttons?.[fromIndex];
-    if (!source || !item) return false;
-    const sourceWillBeRemoved = source.buttons.length <= 1;
-    source.buttons.splice(fromIndex, 1);
-    let insertIndex = Number.isFinite(beforeRow) ? Number(beforeRow) : draft.length;
-    if (sourceWillBeRemoved && fromRow < insertIndex) insertIndex -= 1;
-    insertIndex = Math.max(0, Math.min(insertIndex, draft.length));
-    source.columns = Math.max(1, Math.min(MAX_LAYOUT_ROW_BUTTONS, source.buttons.length || 1));
-    draft.splice(insertIndex, 0, { columns: 1, buttons: [item] });
-    cleanupDraftRows(draft);
+  function isUnchangedNewRow(draft, fromRow, targetDraft, beforeRow) {
+    return draft === targetDraft && draft[fromRow].buttons.length === 1
+      && (beforeRow === fromRow || beforeRow === fromRow + 1);
+  }
+
+  function moveDraftButtonToNewRow(draft, fromRow, fromIndex, beforeRow, targetDraft = draft) {
+    if (!draft[fromRow]?.buttons[fromIndex]) return false;
+    let index = Number.isInteger(beforeRow) ? Math.max(0, Math.min(beforeRow, targetDraft.length)) : targetDraft.length;
+    if (isUnchangedNewRow(draft, fromRow, targetDraft, index)) return false;
+    if (draft === targetDraft && draft[fromRow].buttons.length === 1 && fromRow < index) index -= 1;
+    const node = removeDraftButton(draft, fromRow, fromIndex);
+    targetDraft.splice(index, 0, { columns: 1, buttons: [node] });
     return true;
   }
 
@@ -103,20 +96,19 @@
     state.layoutModalCleanup?.();
     state.layoutModalCleanup = null;
     state.layoutEditMode = false;
-    state.layoutDraftRows = [];
-    state.layoutPendingMove = null;
+    state.layoutDraftLevels = null;
+    state.layoutMoves = [];
+    state.layoutChanged = new Set();
+    state.layoutOpenSubmenus = new Set();
     state.layoutDragNode = null;
-    state.layoutDragLocal = false;
     state.layoutError = "";
     return true;
   }
 
-  function bindLayoutModal(ctx, previousScroll) {
+  function bindLayoutModal(ctx, previousScroll, finishDrag) {
     const dialog = ctx.el.content.querySelector(".bot-layout-dialog");
     const scroll = dialog.querySelector(".bot-layout-scroll-area");
     const zones = Array.from(dialog.querySelectorAll("[data-layout-scroll]"));
-    const rootDrop = dialog.querySelector(".bot-move-root-context");
-    let rootPlaceholder = null;
     let dragging = false, direction = 0, frame = 0, lastTime = 0;
     function updateZones() {
       for (const zone of zones) {
@@ -143,27 +135,13 @@
         stopScroll();
       } else frame = requestAnimationFrame(tick);
     }
-    dialog.addEventListener("dragstart", () => {
-      const node = ctx.state.layoutDragNode;
-      dragging = !!node;
-      if (rootDrop && canMoveNode(node) && node.parent_path !== "") {
-        const header = dialog.querySelector(".bot-layout-dialog-head").getBoundingClientRect();
-        rootPlaceholder = document.createElement("div");
-        rootPlaceholder.style.height = `${rootDrop.getBoundingClientRect().height}px`;
-        rootPlaceholder.style.margin = getComputedStyle(rootDrop).margin;
-        rootDrop.before(rootPlaceholder);
-        rootDrop.style.setProperty("--bot-root-drop-top", `${header.bottom - rootDrop.getBoundingClientRect().height - 8}px`);
-        rootDrop.style.setProperty("--bot-root-drop-left", `${header.left + 16}px`);
-        rootDrop.style.setProperty("--bot-root-drop-width", `${header.width - 32}px`);
-        rootDrop.classList.add("bot-root-drop-visible");
-      }
+    dialog.addEventListener("dragover", () => {
+      if (dragging || !ctx.state.layoutDragNode) return;
+      dragging = true;
       updateZones();
-    });
+    }, true);
     const endDrag = () => {
       dragging = false;
-      rootDrop?.classList.remove("bot-root-drop-visible", "bot-layout-drop-active", "bot-layout-drop-forbidden");
-      rootPlaceholder?.remove();
-      rootPlaceholder = null;
       stopScroll();
     };
     dialog.addEventListener("dragend", endDrag, true);
@@ -186,22 +164,24 @@
       event.preventDefault();
       if (!ctx.state.layoutSaving) dialog.querySelector("#cancelLayoutBtn").click();
     });
-    const resize = () => dialog.style.setProperty("--bot-layout-work-left", `${Math.max(12, ctx.el.content.closest("#appContent").getBoundingClientRect().left + 12)}px`);
+    const workArea = ctx.el.content.closest("#appContent");
+    const resize = () => {
+      const { left, right } = workArea.getBoundingClientRect();
+      dialog.style.setProperty("--bot-layout-work-left", `${Math.max(0, left) + 12}px`);
+      dialog.style.setProperty("--bot-layout-work-right", `${Math.max(0, window.innerWidth - right) + 12}px`);
+    };
     resize();
     window.addEventListener("resize", resize);
-    window.addEventListener("blur", endDrag);
+    const blur = () => { endDrag(); finishDrag(); };
+    window.addEventListener("blur", blur);
     ctx.state.layoutModalCleanup = () => {
       endDrag();
       window.removeEventListener("resize", resize);
-      window.removeEventListener("blur", endDrag);
+      window.removeEventListener("blur", blur);
       if (dialog.open) dialog.close();
     };
     dialog.showModal();
     scroll.scrollTop = previousScroll;
-  }
-
-  function localLayoutChanged(state) {
-    return JSON.stringify(serializeLayoutRows(state.layoutDraftRows)) !== state.layoutOriginalRows;
   }
 
   function canMoveNode(node) {
@@ -209,22 +189,18 @@
       && !!node.button_id && typeof node.parent_path === "string" && !node.removed && !node.is_archived;
   }
 
-  function moveBlockedReason(ctx, node, parentPath) {
-    if (ctx.state.layoutSaving) return "Дождитесь сохранения.";
-    if (ctx.state.layoutPendingMove) return "Один перенос за сохранение. Сохраните или отмените перенос.";
-    if (localLayoutChanged(ctx.state)) return "Сначала сохраните или отмените перестановки текущего уровня.";
-    if (!canMoveNode(node)) return "Можно переносить только обычные кнопки с ID и путём из структуры.";
-    if (node.parent_path === parentPath) return "Кнопка уже находится на этом уровне.";
-    return "";
-  }
-
-  function moveDropZone(ctx, parentPath, label, contextualRoot = false) {
-    const pending = ctx.state.layoutPendingMove;
-    return `<div class="bot-move-drop${contextualRoot ? " bot-move-root-context" : ""}" data-move-parent="${ctx.escapeHtml(parentPath)}"
-      data-move-label="${ctx.escapeHtml(label)}" aria-disabled="${!!pending || localLayoutChanged(ctx.state)}">
-      ${contextualRoot ? "Переместить в корень меню" : `Перенести сюда: ${ctx.escapeHtml(label)}`}
-      ${pending?.payload.parent_path === parentPath ? `<div class="bot-move-preview">После сохранения: ${ctx.escapeHtml(pending.label)}</div>` : ""}
-    </div>`;
+  function addDraftLevel(state, key, parentPath, rows) {
+    const activeRows = rows.map(row => ({ ...row, buttons: row.buttons.filter(node => !node.removed && node.kind !== "removed_folder") }));
+    const draft = normalizeDraftRows(activeRows);
+    state.layoutDraftLevels.set(key, { rows: draft, parentPath });
+    if (activeRows.some(row => row.buttons.length > MAX_LAYOUT_ROW_BUTTONS)) state.layoutChanged.add(key);
+    for (const row of draft) {
+      for (const node of row.buttons) {
+        if (node.kind === "submenu" && node.level_key) {
+          addDraftLevel(state, node.level_key, node.full_path, node.children_rows || []);
+        }
+      }
+    }
   }
 
   function refreshLevelStack(ctx, structure) {
@@ -313,24 +289,49 @@
   }
 
   function renderSubmenuContents(ctx, node) {
-    const children = (node.children_rows || []).flatMap(row => row.buttons || []);
-    return `<details class="bot-structure-submenu" data-submenu-key="${ctx.escapeHtml(node.technical_key)}" ${ctx.state.layoutOpenSubmenus?.has(node.technical_key) ? "open" : ""}><summary>Содержимое подменю (${children.length})</summary>
-      ${children.map(child => `<div class="bot-structure-child">
-        <button type="button" class="${nodeClass(ctx, child)} ${child.button_id && ctx.state.layoutPendingMove?.payload.button_id === child.button_id ? "bot-move-source-pending" : ""}"
-          data-button-color-key="${ctx.escapeHtml(child.technical_key || "")}" data-move-source="${ctx.escapeHtml(child.technical_key || "")}"
-          draggable="${!ctx.state.layoutPendingMove && !ctx.state.layoutSaving && canMoveNode(child)}">
-          <span>${ctx.escapeHtml(child.label)}</span><span class="bot-button-type-tag">${buttonTypeLabel(child)}</span>
-        </button>${child.kind === "submenu" ? renderSubmenuContents(ctx, child) : ""}</div>`).join("")}
-      ${moveDropZone(ctx, node.full_path, node.label)}
+    const level = ctx.state.layoutDraftLevels.get(node.level_key);
+    if (!level) return "";
+    const count = level.rows.reduce((count, row) => count + row.buttons.length, 0);
+    const key = ctx.escapeHtml(node.technical_key);
+    return `<details class="bot-structure-submenu" data-submenu-key="${key}" ${ctx.state.layoutOpenSubmenus.has(node.technical_key) ? "open" : ""}>
+      <summary>Содержимое подменю (${count})</summary>
+      ${renderLevelRows(ctx, level.rows, node.level_key)}
     </details>`;
   }
 
+  function renderLevelRows(ctx, rows, levelKey) {
+    const editing = ctx.state.layoutEditMode;
+    const newRow = index => `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${index}" hidden>Новый ряд здесь</div>`;
+    return `<div class="bot-buttons-level-list${ctx.state.messengerView && !editing ? " bot-buttons-messenger-view" : ""}"
+      ${editing ? `data-layout-level="${ctx.escapeHtml(levelKey)}"` : ""}>
+      ${rows.length ? rows.map((row, rowIndex) => `
+        ${editing ? newRow(rowIndex) : ""}
+        <div class="bot-buttons-row${editing ? " bot-layout-row-edit" : ""}" ${editing ? `data-layout-drop-row="${rowIndex}"` : ""}>
+          ${row.buttons.map((node, nodeIndex) => `
+            <div class="bot-structure-item">
+              <button type="button"
+                class="${nodeClass(ctx, node)}${node.kind === "submenu" ? " bot-button-submenu" : ""}"
+                data-button-color-key="${ctx.escapeHtml(node.technical_key || "")}"
+                data-row-index="${rowIndex}" data-node-index="${nodeIndex}"
+                ${editing ? `draggable="${!ctx.state.layoutSaving}" data-layout-drag-button="${rowIndex}:${nodeIndex}"` : ""}>
+                <span>${ctx.escapeHtml(node.label)}</span><span class="bot-button-type-tag">${buttonTypeLabel(node)}</span>
+              </button>
+              ${editing && node.kind === "submenu" ? renderSubmenuContents(ctx, node) : ""}
+            </div>`).join("")}
+        </div>`).join("") : `<div class="status">Пусто</div>`}
+      ${editing ? newRow(rows.length) : ""}
+    </div>`;
+  }
+
   function renderLevel(ctx) {
+    if (ctx.state.layoutDragNode) return;
     const previousModal = ctx.el.content.querySelector(".bot-layout-dialog");
     const previousScroll = previousModal?.querySelector(".bot-layout-scroll-area")?.scrollTop || 0;
     ctx.state.layoutModalCleanup?.();
     ctx.state.layoutModalCleanup = null;
-    ctx.state.layoutOpenSubmenus = new Set(Array.from(ctx.el.content.querySelectorAll(".bot-structure-submenu[open]"), node => node.dataset.submenuKey));
+    if (previousModal && ctx.state.layoutEditMode) {
+      ctx.state.layoutOpenSubmenus = new Set(Array.from(previousModal.querySelectorAll(".bot-structure-submenu[open]"), node => node.dataset.submenuKey));
+    }
     const current = currentLevel(ctx);
     const isArchiveLevel = String(current?.levelKey || "").includes("|level|__removed__");
     const rows = current?.rows || [];
@@ -345,17 +346,34 @@
     const canEditLayoutBase = isLayoutEditableLevel(ctx, current);
     const isGroupParentLevel = String(current?.kind || "") === "group_task_parent";
     const isSubmenuLevel = String(current?.kind || "") === "submenu";
-    const addButtonLabel = isGroupParentLevel ? "\u0421\u043e\u0437\u0434\u0430\u0442\u044c child task" : "\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c";
+    const isRootLevel = current?.kind === "root";
+    const addButtonLabel = isGroupParentLevel ? "Создать child task" : "Добавить кнопку";
     const canEditLayout = canEditLayoutBase && !isGroupParentLevel;
-    const messengerToggle = isSubmenuLevel && !ctx.state.layoutEditMode
+    const messengerToggle = (isRootLevel || isSubmenuLevel) && !ctx.state.layoutEditMode
       ? global.BotButtonsMenuView.renderMessengerToggle(ctx.state) : "";
+    const rootControls = isRootLevel && !ctx.state.layoutEditMode ? `
+      <div class="bot-root-controls">
+        <section class="bot-menu-management-panel">
+          <h2 class="bot-menu-bindings-title">Управление меню</h2>
+          <div class="bot-menu-management-actions">
+            <button type="button" id="editLayoutBtn" class="action">Изменить структуру</button>
+            ${messengerToggle}
+            <button type="button" id="addLevelItemBtn" class="action">Добавить новую кнопку</button>
+            ${ctx.state.selectedMenu !== "Базовое"
+              ? '<button type="button" id="deleteMenuTypeBtn" class="action action-danger">УДАЛИТЬ МЕНЮ ПОЛНОСТЬЮ</button>'
+              : ""}
+          </div>
+        </section>
+        ${ctx.renderMenuBindingsPanel()}
+      </div>` : "";
+
     const toolbarHtml = canEditLayout
       ? `
         <div class="bot-layout-toolbar">
           ${ctx.state.layoutEditMode
             ? `<button type="button" id="saveLayoutBtn" class="action action-primary">Сохранить структуру</button>
                <button type="button" id="cancelLayoutBtn" class="action">\u041e\u0442\u043c\u0435\u043d\u0430</button>
-               <span class="bot-layout-help">\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043a\u043d\u043e\u043f\u043a\u0438, \u0447\u0442\u043e\u0431\u044b \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a. \u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0434\u043e 3 \u043a\u043d\u043e\u043f\u043e\u043a.</span>`
+               <span class="bot-layout-help">\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043a\u043d\u043e\u043f\u043a\u0438, \u0447\u0442\u043e\u0431\u044b \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043f\u043e\u0440\u044f\u0434\u043e\u043a. \u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0434\u043e 2 \u043a\u043d\u043e\u043f\u043e\u043a.</span>`
             : `<button type="button" id="editLayoutBtn" class="action">Изменить структуру</button>
                ${isSubmenuLevel ? `<button type="button" id="editSubmenuBtn" class="action">\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u043e\u0434\u043c\u0435\u043d\u044e</button>` : ""}
                <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>${messengerToggle}`}
@@ -367,52 +385,26 @@
            <button type="button" id="addLevelItemBtn" class="action">${addButtonLabel}</button>${messengerToggle}
          </div>`;
 
-    const rowsForRender = ctx.state.layoutEditMode ? (ctx.state.layoutDraftRows || []) : visibleRows;
+    const rootKey = ctx.state.levelStack[0]?.levelKey;
+    const rowsForRender = ctx.state.layoutEditMode ? ctx.state.layoutDraftLevels.get(rootKey).rows : visibleRows;
 
     ctx.el.content.innerHTML = `
       <div class="bot-buttons-split-layout bot-buttons-v2-list">
         <div class="bot-buttons-split-left">
-          ${ctx.renderMenuBindingsPanel()}
+          ${rootControls}
           ${ctx.state.layoutEditMode ? `
           <dialog class="bot-layout-edit-shell bot-layout-dialog" aria-labelledby="botLayoutDialogTitle">
             <header class="bot-layout-dialog-head">
               <h2 id="botLayoutDialogTitle">Режим изменения структуры</h2>
           ` : ""}
-          ${toolbarHtml}
+          ${rootControls ? "" : toolbarHtml}
           ${ctx.state.layoutEditMode ? `
             </header>
             <div class="bot-layout-scroll-frame">
             <div class="bot-layout-scroll-area">
-            <div class="bot-move-help" role="status">${ctx.state.layoutPendingMove
-              ? `Черновик: ${ctx.escapeHtml(ctx.state.layoutPendingMove.label)} → ${ctx.escapeHtml(ctx.state.layoutPendingMove.targetLabel)}. Сохраните или отмените перенос; другие изменения заблокированы.`
-              : "Один межуровневый перенос за сохранение. Кнопка добавится отдельным рядом в конец уровня."}</div>
             ${ctx.state.layoutError ? `<div class="bot-layout-error" role="alert">${ctx.escapeHtml(ctx.state.layoutError)} Можно повторить сохранение или отменить.</div>` : ""}
-            ${current.kind === "root" ? moveDropZone(ctx, "", "Корень меню", true) : moveDropZone(ctx, current.fullPath || "", "Текущий уровень")}
-            ${current.kind === "submenu" && typeof current.parentPath === "string" ? moveDropZone(ctx, current.parentPath, "На уровень выше") : ""}
           ` : ""}
-          <div class="bot-buttons-level-list${ctx.state.messengerView && !ctx.state.layoutEditMode ? " bot-buttons-messenger-view" : ""}">
-            ${rowsForRender.length ? rowsForRender.map((row, rowIndex) => `
-              ${ctx.state.layoutEditMode ? `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${rowIndex}">\u041d\u043e\u0432\u044b\u0439 \u0440\u044f\u0434 \u0437\u0434\u0435\u0441\u044c</div>` : ""}
-              <div class="bot-buttons-row ${ctx.state.layoutEditMode ? "bot-layout-row-edit" : ""}" ${ctx.state.layoutEditMode ? `data-layout-drop-row="${rowIndex}"` : ""}>
-                ${(row.buttons || []).map((node, nodeIndex) => `
-                  <div class="bot-structure-item">
-                  <button
-                    type="button"
-                    class="${nodeClass(ctx, node)}${node.kind === "submenu" ? " bot-button-submenu" : ""}${ctx.state.layoutPendingMove?.payload.button_id === node.button_id && node.button_id ? " bot-move-source-pending" : ""}"
-                    data-button-color-key="${ctx.escapeHtml(node.technical_key || "")}"
-                    data-row-index="${rowIndex}"
-                    data-node-index="${nodeIndex}"
-                    ${ctx.state.layoutEditMode ? `draggable="${!ctx.state.layoutPendingMove && !ctx.state.layoutSaving}" data-layout-drag-button="${rowIndex}:${nodeIndex}"` : ""}
-                  >
-                    <span>${ctx.escapeHtml(node.label)}</span><span class="bot-button-type-tag">${buttonTypeLabel(node)}</span>
-                  </button>
-                  ${ctx.state.layoutEditMode && node.kind === "submenu" ? renderSubmenuContents(ctx, node) : ""}
-                  </div>
-                `).join("")}
-              </div>
-            `).join("") : `<div class="status">\u041f\u0443\u0441\u0442\u043e</div>`}
-            ${ctx.state.layoutEditMode ? `<div class="bot-layout-new-row-drop" data-layout-new-row-before="${rowsForRender.length}">\u041d\u043e\u0432\u044b\u0439 \u0440\u044f\u0434 \u0437\u0434\u0435\u0441\u044c</div>` : ""}
-          </div>
+          ${renderLevelRows(ctx, rowsForRender, rootKey)}
           ${ctx.state.layoutEditMode ? `</div>
             <div class="bot-layout-auto-scroll" data-layout-scroll="-1" hidden>▲ Прокрутить вверх</div>
             <div class="bot-layout-auto-scroll" data-layout-scroll="1" hidden>▼ Прокрутить вниз</div>
@@ -434,10 +426,6 @@
       ctx.state.messengerView = !ctx.state.messengerView;
       event.currentTarget.setAttribute("aria-pressed", String(ctx.state.messengerView));
       ctx.el.content.querySelector(".bot-buttons-split-left > .bot-buttons-level-list")?.classList.toggle("bot-buttons-messenger-view", ctx.state.messengerView);
-    });
-    ctx.el.content.querySelectorAll(".bot-structure-submenu").forEach(container => {
-      container.addEventListener("dragover", event => { event.stopPropagation(); });
-      container.addEventListener("drop", event => { event.preventDefault(); event.stopPropagation(); });
     });
     ctx.el.content.querySelectorAll("[data-row-index][data-node-index]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -471,13 +459,10 @@
       cancelLayoutEdit(ctx.state);
       ctx.state.messengerView = false;
       ctx.state.layoutEditMode = true;
-      ctx.state.layoutDraftRows = normalizeDraftRows(
-        visibleRows.map((r) => ({
-          columns: layoutColumns(r.columns, (r.buttons || []).length || 1),
-          buttons: r.buttons || [],
-        })),
-      );
-      ctx.state.layoutOriginalRows = JSON.stringify(serializeLayoutRows(ctx.state.layoutDraftRows));
+      const root = ctx.state.levelStack[0];
+      ctx.state.layoutDraftLevels = new Map();
+      addDraftLevel(ctx.state, root.levelKey, "", root.rows || []);
+      ctx.state.layoutOpenSubmenus = new Set(ctx.state.levelStack.slice(1).map(level => level.technicalKey));
       ctx.render();
     });
     document.getElementById("addLevelItemBtn")?.addEventListener("click", async () => {
@@ -490,17 +475,18 @@
       if (typeof ctx.openSubmenuEditor === "function") await ctx.openSubmenuEditor();
     });
     document.getElementById("cancelLayoutBtn")?.addEventListener("click", () => {
-      if (ctx.state.layoutSaving) return;
+      if (ctx.state.layoutSaving || ctx.state.layoutDragNode) return;
       cancelLayoutEdit(ctx.state);
       ctx.render();
     });
     document.getElementById("saveLayoutBtn")?.addEventListener("click", async () => {
-      if (ctx.state.layoutSaving) return;
-      const level = currentLevel(ctx);
-      if (!level?.levelKey || !ctx.state.selectedMenu) return;
-      const serializedRows = serializeLayoutRows(ctx.state.layoutDraftRows || []);
-      if (!serializedRows) {
-        await window.HelpdeskDialogs.alert("\u0412 \u043e\u0434\u043d\u043e\u043c \u0440\u044f\u0434\u0443 \u043d\u0435\u043b\u044c\u0437\u044f \u0441\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0431\u043e\u043b\u044c\u0448\u0435 3 \u043a\u043d\u043e\u043f\u043e\u043a.");
+      if (ctx.state.layoutSaving || ctx.state.layoutDragNode) return;
+      const layouts = Object.fromEntries([...ctx.state.layoutChanged].map(key => [
+        key, serializeLayoutRows(ctx.state.layoutDraftLevels.get(key).rows).map(row => row.button_keys),
+      ]));
+      if (!ctx.state.layoutChanged.size) {
+        cancelLayoutEdit(ctx.state);
+        ctx.render();
         return;
       }
       ctx.setStatus("Сохранение структуры...");
@@ -508,11 +494,10 @@
       ctx.state.layoutError = "";
       ctx.render();
       try {
-        const pending = ctx.state.layoutPendingMove;
-        const result = await ctx.api(pending ? "/api/v1/settings/bot-buttons/item/move" : `/api/v1/settings/bot-buttons/layout?menu_type=${encodeURIComponent(ctx.state.selectedMenu)}&level_key=${encodeURIComponent(level.levelKey)}`, {
-          method: pending ? "POST" : "PUT",
+        const result = await ctx.api("/api/v1/settings/bot-buttons/structure-layout", {
+          method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(pending ? pending.payload : { rows: serializedRows }),
+          body: JSON.stringify({ menu_type: ctx.state.selectedMenu, moves: ctx.state.layoutMoves, layouts }),
         });
         cancelLayoutEdit(ctx.state);
         if (result?.structure) {
@@ -565,10 +550,10 @@
     });
 
     if (ctx.state.layoutEditMode) {
-      bindLayoutEditing(ctx);
-      bindLayoutModal(ctx, previousScroll);
-      for (const button of ctx.el.content.querySelectorAll("#saveLayoutBtn, #cancelLayoutBtn, .bot-menu-bindings-panel button, .bot-menu-bindings-panel select")) {
-        button.disabled = !!ctx.state.layoutSaving || button.closest(".bot-menu-bindings-panel") !== null;
+      const finishDrag = bindLayoutEditing(ctx);
+      bindLayoutModal(ctx, previousScroll, finishDrag);
+      for (const button of ctx.el.content.querySelectorAll("#saveLayoutBtn, #cancelLayoutBtn")) {
+        button.disabled = !!ctx.state.layoutSaving;
       }
     }
 
@@ -594,168 +579,108 @@
     });
   }
 
-  function parseDragRef(value) {
-    const [row, index] = String(value || "").split(":").map((item) => Number(item));
-    if (!Number.isFinite(row) || !Number.isFinite(index)) return null;
-    return { row, index };
-  }
-
-  function clearDropClasses(root) {
-    root.querySelectorAll(".bot-layout-drop-active, .bot-layout-drop-forbidden").forEach((node) => {
-      node.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden");
-    });
-  }
-
   function bindLayoutEditing(ctx) {
-    const draft = ctx.state.layoutDraftRows || [];
-    const localAllowed = () => !ctx.state.layoutPendingMove && !ctx.state.layoutSaving && ctx.state.layoutDragLocal;
-    const blockLocal = () => {
-      ctx.state.layoutError = ctx.state.layoutPendingMove
-        ? "Сначала сохраните или отмените межуровневый перенос."
-        : "Для межуровневого переноса используйте область вложения или уровень выше.";
-      ctx.render();
-    };
-    ctx.el.content.querySelectorAll("[data-move-source]").forEach(button => {
+    const dialog = ctx.el.content.querySelector(".bot-layout-dialog");
+    const buttons = dialog.querySelectorAll("[data-layout-drag-button]");
+    const zones = dialog.querySelectorAll("[data-layout-new-row-before]");
+    let source = null;
+    let changed = false;
+    let zonesShown = false;
+    const levelKey = element => element.closest("[data-layout-level]").dataset.layoutLevel;
+    const level = element => ctx.state.layoutDraftLevels.get(levelKey(element));
+    const crossLevelAllowed = element => level(element) === source.level || canMoveNode(source.node);
+
+    function hideFeedback() {
+      for (const zone of zones) zone.hidden = true;
+      dialog.querySelectorAll(".bot-layout-drop-active, .bot-layout-drop-forbidden").forEach(element => {
+        element.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden");
+      });
+    }
+
+    // The browser still needs the original drag source until dragend.
+    function finishDrag() {
+      if (!source) return;
+      source.button.classList.remove("bot-layout-dragging");
+      source = null;
+      zonesShown = false;
+      ctx.state.layoutDragNode = null;
+      hideFeedback();
+      if (changed) ctx.render();
+    }
+
+    for (const button of buttons) {
       button.addEventListener("dragstart", event => {
-        if (ctx.state.layoutPendingMove || ctx.state.layoutSaving) { event.preventDefault(); return; }
-        const find = rows => {
-          for (const row of rows || []) for (const node of row.buttons || []) {
-            if (node.technical_key === button.dataset.moveSource) return node;
-            const child = find(node.children_rows);
-            if (child) return child;
+        if (ctx.state.layoutSaving) { event.preventDefault(); return; }
+        const row = Number(button.dataset.rowIndex), index = Number(button.dataset.nodeIndex);
+        const from = level(button);
+        const node = from.rows[row].buttons[index];
+        source = { button, level: from, row, index, node };
+        ctx.state.layoutDragNode = node;
+        event.dataTransfer?.setData("text/plain", node.technical_key || "");
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+        button.classList.add("bot-layout-dragging");
+      });
+      button.addEventListener("dragend", finishDrag);
+    }
+
+    // Wait for native drag capture before inserting space that moves the source.
+    dialog.addEventListener("dragover", () => {
+      if (!source || zonesShown) return;
+      zonesShown = true;
+      const { level: from, row } = source;
+      for (const zone of zones) {
+        zone.hidden = !crossLevelAllowed(zone)
+          || isUnchangedNewRow(from.rows, row, level(zone).rows, Number(zone.dataset.layoutNewRowBefore));
+      }
+    }, true);
+
+    for (const target of [...buttons, ...zones, ...dialog.querySelectorAll("[data-layout-drop-row]")]) {
+      const before = target.dataset.layoutNewRowBefore;
+      const row = Number(target.dataset.layoutDropRow ?? target.dataset.rowIndex);
+      const allowed = () => {
+        if (!source || changed || !crossLevelAllowed(target)) return false;
+        if (before !== undefined) return !target.hidden;
+        return target !== source.button && (level(target) === source.level && row === source.row
+          || level(target).rows[row].buttons.length < MAX_LAYOUT_ROW_BUTTONS);
+      };
+      target.addEventListener("dragover", event => {
+        event.stopPropagation();
+        const valid = allowed();
+        if (valid) event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = valid ? "move" : "none";
+        target.classList.toggle("bot-layout-drop-active", valid);
+        target.classList.toggle("bot-layout-drop-forbidden", !!source && !valid);
+      });
+      target.addEventListener("dragleave", () => target.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden"));
+      target.addEventListener("drop", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (allowed()) {
+          const destination = level(target);
+          const sameRow = destination === source.level && row === source.row;
+          const targetIndex = Number(target.dataset.nodeIndex);
+          const insert = Number.isInteger(targetIndex) ? targetIndex + Number(sameRow && targetIndex > source.index) : null;
+          changed = before !== undefined
+            ? moveDraftButtonToNewRow(source.level.rows, source.row, source.index, Number(before), destination.rows)
+            : moveDraftButton(source.level.rows, source.row, source.index, row, insert, destination.rows);
+          if (changed) {
+            ctx.state.layoutChanged.add(levelKey(source.button));
+            ctx.state.layoutChanged.add(levelKey(target));
+            if (destination !== source.level) {
+              ctx.state.layoutMoves.push({ button_id: source.node.button_id, parent_path: destination.parentPath });
+            }
+            ctx.state.layoutError = "";
           }
-          return null;
-        };
-        ctx.state.layoutDragNode = find(ctx.state.menuStructure.tree_rows);
-        ctx.state.layoutDragLocal = false;
-        event.dataTransfer?.setData("text/plain", button.dataset.moveSource);
-        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-      });
-      button.addEventListener("dragend", () => {
-        ctx.state.layoutDragNode = null;
-        ctx.state.layoutDragLocal = false;
-        clearDropClasses(ctx.el.content);
-      });
-    });
-    ctx.el.content.querySelectorAll("[data-move-parent]").forEach(zone => {
-      zone.addEventListener("dragover", event => {
-        event.preventDefault(); event.stopPropagation();
-        const reason = moveBlockedReason(ctx, ctx.state.layoutDragNode, zone.dataset.moveParent);
-        zone.classList.toggle("bot-layout-drop-active", !reason);
-        zone.classList.toggle("bot-layout-drop-forbidden", !!reason);
-        zone.setAttribute("aria-disabled", String(!!reason));
-        zone.title = reason || "Добавить отдельным рядом в конец уровня";
-        const help = ctx.el.content.querySelector(".bot-move-help");
-        if (help) help.textContent = reason || "Добавить отдельным рядом в конец уровня после сохранения.";
-        if (event.dataTransfer) event.dataTransfer.dropEffect = reason ? "none" : "move";
-      });
-      zone.addEventListener("dragleave", () => clearDropClasses(ctx.el.content));
-      zone.addEventListener("drop", event => {
-        event.preventDefault(); event.stopPropagation();
-        const node = ctx.state.layoutDragNode;
-        const reason = moveBlockedReason(ctx, node, zone.dataset.moveParent);
-        if (reason) { ctx.state.layoutError = reason; ctx.render(); return; }
-        ctx.state.layoutPendingMove = {
-          label: node.label,
-          targetLabel: zone.dataset.moveLabel,
-          payload: { button_id: node.button_id, menu_type: ctx.state.selectedMenu,
-            parent_path: zone.dataset.moveParent, new_row: true, target_index: 0 },
-        };
-        ctx.state.layoutDragNode = null;
-        ctx.state.layoutError = "";
-        ctx.render();
-      });
-    });
-    ctx.el.content.querySelectorAll("[data-layout-drag-button]").forEach((btn) => {
-      btn.addEventListener("dragstart", (event) => {
-        if (ctx.state.layoutPendingMove || ctx.state.layoutSaving) { event.preventDefault(); return; }
-        const ref = parseDragRef(btn.dataset.layoutDragButton);
-        ctx.state.layoutDragNode = draft[ref?.row]?.buttons?.[ref?.index];
-        ctx.state.layoutDragLocal = true;
-        event.dataTransfer?.setData("text/plain", btn.dataset.layoutDragButton || "");
-        event.dataTransfer?.setData("application/x-bot-layout-button", btn.dataset.layoutDragButton || "");
-        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-        btn.classList.add("bot-layout-dragging");
-      });
-      btn.addEventListener("dragend", () => {
-        ctx.state.layoutDragNode = null;
-        ctx.state.layoutDragLocal = false;
-        btn.classList.remove("bot-layout-dragging");
-        clearDropClasses(ctx.el.content);
-      });
-      btn.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const target = draft[Number(btn.dataset.rowIndex)];
-        const allowed = localAllowed() && (target?.buttons.includes(ctx.state.layoutDragNode) || (target?.buttons.length || 0) < MAX_LAYOUT_ROW_BUTTONS);
-        btn.classList.toggle("bot-layout-drop-active", allowed);
-        btn.classList.toggle("bot-layout-drop-forbidden", !allowed);
-      });
-      btn.addEventListener("dragleave", () => btn.classList.remove("bot-layout-drop-active"));
-      btn.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!localAllowed()) { blockLocal(); return; }
-        const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
-        const toRow = Number(btn.dataset.rowIndex);
-        const toIndex = Number(btn.dataset.nodeIndex);
-        clearDropClasses(ctx.el.content);
-        if (!from || Number.isNaN(toRow) || Number.isNaN(toIndex)) return;
-        if (!moveDraftButton(draft, from.row, from.index, toRow, toIndex)) {
-          await window.HelpdeskDialogs.alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
-          return;
         }
-        ctx.render();
+        hideFeedback();
       });
-    });
-
-    ctx.el.content.querySelectorAll("[data-layout-drop-row]").forEach((rowEl) => {
-      rowEl.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        const idx = Number(rowEl.dataset.layoutDropRow);
-        const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
-        const targetLen = draft[idx]?.buttons?.length || 0;
-        const sameRow = ctx.state.layoutDragNode && draft[idx]?.buttons.includes(ctx.state.layoutDragNode);
-        const allowed = localAllowed() && (sameRow || targetLen < MAX_LAYOUT_ROW_BUTTONS);
-        rowEl.classList.toggle("bot-layout-drop-active", !!allowed);
-        rowEl.classList.toggle("bot-layout-drop-forbidden", !allowed);
-      });
-      rowEl.addEventListener("dragleave", () => {
-        rowEl.classList.remove("bot-layout-drop-active", "bot-layout-drop-forbidden");
-      });
-      rowEl.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        if (!localAllowed()) { blockLocal(); return; }
-        const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
-        const toRow = Number(rowEl.dataset.layoutDropRow);
-        clearDropClasses(ctx.el.content);
-        if (!from || Number.isNaN(toRow)) return;
-        if (!moveDraftButton(draft, from.row, from.index, toRow, null)) {
-          await window.HelpdeskDialogs.alert("\u0412 \u0440\u044f\u0434\u0443 \u0443\u0436\u0435 3 \u043a\u043d\u043e\u043f\u043a\u0438.");
-          return;
-        }
-        ctx.render();
-      });
-    });
-
-    ctx.el.content.querySelectorAll("[data-layout-new-row-before]").forEach((zone) => {
-      zone.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        zone.classList.toggle("bot-layout-drop-active", !!localAllowed());
-        zone.classList.toggle("bot-layout-drop-forbidden", !localAllowed());
-      });
-      zone.addEventListener("dragleave", () => zone.classList.remove("bot-layout-drop-active"));
-      zone.addEventListener("drop", (event) => {
-        event.preventDefault();
-        if (!localAllowed()) { blockLocal(); return; }
-        const from = parseDragRef(event.dataTransfer?.getData("application/x-bot-layout-button") || event.dataTransfer?.getData("text/plain"));
-        const beforeRow = Number(zone.dataset.layoutNewRowBefore);
-        clearDropClasses(ctx.el.content);
-        if (!from || Number.isNaN(beforeRow)) return;
-        moveDraftButtonToNewRow(draft, from.row, from.index, beforeRow);
-        ctx.render();
-      });
-    });
+    }
+    for (const submenu of dialog.querySelectorAll(".bot-structure-submenu")) {
+      submenu.addEventListener("dragover", event => event.stopPropagation());
+      submenu.addEventListener("drop", event => { event.stopPropagation(); hideFeedback(); });
+    }
+    dialog.addEventListener("drop", hideFeedback);
+    return finishDrag;
   }
 
   global.BotButtonsLevelView = {

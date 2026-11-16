@@ -32,16 +32,57 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
   else if(p.endsWith('/users/agents')||p.endsWith('/users/by-role')||p.endsWith('/assignees'))data=[];
   else if(p.endsWith('/counts'))data={active:0,frozen:0,closed:0,special:0,unassigned:0,by_assignee:{}};
   else if(p.endsWith('/menu-types/archived'))data=[];
-  else if(p.endsWith('/destination-options'))data={items:['Колл Центр'],free:[]};
+  else if(p.endsWith('/destination-options'))data={items:['Колл Центр','Розница'],free:['Розница']};
   else if(p.endsWith('/menu-types')){if(req.method()==='POST'){const input=req.postDataJSON();menus.push({menu_name:input.display_name,display_name:input.display_name,destinations:[],ok:true,buttons_count:0,menus_count:1});data=menus.at(-1);}else data=menus;}
   else if(p.endsWith('/structure'))data=structure();
-  else if(p.endsWith('/layout')){
-   if(req.method()==='PUT'){const byKey=new Map(rows.flatMap(r=>r.buttons).map(n=>[n.technical_key,n]));rows=req.postDataJSON().rows.map(r=>({columns:r.columns,buttons:r.button_keys.map(key=>byKey.get(key))}));}data={structure:structure()};
+  else if(req.method()==='DELETE' && p.includes('/menu-types/')){
+   const name=decodeURIComponent(p.split('/').at(-1));
+   menus.splice(menus.findIndex(menu=>menu.menu_name===name),1);
+   data={ok:true};
+  }
+  else if(p.endsWith('/structure-layout')){
+   const byKey=new Map(rows.flatMap(r=>r.buttons).map(n=>[n.technical_key,n]));
+   rows=req.postDataJSON().layouts.root.map(keys=>({columns:keys.length,buttons:keys.map(key=>byKey.get(key))}));
+   data={structure:structure()};
   }
   else if(p.endsWith('/item/create')){const input=req.postDataJSON();rows.push({columns:1,buttons:[leaf(input.label,input.workflow_type)]});data={ok:true};}
   else if(p.endsWith('/item'))data={button_style:colors[u.searchParams.get('button_key')]||null,button_key:u.searchParams.get('button_key'),workflow_type:'task',button_label:'Задача',currently_present:true,files_effective:[],conditional_files_effective:[]};
   return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
  });
+ const discardMessage='Закрыть без сохранения? Внесённые изменения будут потеряны';
+ const confirmDialog=page.locator('dialog.desk-dialog[open]');
+ async function checkFormDismiss(dialog, cancel, input, changeOption, verifyOption, open) {
+  const overlay=dialog.locator('..');
+  const exits=[
+   () => cancel.click(),
+   () => overlay.click({position:{x:2,y:2}}),
+   () => page.keyboard.press('Escape'),
+  ];
+  for(const exit of exits){
+   await open();
+   await exit();
+   assert.equal(await dialog.count(),0);
+   assert.equal(await confirmDialog.count(),0);
+  }
+  await open();
+  await changeOption();
+  // Changing only a checkbox or radio already makes the form dirty.
+  await exits[0]();
+  assert.equal(await confirmDialog.locator('.desk-dialog-message').innerText(),discardMessage);
+  await confirmDialog.locator('[data-dialog-cancel]').click();
+  await verifyOption();
+  await input.fill('Черновик');
+  for(const exit of exits.slice(1)){
+   await exit();
+   assert.equal(await confirmDialog.locator('.desk-dialog-message').innerText(),discardMessage);
+   await confirmDialog.locator('[data-dialog-cancel]').click();
+   assert.equal(await input.inputValue(),'Черновик');
+   await verifyOption();
+  }
+  await exits[2]();
+  await confirmDialog.locator('[data-dialog-accept]').click();
+  assert.equal(await dialog.count(),0);
+ }
  const colorGeometry=new Map(), normalColors=new Map();
  async function checkColors(){
   const editing=await page.locator(".bot-layout-edit-shell").count()>0;
@@ -78,10 +119,22 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  await page.locator('[data-menu-name]').first().click();await page.waitForSelector('#editLayoutBtn');
  assert.equal(await page.locator('#addLevelItemBtn').count(),1);
  assert.equal(await page.locator('#editLayoutBtn').innerText(),'Изменить структуру');
+ assert.equal(await page.locator('#deleteMenuTypeBtn').count(),0,'The protected default menu remains protected');
+ const panels=page.locator('.bot-root-controls > *');
+ assert.deepEqual(await panels.locator('h2').allTextContents(),['Управление меню','Типы клиентов']);
+ assert.equal(await page.locator('.bot-menu-bindings-panel #messengerViewBtn').count(),0);
+ assert.equal(await page.locator('.bot-menu-bindings-panel #addDestinationSelect option').last().textContent(),'Розница');
+ async function checkPanels(stacked){
+  const [left,right]=await panels.evaluateAll(nodes=>nodes.map(el=>el.getBoundingClientRect().toJSON()));
+  if(stacked){ assert.equal(left.x,right.x);assert.ok(left.bottom<right.top); }
+  else { assert.equal(left.y,right.y);assert.ok(left.right<right.left); }
+ }
+ await checkPanels(false);
  assert.equal(await page.locator('.bot-button-submenu .bot-button-type-tag').innerText(),'Подменю');
  assert.equal(await page.locator('.bot-buttons-row').nth(1).locator('.bot-button-type-tag').last().innerText(),'Автоматическая задача');
  for(const width of [1920,768]){
   await page.setViewportSize({width,height:1080});
+  await checkPanels(width===768);
   assert.equal(await page.locator('.bot-buttons-level-item').first().evaluate(el=>getComputedStyle(el).fontSize),'21px');
   const buttonHeight=await page.locator('.bot-buttons-level-item').first().evaluate(el=>el.getBoundingClientRect().height);
   assert.ok(buttonHeight>=46 && (width<768 || buttonHeight<64),JSON.stringify({width,buttonHeight}));
@@ -112,16 +165,43 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  await page.setViewportSize({width:1920,height:1080});
  await page.locator('.bot-button-submenu').click();await page.waitForSelector('#editSubmenuBtn');
  assert.match(await page.locator('.bot-buttons-level-list').innerText(),/Вложенная заявка/);
+ assert.equal(await page.locator('#addLevelItemBtn').innerText(),'Добавить кнопку');
  await page.locator('#botButtonsBackBtn').click();await page.waitForSelector('#editLayoutBtn');
  await checkColors();
  const colorReads=calls.filter(c=>c.path.endsWith("/item")).length;
  await page.locator('#editLayoutBtn').click();await page.locator('.bot-structure-submenu > summary').click();
  await checkColors();
+ for(const width of [1920,768]){
+  await page.setViewportSize({width,height:1080});
+  const offsets=await page.locator('.bot-layout-dialog').evaluate(dialog=>{
+   const work=dialog.closest('#appContent').getBoundingClientRect();
+   const box=dialog.getBoundingClientRect();
+   const row=dialog.querySelector('.bot-buttons-level-list > .bot-buttons-row').getBoundingClientRect();
+   return [box.left-work.left-(work.right-box.right),row.left-box.left-(box.right-row.right)];
+  });
+  assert.ok(offsets.every(offset=>Math.abs(offset)<2),JSON.stringify({width,offsets}));
+ }
+ await page.setViewportSize({width:1920,height:1080});
  assert.ok(calls.filter(c=>c.path.endsWith("/item")).length<=colorReads+1,"Structure mode reuses cached colors and reads the nested button");
- assert.match(await page.locator('.bot-structure-submenu').innerText(),/Вложенная заявка[\s\S]*Перенести сюда: Подменю/);
- await page.locator('[data-layout-drag-button="2:0"]').dragTo(page.locator('[data-layout-new-row-before="0"]'));
+ assert.match(await page.locator('.bot-structure-submenu').innerText(),/Вложенная заявка/);
+ assert.equal(await page.locator('.bot-layout-new-row-drop:visible').count(),0);
+ async function moveTaskToFirstRow() {
+  const source=await page.locator('[data-layout-level="root"] > [data-layout-drop-row="2"] button').elementHandle();
+  const target=page.locator('[data-layout-level="root"] > [data-layout-new-row-before="0"]');
+  const transfer=await page.evaluateHandle(()=>new DataTransfer());
+  await source.dispatchEvent('dragstart',{dataTransfer:transfer});
+  assert.equal(await target.isVisible(),false);
+  await source.dispatchEvent('dragover',{dataTransfer:transfer});
+  assert.equal(await target.isVisible(),true);
+  await target.dispatchEvent('drop',{dataTransfer:transfer});
+  assert.equal(await target.isVisible(),false);
+  await source.dispatchEvent('dragend',{dataTransfer:transfer});
+  await source.dispose();
+  await transfer.dispose();
+ }
+ await moveTaskToFirstRow();
  assert.equal(await page.locator('[data-layout-drag-button]').first().locator('span').first().innerText(),'Задача');
- await page.locator('#cancelLayoutBtn').click();assert.equal(calls.filter(c=>c.method==='PUT').length,0);
+ await page.locator('#cancelLayoutBtn').click();assert.equal(calls.filter(c=>c.path.endsWith('/structure-layout')).length,0);
  for(const style of ['primary','success','danger']){
   colors.sub=style;
   await page.locator('#botButtonsBackBtn').click();await page.waitForSelector('#createMenuTypeBtn');
@@ -131,11 +211,16 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  colors.sub='';
 
  await page.locator('#editLayoutBtn').click();
- await page.locator('[data-layout-drag-button="2:0"]').dragTo(page.locator('[data-layout-new-row-before="0"]'));
+ await moveTaskToFirstRow();
  await page.locator('#saveLayoutBtn').click();await page.waitForSelector('#editLayoutBtn');
- assert.equal(calls.find(c=>c.method==='PUT').data.rows[0].button_keys[0],'Задача');
+ assert.equal(calls.find(c=>c.path.endsWith('/structure-layout')).data.layouts.root[0][0],'Задача');
  // Existing type picker stays unchanged; cancelling must not create anything.
- await page.locator('#addLevelItemBtn').click();await page.locator('#cancelCreateItemBtn').click();
+ const itemDialog=page.locator('.bot-create-item-dialog');
+ const itemEnabled=page.locator('#botCreateEnabledInput');
+ await checkFormDismiss(itemDialog,page.locator('#cancelCreateItemBtn'),page.locator('#botCreateLabelInput'),
+  () => itemEnabled.uncheck(),async () => assert.equal(await itemEnabled.isChecked(),false),
+  () => page.locator('#addLevelItemBtn').click());
+ assert.equal(calls.filter(c=>c.path.endsWith('/item/create')).length,0);
  await page.locator('#addLevelItemBtn').click();await page.locator('#botCreateLabelInput').fill('Новая кнопка');await page.locator('#applyCreateItemBtn').click();
  await page.getByRole('button',{name:'Новая кнопка Заявка',exact:true}).waitFor();
  assert.ok(calls.some(c=>c.path.endsWith('/item/create')&&c.data.label==='Новая кнопка'&&c.data.parent_path===''));
@@ -143,8 +228,29 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  assert.equal(await page.locator('.bot-buttons-v2-browse').count(),0,'Concrete editor keeps its existing UI');
  await page.locator('#botButtonsBackBtn').click();await page.waitForSelector('#editLayoutBtn');
  await page.locator('#botButtonsBackBtn').click();await page.waitForSelector('#createMenuTypeBtn');
+ const menuOption=page.locator('.bot-create-menu-option input');
+ await checkFormDismiss(page.locator('.bot-create-menu-dialog'),page.locator('#cancelCreateMenuBtn'),page.locator('#botCreateMenuNameInput'),
+  () => menuOption.check(),async () => assert.equal(await menuOption.isChecked(),true),
+  () => page.locator('#createMenuTypeBtn').click());
+ assert.equal(calls.filter(c=>c.method==='POST'&&c.path.endsWith('/menu-types')).length,0);
  await page.locator('#createMenuTypeBtn').click();await page.locator('#botCreateMenuNameInput').fill('Новое меню');await page.locator('#applyCreateMenuBtn').click();
  await page.waitForSelector('#editLayoutBtn');assert.ok(calls.some(c=>c.method==='POST'&&c.path.endsWith('/menu-types')));
+ const menuActions=page.locator('.bot-menu-management-actions > button');
+ assert.deepEqual(await menuActions.allTextContents(),['Изменить структуру','Вид как в мессенджере','Добавить новую кнопку','УДАЛИТЬ МЕНЮ ПОЛНОСТЬЮ']);
+ assert.deepEqual(await menuActions.evaluateAll(buttons=>{
+  const [a,b,c,d]=buttons.map(button=>button.getBoundingClientRect());
+  return [a.y===b.y,c.y===d.y,a.x===c.x,b.x===d.x,a.y<c.y,a.x<b.x];
+ }),Array(6).fill(true));
+ await page.locator('#messengerViewBtn').click();
+ assert.equal(await page.locator('#messengerViewBtn').getAttribute('aria-pressed'),'true');
+ await page.locator('#deleteMenuTypeBtn').click();
+ assert.match(await confirmDialog.locator('.desk-dialog-message').innerText(),/^Вы уверены/);
+ await confirmDialog.locator('[data-dialog-accept]').click();
+ assert.match(await confirmDialog.locator('.desk-dialog-message').innerText(),/^Вы ТОЧНО уверены/);
+ assert.equal(calls.filter(c=>c.method==='DELETE').length,0);
+ await confirmDialog.locator('[data-dialog-accept]').click();
+ await page.locator('#createMenuTypeBtn').waitFor();
+ assert.equal(calls.filter(c=>c.method==='DELETE').length,1);
  await page.setViewportSize({width:320,height:1080});assert.deepEqual(await bounds(),{top:12,left:12,right:12,bottom:12,radius:'24px'});
  assert.deepEqual(errors,[]);
 });

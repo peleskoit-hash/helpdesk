@@ -2901,7 +2901,7 @@ def _patch_layout_config(monkeypatch, config, refs, session=None):
     monkeypatch.setattr(settings_bot_button_structure, "_require_admin", lambda user: None)
 
 
-def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
+def test_save_bot_button_layout_persists_two_button_rows(monkeypatch):
     session = _session()
     config, refs = _layout_config()
     _patch_layout_config(monkeypatch, config, refs, session)
@@ -2912,7 +2912,8 @@ def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
         level_key=level_key,
         payload={
             "rows": [
-                {"columns": 3, "button_keys": ["menu-a|ticket|C", "menu-a|ticket|A", "menu-a|ticket|B"]},
+                {"columns": 2, "button_keys": ["menu-a|ticket|C", "menu-a|ticket|A"]},
+                {"columns": 1, "button_keys": ["menu-a|ticket|B"]},
                 {"columns": 1, "button_keys": ["menu-a|ticket|D"]},
             ]
         },
@@ -2923,9 +2924,9 @@ def test_save_bot_button_layout_persists_three_button_rows(monkeypatch):
     row = session.query(BotMenuLevelLayout).filter_by(menu_type="menu-a", level_key=level_key).one()
     structure = settings_bot_button_structure._build_bot_menu_structure(session, "menu-a")
     layout_labels = [[node["label"] for node in item["buttons"]] for item in structure.tree_rows]
-    assert result["rows"][0]["button_keys"] == ["menu-a|ticket|C", "menu-a|ticket|A", "menu-a|ticket|B"]
-    assert row.layout_json[0]["columns"] == 3
-    assert layout_labels[:2] == [["C", "A", "B"], ["D"]]
+    assert result["rows"][0]["button_keys"] == ["menu-a|ticket|C", "menu-a|ticket|A"]
+    assert row.layout_json[0]["columns"] == 2
+    assert layout_labels == [["C", "A"], ["B"], ["D"]]
 
 
 def test_bot_button_layout_rejects_unknown_duplicate_and_too_wide_rows(monkeypatch):

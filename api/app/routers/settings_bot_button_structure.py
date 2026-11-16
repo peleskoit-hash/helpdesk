@@ -9,15 +9,20 @@ from sqlalchemy.exc import IntegrityError
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuLevelLayout
-from ..schemas import BotButtonGroupOut, BotButtonMenuStructureOut, BotButtonStructureLeafOut, BotButtonMovePayload
+from ..schemas import (
+    BotButtonGroupOut,
+    BotButtonMenuStructureOut,
+    BotButtonMovePayload,
+    BotButtonStructureLayoutPayload,
+    BotButtonStructureLeafOut,
+)
 from ..services.button_config import build_level_layout_key, build_visibility_button_key, build_terminal_button_key
 from ..services.bot_button_keys import lock_button_keys, check_button_key_collisions, change_button_workflow_key
-from ..services.bot_button_moves import move_button_between_levels
+from ..services.bot_button_moves import MAX_LAYOUT_ROW_BUTTONS, move_button_between_levels
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 EDITABLE_WORKFLOW_TYPES = {"ticket", "task", "auto"}
-MAX_LAYOUT_ROW_BUTTONS = 3
 
 
 def _error(status_code: int, code: str, message: str):
@@ -41,7 +46,6 @@ def _normalize_level_layout(raw: object) -> list[dict]:
             cols = int(cols_raw)
         except Exception:
             cols = 1
-        cols = cols if cols in {1, 2, 3} else 1
         keys_raw = row.get("button_keys")
         keys: list[str] = []
         if isinstance(keys_raw, list):
@@ -49,7 +53,9 @@ def _normalize_level_layout(raw: object) -> list[dict]:
                 text = str(key or "").strip()
                 if text and text not in keys:
                     keys.append(text)
-        normalized.append({"columns": cols, "button_keys": keys[:MAX_LAYOUT_ROW_BUTTONS]})
+        for start in range(0, len(keys), MAX_LAYOUT_ROW_BUTTONS):
+            chunk = keys[start:start + MAX_LAYOUT_ROW_BUTTONS]
+            normalized.append({"columns": max(1, min(cols, len(chunk))), "button_keys": chunk})
     return normalized
 
 
@@ -70,32 +76,18 @@ def _apply_level_layout(rows: list[dict], layout_rows: list[dict] | None) -> lis
 
     result: list[dict] = []
     used: set[str] = set()
-    for row in layout_rows:
-        if not isinstance(row, dict):
-            continue
-        cols_raw = row.get("columns", 1)
-        try:
-            cols = int(cols_raw)
-        except Exception:
-            cols = 1
-        cols = cols if cols in {1, 2, 3} else 1
-        keys = row.get("button_keys")
-        if not isinstance(keys, list):
-            continue
+    for row in _normalize_level_layout(layout_rows):
         picked: list[dict] = []
-        for raw in keys:
-            key = str(raw or "").strip()
-            if not key or key in used:
+        for key in row["button_keys"]:
+            if key in used:
                 continue
             node = node_by_key.get(key)
             if node is None:
                 continue
             picked.append(node)
             used.add(key)
-            if len(picked) >= MAX_LAYOUT_ROW_BUTTONS:
-                break
         if picked:
-            result.append({"columns": cols, "buttons": picked})
+            result.append({"columns": min(row["columns"], len(picked)), "buttons": picked})
 
     for key in source_order:
         if key in used:
@@ -142,8 +134,8 @@ def _preserve_level_order(db: Session, row: BotButtonSetting) -> None:
     level_key = build_level_layout_key(row.menu_type, row.parent_path)
     rows = _rows_for_level_key(db, row.menu_type, level_key)
     layout = db.execute(select(BotMenuLevelLayout).where(BotMenuLevelLayout.level_key == level_key)).scalar_one_or_none()
-    layout_rows = list(layout.layout_json or []) if layout else []
-    used = {key for item in _normalize_level_layout(layout_rows) for key in item["button_keys"]}
+    layout_rows = _normalize_level_layout(layout.layout_json if layout else [])
+    used = {key for item in layout_rows for key in item["button_keys"]}
     for item in rows:
         for node in item.get("buttons", []):
             key = node.get("technical_key")
@@ -162,7 +154,7 @@ def _normalize_layout_payload_rows(raw_rows: object, allowed_keys: set[str]) -> 
         _error(422, "layout_rows_required", "Layout rows must be a list")
     normalized: list[dict] = []
     seen: set[str] = set()
-    for row_index, raw_row in enumerate(raw_rows):
+    for raw_row in raw_rows:
         if isinstance(raw_row, dict):
             raw_keys = raw_row.get("button_keys")
             raw_columns = raw_row.get("columns")
@@ -181,7 +173,7 @@ def _normalize_layout_payload_rows(raw_rows: object, allowed_keys: set[str]) -> 
         if not keys:
             continue
         if len(keys) > MAX_LAYOUT_ROW_BUTTONS:
-            _error(422, "layout_row_too_wide", "A layout row can contain at most 3 buttons")
+            _error(422, "layout_row_too_wide", "A layout row can contain at most 2 buttons")
         for key in keys:
             if key in seen:
                 _error(422, "duplicate_button_key", "Duplicate button_key in layout")
@@ -192,7 +184,7 @@ def _normalize_layout_payload_rows(raw_rows: object, allowed_keys: set[str]) -> 
             columns = int(raw_columns if raw_columns is not None else len(keys))
         except Exception:
             columns = len(keys)
-        columns = columns if columns in {1, 2, 3} else len(keys)
+        columns = columns if columns in {1, 2} else len(keys)
         columns = max(1, min(MAX_LAYOUT_ROW_BUTTONS, columns, len(keys)))
         normalized.append({"columns": columns, "button_keys": keys})
     return normalized
@@ -248,7 +240,7 @@ def _build_db_only_tree_rows(db: Session, menu_name: str) -> list[dict]:
     now = datetime.utcnow()
     layout_rows_by_level: dict[str, list[dict]] = {}
     for row in db.execute(select(BotMenuLevelLayout).where(BotMenuLevelLayout.menu_type == menu_name)).scalars().all():
-        layout_rows_by_level[row.level_key] = _normalize_level_layout(row.layout_json)
+        layout_rows_by_level[row.level_key] = row.layout_json
     rows = [
         row
         for row in db.execute(select(BotButtonSetting).where(BotButtonSetting.menu_type == menu_name)).scalars().all()
@@ -445,6 +437,15 @@ def get_bot_button_level_layout(
     }
 
 
+def _load_move_layout(db: Session, menu: str, level_key: str) -> list[dict]:
+    rows = _rows_for_level_key(db, menu, level_key)
+    allowed = _level_button_keys(rows)
+    return _normalize_layout_payload_rows([
+        {"columns": item.get("columns"), "button_keys": [node["technical_key"]
+         for node in item.get("buttons", []) if node.get("technical_key") in allowed]}
+        for item in rows], allowed)
+
+
 @router.post("/bot-buttons/item/move")
 def move_bot_button_item(
     payload: BotButtonMovePayload,
@@ -453,16 +454,8 @@ def move_bot_button_item(
 ):
     _require_admin(user)
 
-    def load_layout(menu, level_key):
-        rows = _rows_for_level_key(db, menu, level_key)
-        allowed = _level_button_keys(rows)
-        return _normalize_layout_payload_rows([
-            {"columns": item.get("columns"), "button_keys": [node["technical_key"]
-             for node in item.get("buttons", []) if node.get("technical_key") in allowed]}
-            for item in rows], allowed)
-
     try:
-        row = move_button_between_levels(db, payload, load_layout)
+        row = move_button_between_levels(db, payload, lambda menu, key: _load_move_layout(db, menu, key))
         db.flush()
         structure = _model_to_dict(_build_bot_menu_structure(db, payload.menu_type))
         db.commit()
@@ -477,23 +470,7 @@ def move_bot_button_item(
             "button_path": row.button_path, "structure": structure}
 
 
-@router.put("/bot-buttons/layout")
-def save_bot_button_level_layout(
-    menu_type: str,
-    level_key: str,
-    payload: dict,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    _require_admin(user)
-    lock_button_keys(db)
-    if not menu_type.strip():
-        _error(422, "menu_type_required", "menu_type is required")
-    if not level_key.strip():
-        _error(422, "level_key_required", "level_key is required")
-    level_rows = _rows_for_level_key(db, menu_type, level_key)
-    allowed_keys = _level_button_keys(level_rows)
-    rows = _normalize_layout_payload_rows(payload.get("rows"), allowed_keys)
+def _stage_level_layout(db: Session, menu_type: str, level_key: str, rows: list[dict]) -> None:
     now = datetime.utcnow()
     row = db.execute(
         select(BotMenuLevelLayout).where(
@@ -514,6 +491,66 @@ def save_bot_button_level_layout(
     else:
         row.layout_json = rows
         row.updated_at = now
+
+
+@router.post("/bot-buttons/structure-layout")
+def save_bot_button_structure_layout(
+    payload: BotButtonStructureLayoutPayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    menu = payload.menu_type
+    try:
+        lock_button_keys(db)
+        affected: set[str] = set()
+        for move in payload.moves:
+            source = db.get(BotButtonSetting, move.button_id, populate_existing=True)
+            source_parent = source.parent_path if source is not None else ""
+            move_button_between_levels(
+                db, BotButtonMovePayload(menu_type=menu, button_id=move.button_id, parent_path=move.parent_path),
+                lambda menu, key: _load_move_layout(db, menu, key),
+            )
+            affected.update(build_level_layout_key(menu, path) for path in (source_parent, move.parent_path))
+            db.flush()
+        if affected - payload.layouts.keys():
+            _error(422, "missing_move_layout", "Each moved level needs a final layout")
+        for key, raw_rows in payload.layouts.items():
+            allowed = _level_button_keys(_rows_for_level_key(db, menu, key))
+            rows = _normalize_layout_payload_rows(raw_rows, allowed)
+            if {button_key for row in rows for button_key in row["button_keys"]} != allowed:
+                _error(409, "layout_level_changed", "The buttons in this level have changed")
+            _stage_level_layout(db, menu, key, rows)
+        db.flush()
+        structure = _model_to_dict(_build_bot_menu_structure(db, menu))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _error(409, "button_move_conflict", "Button move conflicts with existing data")
+    except Exception:
+        db.rollback()
+        raise
+    return {"ok": True, "structure": structure}
+
+
+@router.put("/bot-buttons/layout")
+def save_bot_button_level_layout(
+    menu_type: str,
+    level_key: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    _require_admin(user)
+    lock_button_keys(db)
+    if not menu_type.strip():
+        _error(422, "menu_type_required", "menu_type is required")
+    if not level_key.strip():
+        _error(422, "level_key_required", "level_key is required")
+    level_rows = _rows_for_level_key(db, menu_type, level_key)
+    allowed_keys = _level_button_keys(level_rows)
+    rows = _normalize_layout_payload_rows(payload.get("rows"), allowed_keys)
+    _stage_level_layout(db, menu_type, level_key, rows)
     db.commit()
     structure = _build_bot_menu_structure(db, menu_type)
     return {"ok": True, "menu_type": menu_type, "level_key": level_key, "rows": rows, "structure": _model_to_dict(structure)}

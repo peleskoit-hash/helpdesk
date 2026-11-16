@@ -1879,14 +1879,24 @@ function plain(value) {
 
 function renderLayoutEditHtml() {
   const source = fs.readFileSync('api/app/static/bot_buttons_level_view.js', 'utf8');
+  const scroll = {scrollTop: 0, addEventListener() {}};
+  const dialog = {
+    querySelector() { return scroll; },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+    showModal() {},
+    style: {setProperty() {}},
+  };
   const content = {
     innerHTML: '',
+    querySelector() { return this.innerHTML ? dialog : null; },
+    closest() { return {getBoundingClientRect() { return {left: 0}; }}; },
     querySelectorAll() { return []; },
   };
   const document = {
     getElementById() { return null; },
   };
-  const window = {};
+  const window = {addEventListener() {}};
   const context = vm.createContext({ window, document, console, JSON, Array, Set, Map, String, Object, Number, Math });
   vm.runInContext(source, context);
   context.window.BotButtonsLevelView.renderLevel({
@@ -1894,9 +1904,9 @@ function renderLayoutEditHtml() {
       view: 'level',
       selectedMenu: 'menu-a',
       layoutEditMode: true,
-      layoutDraftRows: [
-        { columns: 2, buttons: [layoutButton('a', 'A'), layoutButton('b', 'B')] },
-      ],
+      layoutDraftLevels: new Map([['menu-a|level|__root__', {
+        rows: [{ columns: 2, buttons: [layoutButton('a', 'A'), layoutButton('b', 'B')] }],
+      }]]),
       levelStack: [
         {
           label: 'Menu A',
@@ -1932,13 +1942,13 @@ function renderLayoutEditHtml() {
 
 test('layout draft changes button order inside the same row', () => {
   const draft = [
-    { columns: 3, buttons: [layoutButton('a'), layoutButton('b'), layoutButton('c')] },
+    { columns: 2, buttons: [layoutButton('a'), layoutButton('b')] },
   ];
 
-  const moved = levelViewHelpers.moveDraftButton(draft, 0, 2, 0, 0);
+  const moved = levelViewHelpers.moveDraftButton(draft, 0, 1, 0, 0);
 
   assert.equal(moved, true);
-  assert.deepEqual(draft[0].buttons.map((item) => item.technical_key), ['c', 'a', 'b']);
+  assert.deepEqual(draft[0].buttons.map((item) => item.technical_key), ['b', 'a']);
 });
 
 test('layout draft moves button to another row', () => {
@@ -1953,16 +1963,16 @@ test('layout draft moves button to another row', () => {
   assert.deepEqual(draft.map((row) => row.buttons.map((item) => item.technical_key)), [['a'], ['c', 'b']]);
 });
 
-test('layout draft refuses fourth button in a row', () => {
+test('layout draft refuses third button in a row', () => {
   const draft = [
     { columns: 1, buttons: [layoutButton('a')] },
-    { columns: 3, buttons: [layoutButton('b'), layoutButton('c'), layoutButton('d')] },
+    { columns: 2, buttons: [layoutButton('b'), layoutButton('c')] },
   ];
 
   const moved = levelViewHelpers.moveDraftButton(draft, 0, 0, 1, null);
 
   assert.equal(moved, false);
-  assert.deepEqual(draft.map((row) => row.buttons.map((item) => item.technical_key)), [['a'], ['b', 'c', 'd']]);
+  assert.deepEqual(draft.map((row) => row.buttons.map((item) => item.technical_key)), [['a'], ['b', 'c']]);
 });
 
 test('layout draft creates a new row between existing rows', () => {
@@ -1990,12 +2000,12 @@ test('layout draft normalizes empty rows away', () => {
 test('layout cancel exits edit mode and drops draft rows', () => {
   const state = {
     layoutEditMode: true,
-    layoutDraftRows: [{ columns: 1, buttons: [layoutButton('a')] }],
+    layoutDraftLevels: new Map([['root', { rows: [{ columns: 1, buttons: [layoutButton('a')] }] }]]),
   };
 
   assert.equal(levelViewHelpers.cancelLayoutEdit(state), true);
   assert.equal(state.layoutEditMode, false);
-  assert.deepEqual(plain(state.layoutDraftRows), []);
+  assert.equal(state.layoutDraftLevels, null);
 });
 
 test('layout save serializes expected payload rows', () => {
@@ -2004,8 +2014,9 @@ test('layout save serializes expected payload rows', () => {
     { columns: 1, buttons: [layoutButton('d')] },
   ];
 
-  assert.deepEqual(plain(levelViewHelpers.serializeLayoutRows(rows)), [
-    { columns: 3, button_keys: ['c', 'a', 'b'] },
+  assert.deepEqual(plain(levelViewHelpers.serializeLayoutRows(levelViewHelpers.normalizeDraftRows(rows))), [
+    { columns: 2, button_keys: ['c', 'a'] },
+    { columns: 1, button_keys: ['b'] },
     { columns: 1, button_keys: ['d'] },
   ]);
 });
@@ -2020,7 +2031,6 @@ test('layout edit markup has mode shell and no old row controls', () => {
   const html = renderLayoutEditHtml();
 
   assert.match(html, /bot-layout-edit-shell/);
-  assert.match(html, /bot-layout-mode-badge/);
   assert.match(html, /Режим изменения структуры/);
   assert.match(html, /data-layout-drag-button/);
   assert.match(html, /data-layout-new-row-before/);

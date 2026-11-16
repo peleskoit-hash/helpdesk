@@ -151,10 +151,9 @@
     const item = MenuView.selectedMenuInfo(ctx);
     const destinations = Array.isArray(item?.destinations) ? item.destinations : [];
     const free = state.freeDestinationOptions || [];
-    const canDeleteMenu = state.selectedMenu && state.selectedMenu !== "Базовое";
     return `
       <div class="bot-menu-bindings-panel">
-        <div class="bot-menu-bindings-title">Привязанные типы клиентов:</div>
+        <h2 class="bot-menu-bindings-title">Типы клиентов</h2>
         <div class="bot-menu-bindings-list">
           ${destinations.length ? destinations.map((value) => `
             <span class="bot-menu-binding-chip">
@@ -169,8 +168,6 @@
             ${free.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}
           </select>
           <button type="button" id="addDestinationBtn" class="action">Добавить тип клиента</button>
-          ${MenuView.renderMessengerToggle(state)}
-          ${canDeleteMenu ? '<button type="button" id="deleteMenuTypeBtn" class="action action-danger">Удалить меню</button>' : ""}
         </div>
       </div>
     `;
@@ -187,6 +184,40 @@
     state.archivedMenuTypes = Array.isArray(archivedMenuTypes) ? archivedMenuTypes : [];
     state.destinationOptions = Array.isArray(destinations?.items) ? destinations.items : [];
     state.freeDestinationOptions = Array.isArray(destinations?.free) ? destinations.free : [];
+  };
+
+  MenuView.bindCreateFormDismiss = function bindCreateFormDismiss(overlay, cancelSelector, close) {
+    const controls = [...overlay.querySelectorAll("input")];
+    let confirming = false;
+    async function dismiss() {
+      if (confirming) return;
+      const changed = controls.some(input => ["checkbox", "radio"].includes(input.type)
+        ? input.checked !== input.defaultChecked : input.value !== input.defaultValue);
+      if (!changed) {
+        close(null);
+        return;
+      }
+      confirming = true;
+      try {
+        if (await window.HelpdeskDialogs.confirm("Закрыть без сохранения? Внесённые изменения будут потеряны")) {
+          close(null);
+        } else if (!overlay.contains(document.activeElement)) {
+          overlay.querySelector('input[type="text"]')?.focus();
+        }
+      } finally {
+        confirming = false;
+      }
+    }
+    overlay.querySelector(cancelSelector).addEventListener("click", dismiss);
+    overlay.addEventListener("click", event => {
+      if (event.target === overlay) dismiss();
+    });
+    overlay.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    });
   };
 
   MenuView.openCreateMenuTypeModal = function openCreateMenuTypeModal(ctx) {
@@ -248,11 +279,8 @@
         close({ display_name: displayName, destinations });
       };
 
-      overlay.querySelector("#cancelCreateMenuBtn")?.addEventListener("click", () => close(null));
+      MenuView.bindCreateFormDismiss(overlay, "#cancelCreateMenuBtn", close);
       overlay.querySelector("#applyCreateMenuBtn")?.addEventListener("click", apply);
-      overlay.addEventListener("click", (event) => {
-        if (event.target === overlay) close(null);
-      });
       nameInput?.addEventListener("keydown", (event) => {
         if (event.key === "Enter") apply();
       });
