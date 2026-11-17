@@ -1,5 +1,5 @@
 from enum import Enum
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -151,6 +151,57 @@ class UserDeletionOperation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MassNotificationOperation(Base):
+    __tablename__ = "mass_notification_operations"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_mass_notification_idempotency_key"),
+        CheckConstraint("length(trim(idempotency_key)) > 0", name="ck_mass_notification_idempotency_key"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'interrupted')",
+            name="ck_mass_notification_operation_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    requested_by_user_id: Mapped[str] = mapped_column(String(36))
+    idempotency_key: Mapped[str] = mapped_column(String)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(Text)
+    filters_json: Mapped[dict] = mapped_column(JSON)
+    attachments_json: Mapped[list] = mapped_column(JSON)
+    total_count: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    stage: Mapped[str] = mapped_column(String, default="queued")
+    worker_token: Mapped[str | None] = mapped_column(String)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MassNotificationRecipient(Base):
+    __tablename__ = "mass_notification_recipients"
+    __table_args__ = (
+        UniqueConstraint("operation_id", "chat_id", name="uq_mass_notification_recipient_chat"),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'partial', 'failed', 'unknown', 'skipped')",
+            name="ck_mass_notification_recipient_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(ForeignKey("mass_notification_operations.id"), index=True)
+    client_id: Mapped[str] = mapped_column(String(36))
+    chat_id: Mapped[str] = mapped_column(String(100))
+    client_name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    components_json: Mapped[list] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class Client(Base):

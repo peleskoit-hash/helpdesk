@@ -33,6 +33,10 @@ def test_saved_options_are_the_only_runtime_and_consumer_choices(key):
     runtime = client_card._client_card_view_config(db).blocks[0].fields[0]
     assert runtime.options == ['Current', 'Admin']
     assert runtime.label == 'Configured label' and runtime.admin_only_values == ['Admin']
+    mass_notifications._recipients_query(db, [(key, "Current")])
+    with pytest.raises(HTTPException) as exc:
+        mass_notifications._recipients_query(db, [(key, "Old")])
+    assert exc.value.status_code == 400
     assert runtime.field_type == 'select' and runtime.is_editable and runtime.is_visible_in_editor
     assert client_card._field_options_out(field) == runtime.options
     assert (getattr(profile, key) if field.is_system else profile.custom_fields[key]) == 'Legacy'

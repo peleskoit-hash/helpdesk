@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES DESK - Массовые оповещения</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/chert.svg?v=20261028-favicon-v1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261116-task-panel-v1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261117-mass-editor-width-v3" />
 </head>
 <body>
   <div class="layout">
@@ -62,31 +62,40 @@
           <div class="card-head">
             <div style="font-weight:700;">Массовые оповещения в Telegram</div>
           </div>
-          <div class="modal-body" style="padding: 12px;">
-            <label>Тип сотрудника
-              <select id="filterFieldSelect"></select>
+          <div id="massNotificationsForm" class="modal-body" style="padding: 12px;">
+            <label>Подразделение
+              <select id="filterFieldSelect" name="destination"><option value=""></option></select>
             </label>
-            <label>Ветвление
-              <select id="filterValueSelect" disabled>
-                <option value="" selected>Не выбрано</option>
-              </select>
-            </label>
-            <label>Расположение
-              <select id="locationTypeSelect">
-                <option value="" selected>Не выбрано</option>
-              </select>
+            <div id="dependentFilters"></div>
+            <label><span id="locationTypeLabel">Расположение</span>
+              <select id="locationTypeSelect" name="location_type"><option value=""></option></select>
             </label>
             <div class="status">Получатели: <span id="recipientCount">0</span></div>
-            <label>Текст оповещения
-              <textarea id="broadcastText" rows="8" placeholder="Введите текст сообщения для рассылки"></textarea>
-            </label>
+            <div id="broadcastEditor">
+              <div class="broadcast-editor-panel">
+                <label class="broadcast-editor-title" for="broadcastText">Текст оповещения</label>
+                <div id="broadcastToolbar"></div>
+                <textarea id="broadcastText" rows="8" placeholder="Введите текст сообщения для рассылки"></textarea>
+              </div>
+              <div class="broadcast-editor-panel">
+                <h3 class="broadcast-editor-title" id="broadcastPreviewTitle">Предпросмотр в Telegram</h3>
+                <div id="broadcastPreview" class="bot-telegram-preview" aria-labelledby="broadcastPreviewTitle" role="region" tabindex="0"></div>
+              </div>
+            </div>
             <input id="broadcastFilesInput" type="file" multiple hidden />
             <div id="broadcastFilesList" class="selected-files hidden"></div>
             <div class="modal-foot" style="padding: 0; border-top: 0; justify-content: flex-start; gap: 8px;">
               <button id="addBroadcastFilesBtn" type="button" class="action">Добавить файлы</button>
-              <button id="sendBroadcastBtn" type="button" class="action primary">Отправить оповещение</button>
+              <span id="broadcastFilesCount" aria-live="polite">0 из 10</span>
+              <button id="sendBroadcastBtn" type="button" disabled class="action primary">Отправить оповещение</button>
             </div>
-            <div id="resultBox" class="status"></div>
+            <div id="resultBox" class="status" aria-live="polite"></div>
+            <button id="newBroadcastBtn" type="button" class="action hidden">Новая рассылка</button>
+            <section id="broadcastJournal" class="hidden" aria-label="Журнал рассылки">
+              <h2>Журнал рассылки</h2>
+              <div id="broadcastJournalSummary" aria-live="polite"></div>
+              <div id="broadcastJournalDetails"></div>
+            </section>
           </div>
         </div>
       </section>
@@ -113,7 +122,10 @@
   <script src="/static/theme.js?v=20261029-contour-delete-only-v1"></script>
   <script src="/static/sidebar.js?v=20261106-personal-stats-v2"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261116-spellcheck-v1"></script>
-  <script src="/static/mass_notifications.js?v=20261105-field-config"></script>
+  <script src="/static/app_shell.js?v=20261117-mass-notifications-v1"></script>
+  <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
+  <script src="/static/bot_buttons_emoji_data.js?v=20260605a"></script>
+  <script src="/static/telegram_text_editor.js?v=20261027-dialog-prompts-v4"></script>
+  <script src="/static/mass_notifications.js?v=20261117-mass-notifications-v1"></script>
 </body>
 </html>

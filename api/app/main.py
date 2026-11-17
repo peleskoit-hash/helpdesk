@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import secrets
 from datetime import datetime, timezone
@@ -99,6 +100,7 @@ from .services.schema_evolution import (
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
 from .services.bot_button_saved_file_migration import migrate_legacy_bot_button_pdf_saved_files
 from .services.integration_tasks import cleanup_old_integration_logs_on_startup
+from .services.mass_notification_delivery import reconcile_stale_mass_notification_operations
 from .services.internal_task_scheduler import internal_task_scheduler_loop
 from .services.employee_telegram_bot import set_employee_bot_commands
 from .services.employee_telegram_polling import employee_telegram_polling_loop
@@ -241,6 +243,12 @@ async def on_startup():
 
     if last_error is not None:
         raise last_error
+
+    try:
+        with SessionLocal() as db:
+            reconcile_stale_mass_notification_operations(db)
+    except Exception:
+        logging.getLogger(__name__).exception("Mass notification recovery failed during startup")
 
     if settings.telegram_bot_token:
         try:

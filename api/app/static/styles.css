@@ -7315,6 +7315,101 @@ body[data-theme="dark"] .client-card-field-readonly-rule textarea {
   padding: 10px;
 }
 
+#appContent[data-shell-page="mass-notifications"] #massNotificationsForm:has(> #broadcastEditor) {
+  --broadcast-field-width: 665px;
+  --broadcast-panel-insets: 26px;
+  --broadcast-panel-width: calc(var(--broadcast-field-width) + var(--broadcast-panel-insets));
+  width: 100%;
+  container: broadcast-form / inline-size;
+}
+
+#massNotificationsForm > :not(#broadcastEditor) {
+  max-width: 903px;
+}
+
+#massNotificationsForm > label,
+#massNotificationsForm #dependentFilters label {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#appContent #massNotificationsForm :is(#filterFieldSelect, #locationTypeSelect, #dependentFilters select) {
+  width: min(var(--broadcast-field-width), calc(100% - var(--broadcast-panel-insets)));
+}
+
+#broadcastEditor {
+  display: grid;
+  grid-template-columns: minmax(0, var(--broadcast-panel-width));
+  gap: 12px;
+  width: 100%;
+}
+
+#broadcastEditor .broadcast-editor-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--desk-border, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--desk-soft, var(--bg)), var(--desk-surface, var(--surface)));
+}
+
+#appContent #broadcastEditor :is(label.broadcast-editor-title, #broadcastPreviewTitle) {
+  margin: 0;
+  color: var(--desk-text, var(--text));
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+#broadcastEditor #broadcastToolbar .bot-emoji-picker {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+#broadcastEditor #broadcastPreview {
+  box-sizing: border-box;
+  width: 100%;
+  height: 278px;
+  max-height: none;
+  padding: 12px 16px;
+  border: 1px solid var(--desk-border, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--desk-hover, var(--surface)) 94%, var(--desk-accent, var(--accent)));
+  color: var(--desk-text, var(--text));
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+#broadcastEditor #broadcastPreview a {
+  color: var(--desk-accent, var(--accent));
+  text-decoration: underline;
+}
+
+#broadcastEditor #broadcastPreview blockquote.tg-preview-expandable::before {
+  color: var(--desk-muted, var(--muted));
+}
+
+/* Two panels at 691px plus the 12px gap. */
+@container broadcast-form (min-width: 1394px) {
+  #broadcastEditor {
+    grid-template-columns: repeat(2, var(--broadcast-panel-width));
+  }
+
+  #broadcastEditor .broadcast-editor-panel {
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+  }
+
+  #broadcastEditor #broadcastPreview {
+    grid-row: 3;
+    height: 100%;
+    contain: size;
+  }
+}
+
 .bot-telegram-preview b,
 .bot-telegram-preview strong {
   font-weight: 700;

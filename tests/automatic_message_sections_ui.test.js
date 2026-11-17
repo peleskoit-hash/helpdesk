@@ -146,7 +146,7 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261116-task-panel-v1' : '20261116-spellcheck-v1'], `${file}: ${resource}`);
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? '20261116-task-panel-v1' : '20261116-recipient-filters-v1'], `${file}: ${resource}`);
     }
   }
 });

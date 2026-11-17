@@ -21,7 +21,7 @@ async function setup(t, theme, width) {
   if(url.hostname!=='desk.test')return route.abort();
   if(p.startsWith('/static/')){const file=path.resolve('api/app',p.slice(1));return route.fulfill({status:fs.existsSync(file)?200:404,body:fs.existsSync(file)?fs.readFileSync(file):'',contentType:{'.css':'text/css','.js':'text/javascript','.ttf':'font/ttf','.svg':'image/svg+xml'}[path.extname(file)]||'application/octet-stream'});}
   if(pages[p])return route.fulfill({contentType:'text/html',body:fs.readFileSync(`api/app/templates/${pages[p]}.html`,'utf8')});
-  calls.push({path:p,method:req.method(),body:req.postData()});let data={};
+  calls.push({path:p,method:req.method(),body:req.postData()});let data={}, status=200;
   if(p.endsWith('/appearance-session'))data={writer_id:'00000000-0000-4000-8000-000000000001',preferences:{theme_preference:theme,appearance_revision:'0'}};
   else if(p.endsWith('/preferences'))data={theme_preference:theme,appearance_revision:'0'};
   else if(p==='/api/v1/auth/session')data={real_user:me,effective_user:me,is_real_admin:true,session_login_ts:1,app_timezone:'Europe/Moscow'};
@@ -31,12 +31,20 @@ async function setup(t, theme, width) {
   else if(p.endsWith('/counts'))data={active:0,frozen:0,closed:0,special:0,unassigned:0,by_assignee:{}};
   else if(p==='/api/v1/settings/automatic-messages')data={items:[item],categories:[{category:'first',category_title:'Основные сообщения',items:[item]}]};
   else if(p.startsWith('/api/v1/settings/automatic-messages/')){item.effective_text=req.method()==='DELETE'?item.default_text:req.postDataJSON().body;data=item;}
-  else if(p.endsWith('/recipients'))data=[{id:'client',full_name:'Клиент'}];
-  else if(p.endsWith('/mass-notifications/send'))data={sent:1,failed:0};
+  else if(p.endsWith('/client-card-view-config'))data={blocks:[{fields:[
+    {key:'destination',label:'Подразделение',field_type:'select',options:['Support']},
+    {key:'location_type',label:'Расположение',field_type:'select',options:['Remote']},
+  ]}],rules:[]};
+  else if(p.endsWith('/mass-notifications/preview'))data={count:1,audience_fingerprint:'a'.repeat(64)};
+  else if(p.endsWith('/operations/latest'))data={operation:null};
+  else if(p.endsWith('/operations/mock-operation'))data={operation:{operation_id:'mock-operation',status:'completed',
+    total_count:1,processed_count:1,sent_count:1,failed_count:0,partial_count:0,unknown_count:0,skipped_count:0,
+    recipients:[],attachments:[]}};
+  else if(p.endsWith('/mass-notifications/send')){status=202;data={operation_id:'mock-operation',status:'queued',total_count:1,created:true};}
   else if(p.endsWith('/internal-tasks/options'))data={current_admin_id:'admin',app_timezone:'Europe/Moscow',assignees:[agent],admins:[me]};
   else if(p.endsWith('/internal-tasks/overview'))data={active:[],scheduled:[definition],recurring:[],completed:[]};
   else if(p.startsWith('/api/v1/management/internal-tasks/'))data={ok:true};
-  return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+  return route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
  });
  return {page,calls};
 }
@@ -98,7 +106,7 @@ for(const theme of ['light','dark'])for(const width of [320,700,1920])test(`seco
 
  await page.evaluate(()=>window.HelpdeskAppShell.navigate('/settings/automatic-messages'));
  await page.waitForSelector('.automatic-message-section-head');await checkPage(page);
- await activate(page,'summary');await activate(page,'.automatic-message-row');
+ await activate(page,'.automatic-message-section-head');await activate(page,'.automatic-message-row');
  await checkDialog(page,'#automaticMessageEditorModal .modal-dialog');
  const editor=await page.locator('#automaticMessageEditorModal').evaluate(el=>{
    const rect=el.querySelector('.modal-dialog').getBoundingClientRect(),textarea=el.querySelector('textarea'),preview=el.querySelector('.bot-telegram-preview-wrap');
@@ -118,15 +126,10 @@ for(const theme of ['light','dark'])for(const width of [320,700,1920])test(`seco
  await page.locator('#automaticMessageTextarea').fill('Новый текст');
  await page.waitForFunction(()=>document.querySelector('#automaticMessagePreview').textContent.includes('Новый текст'));
  await activate(page,'#automaticMessageApplyBtn');
+ await page.locator('#automaticMessageEditorModal').waitFor({state:'hidden'});
  assert.ok(calls.some(c=>c.path.endsWith('/automatic-messages/message.test')&&c.method==='PATCH'));
  await page.evaluate(()=>window.HelpdeskAppShell.navigate('/mass-notifications'));
  await page.waitForSelector('#broadcastText');await checkPage(page);
- assert.equal(await page.locator('#filterValueSelect').isDisabled(),true);
- await page.selectOption('#filterFieldSelect','__all__');
- await page.waitForFunction(()=>document.querySelector('#recipientCount').textContent==='1');
- await page.locator('#broadcastText').fill('Только mock-рассылка');await activate(page,'#sendBroadcastBtn');
- await page.waitForFunction(()=>document.querySelector('#resultBox').textContent.includes('Отправлено: 1'));
- assert.equal(calls.filter(c=>c.path.endsWith('/mass-notifications/send')).length,1);
  await page.evaluate(()=>window.HelpdeskAppShell.navigate('/management/tasks'));
  await page.waitForSelector('#internalTaskCreateBtn');await checkPage(page);
  await activate(page,'#internalTaskCreateBtn');await checkDialog(page,'#internalTaskModal .modal-dialog');
@@ -145,6 +148,40 @@ for(const theme of ['light','dark'])for(const width of [320,700,1920])test(`seco
  await activate(page,'#internalTasksScheduledBody button');await checkDialog(page,'#internalTaskModal .modal-dialog');
 });
 
+test('mass notifications in AppShell require confirmation and send once',async t=>{
+ const {page,calls}=await setup(t,'light',700);
+ await page.goto('https://desk.test/settings/users');
+ await page.waitForSelector('.settings-user-row');
+ await page.evaluate(()=>window.HelpdeskAppShell.navigate('/mass-notifications'));
+ await page.waitForSelector('#broadcastText');
+ await page.locator('#broadcastToolbar [data-format-action="bold"]').waitFor();
+ assert.equal(await page.evaluate(()=>typeof window.HelpdeskDialogs.prompt),'function');
+ assert.equal(await page.locator('#dependentFilters select').count(),0);
+ assert.equal(await page.locator('#filterFieldSelect').inputValue(),'');
+ await page.waitForFunction(()=>document.querySelector('#recipientCount').textContent==='1');
+ await page.locator('#broadcastText').fill('Только mock-рассылка');
+ const dismissed = page.waitForEvent('dialog', { timeout: 5000 }).then(async dialog=>{
+   assert.match(dialog.message(),/всем допустимым получателям/);
+   await dialog.dismiss();
+ });
+ await Promise.all([dismissed,activate(page,'#sendBroadcastBtn')]);
+ assert.equal(calls.filter(c=>c.path.endsWith('/mass-notifications/send')).length,0);
+ await page.evaluate(()=>{
+   window.confirm=()=>true;
+   const button=document.getElementById('sendBroadcastBtn');
+   button.click();
+   button.click();
+ });
+ await page.waitForFunction(()=>document.getElementById('resultBox').textContent.includes('Рассылка принята'));
+ const sends=calls.filter(c=>c.path.endsWith('/mass-notifications/send'));
+ assert.equal(sends.length,1);
+ assert.match(sends[0].body,/name="filters"\r\n\r\n\{\}/);
+ assert.match(sends[0].body,/name="idempotency_key"\r\n\r\n[0-9a-f-]{36}/);
+ assert.match(sends[0].body,/name="audience_fingerprint"\r\n\r\na{64}/);
+ assert.match(sends[0].body,/name="text_format"\r\n\r\ntelegram_html/);
+ assert.equal(calls.some(c=>c.path.endsWith('/mass-notifications/recipients')),false);
+});
+
 test('second package leaves the shared layout and sidebar CSS alone',()=>{
  const css=fs.readFileSync('api/app/static/admin-editors-v2.css','utf8');
  assert.doesNotMatch(css,/&\s+\.layout(?:\s|[>{])/);
@@ -161,4 +198,34 @@ for(const theme of ['light','dark'])test(`four editor bubbles keep mobile geomet
    });
    assert.deepEqual(bounds,{top:12,left:12,right:12,bottom:12,radius:'24px'},url);
  }
+});
+
+
+test('mass notifications restore the journal on direct load, reload, and AppShell navigation', async t => {
+ const {page}=await setup(t,'light',700);
+ let latest=0, polls=0;
+ const operation={operation_id:'restored-operation',status:'running',total_count:2,
+   processed_count:1,sent_count:1,failed_count:0,partial_count:0,unknown_count:0,skipped_count:0,
+   recipients:[],attachments:[]};
+ await page.route('**/api/v1/mass-notifications/operations/*',route=>{
+   if(route.request().url().endsWith('/latest')){
+     latest++;
+     return route.fulfill({json:{operation}});
+   }
+   polls++;
+   return route.fulfill({json:{operation:{...operation,status:'interrupted'}}});
+ });
+ await page.goto('https://desk.test/mass-notifications');
+ await page.locator('#broadcastToolbar [data-format-action="emoji"]').waitFor();
+ await page.getByText('Обработано 1 из 2',{exact:true}).waitFor();
+ await page.reload();
+ await page.getByText('Обработано 1 из 2',{exact:true}).waitFor();
+ await page.evaluate(()=>window.HelpdeskAppShell.navigate('/settings/users'));
+ await page.waitForSelector('.settings-user-row');
+ await page.evaluate(()=>window.HelpdeskAppShell.navigate('/mass-notifications'));
+ await page.getByText('Обработано 1 из 2',{exact:true}).waitFor();
+ await page.getByText('Операция restored-operation · Прервана',{exact:true}).waitFor();
+ assert.equal(latest,3);
+ assert.equal(polls,1);
+ assert.equal(await page.locator('#broadcastToolbar [data-format-action="bold"]').count(),1);
 });
