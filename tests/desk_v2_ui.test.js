@@ -2171,8 +2171,8 @@ for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticke
   assert.equal(await page.evaluate(() => history.length), historyLength + 1);
   await page.reload(); await page.waitForSelector('.message');
   assert.equal(new URL(page.url()).search, '');
-  await page.locator('#backToListBtn').click(); await listReady('frozen', 2, 'почта'); assert.equal(page.url(), listUrl);
-  assert.equal(await page.evaluate(() => history.length), historyLength + 1, 'back traverses history instead of adding a list entry');
+  await page.goBack(); await listReady('frozen', 2, 'почта'); assert.equal(page.url(), listUrl);
+  assert.equal(await page.evaluate(() => history.length), historyLength + 1);
   assert.equal(await page.evaluate(() => localStorage.getItem('hd_admin_assignee_ids')), filter);
   assert.deepEqual(new URLSearchParams(requests.filter(r => r.path === '/api/v1/tickets/frozen').at(-1).query).getAll('assignee_ids'), filterQuery);
   await page.goForward(); await page.waitForSelector('.message'); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
@@ -2183,7 +2183,7 @@ for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticke
   await page.keyboard.press('Escape');
   await modal.waitFor({ state: 'hidden' });
   assert.equal(page.url(), cardUrl);
-  await page.keyboard.press('Escape');
+  await page.goBack();
   await listReady('frozen', 2, 'почта');
   assert.equal(page.url(), listUrl);
   assert.equal(await page.evaluate(() => history.length), historyLength + 1);
@@ -2206,11 +2206,11 @@ for (const popup of ['message editor', 'global error', 'staff statistics', 'quic
     await page.waitForSelector('.message');
     const cardUrl = page.url();
     await page.evaluate(() => {
-      const goBack = window.HelpdeskAppShell.goBack;
-      window.escapeBackCalls = 0;
-      window.HelpdeskAppShell.goBack = () => {
-        window.escapeBackCalls += 1;
-        return goBack();
+      const navigate = window.HelpdeskAppShell.navigate;
+      window.escapeDestinations = [];
+      window.HelpdeskAppShell.navigate = (href, options) => {
+        window.escapeDestinations.push(href);
+        return navigate(href, options);
       };
     });
 
@@ -2244,7 +2244,7 @@ for (const popup of ['message editor', 'global error', 'staff statistics', 'quic
     }
     await overlay.waitFor();
     await page.keyboard.press('Escape');
-    assert.equal(await page.evaluate(() => window.escapeBackCalls), 0);
+    assert.deepEqual(await page.evaluate(() => window.escapeDestinations), []);
     await overlay.waitFor({ state: 'hidden' });
     assert.equal(page.url(), cardUrl);
     if (popup === 'message editor') {
@@ -2256,52 +2256,102 @@ for (const popup of ['message editor', 'global error', 'staff statistics', 'quic
     await page.keyboard.press('Escape');
     await page.waitForURL(listUrl);
     await page.waitForSelector('.ticket-row');
-    assert.equal(await page.evaluate(() => window.escapeBackCalls), 1);
+    assert.deepEqual(await page.evaluate(() => window.escapeDestinations), ['/tickets?tab=active']);
   });
 }
 
-test('short task panel links use the previous card as Back destination', async t => {
-  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role: 'agent', workflowType: 'task' });
-  const panelLinks = page.locator('#taskPanel a'); await panelLinks.first().waitFor();
-  assert.ok((await panelLinks.evaluateAll(nodes => nodes.map(n => n.getAttribute('href')))).every(href => /^\/tickets\/[^/?#]+$/.test(href)));
-  await panelLinks.first().click(); await page.waitForSelector('.message');
-  await page.locator('#taskPanel a[href="/tickets/demo-1"]').click();
-  await page.waitForFunction(() => location.pathname === '/tickets/demo-1' && !!document.querySelector('.message'));
-  assert.equal(new URL(page.url()).search, '');
+for (const workflowType of ['ticket', 'task']) test(`Escape goes straight to the current list after consecutive cards: ${workflowType}`, async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets', role: 'agent', workflowType, initialPath: '/tickets?tab=frozen' });
+  await page.locator('.ticket-row-link').first().click();
+  await page.waitForURL('**/tickets/demo-0');
+  await page.waitForSelector('.message');
+  const nextCard = page.locator('#taskPanel a[href="/tickets/demo-1"]');
+  await nextCard.click();
+  await page.waitForURL('**/tickets/demo-1');
+  await page.waitForSelector('.message');
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => location.pathname === '/tickets/demo-0' && !!document.querySelector('.message'));
-  await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
-  assert.equal(new URL(page.url()).pathname, '/tickets');
-  await page.goForward(); await page.waitForSelector('.message');
-  assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
+  await page.waitForURL('**/tickets?tab=frozen&page=1', { timeout: 5000 });
+  await page.waitForSelector('.ticket-row');
+  await page.goBack();
+  await page.waitForURL('**/tickets/demo-1');
 });
 
-test('a direct short ticket with no previous history falls back to the list', async t => {
+test('Escape on a directly opened ticket without AppShell navigation falls back to the active list', async t => {
   const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'ticket', replaceInitial: true });
   assert.equal(await page.evaluate(() => history.length), 1);
-  await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
-  assert.equal(new URL(page.url()).pathname, '/tickets');
+  await page.evaluate(() => { delete window.HelpdeskAppShell.navigate; });
+  await page.keyboard.press('Escape');
+  await page.waitForURL('**/tickets?tab=active&page=1');
+  await page.waitForSelector('.ticket-row');
 });
 
-test('short notification links and card Back preserve ordinary browser history', async t => {
+test('Escape preserves all supported list tabs and defaults an invalid tab to active', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'ticket' });
+  for (const tab of ['active', 'unassigned', 'special', 'frozen', 'closed', 'invalid']) {
+    await page.evaluate(tab => localStorage.setItem('hd_tab', tab), tab);
+    await page.goto('http://desk.test/tickets/demo-0');
+    await page.waitForSelector('.message');
+    await page.keyboard.press('Escape');
+    await page.waitForURL(`**/tickets?tab=${tab === 'invalid' ? 'active' : tab}&page=1`);
+    await page.waitForSelector('.ticket-row');
+  }
+});
+
+test('Escape and Back protect unsaved client edits', async t => {
+  const { page, requests } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'ticket' });
+  await page.route('**/api/v1/tickets/demo-0/client-card-view-config', route => route.fulfill({ json: {
+    blocks: [{ key: 'profile', title: 'Клиент', is_visible: true, is_visible_in_editor: true, fields: [
+      { key: 'contact_name', label: 'Имя', field_type: 'text', is_system: true, is_visible: true, is_visible_in_editor: true, is_editable: true },
+    ] }],
+  } }));
+  const cardUrl = page.url();
+  const editor = page.locator('#clientModal');
+  const draft = editor.locator('#fContactName');
+  const confirm = page.locator('dialog.desk-dialog[open]');
+  await page.locator('#editClientBtn').click();
+  await draft.fill('Несохранённое имя');
+
+  await page.keyboard.press('Escape');
+  await confirm.waitFor();
+  assert.match(await confirm.textContent(), /Есть несохранённые изменения/);
+  await confirm.locator('[data-dialog-cancel]').click();
+  await confirm.waitFor({ state: 'hidden' });
+  assert.equal(page.url(), cardUrl);
+  assert.equal(await draft.inputValue(), 'Несохранённое имя');
+
+  await page.locator('#backToListBtn').click();
+  await confirm.waitFor();
+  await confirm.locator('[data-dialog-cancel]').click();
+  assert.equal(page.url(), cardUrl);
+  assert.equal(await draft.inputValue(), 'Несохранённое имя');
+
+  await page.locator('#backToListBtn').click();
+  await confirm.locator('[data-dialog-accept]').click();
+  await page.waitForURL('**/tickets?tab=active&page=1');
+  await page.waitForSelector('.ticket-row');
+  assert.ok(!requests.some(({ method, path }) => method === 'PATCH' && path.endsWith('/client-profile')));
+});
+
+test('short notification links preserve ordinary browser history', async t => {
   const { page } = await setup(t, { width: 1366, height: 900, theme: 'dark', pageName: 'tickets' });
   await page.goto('http://desk.test/profile/notification-bot');
   await page.waitForFunction(() => document.body.dataset.sidebarReady === '1');
   await page.evaluate(() => { const link = document.createElement('a'); link.id = 'notificationTicket'; link.href = '/tickets/demo-0'; link.textContent = 'Уведомление о заявке'; document.querySelector('#appContent').append(link); });
   await page.locator('#notificationTicket').click(); await page.waitForSelector('.message');
   assert.equal(new URL(page.url()).pathname, '/tickets/demo-0'); assert.equal(new URL(page.url()).search, '');
-  await page.locator('#backToListBtn').click();
+  await page.goBack();
   await page.waitForURL('**/profile/notification-bot');
   await page.goForward(); await page.waitForSelector('.message'); assert.equal(new URL(page.url()).pathname, '/tickets/demo-0');
 });
 
-test('ticket Back can return to an external previous page without a separate guard', async t => {
+test('ticket Back goes to the list even with an external previous page', async t => {
   const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'tickets' });
   await page.route('http://outside.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><p>Previous external page</p>' }));
   await page.goto('http://outside.test/start');
   await page.goto('http://desk.test/tickets/demo-0'); await page.waitForSelector('.message');
-  await page.locator('#backToListBtn').click(); await page.waitForURL('http://outside.test/start');
-  assert.equal(await page.locator('p').textContent(), 'Previous external page');
+  await page.locator('#backToListBtn').click();
+  await page.waitForURL('**/tickets?tab=active&page=1');
+  await page.waitForSelector('.ticket-row');
 });
 
 async function attachmentFailureUi(t, workflowType, theme, uncertain = false, claimed = false) {

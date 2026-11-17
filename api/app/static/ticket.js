@@ -3,6 +3,7 @@ function initTicketCardPage() {
 // ===== state/elements =====
 const ticketId = window.location.pathname.split("/").pop();
 const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);
+const TICKET_LIST_TABS = new Set(["active", "unassigned", "special", "frozen", "closed"]);
 const RESTORE_CLOSE_COOLDOWN_MS = 10_000;
 
 const state = {
@@ -1795,9 +1796,8 @@ async function updateAvailabilityStatus(status) {
 
 // ===== init/events =====
 function backToList() {
-  if (window.history.length <= 1) shellNavigateOrReload("/tickets");
-  else if (window.HelpdeskAppShell?.goBack) void window.HelpdeskAppShell.goBack();
-  else window.history.back();
+  const tab = TICKET_LIST_TABS.has(state.tab) ? state.tab : "active";
+  shellNavigateOrReload(`/tickets?tab=${tab}`);
 }
 
 function bindPageHandlers() {
@@ -2026,7 +2026,7 @@ function bindPageHandlers() {
 }
 
 function initPostSidebarState() {
-  if (!["active", "unassigned", "special", "frozen", "closed"].includes(state.tab)) {
+  if (!TICKET_LIST_TABS.has(state.tab)) {
     state.tab = "active";
   }
   localStorage.setItem("hd_tab", state.tab);
