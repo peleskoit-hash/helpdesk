@@ -47,12 +47,12 @@ async function setup(t, theme, width, kind, { showPreview = true, originalReady 
       if (originalReady) await originalReady;
       return route.continue();
     }
-    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
+    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
   });
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${origin}/tickets/${kind === 'task' ? 531 : 530}`);
   await page.addScriptTag({ url: '/static/ticket_api.js' });
-  await page.addScriptTag({ url: '/static/ticket_attachments.js?v=20261117-ticket-attachment-source-v1' });
+  await page.addScriptTag({ url: '/static/ticket_attachments.js?v=20261117-message-clipboard-v1' });
   await page.evaluate(({ endpoint, showPreview }) => {
     window.ctx = { el: {}, showError: message => { throw Error(message); }, setStatus: value => { window.statusText = value; },
       closeOnBackdropClick: (modal, close) => modal.addEventListener('click', event => { if (event.target === modal) close(); }) };
@@ -125,7 +125,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 390]) for (con
 });
 
 async function setupAttachmentMenu(t, originalReady) {
-  const { page, endpoint, requests } = await setup(t, 'light', 1440, 'ticket', { showPreview: false, originalReady });
+  const { page, context, endpoint, requests } = await setup(t, 'light', 1440, 'ticket', { showPreview: false, originalReady });
   await page.addScriptTag({ url: '/static/ticket_message_view.js' });
   await page.evaluate(() => {
     const bubble = document.querySelector('#attachments');
@@ -151,8 +151,54 @@ async function setupAttachmentMenu(t, originalReady) {
     await page.locator('#attachments').click({ button: 'right' });
     await page.locator('.message-context-menu').getByRole('button', { name: label, exact: true }).click();
   }
-  return { page, endpoint, requests, action };
+  return { page, context, endpoint, requests, action };
 }
+
+test('photo copy writes a readable PNG through the native clipboard on a secure origin', async t => {
+  const { page, context, action } = await setupAttachmentMenu(t);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+  assert.deepEqual(await page.evaluate(() => [
+    isSecureContext, typeof ClipboardItem, typeof navigator.clipboard?.write, ClipboardItem.supports?.('image/png'),
+  ]), [true, 'function', 'function', true]);
+
+  await action('Скопировать фото в буфер');
+  await page.waitForFunction(() => window.statusText || window.errorText);
+  assert.equal(await page.evaluate(() => window.errorText), undefined);
+  const copied = await page.evaluate(async () => {
+    const [item] = await navigator.clipboard.read();
+    const png = await item.getType('image/png');
+    const bitmap = await createImageBitmap(png);
+    try {
+      return { mime: png.type, size: [bitmap.width, bitmap.height], bytes: png.size };
+    } finally {
+      bitmap.close();
+    }
+  });
+  assert.equal(copied.mime, 'image/png');
+  assert.deepEqual(copied.size, [512, 512]);
+  assert.ok(copied.bytes > 8);
+});
+
+test('photo copy explains why the native clipboard is unavailable on remote HTTP', async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.route('http://desk.test/**', route => route.fulfill({ contentType: 'text/html', body: '<title>HTTP</title>' }));
+  await page.goto('http://desk.test/');
+  await page.addScriptTag({ path: 'api/app/static/ticket_attachments.js' });
+  const result = await page.evaluate(async () => {
+    let error;
+    let status;
+    await TicketAttachments.copyAttachmentImage({
+      showError(value) { error = value; },
+      setStatus(value) { status = value; },
+    }, {}, 'фото');
+    return { secure: isSecureContext, write: typeof navigator.clipboard?.write, error, status };
+  });
+  assert.equal(result.secure, false);
+  assert.equal(result.write, 'undefined');
+  assert.match(result.error, /HTTPS/);
+  assert.equal(result.status, undefined);
+});
 
 test('attachment menu opens the original after loading and downloads photos and files with their names', async t => {
   let release;

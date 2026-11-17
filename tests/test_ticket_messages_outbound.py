@@ -1498,15 +1498,15 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261117-appearance-escape-v1"
+    app_shell_version = "20261117-message-clipboard-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
-    ticket_message_view_version = "20261117-ticket-attachment-source-v1"
+    ticket_message_view_version = "20261117-message-clipboard-v1"
     ticket_static_version = "20261111-shared-drafts-v1"
-    ticket_attachments_template_version = "20261117-ticket-attachment-source-v1"
-    ticket_attachments_shell_version = "20261117-ticket-attachment-source-v1"
+    ticket_attachments_template_version = "20261117-message-clipboard-v1"
+    ticket_attachments_shell_version = "20261117-message-clipboard-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
     ticket_page_version = "20261117-appearance-escape-v1"
-    ticket_styles_version = "20261116-task-panel-v1-radius-v1-seam-v1"
+    ticket_styles_version = "20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")
     index_template = (repo_root / "api" / "app" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -1541,7 +1541,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     assert f'/static/styles.css?v={ticket_styles_version}' in index_template
     for name, source in template_sources.items():
         if "/static/styles.css?v=" in source:
-            styles_version = "20261117-mass-editor-width-v3-radius-v1-seam-v1" if name == "mass_notifications.html" else ticket_styles_version
+            styles_version = "20261117-mass-editor-width-v3-radius-v1-seam-v1-scrollbars-v1" if name == "mass_notifications.html" else ticket_styles_version
             assert f"/static/styles.css?v={styles_version}" in source
     assert f"/static/ticket.js?v={ticket_page_version}" in template
     assert f"/static/ticket.js?v={ticket_page_version}" in app_shell

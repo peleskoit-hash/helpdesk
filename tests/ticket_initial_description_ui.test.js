@@ -9,7 +9,7 @@ function element() {
     append(...items) { this.children.push(...items); },
     appendChild(item) { this.children.push(item); },
     querySelector(selector) { return this.children.find((child) => `.${child.className}` === selector); },
-    contains(node) { return node === this; },
+    contains(node) { return node === this || this.children.some((child) => child.contains(node)); },
     handlers: {}, style: {}, classList: { add() {}, remove() {} },
     getBoundingClientRect: () => ({ width: 100, height: 100 }),
     addEventListener(type, handler) { this.handlers[type] = handler; },
@@ -217,6 +217,36 @@ test("description flag change invalidates the render signature", () => {
   const second = view.render(first.signature);
   assert.notEqual(first.signature, second.signature);
   assert.equal(view.container.children.length, 2);
+});
+
+test("message menu copies selection from its sender and time or across its own text", () => {
+  const { container, ctx, window, render } = fixture([
+    { id: "first", message_type: "client", body: "Full body", created_at: "12:34" },
+    { id: "other", message_type: "client", body: "Other body" },
+    { id: "empty", message_type: "client", body: "" },
+  ]);
+  render();
+  const [first, other, empty] = container.children;
+  const { messageContextMenu } = ctx.el;
+  for (const [bubble, selectedNode, text, shouldCopySelection] of [
+    [first, first.querySelector(".message-header").children[0], "Client", true],
+    [first, first.querySelector(".message-header").children[1], "12:34", true],
+    [first, first, "Client\n12:34\nFull", true],
+    [first, other.querySelector(".message-header"), "Other sender", false],
+    [first, container, "Selection across bubbles", false],
+    [empty, empty.querySelector(".message-header"), "Client", true],
+  ]) {
+    window.getSelection = () => ({
+      rangeCount: 1, getRangeAt: () => ({ commonAncestorContainer: selectedNode }), toString: () => text,
+    });
+    const event = { currentTarget: bubble, preventDefault() {}, stopPropagation() {}, clientX: 10, clientY: 10 };
+    bubble.handlers.contextmenu(event);
+    const label = shouldCopySelection ? "Копировать выделенное" : "Копировать сообщение";
+    assert.deepEqual(messageContextMenu.children.map(item => item.textContent), [label, "Цитировать"]);
+    window.getSelection = () => null;
+    messageContextMenu.children.find(item => item.textContent === label).handlers.click(event);
+    assert.equal(ctx.copied, shouldCopySelection ? text : "Full body");
+  }
 });
 
 test("attachment source change invalidates the render signature and updates the menu", () => {

@@ -334,12 +334,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -704,12 +704,12 @@ for (const theme of ['light', 'dark']) {
       const panel = document.querySelector('.ticket-client-side').getBoundingClientRect(), rect = document.querySelector('.client-edit-border rect').getBoundingClientRect();
       const style = getComputedStyle(document.querySelector('.client-edit-border rect'));
       return { insets: [rect.left - panel.left, rect.top - panel.top, panel.right - rect.right, panel.bottom - rect.bottom], rx: style.rx, ry: style.ry,
-        scrollbars: ['#messages', '#clientModal .modal-body'].map(selector => { const el = document.querySelector(selector), s = getComputedStyle(el); el.scrollTop = 20; return { width: s.scrollbarWidth, color: s.scrollbarColor, scrolled: el.scrollTop }; }),
+        scrollbars: ['#messages', '#clientModal .modal-body'].map(selector => { const el = document.querySelector(selector), s = getComputedStyle(el); el.scrollTop = 20; return { width: s.scrollbarWidth, color: s.scrollbarColor, customWidth: getComputedStyle(el, '::-webkit-scrollbar').width, scrolled: el.scrollTop }; }),
         rows: [...document.querySelectorAll('#clientModal .desk-toggle')].map(el => { const a = el.getBoundingClientRect(), b = el.previousElementSibling.getBoundingClientRect(); return { type: el.type, appearance: getComputedStyle(el).appearance, alignment: Math.abs(a.y + a.height / 2 - b.y - b.height / 2) }; }) };
     });
     assert.deepEqual(details.insets, [2, 2, 2, 2]);
     assert.equal(details.rx, '12px'); assert.equal(details.ry, '12px');
-    for (const s of details.scrollbars) { assert.equal(s.width, 'thin'); assert.notEqual(s.color, 'auto'); }
+    for (const s of details.scrollbars) assert.deepEqual([s.width, s.color, s.customWidth], ['auto', 'auto', '10px']);
     for (const s of details.scrollbars) assert.ok(s.scrolled > 0);
     assert.equal(details.rows.length, 2);
     for (const row of details.rows) { assert.equal(row.type, 'checkbox'); assert.equal(row.appearance, 'none'); assert.ok(row.alignment < 1); }
@@ -1091,6 +1091,26 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           assert.equal(await page.locator('.ticket-row td[data-column-key="requester"]').first().evaluate(el => getComputedStyle(el).fontSize), '16px');
           await page.locator('.table-scroll').evaluate(el => { el.scrollLeft = el.scrollWidth; el.scrollTop = el.scrollHeight; });
           assert.ok(await page.locator('.table-scroll').evaluate(el => el.scrollLeft > 0 && el.scrollTop > 0));
+          const viewport = await page.locator('.table-scroll').evaluate(el => {
+            el.scrollTop = Math.floor((el.scrollHeight - el.clientHeight) / 2);
+            const header = el.querySelector('thead');
+            const row = el.querySelector('.ticket-row');
+            const scrollbar = getComputedStyle(el, '::-webkit-scrollbar');
+            return {
+              scrollbarSize: [scrollbar.width, scrollbar.height],
+              position: getComputedStyle(header).position,
+              paddingTop: parseFloat(getComputedStyle(el).paddingTop),
+              inset: header.getBoundingClientRect().top - el.getBoundingClientRect().top,
+              aligned: [...header.rows[0].cells].every((cell, index) => {
+                const head = cell.getBoundingClientRect(), body = row.cells[index].getBoundingClientRect();
+                return Math.abs(head.left - body.left) <= 1 && Math.abs(head.width - body.width) <= 1;
+              }),
+            };
+          });
+          assert.deepEqual(viewport.scrollbarSize, ['10px', '10px']);
+          assert.equal(viewport.position, 'sticky');
+          assert.ok(Math.abs(viewport.inset - viewport.paddingTop - 6) <= 1, JSON.stringify(viewport));
+          assert.equal(viewport.aligned, true);
           await page.locator('.table-scroll').evaluate(el => { el.scrollLeft = 0; el.scrollTop = 0; });
           await page.locator('#columnsSettingsBtn').click();
           await modalVisible(page, '#columnsModal');

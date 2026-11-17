@@ -266,6 +266,10 @@
   }
 
   async function copyAttachmentImage(ctx, attachment, kind) {
+    if (!window.isSecureContext) {
+      ctx.showError("Для копирования изображения в буфер обмена откройте ES DESK по HTTPS.");
+      return;
+    }
     if (typeof ClipboardItem !== "function" || !navigator.clipboard?.write || ClipboardItem.supports?.("image/png") === false) {
       ctx.showError(`Браузер не поддерживает копирование ${kind === "стикер" ? "стикера" : "фото"} в буфер обмена.`);
       return;

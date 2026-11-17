@@ -35,38 +35,6 @@
   }
 }
 
-[data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard {
-  scrollbar-width: thin;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  @supports selector(::-webkit-scrollbar) {
-    body #appContent.main[data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard {
-      scrollbar-width: auto;
-      scrollbar-color: auto;
-    }
-
-    [data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
-    }
-
-    [data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard::-webkit-scrollbar-track {
-      background: var(--desk-soft);
-    }
-
-    [data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard::-webkit-scrollbar-track:vertical {
-      margin-block: 14px;
-    }
-
-    [data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard::-webkit-scrollbar-thumb {
-      border: 2px solid transparent;
-      border-radius: 8px;
-      background: var(--desk-muted) padding-box;
-    }
-  }
-}
-
 [data-shell-page="ticket-card"] .ticket-control-wrap > .wrong-problem-wrap {
   margin-bottom: 0;
 }

@@ -82,7 +82,9 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
   assert.deepEqual(metrics,{radius:'12px',matches:true,fits:true,overflow:false});
   assert.ok(Math.abs(await dialog.evaluate(el=>el.getBoundingClientRect().width)-Math.min(576,width-24))<=1);
   assert.equal(await dialog.evaluate(el=>getComputedStyle(el).overflow),'hidden');
-  assert.equal(await modal.locator('.modal-body').evaluate(el=>getComputedStyle(el).scrollbarWidth),'thin');
+  assert.deepEqual(await modal.locator('.modal-body').evaluate(el=>[
+    getComputedStyle(el).scrollbarWidth, getComputedStyle(el,'::-webkit-scrollbar').width,
+  ]),['auto','10px']);
   assert.equal(await modal.locator('input[type=checkbox]').evaluateAll(nodes=>nodes.length>=2&&nodes.every(el=>el.classList.contains('desk-toggle')&&getComputedStyle(el).appearance==='none')),true);
   for(const id of ['resetClientDataBtn','toggleClientBlockBtn','saveClientBtn'])assert.equal(await page.locator('#'+id).isVisible(),true);
  }

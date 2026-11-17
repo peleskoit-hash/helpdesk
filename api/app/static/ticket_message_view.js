@@ -283,18 +283,16 @@
 
     const menu = el.messageContextMenu;
     menu.innerHTML = "";
-    const body = event.currentTarget.querySelector(".message-body");
-    if (body) {
-      const selection = window.getSelection();
-      const selectedText = selection?.rangeCount === 1
-        && body.contains(selection.getRangeAt(0).commonAncestorContainer)
-        ? selection.toString()
-        : "";
-      if (selectedText) {
-        addContextMenuItem(ctx, menu, "Копировать выделенное", () => copyMessageText(ctx, selectedText));
-      } else {
-        addContextMenuItem(ctx, menu, "Копировать сообщение", () => copyMessageText(ctx, message.body));
-      }
+    const bubble = event.currentTarget;
+    const selection = window.getSelection();
+    const selectedText = selection?.rangeCount === 1
+      && bubble.contains(selection.getRangeAt(0).commonAncestorContainer)
+      ? selection.toString()
+      : "";
+    if (selectedText) {
+      addContextMenuItem(ctx, menu, "Копировать выделенное", () => copyMessageText(ctx, selectedText));
+    } else if (bubble.querySelector(".message-body")) {
+      addContextMenuItem(ctx, menu, "Копировать сообщение", () => copyMessageText(ctx, message.body));
     }
     const attachments = displayedMessage.attachments || [];
     if (displayedMessage.message_status !== "deleted" && attachments.length === 1 && attachments[0].download_url) {

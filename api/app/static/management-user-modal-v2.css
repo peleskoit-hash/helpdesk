@@ -10,7 +10,6 @@ body #appContent.main[data-shell-page="management-users"] #clientModal {
   & :is(.modal-head, .modal-foot) { padding: 18px 21px; gap: 12px; border-color: var(--desk-border); background: var(--desk-surface); flex-wrap: wrap; }
   & .modal-head { justify-content: space-between; }
   & .modal-body { padding: 21px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-  & :is(.modal-body, textarea) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
   & .client-modal-scroll { gap: 18px; }
   & .modal-field-section {
     --client-card-editor-bg: var(--desk-soft); --client-card-editor-border: var(--desk-border); --client-card-editor-title-text: var(--desk-text); --client-card-editor-label-text: var(--desk-muted);

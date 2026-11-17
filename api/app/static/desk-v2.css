@@ -1,12 +1,12 @@
 @import url("/static/desk-dialogs.css?v=20261027-dialog-prompts-v4-radius-v1");
-@import url("/static/bot-buttons-browser-v2.css?v=20261116-bot-structure-layout-v2-radius-v1");
+@import url("/static/bot-buttons-browser-v2.css?v=20261116-bot-structure-layout-v2-radius-v1-scrollbars-v1");
 @import url("/static/profile-settings-v2.css?v=20261024-notification-layout-v2-radius-v1");
-@import url("/static/client-card-settings-v2.css?v=20261024-client-settings-panel-v2-radius-v1");
+@import url("/static/client-card-settings-v2.css?v=20261024-client-settings-panel-v2-radius-v1-scrollbars-v1");
 @import url("/static/admin-pages-v2.css?v=20261115-statistics-layout-v1-radius-v1");
 
-@import url("/static/admin-editors-v2.css?v=20261025-modal-final-v2-radius-v1");
+@import url("/static/admin-editors-v2.css?v=20261025-modal-final-v2-radius-v1-scrollbars-v1");
 
-@import url("/static/management-user-modal-v2.css?v=20261025-modal-final-v2-radius-v1");
+@import url("/static/management-user-modal-v2.css?v=20261025-modal-final-v2-radius-v1-scrollbars-v1");
 
 /* ES DESK+ · independent v2 concept. Shared chrome; page styles stay scoped.
    The import precedes legacy CSS; deliberate scope specificity wins in both themes. */
@@ -101,12 +101,49 @@ body:has(.layout > .main) .toolbar {
   -webkit-backdrop-filter: none;
 }
 
+body:has(.layout > .main) {
+  --desk-scrollbar-size: 10px;
+  --desk-scrollbar-thumb-border: 2px;
+  --desk-scrollbar-thumb-radius: 8px;
+  --desk-scrollbar-track-inset: 14px;
+  --desk-scrollbar-track: var(--desk-soft);
+  --desk-scrollbar-thumb: var(--desk-muted);
+
+  &, & * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--desk-scrollbar-thumb) var(--desk-scrollbar-track);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    @supports selector(::-webkit-scrollbar) {
+      &, & * {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+      }
+      &::-webkit-scrollbar, & *::-webkit-scrollbar {
+        width: var(--desk-scrollbar-size);
+        height: var(--desk-scrollbar-size);
+      }
+      &::-webkit-scrollbar-track, & *::-webkit-scrollbar-track {
+        background: var(--desk-scrollbar-track);
+      }
+      &::-webkit-scrollbar-track:vertical, & *::-webkit-scrollbar-track:vertical {
+        margin-block: var(--desk-scrollbar-track-inset);
+      }
+      &::-webkit-scrollbar-thumb, & *::-webkit-scrollbar-thumb {
+        border: var(--desk-scrollbar-thumb-border) solid transparent;
+        border-radius: var(--desk-scrollbar-thumb-radius);
+        background: var(--desk-scrollbar-thumb) padding-box;
+      }
+    }
+  }
+}
+
 body:has(.layout > .main) .sidebar {
   font: 14px/1.5 var(--desk-font);
   padding: 18px 16px 16px;
   gap: 2px;
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 body:has(.layout > .main) :where(.sidebar) .sidebar-brand {
   color: var(--desk-text);
@@ -176,7 +213,7 @@ body:has(.layout > .main) :where(.sidebar) :is(.tab-list, .admin-agent-filter, .
 body:has(.layout > .main) :where(.sidebar) .admin-agent-filter { padding: 8px; }
 body:has(.layout > .main) :where(.sidebar) .tab-list { padding: 9px; }
 body:has(.layout > .main) :where(.sidebar) .tab-btn { padding-top: 9px; padding-bottom: 9px; }
-body:has(.layout > .main) :where(.sidebar) .admin-agent-list { max-height: 160px; overflow-y: auto; scrollbar-width: thin; grid-template-columns: minmax(0, 1fr); }
+body:has(.layout > .main) :where(.sidebar) .admin-agent-list { max-height: 160px; overflow-y: auto; grid-template-columns: minmax(0, 1fr); }
 body:has(.layout > .main) :where(.sidebar) .settings-link { margin-top: 3px; padding: 8px 12px; }
 body:has(.layout > .main) :where(.sidebar) .settings-link.agent-only[href="/management/users"] {
   border-color: var(--desk-border);
@@ -406,8 +443,6 @@ body #appContent.main[data-shell-page="ticket-card"] {
     .client-card-field-readonly-rule, .status, .status-panel-title, .meta, small) { color: var(--desk-text); }
   & .client-edit-border { stroke: var(--desk-accent); border-radius: var(--desk-radius, 12px); }
   & .client-edit-border rect { rx: var(--desk-radius); ry: var(--desk-radius); }
-  & :is(#messages, #clientModal .modal-body) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
-  & #clientDynamicCard { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
   & #clientModal .custom-field-editor:has(> .desk-toggle) { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   & .ticket-control-wrap { padding: 10px; gap: 10px; }
   & :is(.freeze-box, .assignee-box, .auto-close-box, .admin-actions-box, .ticket-quick-actions, .close-wrap) { padding: 12px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); box-shadow: none; backdrop-filter: none; }
@@ -445,12 +480,6 @@ body #appContent.main[data-shell-page="tickets-list"] {
   & .bulk-admin-actions { padding: 0 2px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); }
   & select.bulk-assign-btn { background: var(--desk-tint) !important; color: var(--desk-on-tint) !important; border-color: var(--desk-border) !important; }
   & .table-scroll { padding: 8px 12px 0; }
-  @media (hover: hover) and (pointer: fine) {
-    & .panel.table-wrap > .table-scroll::-webkit-scrollbar { background: transparent; }
-    & .panel.table-wrap > .table-scroll::-webkit-scrollbar-track { background: var(--desk-soft); }
-    & .panel.table-wrap > .table-scroll::-webkit-scrollbar-track:vertical { margin-block: 14px; }
-    & .panel.table-wrap > .table-scroll::-webkit-scrollbar-thumb { background: var(--desk-muted) padding-box; border: 3px solid transparent; border-radius: 8px; }
-  }
   & table { margin: 0; width: 100%; border-spacing: 0 6px; }
   & th { padding: 0 12px; vertical-align: middle; background: var(--desk-surface); color: var(--desk-muted); border-color: var(--desk-border); border-bottom-color: transparent; font-size: 13px; }
   & #ticketsTable thead { position: sticky; top: 6px; z-index: 3; background: var(--desk-surface); box-shadow: 0 -12px 0 12px var(--desk-surface); }

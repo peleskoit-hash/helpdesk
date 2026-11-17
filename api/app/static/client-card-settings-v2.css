@@ -46,7 +46,6 @@ body #appContent.main[data-shell-page="settings-client-card"] {
   & :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
   & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: var(--desk-radius, 12px); box-shadow: 0 24px 80px #00000026; backdrop-filter: none; }
   & :is(.modal-head, .modal-foot) { border-color: var(--desk-border); }
-  & :is(.client-card-work-panel, .modal-body, textarea) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
   @media (max-width: 900px) {
     & .client-card-block-editor { grid-template-columns: minmax(0, 1fr); }
     & .client-card-field-row { grid-template-columns: minmax(0, 1fr); }
