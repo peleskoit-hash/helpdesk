@@ -2298,7 +2298,8 @@ for (const theme of ['light', 'dark']) test(`active staff status has a triple in
 
 for (const theme of ['light', 'dark']) test(`users sidebar link keeps its role and themed outline: ${theme}`, async t => {
   const { page } = await setup(t, { width: 1440, height: 900, theme, pageName: 'tickets', role: 'agent' });
-  const link = page.locator('.sidebar .settings-link.agent-only[href="/management/users"]');
+  const selector = '.sidebar .settings-link.agent-only[href="/management/users"]';
+  const link = page.locator(selector);
   const icon = link.locator('img');
   await icon.evaluate(img => img.decode());
   const skin = await link.evaluate(node => {
@@ -2315,7 +2316,26 @@ for (const theme of ['light', 'dark']) test(`users sidebar link keeps its role a
   assert.deepEqual([skin.radius, skin.border, skin.iconWidth, skin.iconHeight, skin.iconOnRight], ['12px', '1px', 18, 18, true]);
   assert.equal(skin.icon, '/static/icons/sidebar-users.png');
   const admin = await setup(t, { width: 1440, height: 900, theme, pageName: 'tickets' });
-  assert.equal(await admin.page.locator('.sidebar .settings-link.agent-only[href="/management/users"]').isVisible(), false);
+  assert.equal(await admin.page.locator(selector).isVisible(), false);
+
+  for (const [role, rolePage, visible] of [['agent', page, true], ['admin', admin.page, false]]) {
+    const ticketLink = rolePage.locator(selector);
+    await rolePage.evaluate(() => { window.originalDocument = document; });
+    await rolePage.locator('.ticket-row-link').first().click();
+    await rolePage.waitForSelector('.message');
+    assert.equal(await rolePage.evaluate(() => document === window.originalDocument), true);
+    assert.equal(await ticketLink.isVisible(), visible, `${role}: SPA ticket entry`);
+
+    const ticketUrl = rolePage.url();
+    const response = await rolePage.goto(ticketUrl);
+    assert.equal(response.status(), 200);
+    await rolePage.waitForSelector('body[data-sidebar-ready="1"] .message');
+    assert.equal(await ticketLink.isVisible(), visible, `${role}: direct ticket entry`);
+
+    await rolePage.reload();
+    await rolePage.waitForSelector('body[data-sidebar-ready="1"] .message');
+    assert.equal(await ticketLink.isVisible(), visible, `${role}: ticket reload`);
+  }
 });
 
 test('desktop ticket headers share the central header baseline with a wrapped subject', async t => {
