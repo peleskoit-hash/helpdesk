@@ -191,12 +191,12 @@ test('ticket client card safely applies hex block colors for ticket and manageme
 test('client card script cache busting is updated for changed JS files', () => {
   assert.match(settingsClientCardTemplate, /settings_client_card\.js\?v=20261027-dialogs-complete-v3/);
   assert.match(appShellSource, /settings_client_card\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(appShellSource, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
+  assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
+  assert.match(appShellSource, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261117-ticket-list-escape-v1/);
   assert.match(appShellSource, /ticket\.js\?v=20261117-ticket-list-escape-v1/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261027-dialogs-complete-v3/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261105-field-config/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {

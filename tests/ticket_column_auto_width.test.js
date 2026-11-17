@@ -14,7 +14,7 @@ test('ticket header overflow decoration is removed and CSS cache versions match 
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/styles\.css\?v=([^"']+)/g)) {
-      assert.equal(version, '20261116-task-panel-v1', file);
+      assert.equal(version, file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3' : '20261116-task-panel-v1', file);
     }
   }
 });
@@ -29,7 +29,7 @@ test('column scripts and the changed app shell use consistent resource versions 
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/app_shell\.js\?v=([^"']+)/g)) {
-      assert.equal(version, '20261117-ticket-list-escape-v1', file);
+      assert.equal(version, '20261117-settings-users-cache-v1', file);
     }
   }
 });

@@ -31,7 +31,7 @@ test("profile notification bot direct and shell loading use the current script v
   const shell = fs.readFileSync(path.join(__dirname, "..", "api", "app", "static", "app_shell.js"), "utf8");
   const templateVersion = template.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
   const shellVersion = shell.match(/profile_notification_bot\.js\?v=([0-9a-z-]+)"/)?.[1];
-  assert.equal(templateVersion, "20261024-notification-layout-v2");
+  assert.equal(templateVersion, "20261027-dialogs-complete-v3");
   assert.equal(shellVersion, templateVersion);
 });
 
