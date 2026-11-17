@@ -118,6 +118,7 @@ class TaskPanelItem(BaseModel):
 
 class TicketAttachmentOut(BaseModel):
     id: str
+    source: str
     original_filename: str | None = None
     mime_type: str | None = None
     file_size: int | None = None

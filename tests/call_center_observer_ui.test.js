@@ -15,7 +15,7 @@ async function setup(t, role, workflow = 'ticket', width = 1600, options = {}) {
   page.on('pageerror', e => errors.push(e.message));
   t.after(() => assert.deepEqual(errors, []));
   const me = { id: 'viewer', role, login: 'viewer', full_name: 'Viewer' };
-  const messages = [{ id: 'source', message_type: 'client', body: 'Original client text', telegram_message_id: '123', created_at: '2026-01-01T10:00:00' }];
+  const messages = options.messages || [{ id: 'source', message_type: 'client', body: 'Original client text', telegram_message_id: '123', created_at: '2026-01-01T10:00:00' }];
   const card = { id: '123', subject: 'Observer fixture', status: 'new', workflow_type: workflow,
     assignee_id: 'viewer', client_profile: { telegram_username: 'observer_client', internal_number: '123', bitrix_id: '456', custom_fields: { custom_url: 'https://example.test/' } },
     messages, quick_actions_used: {}, intake_state: 'ready', draft_mode: 'reply', draft_text: '', draft_revision: 1 };
@@ -99,10 +99,10 @@ for (const workflow of ['ticket','task']) test(`observer comments and quotes wit
   await page.keyboard.press('Escape');
   await page.evaluate(() => Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text => {window.copiedText=text;}}}));
   await page.locator('[data-message-id="source"]').first().click({button:'right'});
-  await page.locator('.message-context-menu').getByText('Копировать',{exact:true}).click();
+  await page.locator('.message-context-menu').getByText('Копировать сообщение',{exact:true}).click();
   assert.equal(await page.evaluate(() => window.copiedText),'Original client text');
   await page.locator('[data-message-id="source"]').first().click({button:'right'});
-  assert.equal(await page.locator('.message-context-menu').getByText('Копировать',{exact:true}).count(),1);
+  assert.equal(await page.locator('.message-context-menu').getByText('Копировать сообщение',{exact:true}).count(),1);
   await page.locator('.message-context-menu').getByText('Цитировать',{exact:true}).click();
   assert.match(await page.locator('#quotePreviewText').textContent(),/Original client text/);
   await page.locator('#modeReplyBtn').evaluate(n => {n.disabled=false;n.click();});
@@ -111,6 +111,60 @@ for (const workflow of ['ticket','task']) test(`observer comments and quotes wit
   await page.locator('#sendNowBtn').click();
   await page.waitForFunction(() => document.querySelector('[data-message-id="sent"]'));
   assert.deepEqual(sent,[{path:'/api/v1/tickets/123/comment',body:{text:'Observation',quote_message_id:'source'}}]);
+});
+
+test('message copy uses only the selection saved inside the opened message body', async t => {
+  const body = 'Start first\nsecond end';
+  const messages = [
+    {id: 'source', body},
+    {id: 'other', body: 'Other message'},
+    {id: 'empty', body: ''},
+    {id: 'no-body'},
+  ].map(message => ({message_type: 'client', created_at: '2026-01-01T10:00:00', ...message}));
+  const {page} = await setup(t, 'chiki_piki', 'ticket', 1600, {messages});
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {
+    configurable: true, value: {writeText: async text => {window.copiedText = text;}},
+  }));
+  const bubble = id => page.locator(`[data-message-id="${id}"]`);
+  const menu = page.locator('.message-context-menu');
+  const copyMessage = menu.getByRole('button', {name: 'Копировать сообщение', exact: true});
+  const copySelection = menu.getByRole('button', {name: 'Копировать выделенное', exact: true});
+  const openMenu = id => bubble(id).evaluate(node => node.dispatchEvent(
+    new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 100, clientY: 100, button: 2}),
+  ));
+
+  for (const [start, end, expected] of [
+    ['source', 'source', 'first\nsecond'],
+    ['other', 'other', body],
+    ['source', 'other', body],
+  ]) {
+    const withinMessage = start === 'source' && end === 'source';
+    const point = await page.evaluate(({start, end}) => {
+      const textNode = id => document.querySelector(`[data-message-id="${id}"] .message-body`).firstChild;
+      const selection = window.getSelection();
+      selection.setBaseAndExtent(textNode(start), start === 'source' ? 6 : 0,
+        textNode(end), end === 'source' ? 18 : 5);
+      const {left, top, width, height} = selection.getRangeAt(0).getClientRects()[0];
+      return {x: left + width / 2, y: top + height / 2};
+    }, {start, end});
+    if (withinMessage) {
+      await page.mouse.click(point.x, point.y, {button: 'right'});
+    } else {
+      await openMenu('source');
+    }
+    await page.evaluate(() => {
+      window.getSelection().removeAllRanges();
+      window.copiedText = null;
+    });
+    assert.equal(await (withinMessage ? copyMessage : copySelection).count(), 0);
+    await (withinMessage ? copySelection : copyMessage).click();
+    assert.equal(await page.evaluate(() => window.copiedText), expected);
+  }
+
+  for (const id of ['empty', 'no-body']) {
+    await openMenu(id);
+    assert.deepEqual(await menu.getByRole('button').allTextContents(), ['Цитировать']);
+  }
 });
 
 for (const width of [1600,1366,1100]) test(`observer chat fills available space without changing client column: ${width}`, async t => {

@@ -2,6 +2,7 @@
   const { headers, formatFileSize } = global.TicketApi || {};
 
   const attachmentObjectUrls = new Map();
+  const photoMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
   let stickerDepsPromise = null;
   const stickerLottieInstances = new Map();
   const stickerAnimationDataCache = new Map();
@@ -34,10 +35,28 @@
     return idx >= 0 ? name.slice(idx) : "";
   }
 
-  function isStickerAttachment(attachment) {
+  function stickerType(attachment) {
+    const source = attachment?.source;
+    if (source != null && source !== "sticker") return "";
+    if (isTgsSticker(attachment)) return "tgs";
+    if (isVideoSticker(attachment)) return "webm";
     const mime = (attachment?.mime_type || "").toLowerCase();
-    const ext = attachmentExt(attachment);
-    return mime.includes("sticker") || ext === ".tgs" || ext === ".webm" || ext === ".webp";
+    const markedSticker = source === "sticker" || mime.includes("sticker");
+    const webp = mime === "image/webp" || attachmentExt(attachment) === ".webp";
+    if (webp && (markedSticker || (attachment?.original_filename || "").toLowerCase() === "sticker.webp")) return "webp";
+    return markedSticker ? "unknown" : "";
+  }
+
+  function isPhotoAttachment(attachment) {
+    const mime = (attachment.mime_type || "").toLowerCase();
+    return attachment.is_image && !attachment.is_unsupported_preview && photoMimeTypes.has(mime)
+      && !stickerType(attachment);
+  }
+
+  function isPdfAttachment(attachment) {
+    const mime = (attachment.mime_type || "").toLowerCase();
+    return mime === "application/pdf"
+      || ((!mime || mime === "application/octet-stream") && attachmentExt(attachment) === ".pdf");
   }
 
   function isStickerOnlyMessage(message) {
@@ -45,7 +64,7 @@
     if (!attachments.length) return false;
     const body = (message?.body || "").trim();
     if (body) return false;
-    return attachments.every((attachment) => isStickerAttachment(attachment));
+    return attachments.every(stickerType);
   }
 
   function messageRenderSignature(messages) {
@@ -64,11 +83,14 @@
       author_name: message.author_name || "",
       attachments: (message.attachments || []).map((attachment) => ({
         id: attachment.id,
+        source: attachment.source ?? null,
         mime_type: attachment.mime_type || "",
         original_filename: attachment.original_filename || "",
         file_size: attachment.file_size || 0,
         telegram_delivery_status: attachment.telegram_delivery_status || "",
         download_url: attachment.download_url || "",
+        is_image: Boolean(attachment.is_image),
+        is_unsupported_preview: Boolean(attachment.is_unsupported_preview),
       })),
     })));
   }
@@ -130,12 +152,6 @@
     return mime === "video/webm" || ext === ".webm";
   }
 
-  function isStaticSticker(attachment) {
-    const mime = (attachment?.mime_type || "").toLowerCase();
-    const ext = attachmentExt(attachment);
-    return mime === "image/webp" || ext === ".webp";
-  }
-
   function loadScriptOnce(src, check) {
     if (check()) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -181,7 +197,11 @@
       }
       throw new Error(message);
     }
-    const blob = await response.blob();
+    let blob = await response.blob();
+    if (isPdfAttachment(attachment) && (!blob.type || blob.type === "application/octet-stream")
+        && await blob.slice(0, 5).text() === "%PDF-") {
+      blob = blob.slice(0, blob.size, "application/pdf");
+    }
     const objectUrl = URL.createObjectURL(blob);
     attachmentObjectUrls.set(attachment.id, objectUrl);
     return objectUrl;
@@ -197,6 +217,73 @@
       link.click();
       link.remove();
       ctx.setStatus?.("Скачивание начато...");
+    } catch (e) {
+      ctx.showError(e.message);
+    }
+  }
+
+  async function openAttachmentInTab(ctx, attachment, kind) {
+    let tab;
+    try {
+      tab = window.open("");
+      if (!tab) throw new Error("Разрешите всплывающие окна для этого сайта.");
+      tab.opener = null;
+      const url = await getAttachmentObjectUrl(attachment);
+      const response = await fetch(url);
+      const mime = response.headers.get("content-type");
+      const supported = kind === "PDF" ? mime === "application/pdf"
+        : kind === "стикер" ? mime === "image/webp" || mime === "video/webm"
+        : photoMimeTypes.has(mime);
+      if (!response.ok || !supported) {
+        throw new Error("Формат вложения не поддерживается.");
+      }
+      if (!tab.closed) tab.location.replace(url);
+    } catch (e) {
+      tab?.close();
+      ctx.showError(`Не удалось открыть ${kind}: ${e.message}`);
+    }
+  }
+
+  async function attachmentImagePng(attachment) {
+    const url = await getAttachmentObjectUrl(attachment);
+    const original = await (await fetch(url)).blob();
+    if (original.type === "image/png") return original;
+    const bitmap = await createImageBitmap(original);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      return await new Promise((resolve, reject) => {
+        canvas.toBlob((png) => {
+          if (png) resolve(png);
+          else reject(new Error("Не удалось преобразовать изображение в PNG."));
+        }, "image/png");
+      });
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  async function copyAttachmentImage(ctx, attachment, kind) {
+    if (typeof ClipboardItem !== "function" || !navigator.clipboard?.write || ClipboardItem.supports?.("image/png") === false) {
+      ctx.showError(`Браузер не поддерживает копирование ${kind === "стикер" ? "стикера" : "фото"} в буфер обмена.`);
+      return;
+    }
+    const png = attachmentImagePng(attachment).catch((e) => {
+      throw new Error(`Не удалось подготовить ${kind} для копирования: ${e.message}`);
+    });
+    // Start the clipboard write during the click, while the original is still loading.
+    const write = async () => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+      } catch {
+        throw new Error(`Не удалось записать ${kind} в буфер обмена. Проверьте разрешение браузера.`);
+      }
+    };
+    try {
+      await Promise.all([png, write()]);
+      ctx.setStatus?.(kind === "стикер" ? "Стикер скопирован в буфер обмена" : "Фото скопировано в буфер обмена");
     } catch (e) {
       ctx.showError(e.message);
     }
@@ -430,8 +517,9 @@
     const wrap = document.createElement("div");
     wrap.className = "message-attachments";
     for (const attachment of attachments) {
-      const item = document.createElement("button");
-      item.type = "button";
+      const sticker = stickerType(attachment);
+      const item = document.createElement(sticker ? "div" : "button");
+      if (!sticker) item.type = "button";
       item.className = `attachment-block ${attachment.is_image ? "attachment-image" : "attachment-file"}`;
       const name = document.createElement("div");
       name.className = "attachment-name";
@@ -446,15 +534,16 @@
         deliveryStatus.textContent = deliveryStatusText;
       }
 
-      if (isStickerAttachment(attachment)) {
+      if (sticker) {
         item.classList.add("attachment-sticker");
+        item.style.cursor = "default";
         const media = document.createElement("div");
         media.className = "sticker-preview attachment-sticker-media";
         const metaSticker = document.createElement("div");
         metaSticker.className = "attachment-meta";
         metaSticker.textContent = attachmentMeta(attachment);
 
-        if (isStaticSticker(attachment)) {
+        if (sticker === "webp") {
           const img = document.createElement("img");
           img.alt = "sticker";
           img.loading = "lazy";
@@ -468,7 +557,7 @@
               media.innerHTML = "<div class='attachment-unsupported-text'>Стикер недоступен</div>";
             });
           media.appendChild(img);
-        } else if (isVideoSticker(attachment)) {
+        } else if (sticker === "webm") {
           const video = document.createElement("video");
           video.className = "sticker-video attachment-sticker-video";
           video.autoplay = true;
@@ -487,7 +576,7 @@
               media.innerHTML = "<div class='attachment-unsupported-text'>Стикер недоступен</div>";
             });
           media.appendChild(video);
-        } else if (isTgsSticker(attachment)) {
+        } else if (sticker === "tgs") {
           const host = document.createElement("div");
           host.className = "sticker-lottie attachment-sticker-lottie";
           media.appendChild(host);
@@ -503,7 +592,6 @@
 
         item.append(media, metaSticker);
         if (deliveryStatus) item.appendChild(deliveryStatus);
-        item.addEventListener("click", () => downloadAttachment(ctx, attachment));
       } else if (attachment.is_unsupported_preview) {
         item.classList.add("attachment-unsupported");
         const unsupported = document.createElement("div");
@@ -610,6 +698,12 @@
     renderQuoteThumbnail,
     openClientAvatarPreview,
     renderAttachments,
+    stickerType,
+    isPhotoAttachment,
+    isPdfAttachment,
+    downloadAttachment,
+    openAttachmentInTab,
+    copyAttachmentImage,
     cleanupAttachmentObjectUrls,
     cleanupStickerResources,
     isStickerOnlyMessage,

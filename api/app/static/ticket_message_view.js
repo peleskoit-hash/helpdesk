@@ -75,7 +75,7 @@
       content.textContent = "Сообщение без текста";
       return;
     }
-    const sticker = /sticker|webp|webm/i.test(first.mime_type || "") || /\.(webp|webm|tgs)$/i.test(first.original_filename || "");
+    const sticker = global.TicketAttachments.stickerType(first);
     if (first.is_image || sticker) {
       const thumbnail = document.createElement("span");
       thumbnail.className = "quote-thumbnail-host";
@@ -256,9 +256,8 @@
     }
   }
 
-  async function copyMessageText(ctx, message) {
+  async function copyMessageText(ctx, text) {
     const { setStatus } = ctx;
-    const text = message.body || "";
     try {
       await navigator.clipboard.writeText(text);
       setStatus("Текст сообщения скопирован");
@@ -275,15 +274,54 @@
     }
   }
 
-  function showMessageContextMenu(ctx, event, message) {
+  function showMessageContextMenu(ctx, event, displayedMessage) {
     const { state, el, quoteMessage } = ctx;
+    const message = displayedMessage.sourceMessage || displayedMessage;
     if (!["client", "agent", "internal"].includes(message.message_type)) return;
     event.preventDefault();
     event.stopPropagation();
 
     const menu = el.messageContextMenu;
     menu.innerHTML = "";
-    addContextMenuItem(ctx, menu, "Копировать", () => copyMessageText(ctx, message));
+    const body = event.currentTarget.querySelector(".message-body");
+    if (body) {
+      const selection = window.getSelection();
+      const selectedText = selection?.rangeCount === 1
+        && body.contains(selection.getRangeAt(0).commonAncestorContainer)
+        ? selection.toString()
+        : "";
+      if (selectedText) {
+        addContextMenuItem(ctx, menu, "Копировать выделенное", () => copyMessageText(ctx, selectedText));
+      } else {
+        addContextMenuItem(ctx, menu, "Копировать сообщение", () => copyMessageText(ctx, message.body));
+      }
+    }
+    const attachments = displayedMessage.attachments || [];
+    if (displayedMessage.message_status !== "deleted" && attachments.length === 1 && attachments[0].download_url) {
+      const [attachment] = attachments;
+      const sticker = ctx.stickerType(attachment);
+      const photo = ctx.isPhotoAttachment(attachment);
+      const pdf = ctx.isPdfAttachment(attachment);
+      if (!sticker && !photo && !pdf) {
+        addContextMenuItem(ctx, menu, "Скачать файл", () => ctx.downloadAttachment(attachment));
+      } else if (message.attachments.length === 1) {
+        const downloadLabel = sticker ? "Скачать стикер" : photo ? "Скачать фото" : "Скачать файл";
+        addContextMenuItem(ctx, menu, downloadLabel, () => ctx.downloadAttachment(attachment));
+        if (photo) {
+          addContextMenuItem(ctx, menu, "Скопировать фото в буфер", () => ctx.copyAttachmentImage(attachment, "фото"));
+          addContextMenuItem(ctx, menu, "Открыть фото в новом окне", () => ctx.openAttachmentInTab(attachment, "фото"));
+        } else if (pdf) {
+          addContextMenuItem(ctx, menu, "Открыть PDF в новой вкладке", () => ctx.openAttachmentInTab(attachment, "PDF"));
+        } else {
+          if (sticker === "webp") {
+            addContextMenuItem(ctx, menu, "Скопировать стикер в буфер", () => ctx.copyAttachmentImage(attachment, "стикер"));
+          }
+          if (sticker === "webp" || sticker === "webm") {
+            addContextMenuItem(ctx, menu, "Открыть в новой вкладке", () => ctx.openAttachmentInTab(attachment, "стикер"));
+          }
+        }
+      }
+    }
     if (message.message_type !== "internal") {
       addContextMenuItem(ctx, menu, "Цитировать", () => quoteMessage(message));
     }
@@ -376,7 +414,7 @@
         const stickerOnly = isStickerOnlyMessage(m);
         div.className = `message ${cls} ${stickerOnly ? "message-sticker-only" : ""} ${m.message_status && m.message_status !== "normal" ? `message-${m.message_status}` : ""}`.trim();
         if (["client", "agent", "internal"].includes(m.message_type)) {
-          div.addEventListener("contextmenu", (event) => showMessageContextMenu(ctx, event, m.sourceMessage || m));
+          div.addEventListener("contextmenu", (event) => showMessageContextMenu(ctx, event, m));
         }
         if (m.quote_message_id) {
           const quote = document.createElement("div");

@@ -577,6 +577,28 @@ def test_attachment_out_includes_delivery_status():
     assert payload["telegram_delivery_status"] == "uploading"
 
 
+def test_ticket_card_serializes_attachment_sources_from_db():
+    engine, _, session = _session_bundle()
+    try:
+        ticket = _seed_ticket(session)
+        message = TicketMessage(id="source-test", ticket_id=ticket.id, message_type=MessageType.CLIENT.value, body="")
+        session.add(message)
+        sources = {"custom.webp": "sticker", "sticker.webp": "document", "ordinary.webm": "video"}
+        for filename, source in sources.items():
+            session.add(TicketAttachment(
+                id=filename, ticket_id=ticket.id, message_id=message.id, source=source,
+                original_filename=filename, local_path=filename,
+            ))
+        session.commit()
+
+        card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+        payload = json.loads(card.model_dump_json())
+        assert {item["original_filename"]: item["source"] for item in payload["messages"][0]["attachments"]} == sources
+    finally:
+        session.close()
+        engine.dispose()
+
+
 def test_ticket_draft_save_shared_revision_and_clear():
     _engine, _Session, session = _session_bundle()
     ticket = _seed_ticket(session)
@@ -1476,14 +1498,14 @@ def test_delete_agent_message_deduplicates_identical_telegram_ids(monkeypatch):
 
 def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     repo_root = Path(__file__).resolve().parents[1]
-    app_shell_version = "20261116-recipient-filters-v1"
+    app_shell_version = "20261117-ticket-attachment-source-v1"
     bot_buttons_editor_version = "20261027-themed-dialogs-v1"
-    ticket_message_view_version = "20261027-dialogs-complete-v3"
+    ticket_message_view_version = "20261117-ticket-attachment-source-v1"
     ticket_static_version = "20261111-shared-drafts-v1"
-    ticket_attachments_template_version = "20261031-web-history-v1"
-    ticket_attachments_shell_version = "20261031-web-history-v1"
+    ticket_attachments_template_version = "20261117-ticket-attachment-source-v1"
+    ticket_attachments_shell_version = "20261117-ticket-attachment-source-v1"
     ticket_controls_version = "20261027-dialogs-complete-v3"
-    ticket_page_version = "20261116-spellcheck-v1"
+    ticket_page_version = "20261117-ticket-attachment-source-v1"
     ticket_styles_version = "20261116-task-panel-v1"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
     template = (repo_root / "api" / "app" / "templates" / "ticket.html").read_text(encoding="utf-8")

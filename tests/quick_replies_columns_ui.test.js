@@ -115,7 +115,7 @@ test('quick reply page bundles have versioned URLs', () => {
   for (const file of fs.readdirSync('api/app/templates')) {
     if (!file.endsWith('.html')) continue;
     const content = fs.readFileSync('api/app/templates/' + file, 'utf8');
-    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261116-recipient-filters-v1'), file);
+    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261117-ticket-attachment-source-v1'), file);
   }
 });
 

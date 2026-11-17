@@ -194,8 +194,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261027-dialogs-complete-v3/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261029-ticket-history-v1/);
-  assert.match(appShellSource, /ticket\.js\?v=20261029-ticket-history-v1/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261117-ticket-attachment-source-v1/);
+  assert.match(appShellSource, /ticket\.js\?v=20261117-ticket-attachment-source-v1/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261027-dialogs-complete-v3/);
 });
 

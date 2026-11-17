@@ -32,6 +32,7 @@ def _attachment_is_image(attachment: TicketAttachment) -> bool:
 def _attachment_out(ticket_id: str, attachment: TicketAttachment) -> dict:
     return {
         "id": attachment.id,
+        "source": attachment.source,
         "original_filename": attachment.original_filename,
         "mime_type": attachment.mime_type,
         "file_size": attachment.file_size,

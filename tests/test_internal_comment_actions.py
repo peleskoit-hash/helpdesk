@@ -205,8 +205,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 global.window = global;
 global.innerWidth = global.innerHeight = 1000;
+global.getSelection = () => null;
 function node() {
-  const n = {children: [], listeners: {}, style: {}, value: "", classList: {add() {}, remove() {}},
+  const n = {children: [], dataset: {}, listeners: {}, style: {}, value: "", classList: {add() {}, remove() {}},
     append(...children) {this.children.push(...children);},
     appendChild(child) {this.children.push(child);},
     addEventListener(name, fn) {this.listeners[name] = fn;},
@@ -220,24 +221,25 @@ eval(fs.readFileSync("api/app/static/ticket_message_view.js", "utf8"));
 const ctx = {state: {role: "agent", userId: "agent-1", ticketId: "ticket", card: {status: "pending"}},
   el: {messageContextMenu: node(), messages: node()}, quoteMessage() {throw Error("Unexpected quote");},
   closeOnBackdropClick() {}, setStatus() {}, loadCard: async () => {}, showError: (text) => {throw Error(text);}};
-const event = {preventDefault() {}, stopPropagation() {}, clientX: 50, clientY: 50};
+const event = {preventDefault() {}, stopPropagation() {}, clientX: 50, clientY: 50,
+  currentTarget: {querySelector: (selector) => selector === ".message-body" ? node() : null}};
 const message = {id: "internal", message_type: "internal", message_status: "normal",
   author_user_id: "agent-1", body: "Private", attachments: [{id: "private-file"}]};
 function labels(m) {
   TicketMessageView.showMessageContextMenu(ctx, event, m);
   return ctx.el.messageContextMenu.children.map((n) => n.textContent);
 }
-assert.deepEqual(labels(message), ["Копировать", "Редактировать", "Удалить"]);
-assert.deepEqual(labels({...message, message_type: "agent"}), ["Копировать", "Цитировать", "Редактировать", "Удалить"]);
-assert.deepEqual(labels({...message, message_type: "client"}), ["Копировать", "Цитировать"]);
-assert.deepEqual(labels({...message, author_user_id: "other"}), ["Копировать"]);
-assert.deepEqual(labels({...message, author_user_id: null}), ["Копировать"]);
+assert.deepEqual(labels(message), ["Копировать сообщение", "Редактировать", "Удалить"]);
+assert.deepEqual(labels({...message, message_type: "agent"}), ["Копировать сообщение", "Цитировать", "Редактировать", "Удалить"]);
+assert.deepEqual(labels({...message, message_type: "client"}), ["Копировать сообщение", "Цитировать"]);
+assert.deepEqual(labels({...message, author_user_id: "other"}), ["Копировать сообщение"]);
+assert.deepEqual(labels({...message, author_user_id: null}), ["Копировать сообщение"]);
 ctx.state.role = "admin";
-assert.deepEqual(labels({...message, author_user_id: null}), ["Копировать", "Редактировать", "Удалить"]);
+assert.deepEqual(labels({...message, author_user_id: null}), ["Копировать сообщение", "Редактировать", "Удалить"]);
 ctx.state.card.status = "closed";
-assert.deepEqual(labels(message), ["Копировать"]);
+assert.deepEqual(labels(message), ["Копировать сообщение"]);
 ctx.state.card.status = "pending";
-assert.deepEqual(labels({...message, message_status: "deleted"}), ["Копировать"]);
+assert.deepEqual(labels({...message, message_status: "deleted"}), ["Копировать сообщение"]);
 const calls = [];
 ctx.api = async (url, options) => calls.push({url, ...options});
 (async () => {
@@ -248,7 +250,9 @@ ctx.api = async (url, options) => calls.push({url, ...options});
   await editing;
   assert.equal(calls[0].method, "PATCH");
   assert.deepEqual(JSON.parse(calls[0].body), {text: "Edited"});
-  global.confirm = (text) => {assert.equal(text, "Удалить внутренний комментарий?"); return true;};
+  global.HelpdeskDialogs = {
+    confirm: (text) => {assert.equal(text, "Удалить внутренний комментарий?"); return true;},
+  };
   await TicketMessageView.deleteAgentMessage(ctx, message);
   assert.equal(calls[1].method, "DELETE");
   assert.equal(calls[1].url, "/api/v1/tickets/ticket/messages/internal");
