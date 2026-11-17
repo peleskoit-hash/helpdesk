@@ -171,7 +171,7 @@ test('only the client card scroll viewport uses native thin scrollbars with cach
   assert.equal(rule.slice(rule.indexOf('{') + 1).trim(), 'scrollbar-width: thin;');
   assert.equal([...css.matchAll(/scrollbar-width:/g)].length, 1);
   assert.doesNotMatch(css, /::-webkit-scrollbar|scrollbar-color:/);
-  assert.match(template, /appContent[\s\S]*ticket_client_card\.css\?v=20261021-client-scroll-thin"/);
+  assert.match(template, /appContent[\s\S]*ticket_client_card\.css\?v=20261117-round-telegram-avatar-v1"/);
 });
 
 test('open and clean cancel switch modes without confirm or PATCH; fields retain identity', async () => {

@@ -153,6 +153,11 @@
   cursor: pointer;
 }
 
+body #appContent.main[data-shell-page="ticket-card"] .client-card-telegram-avatar {
+  border-radius: 50%;
+  overflow: hidden;
+}
+
 [data-shell-page="ticket-card"] .client-card-telegram-avatar img {
   display: block;
   width: 100%;
