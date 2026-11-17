@@ -8,7 +8,7 @@ function ensureStyles() {
   if (!styles) styles = new Promise((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/static/contour-editor.css?v=20261029-composition-intensity-v1';
+    link.href = '/static/contour-editor.css?v=20261029-composition-intensity-v1-radius-v1';
     link.onload = resolve;
     link.onerror = () => { link.remove(); styles = null; reject(new Error('Не удалось загрузить редактор')); };
     document.head.appendChild(link);

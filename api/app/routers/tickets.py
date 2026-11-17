@@ -48,6 +48,7 @@ from ..services.telegram_outbound_delivery import (
 )
 from ..services.button_config import DEFAULT_MENU_NAME, resolve_button_row
 from ..services.ticket_attachments import (
+    _attachment_download_filename,
     _attachment_out,
     _ensure_local_attachment_file,
     _message_attachments,
@@ -1385,11 +1386,11 @@ def download_attachment(
     if attachment is None or attachment.ticket_id != ticket.id:
         _error(404, "attachment_not_found", "Файл не найден")
     media_type = attachment.mime_type or "application/octet-stream"
-    filename = attachment.original_filename or Path(attachment.local_path).name
     path = Path(attachment.local_path)
-    headers = {"Content-Disposition": _content_disposition_attachment(filename)}
 
     if path.exists() and path.is_file():
+        filename = _attachment_download_filename(attachment) or path.name
+        headers = {"Content-Disposition": _content_disposition_attachment(filename)}
         return FileResponse(path, media_type=media_type, headers=headers)
 
     file_path = (attachment.telegram_file_path or "").strip()
@@ -1441,6 +1442,8 @@ def download_attachment(
         finally:
             telegram_response.close()
 
+    filename = _attachment_download_filename(attachment) or path.name
+    headers = {"Content-Disposition": _content_disposition_attachment(filename)}
     telegram_content_length = telegram_response.headers.get("Content-Length")
     if telegram_content_length:
         headers["Content-Length"] = telegram_content_length

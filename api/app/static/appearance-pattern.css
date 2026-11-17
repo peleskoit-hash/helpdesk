@@ -1,17 +1,17 @@
 /* Local background controls and the existing viewport-aligned paint surfaces. */
 body #appearanceMenu.appearance-menu .pattern-library {
   box-sizing: border-box; max-height: 440px; overflow-y: auto;
-  padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px;
+  padding: 16px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px);
   background: var(--desk-surface);
 }
 body #appearanceMenu.appearance-menu .contour-heading { margin: 18px 0 12px; font: inherit; font-weight: 800; }
 body #appearanceMenu.appearance-menu .contour-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 body #appearanceMenu.appearance-menu .contour-card {
   position: relative; display: grid; gap: 8px; min-width: 0; padding: 10px;
-  border: 1px dashed var(--desk-focus); border-radius: 12px; background: var(--desk-soft);
+  border: 1px dashed var(--desk-focus); border-radius: var(--desk-radius, 12px); background: var(--desk-soft);
 }
 body #appearanceMenu.appearance-menu .contour-card.selected { background: var(--desk-tint); border-style: solid; color: var(--desk-on-tint); }
-body #appearanceMenu.appearance-menu button.contour-select { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 12px; padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
+body #appearanceMenu.appearance-menu button.contour-select { position: absolute; inset: 0; width: 100%; border: 0; border-radius: var(--desk-radius, 12px); padding: 0; background: transparent; box-shadow: none; cursor: pointer; }
 body #appearanceMenu.appearance-menu .contour-footer { position: relative; z-index: 1; }
 body #appearanceMenu.appearance-menu .contour-card:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: -3px; }
 body #appearanceMenu.appearance-menu .contour-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
@@ -23,7 +23,7 @@ body #appearanceMenu.appearance-menu .contour-image-missing .contour-name { grid
 body #appearanceMenu.appearance-menu .contour-footer { display: flex; align-items: center; min-width: 0; height: 34px; opacity: 0; pointer-events: none; }
 body #appearanceMenu.appearance-menu .contour-card:is(:hover, :focus-within) :is(.contour-footer, .contour-actions) { opacity: 1; pointer-events: auto; }
 body #appearanceMenu.appearance-menu .contour-author { flex: 1; min-width: 0; min-height: 0; max-height: 100%; overflow-y: auto; overflow-wrap: anywhere; font-size: 11px; line-height: 1.3; color: var(--desk-muted); }
-body #appearanceMenu.appearance-menu .contour-actions { position: absolute; top: 50%; right: 0; transform: translateY(-50%); z-index: 1; display: flex; opacity: 0; pointer-events: none; border: 1px solid var(--desk-border); border-radius: 8px; overflow: hidden; }
+body #appearanceMenu.appearance-menu .contour-actions { position: absolute; top: 50%; right: 0; transform: translateY(-50%); z-index: 1; display: flex; opacity: 0; pointer-events: none; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); overflow: hidden; }
 body #appearanceMenu.appearance-menu .contour-action-hint { display: flex; }
 body #appearanceMenu.appearance-menu button.contour-action {
   display: flex; align-items: center; justify-content: center; line-height: 0; width: 32px; height: 32px; min-height: 0; padding: 0;
@@ -36,7 +36,7 @@ body #appearanceMenu.appearance-menu .contour-status { margin: 12px 0 0; font-si
 body #appearanceMenu.appearance-menu .contour-status:empty, body #appearanceMenu.appearance-menu .contour-retry[hidden] { display: none; }
 body #appearanceMenu.appearance-menu .contour-create { margin-top: 12px; text-align: center; }
 body #appearanceMenu.appearance-menu .contour-create button, body #appearanceMenu.appearance-menu .contour-retry {
-  padding: 9px 12px; border: 1px solid var(--desk-border); border-radius: 12px;
+  padding: 9px 12px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px);
   background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none;
 }
 body #appearanceMenu.appearance-menu .contour-create button { display: block; margin-inline: auto; font-size: 18px; font-weight: 700; text-align: center; }
@@ -63,11 +63,11 @@ body #appearanceMenu.appearance-menu .appearance-pattern > summary {
 body #appearanceMenu.appearance-menu .appearance-pattern > summary::-webkit-details-marker { display: none; }
 body #appearanceMenu.appearance-menu .appearance-pattern > summary::after { content: "+"; font-size: 20px; line-height: 1; }
 body #appearanceMenu.appearance-menu .appearance-pattern[open] > summary::after { content: "−"; }
-body #appearanceMenu.appearance-menu .appearance-pattern > summary:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 2px; border-radius: 8px; }
+body #appearanceMenu.appearance-menu .appearance-pattern > summary:focus-visible { outline: 2px solid var(--desk-focus); outline-offset: 2px; border-radius: var(--desk-radius, 12px); }
 body #appearanceMenu.appearance-menu .pattern-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 body #appearanceMenu.appearance-menu .pattern-card {
   position: relative; display: grid; gap: 7px; min-width: 0; margin: 0; padding: 10px;
-  border: 1px solid var(--desk-border); border-radius: 12px; text-align: center;
+  border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); text-align: center;
   color: var(--desk-text); background: var(--desk-surface); cursor: pointer;
 }
 body #appearanceMenu.appearance-menu .pattern-card > input,

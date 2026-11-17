@@ -37,7 +37,7 @@ def test_login_v2_real_routes_preserve_saved_appearance(saved_theme):
             assert page.status_code == 200
             assert 'ES DESK' in page.text and 'Вход в Helpdesk' not in page.text
             assert '<title>ES DESK</title>' in page.text
-            assert '/static/login-v2.css?v=20261028-studio-final-v2' in page.text
+            assert '/static/login-v2.css?v=20261028-studio-final-v2-radius-v1' in page.text
             assert '/static/login.js?v=20261112-lockout' in page.text
             assert '/static/theme.js' not in page.text
             assert 'autocomplete="username"' in page.text and 'autocomplete="current-password"' in page.text

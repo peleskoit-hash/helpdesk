@@ -31,6 +31,7 @@ ARCHIVE_INFO_WAIT_ATTEMPTS = 30
 ARCHIVE_INFO_WAIT_DELAY_SECONDS = 0.1
 STAGING_BINARY_UPLOAD_CONCURRENCY = 1
 STAGING_BINARY_UPLOAD_TIMEOUT_SECONDS = 300
+STAGING_AUDIO_DOCUMENT_EXTENSIONS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac"}
 STAGING_BINARY_UPLOAD_SEMAPHORE = threading.Semaphore(STAGING_BINARY_UPLOAD_CONCURRENCY)
 try:
     PROJECT_TIMEZONE = ZoneInfo("Europe/Moscow")
@@ -554,6 +555,9 @@ def _send_staging_document_from_path(
     path = Path(local_path)
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(str(path))
+    filename = original_filename or path.name
+    force_audio_document = Path(filename).suffix.lower() in STAGING_AUDIO_DOCUMENT_EXTENSIONS
+    content_type = "application/octet-stream" if force_audio_document else (mime_type or "application/octet-stream")
 
     while not STAGING_BINARY_UPLOAD_SEMAPHORE.acquire(timeout=30):
         if on_wait:
@@ -564,9 +568,10 @@ def _send_staging_document_from_path(
         response = send_document(
             _staging_chat_id(),
             path,
-            filename=original_filename or path.name,
-            mime_type=mime_type or "application/octet-stream",
+            filename=filename,
+            mime_type=content_type,
             timeout=STAGING_BINARY_UPLOAD_TIMEOUT_SECONDS,
+            disable_content_type_detection=force_audio_document,
         )
     finally:
         STAGING_BINARY_UPLOAD_SEMAPHORE.release()

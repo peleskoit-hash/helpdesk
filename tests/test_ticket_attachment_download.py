@@ -17,6 +17,8 @@ from sqlalchemy.pool import StaticPool
 from api.app.db import Base
 from api.app.models import MessageType, Ticket, TicketAttachment, TicketMessage, TicketStatus, TicketWorkflowType
 from api.app.routers import tickets as tickets_router
+from api.app.services import telegram_attachments
+from api.app.services.ticket_attachments import _attachment_out
 
 
 def _session():
@@ -92,6 +94,79 @@ def test_download_cyrillic_filename_is_encoded_for_content_disposition(tmp_path)
     disposition = response.headers["content-disposition"]
     assert disposition.startswith('attachment; filename="_ 1.pdf"; filename*=UTF-8\'\'')
     assert "%D0%B4%D0%BE%D0%B3%D0%BE%D0%B2%D0%BE%D1%80%201.pdf" in disposition
+
+
+@pytest.mark.parametrize(("original", "mime", "telegram_path", "expected"), [
+    (None, "video/mp4", "videos/file", "video.mp4"),
+    (None, None, "videos/file.mov", "video.mov"),
+    ("road-trip", "video/webm", "videos/file", "road-trip.webm"),
+    ("original.MOV", "video/mp4", "videos/file.mp4", "original.MOV"),
+    (None, "application/octet-stream", "videos/file.bin", "video"),
+])
+def test_new_inbound_video_uses_same_name_in_card_and_download(monkeypatch, tmp_path, original, mime, telegram_path, expected):
+    session = _session()
+    ticket, seed = _seed_attachment(session, tmp_path)
+    monkeypatch.setattr(telegram_attachments.settings, "attachment_storage_dir", str(tmp_path))
+    monkeypatch.setattr(telegram_attachments, "get_file", lambda *args, **kwargs:
+                        {"result": {"file_path": telegram_path}})
+    data = telegram_attachments._extract_attachment(
+        {"video": {"file_id": "incoming-video", "file_name": original, "mime_type": mime}},
+    )
+    video = telegram_attachments._store_telegram_attachment(
+        session, ticket, session.get(TicketMessage, seed.message_id), data, "client-chat",
+    )
+    session.commit()
+    monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "test-token")
+    raw = b"original video data\x00\xff"
+    upstream = BytesIO(raw)
+    upstream.headers = {"Content-Length": str(len(raw))}
+    monkeypatch.setattr(tickets_router, "urlopen", lambda request, timeout: upstream)
+
+    assert _attachment_out(ticket.id, video)["original_filename"] == expected
+    response = tickets_router.download_attachment(ticket.id, video.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+    assert response.headers["content-disposition"] == tickets_router._content_disposition_attachment(expected)
+
+    async def read_body():
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    assert asyncio.run(read_body()) == raw
+    assert upstream.closed
+
+
+@pytest.mark.parametrize(("mime", "telegram_path", "expected"), [
+    ("video/mp4", None, "video.mp4"),
+    (None, "videos/file.webm", "video.webm"),
+    (None, "videos/file.unknown", "video"),
+])
+def test_old_video_download_uses_metadata_without_renaming_record(tmp_path, mime, telegram_path, expected):
+    session = _session()
+    ticket, video = _seed_attachment(session, tmp_path, filename="video", telegram_file_id="old-video", telegram_file_path=telegram_path)
+    video.source = "video"
+    video.mime_type = mime
+    session.commit()
+
+    assert _attachment_out(ticket.id, video)["original_filename"] == expected
+    response = tickets_router.download_attachment(ticket.id, video.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+    assert isinstance(response, FileResponse)
+    assert response.headers["content-disposition"] == tickets_router._content_disposition_attachment(expected)
+    assert video.original_filename == "video"
+
+
+def test_old_video_download_uses_path_discovered_by_get_file(monkeypatch, tmp_path):
+    session = _session()
+    ticket, video = _seed_attachment(session, tmp_path, filename="video", local_exists=False, telegram_file_id="old-video")
+    video.source = "video"
+    video.mime_type = None
+    session.commit()
+    monkeypatch.setattr(tickets_router.settings, "telegram_bot_token", "test-token")
+    monkeypatch.setattr(tickets_router, "get_file", lambda *args, **kwargs: {"result": {"file_path": "videos/file.mov"}})
+    monkeypatch.setattr(tickets_router, "urlopen", lambda request, timeout: SimpleNamespace(headers={}))
+
+    response = tickets_router.download_attachment(ticket.id, video.id, db=session, user=SimpleNamespace(id="admin-1", role="admin"))
+
+    assert response.headers["content-disposition"] == tickets_router._content_disposition_attachment("video.mov")
+    assert _attachment_out(ticket.id, video)["original_filename"] == "video.mov"
+    assert video.original_filename == "video"
 
 
 def test_download_missing_physical_file_without_telegram_metadata_returns_controlled_404(tmp_path):

@@ -71,17 +71,24 @@ def test_document_receipt_and_final_dispatch_without_duplicates(prepared, monkey
 @pytest.mark.parametrize('kind', ['photo', 'sticker', 'video', 'audio', 'animation', 'voice', 'video_note'])
 def test_unexpected_receipt_stays_failed_until_confirmed_retry_as_document(prepared, monkeypatch, kind):
     p = prepared
+    if kind in {'audio', 'voice'}:
+        p.row.original_filename = 'original.MP3'
+        p.row.mime_type = 'audio/mpeg'
+        p.db.commit()
     monkeypatch.setattr(outbound, 'send_document', lambda *a, **kw: p.calls.append(('binary', a, kw)) or media_response(kind))
     outbound.deliver_attachment_preload(preload_id=p.row.id)
     p.db.expire_all(); saved = p.db.get(TicketAttachmentPreload, p.row.id)
     assert saved.status == 'failed' and not saved.telegram_file_id
     assert saved.telegram_upload_state_json['receipt']['media_type'] == kind
+    assert saved.telegram_upload_state_json['error_code'] == 'staging_media_mismatch'
     assert saved.telegram_staging_file_message_id == '301' and p.path.read_bytes() == b'original bytes'
     actor = SimpleNamespace(id=p.user.id, role='agent')
     assert routes.get_ticket(p.ticket.id, db=p.db, user=actor).active_attachment_preloads[0]['status'] == 'failed'
     with pytest.raises(HTTPException) as error:
         routes.retry_attachment_preload(p.ticket.id, saved.id, BackgroundTasks(), False, db=p.db, user=actor)
     assert error.value.status_code == 409
+    outbound.deliver_attachment_preload(preload_id=saved.id)
+    assert len([c for c in p.calls if c[0] == 'binary']) == 1
     monkeypatch.setattr(outbound, 'send_document', lambda *a, **kw: p.calls.append(('binary', a, kw)) or media_response('document'))
     routes.retry_attachment_preload(p.ticket.id, saved.id, BackgroundTasks(), True, db=p.db, user=actor)
     outbound.deliver_attachment_preload(preload_id=saved.id)
@@ -883,21 +890,26 @@ def test_auto_close_cleans_failed_preload_without_telegram_archive_deletion(prep
 
 
 
-@pytest.mark.parametrize('filename,mime,is_webp', [
-    ('original.webp','image/webp',True), ('original.WEBP',None,True),
-    ('photo.jpg','image/jpeg',False), ('photo.png','image/png',False),
-    ('report.pdf','application/pdf',False), ('clip.mp4','video/mp4',False),
+@pytest.mark.parametrize('filename,mime,kind', [
+    ('original.webp', 'image/webp', 'webp'), ('original.WEBP', None, 'webp'),
+    ('photo.jpg', 'image/jpeg', 'file'), ('photo.png', 'image/png', 'file'),
+    ('report.pdf', 'application/pdf', 'file'), ('clip.mp4', 'video/mp4', 'file'),
+    ('original.MP3', 'audio/mpeg', 'audio'), ('original.m4a', 'audio/mp4', 'audio'),
+    ('original.AaC', 'audio/aac', 'audio'), ('original.wav', 'audio/wav', 'audio'),
+    ('original.OGG', 'audio/ogg', 'audio'), ('original.flac', 'audio/flac', 'audio'),
+    ('original.bin', 'audio/mpeg', 'file'),
 ])
-@pytest.mark.parametrize('source', ['bytes','path'])
-def test_send_document_webp_multipart_preserves_original(monkeypatch,tmp_path,filename,mime,is_webp,source):
+@pytest.mark.parametrize('source', ['bytes', 'path', 'staging'])
+def test_send_document_multipart_preserves_original(monkeypatch, tmp_path, filename, mime, kind, source):
     from email.parser import BytesParser
     from email.policy import default
     import json
 
     original=b'Original binary\x00\xff\r\nunchanged'
     value=original
-    if source=='path':
-        value=tmp_path/filename;value.write_bytes(original)
+    if source != 'bytes':
+        value = tmp_path / 'staged-upload.bin'
+        value.write_bytes(original)
     requests=[]
     class Response:
         def __enter__(self): return self
@@ -909,7 +921,16 @@ def test_send_document_webp_multipart_preserves_original(monkeypatch,tmp_path,fi
     monkeypatch.setattr(telegram_bot,'is_test_chat_id',lambda _:False)
     monkeypatch.setattr(telegram_bot,'_api_url',lambda method,**kw:'https://example.invalid/'+method)
     monkeypatch.setattr(telegram_bot,'urlopen',capture)
-    telegram_bot.send_document('synthetic-chat',value,filename=filename,mime_type=mime)
+    staging_audio = source == 'staging' and kind == 'audio'
+    if source == 'staging':
+        monkeypatch.setattr(outbound.settings, 'telegram_staging_chat_id', 'synthetic-chat')
+        result = outbound._send_staging_document_from_path(
+            local_path=str(value), original_filename=filename, mime_type=mime,
+        )
+        assert result == ('document-file', 'document-unique', '301')
+        assert value.read_bytes() == original
+    else:
+        telegram_bot.send_document('synthetic-chat', value, filename=filename, mime_type=mime)
     assert len(requests)==1
     request=requests[0]
     assert request.full_url=='https://example.invalid/sendDocument'
@@ -918,10 +939,10 @@ def test_send_document_webp_multipart_preserves_original(monkeypatch,tmp_path,fi
     message=BytesParser(policy=default).parsebytes(('Content-Type: '+content_type+'\r\nMIME-Version: 1.0\r\n\r\n').encode()+request.data)
     parts={part.get_param('name',header='content-disposition'):part for part in message.iter_parts()}
     assert parts['document'].get_filename()==filename
-    assert parts['document'].get_content_type()==(mime or 'application/octet-stream')
+    assert parts['document'].get_content_type() == ('application/octet-stream' if staging_audio or not mime else mime)
     assert parts['document'].get_payload(decode=True)==original
     assert parts['document'].get_content_disposition()=='form-data'
-    if is_webp:
+    if kind == 'webp' or staging_audio:
         assert parts['disable_content_type_detection'].get_payload(decode=True)==b'true'
         assert parts['disable_content_type_detection'].get_filename() is None
     else:

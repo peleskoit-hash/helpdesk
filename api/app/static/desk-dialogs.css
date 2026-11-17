@@ -9,7 +9,7 @@
   box-sizing: border-box;
   overflow: auto;
   border: 1px solid var(--desk-border, #e4e0ec);
-  border-radius: 24px;
+  border-radius: var(--desk-radius, 12px);
   background: var(--desk-surface, #fffefd);
   color: var(--desk-text, #302c40);
   box-shadow: 0 24px 80px #00000040;
@@ -23,7 +23,7 @@
   min-height: 52px;
   padding: 12px 24px;
   border: 1px solid var(--desk-border, #e4e0ec);
-  border-radius: 12px;
+  border-radius: var(--desk-radius, 12px);
   font: 600 20px/1.4 var(--desk-font, "Segoe UI", sans-serif);
   background: var(--desk-soft, #f6f4f9);
   color: var(--desk-text, #302c40);
@@ -32,5 +32,5 @@
 .desk-dialog [data-dialog-accept] { background: var(--desk-primary, #7760a8); border-color: var(--desk-focus, #7760a8); color: var(--desk-on-accent, #fff); }
 .desk-dialog button:focus-visible { outline: 3px solid var(--desk-focus, #7760a8); outline-offset: 3px; }
 @media (max-width: 560px) { .desk-dialog { padding: 24px; font-size: 24px; } }
-.desk-dialog-input { display: block; box-sizing: border-box; width: 100%; margin-top: 20px; padding: 12px 16px; border: 1px solid var(--desk-border, #e4e0ec); border-radius: 12px; background: var(--desk-soft, #f6f4f9); color: inherit; font: inherit; }
+.desk-dialog-input { display: block; box-sizing: border-box; width: 100%; margin-top: 20px; padding: 12px 16px; border: 1px solid var(--desk-border, #e4e0ec); border-radius: var(--desk-radius, 12px); background: var(--desk-soft, #f6f4f9); color: inherit; font: inherit; }
 .desk-dialog-input:focus-visible { outline: 3px solid var(--desk-focus, #7760a8); outline-offset: 3px; }

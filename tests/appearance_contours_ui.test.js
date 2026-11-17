@@ -232,7 +232,7 @@ for (const width of [1440, 390]) test(`one partial row scrolls while an empty li
     assert.equal(metrics.scroll > metrics.height, !empty);
     assert.equal(metrics.width, metrics.scrollWidth);
     assert.equal(metrics.overflow, 'auto');
-    assert.equal(metrics.radius, '16px');
+    assert.equal(metrics.radius, '12px');
   }
 });
 

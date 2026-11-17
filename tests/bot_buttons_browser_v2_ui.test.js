@@ -105,7 +105,7 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
     assert.equal(values.filter,'none');
    }
    assert.ok(values.contrast>=4.5,JSON.stringify({key,...values}));assert.ok(values.tagContrast>=4.5,JSON.stringify({key,...values}));
-   assert.equal(values.radius,'16px');assert.ok(values.height>=46 && values.height<64);
+   assert.equal(values.radius,'12px');assert.ok(values.height>=46 && values.height<64);
    const geometryKey=`${editing}:${key}`;
    if(colorGeometry.has(geometryKey))assert.equal(values.height,colorGeometry.get(geometryKey),'Colors and submenu outline preserve height');else colorGeometry.set(geometryKey,values.height);
    if(key==='sub'){assert.equal(values.border,'1px');assert.equal(values.style,'solid');assert.equal(values.pointer,'none');}
@@ -115,7 +115,7 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  assert.equal(await page.locator('#botButtonsRightPanel').count(),0);
  assert.match(await page.locator('[data-menu-name]').first().innerText(),/Основное меню[\s\S]*Колл Центр[\s\S]*Кнопки: 5[\s\S]*Подменю: 1/);
  const bounds=()=>page.evaluate(()=>{const main=document.querySelector('#appContent').getBoundingClientRect(),panel=document.querySelector('.bot-buttons-panel'),r=panel.getBoundingClientRect(),header=document.querySelector('.toolbar').getBoundingClientRect();return {top:r.top-header.bottom,left:r.left-main.left,right:main.right-r.right,bottom:main.bottom-r.bottom,radius:getComputedStyle(panel).borderRadius};});
- assert.deepEqual(await bounds(),{top:14,left:16,right:16,bottom:16,radius:'24px'});
+ assert.deepEqual(await bounds(),{top:14,left:16,right:16,bottom:16,radius:'12px'});
  await page.locator('[data-menu-name]').first().click();await page.waitForSelector('#editLayoutBtn');
  assert.equal(await page.locator('#addLevelItemBtn').count(),1);
  assert.equal(await page.locator('#editLayoutBtn').innerText(),'Изменить структуру');
@@ -251,6 +251,6 @@ for(const theme of ['light','dark'])test(`bot menu browser V2: ${theme}`,async t
  await confirmDialog.locator('[data-dialog-accept]').click();
  await page.locator('#createMenuTypeBtn').waitFor();
  assert.equal(calls.filter(c=>c.method==='DELETE').length,1);
- await page.setViewportSize({width:320,height:1080});assert.deepEqual(await bounds(),{top:12,left:12,right:12,bottom:12,radius:'24px'});
+ await page.setViewportSize({width:320,height:1080});assert.deepEqual(await bounds(),{top:12,left:12,right:12,bottom:12,radius:'12px'});
  assert.deepEqual(errors,[]);
 });

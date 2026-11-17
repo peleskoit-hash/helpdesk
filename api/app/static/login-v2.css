@@ -21,7 +21,7 @@ body.login-page {
 .matrix-field, .login-submit, .login-error { position: absolute; left: 50%; transform: translateX(-50%); }
 .matrix-field {
   width: 25.6%; max-width: calc(100vw - 40px); height: 6.1%;
-  background: linear-gradient(110deg, #140f0ce8, #151719ed); border-radius: 4px;
+  background: linear-gradient(110deg, #140f0ce8, #151719ed); border-radius: var(--desk-radius, 12px);
 }
 .matrix-login { top: 21.4%; }
 .matrix-password { top: 30.3%; }
@@ -49,7 +49,7 @@ body.login-page {
 .login-submit {
   /* Inset within the new panel at source coordinates (652, 372)–(1018, 432). */
   top: 40.35%; width: 20.6%; max-width: calc(100vw - 56px); height: 4.5%;
-  cursor: pointer; border: 2px solid #805024; border-radius: 5px;
+  cursor: pointer; border: 2px solid #805024; border-radius: var(--desk-radius, 12px);
   background: repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 3px), linear-gradient(100deg, #754018, #e0a051 18%, #ac6f31 48%, #e7ab59 80%, #764019);
   color: #211207; font: 700 clamp(10px, 1.55cqw, 32px)/1 Georgia, serif; letter-spacing: .22em;
   text-shadow: 0 1px 0 #f4c77c; box-shadow: inset 0 2px 1px #ffdc9580, inset 0 -3px 3px #593010, 0 4px 0 #211409, 0 6px 8px #000a;
@@ -59,7 +59,7 @@ body.login-page {
 .login-submit::before { left: 12px; } .login-submit::after { right: 12px; }
 .login-submit:active { transform: translate(-50%, 3px); box-shadow: inset 0 3px 8px #40220de0, 0 1px 0 #211409; }
 .login-submit:focus-visible { outline: 2px solid #fff1cc; outline-offset: 5px; }
-.login-error { top: max(46.5%, calc(40.1% + 48px)); width: 39%; max-width: calc(100vw - 32px); margin: 0; text-align: center; color: #ffe2d2; background: #1d0907e8; border-radius: 4px; padding: 7px 10px; font-size: clamp(12px, .9cqw, 17px); }
+.login-error { top: max(46.5%, calc(40.1% + 48px)); width: 39%; max-width: calc(100vw - 32px); margin: 0; text-align: center; color: #ffe2d2; background: #1d0907e8; border-radius: var(--desk-radius, 12px); padding: 7px 10px; font-size: clamp(12px, .9cqw, 17px); }
 .login-error:empty { display: none; }
 .lamp-hotspot { position: absolute; min-width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
 .lamp-hotspot:focus-visible { outline: 2px dashed #fff1cc; outline-offset: 3px; background: #ffe8ad18; }

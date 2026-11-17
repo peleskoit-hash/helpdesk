@@ -148,7 +148,7 @@
         "/static/ticket_composer.js?v=20261111-shared-drafts-v1",
         "/static/ticket_controls.js?v=20261027-dialogs-complete-v3",
         "/static/ticket_message_view.js?v=20261117-ticket-attachment-source-v1",
-        "/static/ticket.js?v=20261117-ticket-list-escape-v1",
+        "/static/ticket.js?v=20261117-appearance-escape-v1",
       ],
     },
   ];

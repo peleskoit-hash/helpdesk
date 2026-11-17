@@ -95,8 +95,8 @@ for (const theme of ['light', 'dark']) {
       assert.deepEqual(line, sibling, 'sibling surfaces share grid phase');
       assert.ok(line.every((value, i) => Math.abs(value - crossing[i]) <= 1), 'crossing strokes match within compositor rounding');
       if (template === 'ticket') assert.equal(await page.locator('#messages').evaluate(el => getComputedStyle(el).getPropertyValue('--desk-grid-base').trim() === getComputedStyle(el).getPropertyValue('--desk-soft').trim()), true);
-      assert.ok(assets.includes('/static/styles.css?v=20261106-ticket-table-v2'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261106-ticket-table-v2'));
+      assert.ok(assets.includes('/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1'));
     });
   }
   test(`grid contrast is stable across appearance hue and intensity: ${theme}`, async t => {
@@ -149,13 +149,31 @@ for (const theme of ['light', 'dark']) test(`continuous chrome corner keeps page
         return {content: s.content, radius: s.borderTopLeftRadius, others: [s.borderTopRightRadius, s.borderBottomLeftRadius, s.borderBottomRightRadius],
           borders: [s.borderTopWidth, s.borderLeftWidth, s.borderRightWidth, s.borderBottomWidth], gridRow: s.gridRow, animation: s.animationName, transition: s.transitionDuration,
           side: getComputedStyle(document.querySelector('.sidebar')).borderRightColor,
-          header: getComputedStyle(el.querySelector('.toolbar')).borderBottomColor};
+          header: getComputedStyle(el.querySelector('.toolbar')).borderBottomColor, edge: s.borderTopColor};
       });
-      assert.equal(shape.content, '""', template); assert.equal(shape.radius, '24px');
-      assert.deepEqual(shape.others, ['24px', '24px', '0px']);
+      assert.equal(shape.content, '""', template); assert.equal(shape.radius, '12px');
+      assert.deepEqual(shape.others, ['12px', '12px', '0px']);
       assert.deepEqual(shape.borders, ['1px', '1px', '1px', '1px']);
       assert.equal(shape.gridRow, '2 / -1'); assert.equal(shape.animation, 'none'); assert.equal(shape.transition, '0s');
-      assert.equal(shape.side, 'rgba(0, 0, 0, 0)'); assert.equal(shape.header, 'rgba(0, 0, 0, 0)');
+      assert.equal(shape.side, 'rgba(0, 0, 0, 0)');
+      if (template === 'tickets') {
+        const toolbar = await page.locator('.toolbar').boundingBox();
+        const seam = (await page.screenshot({ clip: {
+          x: Math.ceil(toolbar.x), y: Math.round(toolbar.y + toolbar.height) - 1,
+          width: Math.floor(toolbar.width), height: 1,
+        } })).toString('base64');
+        const pixels = await page.evaluate(async png => {
+          const image = new Image(); image.src = 'data:image/png;base64,' + png; await image.decode();
+          const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = 1;
+          const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+          return [1, 20, image.width - 21, image.width - 2].map(x => [...ctx.getImageData(x, 0, 1, 1).data].slice(0, 3));
+        }, seam);
+        const border = shape.edge.match(/\d+/g).slice(0, 3).map(Number);
+        assert.notDeepEqual(pixels[0], border, 'left corner has no horizontal tail');
+        assert.deepEqual(pixels[1], border, 'line meets the left arc');
+        assert.deepEqual(pixels[2], border, 'line meets the right arc');
+        assert.notDeepEqual(pixels[3], border, 'right corner has no horizontal tail');
+      }
       const edge = await page.locator('#appContent').evaluate(el => ({
         x: el.getBoundingClientRect().left, y: el.querySelector('.toolbar').getBoundingClientRect().bottom + 40,
         color: getComputedStyle(el, '::before').borderLeftColor.match(/\d+/g).slice(0, 3).map(Number),
@@ -169,7 +187,7 @@ for (const theme of ['light', 'dark']) test(`continuous chrome corner keeps page
       }, pixel), edge.color, `${template}: the vertical contour is visible even with overflow:hidden`);
       if (template === 'tickets') {
         assert.equal(await page.locator('th').first().evaluate(el => getComputedStyle(el).borderBottomColor), 'rgba(0, 0, 0, 0)');
-        assert.equal(await page.locator('thead').evaluate(el => getComputedStyle(el, '::after').height), '1px');
+        assert.equal(await page.locator('.table-wrap').evaluate(el => getComputedStyle(el).borderTopLeftRadius), shape.radius);
       }
       const original = await page.addStyleTag({content: `
         body:has(.layout > .main) #appContent.main {position:static; isolation:auto; background-color:transparent;}
@@ -207,7 +225,7 @@ for (const theme of ['light', 'dark']) test(`new chrome corners follow viewport 
         return {x: r.x, right: r.right, bottom: r.bottom, top,
           border: s.borderLeftColor, surface, radii: [s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomLeftRadius, s.borderBottomRightRadius]};
       });
-      assert.deepEqual(edge.radii, ['24px', '24px', '24px', '0px'], file);
+      assert.deepEqual(edge.radii, ['12px', '12px', '12px', '0px'], file);
       const png = (await page.screenshot()).toString('base64');
       const colors = await page.evaluate(async ({png, edge}) => {
         const image = new Image(); image.src = 'data:image/png;base64,' + png; await image.decode();

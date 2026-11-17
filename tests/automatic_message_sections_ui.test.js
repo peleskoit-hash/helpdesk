@@ -146,8 +146,8 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      const stylesVersion = file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3' : '20261116-task-panel-v1';
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? stylesVersion : '20261117-settings-users-cache-v1'], `${file}: ${resource}`);
+      const stylesVersion = file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3-radius-v1-seam-v1' : '20261116-task-panel-v1-radius-v1-seam-v1';
+      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? stylesVersion : '20261117-appearance-escape-v1'], `${file}: ${resource}`);
     }
   }
 });

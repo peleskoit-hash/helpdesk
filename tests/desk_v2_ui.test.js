@@ -99,6 +99,11 @@ for (const theme of ['light', 'dark']) test(`quick reply accordion V2 populated 
   assert.equal(await panel.locator('.quick-replies-panel-placeholder').count(), 0);
 });
 
+const appearanceColorRanges = [
+  ['appearance-interface-hue', 'appearance-interface-intensity'],
+  ['appearance-accent-hue', 'appearance-accent-intensity'],
+];
+
 for (const theme of ['light', 'dark']) {
   test(`visual controls stay painted across theme and settings changes: ${theme}`, async t => {
     const { page, requests } = await setup(t, { width: 1366, height: 900, theme, role: 'agent', pageName: 'tickets' });
@@ -119,10 +124,11 @@ for (const theme of ['light', 'dark']) {
     async function assertTracksPainted() {
       await page.locator('#appearanceMenu').waitFor({ state: 'visible' });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      const rects = await page.locator('#appearanceMenu input[type="range"]').evaluateAll(nodes => nodes.map(el => {
+      const rects = await page.locator('#appearanceMenu .appearance-controls input[type="range"]').evaluateAll(nodes => nodes.map(el => {
         const r = el.getBoundingClientRect();
         return { id: el.id, x: r.x, y: r.y, width: r.width, height: r.height, appearance: getComputedStyle(el).appearance };
       }));
+      assert.deepEqual(rects.map(rect => rect.id), appearanceColorRanges.flat());
       const png = await page.screenshot();
       const samples = await page.evaluate(async ({ base64, rects }) => {
         const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
@@ -144,6 +150,47 @@ for (const theme of ['light', 'dark']) {
       }
     }
     await assertTracksPainted();
+    const pattern = page.locator('#appearanceMenu details.appearance-pattern');
+    const assertPatternSliders = async () => {
+      for (const [id, min, max] of [['patternIntensity', 0, 100], ['patternScale', 50, 200]]) {
+        const slider = pattern.locator(`.pattern-parameters input[type="range"]#${id}`);
+        assert.equal(await slider.count(), 1);
+        assert.equal(await slider.isVisible(), false);
+        assert.deepEqual(await slider.evaluate(el => [Number(el.min), Number(el.max)]), [min, max]);
+      }
+      await pattern.locator('summary').click();
+      for (const id of ['patternIntensity', 'patternScale']) {
+        const slider = pattern.locator(`#${id}`);
+        await slider.waitFor({ state: 'visible' });
+        const styles = await slider.evaluate(el => {
+          function* rules(sheet) {
+            for (const rule of sheet.cssRules) {
+              if (rule instanceof CSSImportRule && rule.styleSheet) yield* rules(rule.styleSheet);
+              else if (rule instanceof CSSStyleRule) yield rule;
+            }
+          }
+          // Chromium does not expose the painted range parts through getComputedStyle.
+          const matchingPart = suffix => [...document.styleSheets].flatMap(sheet => [...rules(sheet)])
+            .find(rule => rule.selectorText.endsWith(suffix) && el.matches(rule.selectorText.slice(0, -suffix.length)))?.style;
+          const track = matchingPart('::-webkit-slider-runnable-track');
+          const thumb = matchingPart('::-webkit-slider-thumb');
+          const style = getComputedStyle(el);
+          const token = name => style.getPropertyValue(name).trim();
+          return { appearance: style.appearance, rangeValid: el.validity.valid && el.value !== '',
+            gradient: token('--appearance-track'),
+            expectedGradient: `linear-gradient(to right, ${token('--desk-border')}, ${token('--desk-accent')})`,
+            track: [track?.height, track?.background],
+            thumb: [thumb?.width, thumb?.height, thumb?.border, thumb?.borderRadius, thumb?.background] };
+        });
+        assert.equal(styles.appearance, 'none');
+        assert.equal(styles.rangeValid, true);
+        assert.equal(styles.gradient, styles.expectedGradient);
+        assert.deepEqual(styles.track, ['10px', 'var(--appearance-track)']);
+        assert.deepEqual(styles.thumb, ['22px', '22px', '2px solid var(--desk-text)', '50%', 'var(--desk-surface)']);
+      }
+      await pattern.locator('summary').click();
+    };
+    await assertPatternSliders();
     for (const mode of [theme === 'light' ? 'dark' : 'light', theme]) {
       await page.locator(`[data-appearance-theme="${mode}"]`).click();
       await page.locator('#appearance-interface-hue').fill('184');
@@ -170,9 +217,10 @@ for (const height of [768, 900]) for (const theme of ['light', 'dark']) {
     const { page } = await setup(t, { width: 1366, height, theme, pageName: 'tickets' });
     const geometry = await page.evaluate(() => {
       const brand = document.querySelector('.sidebar-brand'), bs = getComputedStyle(brand), br = brand.getBoundingClientRect();
-      const scroll = document.querySelector('.table-scroll'), sr = scroll.getBoundingClientRect(), head = document.querySelector('thead').getBoundingClientRect();
+      const head = document.querySelector('#ticketsTable thead');
       return { brand: { x: br.x + parseFloat(bs.paddingLeft), y: br.y, before: getComputedStyle(brand, "::before").content, background: getComputedStyle(brand.closest('.sidebar')).backgroundColor, color: bs.color, text: brand.textContent, size: bs.fontSize, family: bs.fontFamily },
-        line: { y: Math.floor(head.bottom) - 1, left: sr.left + 1, right: sr.left + scroll.clientWidth - 2, color: getComputedStyle(document.querySelector('thead'), '::after').backgroundColor },
+        separator: getComputedStyle(head, '::after').content,
+        headerBorders: [...head.querySelectorAll('th')].map(cell => getComputedStyle(cell).borderBottomColor),
         buttons: ['prevPageBtn', 'nextPageBtn'].map(id => {
           const el = document.getElementById(id), r = el.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(el);
           const text = range.getBoundingClientRect();
@@ -188,6 +236,9 @@ for (const height of [768, 900]) for (const theme of ['light', 'dark']) {
     assert.equal(geometry.brand.before, 'none');
     assert.equal(geometry.brand.x, 28);
     assert.equal(geometry.brand.y, 4);
+    assert.equal(geometry.separator, 'none');
+    assert.ok(geometry.headerBorders.length > 0);
+    assert.ok(geometry.headerBorders.every(color => color === 'rgba(0, 0, 0, 0)'));
     const png = await page.screenshot();
     const painted = await page.evaluate(async ({ base64, geometry }) => {
       const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
@@ -201,10 +252,9 @@ for (const height of [768, 900]) for (const theme of ['light', 'dark']) {
         const hit = distance(pixel(x, 1), rgb(geometry.brand.background)) > 25;
         if (hit && !previous) threads++; previous = hit;
       }
-      return { threads, line: [geometry.line.left, geometry.line.right].map(x => distance(pixel(x, geometry.line.y), rgb(geometry.line.color))) };
+      return threads;
     }, { base64: png.toString('base64'), geometry });
-    assert.equal(painted.threads, 6);
-    assert.ok(painted.line.every(distance => distance < 10), JSON.stringify(painted));
+    assert.equal(painted, 6);
   });
 }
 
@@ -241,7 +291,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     assert.equal(border.outline, 'none');
     assert.ok(border.cells.every(colors => colors.every(color => color === border.accent)));
     assert.equal(border.left, border.accent); assert.equal(border.right, border.accent);
-    assert.deepEqual(border.radii, ['14px', '14px']);
+    assert.deepEqual(border.radii, ['12px', '12px']);
     for (const selector of ['td.ticket-channel-col', ...(role === 'admin' ? ['td.ticket-check-cell'] : [])]) {
       assert.equal(await row.locator(selector).evaluate(el => getComputedStyle(el).textOverflow), 'clip');
     }
@@ -254,7 +304,10 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     for (const side of ['left', 'right']) {
       if (side === 'right') await page.locator('.table-scroll').evaluate(el => { el.scrollLeft = el.scrollWidth; });
       const cell = side === 'left' ? row.locator('td').first() : row.locator('td').last();
+      await cell.hover();
+      assert.equal(await row.evaluate(el => el.matches(':hover')), true, `${side}: row is hovered before capture`);
       const png = await cell.screenshot();
+      assert.equal(await row.evaluate(el => el.matches(':hover')), true, `${side}: row is still hovered after capture`);
       const pixels = await page.evaluate(async ({ base64, side }) => {
         const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
         const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
@@ -262,11 +315,17 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
         const pixel = (x, y) => [...ctx.getImageData(side === 'left' ? x : image.width - 1 - x, y, 1, 1).data].slice(0, 3);
         const curve = [];
         for (let x = 3; x <= 10; x++) for (let y = 3; y <= 10; y++) curve.push(pixel(x, y));
-        return { top: pixel(18, 0), curve, outside: pixel(0, 0) };
+        const top = [0, 1, 2].map(y => {
+          const edge = [];
+          for (let x = 14; x <= Math.min(25, image.width - 2); x++) edge.push(pixel(x, y));
+          return edge;
+        });
+        return { top, curve, outside: pixel(0, 0) };
       }, { base64: png.toString('base64'), side });
       const accent = border.accent.match(/\d+/g).slice(0, 3).map(Number);
       const distance = pixel => Math.max(...pixel.map((value, index) => Math.abs(value - accent[index])));
-      assert.ok(distance(pixels.top) < 8, `${side} top border: ${pixels.top}`);
+      assert.ok(pixels.top.some(edge => edge.length >= 8 &&
+        edge.filter(pixel => distance(pixel) < 8).length >= edge.length * .75), `${side} top border: ${JSON.stringify(pixels.top)}`);
       assert.ok(pixels.curve.some(pixel => distance(pixel) < 40), `${side} curved border is painted`);
       assert.ok(distance(pixels.outside) > 20, `${side} outer corner stays rounded`);
     }
@@ -275,12 +334,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -360,7 +419,7 @@ for (const theme of ['light', 'dark']) for (const width of [1366, 1920]) {
     }
     assert.deepEqual(await page.locator('.tab-list').evaluate(el => {
       const s = getComputedStyle(el); return [s.borderRadius, s.borderTopWidth, s.padding];
-    }), ['16px', '1px', '8px']);
+    }), ['12px', '1px', '9px']);
     assert.equal(await sidebar.evaluate(el => [el, ...el.querySelectorAll('.admin-agent-item, .admin-agent-name, .admin-agent-counts')].some(n => n.scrollWidth > n.clientWidth + 1)), false);
   });
 }
@@ -379,7 +438,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
       const s = getComputedStyle(el), c = el.querySelector('#closeBtn').getBoundingClientRect(), r = el.querySelector('#restoreBtn').getBoundingClientRect();
       return { radius: s.borderRadius, border: s.borderTopWidth, overlap: r.bottom > c.top, inside: c.bottom <= el.getBoundingClientRect().bottom };
     });
-    assert.deepEqual(block, { radius: '16px', border: '1px', overlap: false, inside: true });
+    assert.deepEqual(block, { radius: '12px', border: '1px', overlap: false, inside: true });
     assert.equal(await page.locator('.freeze-box').evaluate(el => {
       const s = getComputedStyle(el), button = el.querySelector('#freezeToggleBtn');
       return button.getBoundingClientRect().width === el.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight);
@@ -430,7 +489,7 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
       await skip.check();
       assert.equal(await skip.isChecked(), true);
       await page.locator('#adminForceCloseBtn').click();
-      await modalVisible(page, '#adminActionModal');
+      await modalVisible(page, '#adminActionModal', '.desk-dialog');
       await page.locator('#cancelAdminActionBtn').click();
       assert.equal(await skip.isChecked(), false);
       const spacing = await page.locator('.sidebar').evaluate(el => {
@@ -570,10 +629,19 @@ async function geometry(page) {
   });
 }
 
-async function modalVisible(page, selector) {
+async function modalVisible(page, selector, dialogSelector = '.modal-dialog') {
   await page.locator(selector).waitFor({ state: 'visible' });
-  const r = await page.locator(`${selector} .modal-dialog`).boundingBox(), vp = page.viewportSize();
+  const r = await page.locator(`${selector} ${dialogSelector}`).boundingBox(), vp = page.viewportSize();
   assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.width <= vp.width + 1 && r.y + r.height <= vp.height + 1, JSON.stringify(r));
+}
+
+async function mockEditableClientFields(page, fields = [['contact_name', 'Имя', 'text']]) {
+  await page.route('**/api/v1/tickets/demo-0/client-card-view-config', route => route.fulfill({ json: {
+    blocks: [{ key: 'profile', title: 'Клиент', is_visible: true, is_visible_in_editor: true,
+      fields: fields.map(([key, label, field_type]) => ({
+        key, label, field_type, is_system: true, is_visible: true, is_visible_in_editor: true, is_editable: true,
+      })) }],
+  } }));
 }
 
 function contrastRatio(foreground, background) {
@@ -590,10 +658,27 @@ for (const theme of ['light', 'dark']) {
     const scroll = await page.locator('#clientDynamicCard').evaluate(el => {
       el.scrollTop = 25;
       const s = getComputedStyle(el);
-      return { top: el.scrollTop, width: s.scrollbarWidth, color: s.scrollbarColor };
+      const custom = matchMedia('(hover: hover) and (pointer: fine)').matches && CSS.supports('selector(::-webkit-scrollbar)');
+      if (!custom) return { top: el.scrollTop, width: s.scrollbarWidth, color: s.scrollbarColor, custom };
+      const swatch = document.createElement('span');
+      swatch.style.color = 'var(--desk-muted)';
+      el.appendChild(swatch);
+      const expectedThumb = getComputedStyle(swatch).color;
+      swatch.remove();
+      return { top: el.scrollTop, width: s.scrollbarWidth, color: s.scrollbarColor, custom,
+        customWidth: getComputedStyle(el, '::-webkit-scrollbar').width,
+        thumb: getComputedStyle(el, '::-webkit-scrollbar-thumb').backgroundColor, expectedThumb };
     });
     assert.ok(scroll.top > 0, 'the view card itself is the scroll owner');
-    assert.equal(scroll.width, 'thin'); assert.notEqual(scroll.color, 'auto');
+    if (scroll.custom) {
+      assert.equal(scroll.width, 'auto');
+      assert.equal(scroll.color, 'auto');
+      assert.equal(scroll.customWidth, '10px');
+      assert.equal(scroll.thumb, scroll.expectedThumb);
+    } else {
+      assert.equal(scroll.width, 'thin');
+      assert.notEqual(scroll.color, 'auto');
+    }
     assert.equal(await page.locator('#clientModal').isVisible(), false);
   });
   test(`ticket client V2 scrollbars, border and boolean save: ${theme}`, async t => {
@@ -623,7 +708,7 @@ for (const theme of ['light', 'dark']) {
         rows: [...document.querySelectorAll('#clientModal .desk-toggle')].map(el => { const a = el.getBoundingClientRect(), b = el.previousElementSibling.getBoundingClientRect(); return { type: el.type, appearance: getComputedStyle(el).appearance, alignment: Math.abs(a.y + a.height / 2 - b.y - b.height / 2) }; }) };
     });
     assert.deepEqual(details.insets, [2, 2, 2, 2]);
-    assert.equal(details.rx, '22px'); assert.equal(details.ry, '22px');
+    assert.equal(details.rx, '12px'); assert.equal(details.ry, '12px');
     for (const s of details.scrollbars) { assert.equal(s.width, 'thin'); assert.notEqual(s.color, 'auto'); }
     for (const s of details.scrollbars) assert.ok(s.scrolled > 0);
     assert.equal(details.rows.length, 2);
@@ -654,6 +739,10 @@ for (const theme of ['light', 'dark']) {
   });
   test(`client editor text contrast and unchanged geometry: ${theme}`, async t => {
     const { page } = await setup(t, { width: 1366, height: 768, theme, pageName: 'ticket' });
+    await mockEditableClientFields(page, [
+      ['contact_name', 'Имя', 'text'], ['last_name', 'Фамилия', 'text'],
+      ['destination', 'Куда..?', 'select'], ['internal_number', 'Внутренний номер', 'text'],
+    ]);
     await page.locator('#editClientBtn').click();
     await page.locator('#fContactName').waitFor({ state: 'visible' });
     await page.locator('#clientModal .modal-field-section').first().evaluate(section => {
@@ -697,7 +786,9 @@ test('appearance write failure is visible and restores the saved choice', async 
     ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }) : route.fallback();
   await page.route('**/api/v1/users/me/preferences**', failWrite);
   await page.locator('#appearance-accent-hue').fill('350');
-  await page.locator('.appearance-status').filter({ hasText: 'Не удалось сохранить' }).waitFor();
+  await page.locator('.appearance-status')
+    .filter({ hasText: /^Не удалось подтвердить сохранение оформления\. Проверьте настройки\.$/ })
+    .waitFor({ timeout: 5000 });
   assert.equal(await page.locator('#appearance-accent-hue').inputValue(), '259');
   assert.equal(await page.locator('#appearanceMenu').isVisible(), true);
   await page.unroute('**/api/v1/users/me/preferences**', failWrite);
@@ -725,9 +816,14 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
       }
       assert.ok(menuBox.width >= 700 && menuBox.width <= 722);
       assert.equal(await menu.locator('[data-appearance-accent]').count(), 0);
-      assert.equal(await menu.locator('input[type="range"]').count(), 4);
+      assert.equal(await menu.locator('input[type="range"]').count(), 6);
+      assert.deepEqual(await menu.locator('.appearance-controls > fieldset').evaluateAll(fields =>
+        fields.map(field => [...field.querySelectorAll('input[type="range"]')].map(slider => slider.id))), appearanceColorRanges);
+      assert.deepEqual(await menu.locator('details.appearance-pattern .pattern-parameters input[type="range"]')
+        .evaluateAll(sliders => sliders.map(slider => slider.id)), ['patternIntensity', 'patternScale']);
       assert.equal(await menu.locator('output').count(), 0);
-      assert.ok((await page.locator('#appearance-interface-hue').evaluate(el => getComputedStyle(el).backgroundImage)).includes('linear-gradient'));
+      assert.match(await page.locator('#appearance-interface-hue').evaluate(el =>
+        getComputedStyle(el).getPropertyValue('--appearance-track').trim()), /^linear-gradient\(/);
       const range = page.locator('#appearance-accent-intensity');
       const semanticsBackgrounds = () => page.locator('.ticket-status-badge, .message.internal, .message.agent, .action.danger')
         .evaluateAll(nodes => nodes.map(el => getComputedStyle(el).backgroundColor));
@@ -824,7 +920,7 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
         const before = await geometry(page);
         assert.equal(before.overflow, false);
         assert.match(before.font, /Manrope/);
-        assert.equal(before.radius, '24px');
+        assert.equal(before.radius, '12px');
         assert.equal(before.background, theme === 'dark' ? 'rgb(32, 37, 53)' : 'rgb(245, 243, 249)');
         assert.ok(before.content.bottom <= height + 1);
         const sidebarChecks = await page.locator('.sidebar').evaluate(sidebar => ({
@@ -885,11 +981,14 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
             const r = el.getBoundingClientRect();
             return { width: r.width, height: r.height, radius: getComputedStyle(el).borderRadius,
               imageRadius: getComputedStyle(el.querySelector('img')).borderRadius, loaded: el.querySelector('img').naturalWidth > 0 };
-          }), { width: 92, height: 92, radius: '16px', imageRadius: '16px', loaded: true });
+          }), { width: 92, height: 92, radius: '50%', imageRadius: '50%', loaded: true });
           const density = await page.locator('.ticket-layout').evaluate(el => {
-            const s = getComputedStyle(el); return { top: s.paddingTop, side: s.paddingLeft, gap: s.gap };
+            const s = getComputedStyle(el);
+            return { top: s.paddingTop, side: s.paddingLeft, rowGap: s.rowGap, columnGap: s.columnGap };
           });
-          assert.deepEqual(density, width === 1366 ? { top: '11px', side: '11px', gap: '8px' } : { top: '14px', side: '16px', gap: '12px' });
+          assert.deepEqual(density, width === 1366
+            ? { top: '11px', side: '11px', rowGap: '0px', columnGap: '8px' }
+            : { top: '14px', side: '16px', rowGap: '0px', columnGap: '12px' });
           assert.equal(await page.locator('.message').count(), 32);
           assert.equal(await page.locator('.message.client').first().evaluate(el => getComputedStyle(el).fontSize), '18px');
           const internal = page.locator('.message.internal').first();
@@ -917,7 +1016,10 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           });
           assert.equal(new Set(badgeColors).size, 7);
           assert.equal(badgeColors.at(-1), theme === 'dark' ? 'rgb(42, 53, 78)' : 'rgb(234, 240, 250)');
-          assert.ok((await page.locator('.ticket-client-side > .card-head').boundingBox()).height <= 56);
+          const bottoms = await page.locator('.ticket-side > .card-head, #cardWrap > .card-head')
+            .evaluateAll(headers => headers.map(el => el.getBoundingClientRect().bottom));
+          assert.equal(bottoms.length, 3);
+          assert.ok(Math.max(...bottoms) - Math.min(...bottoms) <= 1, `aligned header bottoms: ${bottoms.join(', ')}`);
           const headline = await page.locator('.ticket-head-title-wrap').evaluate(el => {
             const title = el.querySelector('.ticket-head-title').getBoundingClientRect();
             const badges = el.querySelector('.ticket-status-badges').getBoundingClientRect();
@@ -943,6 +1045,11 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
             const scrolled = await page.locator(selector).evaluate(el => { el.scrollTop = el.scrollHeight; return el.scrollHeight <= el.clientHeight || el.scrollTop > 0; });
             assert.ok(scrolled, selector);
           }
+          await page.route('**/api/v1/tickets/demo-0/client-card-view-config', route => route.fulfill({ json: {
+            blocks: [{ key: 'profile', title: 'Клиент', is_visible: true, is_visible_in_editor: true, fields: [
+              { key: 'contact_name', label: 'Имя', field_type: 'text', is_system: true, is_visible: true, is_visible_in_editor: true, is_editable: true },
+            ] }],
+          } }));
           await page.locator('#editClientBtn').click();
           await page.locator('#fContactName').waitFor({ state: 'visible' });
           assert.equal(await page.locator('#fContactName').inputValue(), 'Мария');
@@ -956,7 +1063,7 @@ for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           assert.equal(await page.locator('.wrong-problem-children .wrong-problem-item').isVisible(), true);
           await page.locator('#closeWrongProblemModalBtn').click();
           await page.locator('#adminDeleteBtn').click();
-          await modalVisible(page, '#adminActionModal');
+          await modalVisible(page, '#adminActionModal', '.desk-dialog');
           await page.locator('#cancelAdminActionBtn').click();
           assert.equal(requests.some(r => r.method === 'DELETE'), false);
         } else {
@@ -1094,14 +1201,14 @@ test('AppShell list → card → list preserves shell and new stylesheet', async
   assert.equal(await page.locator('#appearance-accent-intensity').inputValue(), '73');
   await page.keyboard.press('Escape');
   assert.equal(await page.evaluate(() => window.originalSidebar === document.querySelector('.sidebar')), true);
-  assert.equal((await geometry(page)).radius, '24px');
+  assert.equal((await geometry(page)).radius, '12px');
   await page.locator('#backToListBtn').click();
   await page.waitForSelector('.ticket-row');
   assert.equal(await page.evaluate(() => document.body.style.getPropertyValue('--desk-accent')), accentBeforeNavigation);
   await page.evaluate(() => { HelpdeskTheme.initThemeToggle(); HelpdeskTheme.initThemeToggle(); });
   assert.equal(await page.locator('#appearanceMenu').count(), 1);
   assert.equal(await page.evaluate(() => window.originalSidebar === document.querySelector('.sidebar')), true);
-  assert.equal((await geometry(page)).radius, '24px');
+  assert.equal((await geometry(page)).radius, '12px');
 });
 
 for (const width of [1366, 1920]) {
@@ -1142,6 +1249,7 @@ for (const width of [1024, 390]) {
       if (pageName === 'ticket') {
         await page.locator('#ticketMessageBody').scrollIntoViewIfNeeded();
         assert.ok(await page.locator('#ticketMessageBody').isVisible());
+        await mockEditableClientFields(page);
         await page.locator('#editClientBtn').click();
         await page.locator('#fContactName').waitFor({ state: 'visible' });
       } else {
@@ -1375,7 +1483,7 @@ for (const width of [1366,1920]) for (const theme of ['light','dark']) {
       const s = getComputedStyle(el), first = getComputedStyle(el.firstElementChild), next = getComputedStyle(el.children[1]);
       return [s.padding, s.borderRadius, first.backgroundColor !== next.backgroundColor, first.borderColor !== next.borderColor];
     });
-    assert.deepEqual(bubble, ['12px', '16px', true, true]);
+    assert.deepEqual(bubble, ['12px', '12px', true, true]);
     const removedKey = await page.locator('[data-column-delete]').first().getAttribute('data-column-delete');
     await page.locator('[data-column-delete]').first().click();
     await page.locator('dialog.desk-dialog [data-dialog-accept]').click();
@@ -1511,10 +1619,28 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
     await headers.first().click();
     await page.locator('.table-sort-btn[data-sort-key="subject"]').dispatchEvent('click');
     assert.deepEqual(await sortState(), sorted, 'editing never changes sorting');
+    await page.evaluate(() => {
+      const animate = Element.prototype.animate;
+      window.headerMoves = [];
+      Element.prototype.animate = function (...args) {
+        const animation = animate.apply(this, args);
+        if (this.matches('#ticketsTable th[data-column-key]')) {
+          window.headerMoves.push({
+            keyframes: animation.effect.getKeyframes().map(frame => frame.transform),
+            duration: animation.effect.getTiming().duration,
+          });
+        }
+        return animation;
+      };
+    });
     await holdMove(headers.nth(1), headers.nth(2), true);
     const live = await tableKeys(); assert.notDeepEqual(live, original);
     assert.deepEqual(await page.locator('.ticket-row').first().locator('td[data-column-key]').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey)), live);
-    assert.ok(await headers.evaluateAll(nodes => nodes.some(el => el.getAnimations().length)));
+    assert.ok(await page.evaluate(() => window.headerMoves.some(({ keyframes, duration }) => {
+      const x = keyframes[0]?.match(/^translate\((-?[\d.]+)px/);
+      return duration > 0 && keyframes.length === 2 && x && Number(x[1]) !== 0 &&
+        /^translate\(0(?:px)?(?:,\s*0(?:px)?)?\)$/.test(keyframes[1]);
+    })), 'a displaced column header animates back to its new resting position');
     assert.equal(writes().length, 0); await page.mouse.up();
     assert.deepEqual(Object.fromEntries(await widths()), Object.fromEntries(resizedBefore));
     // Resize remains independent of reordering.
@@ -1963,7 +2089,7 @@ for (const theme of ['light', 'dark']) for (const role of ['agent', 'admin']) {
         return [s.borderRadius, s.fontSize, getComputedStyle(el, '::backdrop').backdropFilter,
           document.elementFromPoint(r.x + 20, r.y + 20) === el];
       });
-      assert.deepEqual(appearance, ['24px', '28px', 'blur(6px)', true]);
+      assert.deepEqual(appearance, ['12px', '28px', 'blur(6px)', true]);
       assert.equal(await dialog.locator('[data-dialog-cancel]').evaluate(el => el === document.activeElement), true);
       await page.keyboard.press('Tab'); assert.equal(await dialog.locator('[data-dialog-accept]').evaluate(el => el === document.activeElement), true);
       await page.keyboard.press('Tab'); assert.equal(await dialog.locator('[data-dialog-cancel]').evaluate(el => el === document.activeElement), true);
@@ -2148,6 +2274,61 @@ for (const theme of ['light', 'dark']) test(`active staff status has a triple in
     await old.evaluate(el => el.remove());
   }
   assert.ok(requests.some(r => r.path.endsWith('/users/me/status') && r.method === 'PATCH'), 'existing status selection is used');
+});
+
+for (const theme of ['light', 'dark']) test(`users sidebar link keeps its role and themed outline: ${theme}`, async t => {
+  const { page } = await setup(t, { width: 1440, height: 900, theme, pageName: 'tickets', role: 'agent' });
+  const link = page.locator('.sidebar .settings-link.agent-only[href="/management/users"]');
+  const icon = link.locator('img');
+  await icon.evaluate(img => img.decode());
+  const skin = await link.evaluate(node => {
+    const css = getComputedStyle(node);
+    const image = node.querySelector('img');
+    const text = node.querySelector('span').getBoundingClientRect();
+    const rect = image.getBoundingClientRect();
+    return { radius: css.borderRadius, border: css.borderTopWidth,
+      color: css.borderTopColor, outline: getComputedStyle(node.closest('.sidebar').querySelector('.tab-list')).borderTopColor,
+      icon: image.getAttribute('src'), iconWidth: rect.width, iconHeight: rect.height, iconOnRight: rect.left > text.right };
+  });
+  assert.equal(skin.color, skin.outline);
+  assert.notEqual(skin.color, 'rgba(0, 0, 0, 0)');
+  assert.deepEqual([skin.radius, skin.border, skin.iconWidth, skin.iconHeight, skin.iconOnRight], ['12px', '1px', 18, 18, true]);
+  assert.equal(skin.icon, '/static/icons/sidebar-users.png');
+  const admin = await setup(t, { width: 1440, height: 900, theme, pageName: 'tickets' });
+  assert.equal(await admin.page.locator('.sidebar .settings-link.agent-only[href="/management/users"]').isVisible(), false);
+});
+
+test('desktop ticket headers share the central header baseline with a wrapped subject', async t => {
+  const { page } = await setup(t, { width: 1366, height: 900, theme: 'light', pageName: 'ticket' });
+  await page.waitForFunction(() => [...document.styleSheets].some(sheet => sheet.href?.includes('/ticket_client_card.css?v=')));
+  const measurements = await page.evaluate(() => {
+    const subject = document.querySelector('#ticketSubject');
+    const original = subject.textContent;
+    const sheet = [...document.styleSheets].find(sheet => sheet.href?.includes('/ticket_client_card.css?v='));
+    const desktop = [...sheet.cssRules].find(rule => rule.conditionText === '(min-width: 1201px)');
+    const read = () => [...document.querySelectorAll('.ticket-side > .card-head, #cardWrap > .card-head')]
+      .map(node => { const { top, bottom, height } = node.getBoundingClientRect(); return { top, bottom, height }; });
+    const compare = () => {
+      const aligned = read();
+      desktop.media.mediaText = 'not all';
+      const initial = read();
+      desktop.media.mediaText = '(min-width: 1201px)';
+      return { aligned, initial };
+    };
+    subject.textContent = 'Заявка';
+    const short = compare();
+    subject.textContent = 'Подробный заголовок заявки для проверки переноса текста на несколько строк '.repeat(3);
+    const wrapped = compare();
+    subject.textContent = original;
+    return { short, wrapped };
+  });
+  for (const { aligned, initial } of Object.values(measurements)) {
+    const [left, center, right] = aligned;
+    assert.equal(left.bottom, center.bottom);
+    assert.equal(right.bottom, center.bottom);
+    assert.equal(center.height, initial[1].height);
+  }
+  assert.ok(measurements.wrapped.aligned[1].height > measurements.short.aligned[1].height);
 });
 
 for (const [theme, width] of [['light', 1366], ['dark', 390]]) test(`short ticket links preserve list search, pagination and browser history: ${theme} ${width}`, async t => {
@@ -2412,11 +2593,12 @@ for (const workflow of ['ticket', 'task']) test(`failed WEBP can be removed afte
 
 test('uncertain WEBP retry requires explicit confirmation and cancel retains the tile', async t => {
   const h = await attachmentFailureUi(t, 'ticket', 'dark', true);
+  const dialog = h.page.locator('dialog.desk-dialog[open]');
   await h.page.getByRole('button', { name: 'Повторить', exact: true }).click();
-  await h.page.locator('[data-dialog-cancel]').click();
+  await dialog.locator('[data-dialog-cancel]').click();
   assert.equal(h.status.retries, 0); assert.equal(await h.page.locator('.selected-file-item').count(), 1);
   await h.page.getByRole('button', { name: 'Повторить', exact: true }).click();
-  await h.page.locator('[data-dialog-accept]').click();
+  await dialog.locator('[data-dialog-accept]').click();
   await h.page.waitForFunction(() => document.querySelector('.selected-file-item-ready'));
   assert.equal(h.status.retries, 1);
 });
@@ -2431,9 +2613,13 @@ test('failed claimed task retry resumes its attachment without posting another r
 test('failed tile stays visible when manual removal fails', async t => {
   const h = await attachmentFailureUi(t, 'ticket', 'light'); h.status.deleteError = true;
   await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
-  await h.page.locator('#errorModal').waitFor({ state: 'visible' });
+  const error = h.page.locator('#errorModal');
+  await error.waitFor({ state: 'visible' });
+  assert.match(await error.textContent(), /Не удалось удалить файл/);
   assert.equal(await h.page.locator('.selected-file-item').count(), 1);
-  await h.page.locator('#closeErrorModalBtn').click(); h.status.deleteError = false;
+  await error.getByRole('button', { name: 'Понятно', exact: true }).click();
+  await error.waitFor({ state: 'hidden' });
+  h.status.deleteError = false;
   await h.page.getByRole('button', { name: 'Убрать', exact: true }).click();
   await h.page.waitForFunction(() => !document.querySelector('.selected-file-item'));
 });
@@ -2722,11 +2908,13 @@ for(const role of ['agent']) test(`task panel cache paints before slow SPA reque
 for(const theme of ['light','dark']) test(`task chip theme fill and inward double border: ${theme}`,async t=>{
   const {page}=await setup(t,{width:1920,height:1080,theme,role:'agent',pageName:'tickets'});
   await page.waitForFunction(()=>document.querySelectorAll('#taskPanel a').length===10);
-  const read=()=>page.locator('#taskPanelSlots a').first().evaluate(el=>{
+  const chip = page.locator('#taskPanelSlots .task-panel-chip').first();
+  const read=()=>chip.evaluate(el=>{
     const rgba=color=>{const ctx=document.createElement('canvas').getContext('2d');ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return [...ctx.getImageData(0,0,1,1).data].slice(0,3);};
     const lum=rgb=>rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
-    const s=getComputedStyle(el),background=rgba(s.backgroundColor),a=lum(background),b=lum(rgba(s.color)),r=el.getBoundingClientRect();
-    return {background,surfaceLum:lum(rgba(getComputedStyle(el.closest('.toolbar')).backgroundColor)),lum:a,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),shadow:s.boxShadow,border:s.borderTopWidth,width:r.width,height:r.height,toolbar:el.closest('.toolbar').getBoundingClientRect().height};
+    const s=getComputedStyle(el),background=rgba(s.backgroundColor),a=lum(background);
+    const b=lum(rgba(getComputedStyle(el.querySelector('a')).color)),r=el.getBoundingClientRect();
+    return {background,line:rgba(s.borderTopColor),surfaceLum:lum(rgba(getComputedStyle(el.closest('.toolbar')).backgroundColor)),lum:a,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),shadow:s.boxShadow,border:s.borderTopWidth,width:r.width,height:r.height,toolbar:el.closest('.toolbar').getBoundingClientRect().height};
   });
   await page.locator('#themeToggleBtn').click();
   const colors=[];
@@ -2738,6 +2926,19 @@ for(const theme of ['light','dark']) test(`task chip theme fill and inward doubl
     assert.ok(theme==='dark'?state.lum>state.surfaceLum:state.lum<state.surfaceLum,JSON.stringify(state));
     assert.ok(state.contrast>=4.5,JSON.stringify(state));assert.equal((state.shadow.match(/inset/g)||[]).length,2);
     assert.equal(state.border,'1px');assert.equal(state.height,30);assert.equal(state.toolbar,57);
+    const png = await chip.screenshot();
+    const edge = await page.evaluate(async base64 => {
+      const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+      return Array.from({ length: 6 }, (_, y) =>
+        [...ctx.getImageData(Math.floor(image.width / 2), y, 1, 1).data].slice(0, 3));
+    }, png.toString('base64'));
+    const near = (pixel, color) => pixel.every((value, i) => Math.abs(value - color[i]) <= 10);
+    assert.ok(edge.some((pixel, i) => near(pixel, state.line) &&
+      near(edge[i + 1] || [], state.background) &&
+      i + 3 < edge.length && near(edge[i + 2], state.line) && near(edge[i + 3], state.background)),
+    `painted outer edge, inset gap, inward edge and fill: ${JSON.stringify({ edge, ...state })}`);
   }
   assert.notDeepEqual(colors[0],colors[1]);assert.notDeepEqual(colors[1],colors[2]);
   await page.keyboard.press('Escape');

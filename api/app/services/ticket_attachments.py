@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from mimetypes import guess_extension
+from mimetypes import guess_extension, guess_type
 from pathlib import Path
 import uuid
 import time
@@ -29,11 +29,30 @@ def _attachment_is_image(attachment: TicketAttachment) -> bool:
     )
 
 
+def _attachment_download_filename(attachment: TicketAttachment) -> str | None:
+    filename = attachment.original_filename
+    if attachment.source != "video":
+        return filename
+
+    filename = filename or "video"
+    if Path(filename).suffix:
+        return filename
+
+    suffix = Path(attachment.telegram_file_path or "").suffix
+    path_mime, _ = guess_type(f"video{suffix}", strict=False)
+    if (path_mime or "").startswith("video/"):
+        return filename + suffix
+
+    mime_type = (attachment.mime_type or "").split(";", 1)[0].strip().lower()
+    guessed = guess_extension(mime_type, strict=False) if mime_type.startswith("video/") else None
+    return filename + guessed if guessed else filename
+
+
 def _attachment_out(ticket_id: str, attachment: TicketAttachment) -> dict:
     return {
         "id": attachment.id,
         "source": attachment.source,
-        "original_filename": attachment.original_filename,
+        "original_filename": _attachment_download_filename(attachment),
         "mime_type": attachment.mime_type,
         "file_size": attachment.file_size,
         "telegram_delivery_status": attachment.telegram_delivery_status,

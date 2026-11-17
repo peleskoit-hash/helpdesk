@@ -145,7 +145,7 @@ for (const theme of ['light', 'dark']) for (const width of [1366, 390]) {
         return { radius: s.borderRadius, font: getComputedStyle(el.querySelector('h2')).fontSize,
           fits: r.x >= 0 && r.right <= innerWidth, actions: getComputedStyle(el.querySelector('.desk-dialog-actions')).justifyContent };
       });
-      assert.deepEqual(style, { radius: '24px', font: '28px', fits: true, actions: 'flex-end' });
+      assert.deepEqual(style, { radius: '12px', font: '28px', fits: true, actions: 'flex-end' });
       assert.equal(await page.locator(`#${modal} .modal-head, #${modal} .modal-foot`).count(), 0);
       if (process.env.TICKET_DIALOG_SCREENSHOTS) await page.locator(`#${modal} .desk-dialog`).screenshot({
         path: path.join(process.env.TICKET_DIALOG_SCREENSHOTS, `${modal}-${theme}-${width}.png`) });

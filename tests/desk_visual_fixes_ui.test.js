@@ -79,7 +79,7 @@ for (const theme of ['light', 'dark']) for (const width of [1366, 390]) {
         fits: r.x >= 0 && r.right <= innerWidth, font: getComputedStyle(el.querySelector('h2')).fontSize,
         rowBackground: getComputedStyle(el.querySelector('.bot-create-menu-option')).backgroundColor };
     });
-    assert.equal(style.radius, '24px'); assert.equal(style.centered, true); assert.equal(style.fits, true);
+    assert.equal(style.radius, '12px'); assert.equal(style.centered, true); assert.equal(style.fits, true);
     assert.ok(style.height < 650); assert.equal(style.font, '28px'); assert.equal(style.rowBackground, 'rgba(0, 0, 0, 0)');
     assert.equal(await page.locator('.bot-create-menu-option input').first().evaluate(el => getComputedStyle(el).appearance), 'none');
     await page.locator('#applyCreateMenuBtn').click();

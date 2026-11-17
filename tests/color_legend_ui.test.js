@@ -104,7 +104,7 @@ for (const theme of ['light', 'dark']) {
       'rgba(221, 206, 255, 0.8)', 'rgba(255, 239, 145, 0.82)', 'rgba(205, 231, 255, 0.84)', 'rgba(255, 207, 213, 0.86)']);
     assert.equal(appearance.background, theme === 'dark' ? 'rgb(18, 28, 42)' : 'rgb(255, 255, 255)');
     assert.equal(appearance.padding, '8px');
-    assert.equal(appearance.radius, '8px');
+    assert.equal(appearance.radius, '12px');
     assert.equal(appearance.visible, 'false');
     assert.equal(requests.length, networkBefore);
     const bounds = await page.locator('#colorLegend').boundingBox();

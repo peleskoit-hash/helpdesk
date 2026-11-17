@@ -10,11 +10,12 @@ test('ticket header overflow decoration is removed and CSS cache versions match 
   const css = fs.readFileSync('api/app/static/desk-v2.css', 'utf8');
   assert.doesNotMatch(css, /#ticketsTable\s+thead::after/);
   assert.match(css, /#ticketsTable thead \{ position: sticky; top: 6px; z-index: 3; background: var\(--desk-surface\); box-shadow: 0 -12px 0 12px var\(--desk-surface\); \}/);
-  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261116-task-panel-v1/);
+  assert.match(css, /\.panel\.table-wrap > \.table-scroll::-webkit-scrollbar-track:vertical \{ margin-block: 14px; \}/);
+  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1/);
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/styles\.css\?v=([^"']+)/g)) {
-      assert.equal(version, file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3' : '20261116-task-panel-v1', file);
+      assert.equal(version, file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3-radius-v1-seam-v1' : '20261116-task-panel-v1-radius-v1-seam-v1', file);
     }
   }
 });
@@ -29,7 +30,7 @@ test('column scripts and the changed app shell use consistent resource versions 
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/app_shell\.js\?v=([^"']+)/g)) {
-      assert.equal(version, '20261117-settings-users-cache-v1', file);
+      assert.equal(version, '20261117-appearance-escape-v1', file);
     }
   }
 });

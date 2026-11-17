@@ -147,14 +147,14 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 640, 390, 320]
     await page.locator('.status-board-btn[data-status="waiting"]').click();
     await page.waitForFunction(() => document.querySelector('.status-board-btn[data-status="waiting"]').classList.contains('active'));
     assert.equal((await skin(page, '.status-board-btn')).radius, '12px');
-    assert.equal((await skin(page, '.status-user-column')).radius, '16px');
+    assert.equal((await skin(page, '.status-user-column')).radius, '12px');
     await checkTheme(page);
     await checkTypography(page, 'statuses');
     assert.ok(calls.some(c => c.path === '/api/v1/users/agent/status' && c.method === 'PATCH'));
     for (const [url, template] of Object.entries(pages).slice(1)) {
       await page.evaluate(url => window.HelpdeskAppShell.navigate(url), url);
       await page.waitForFunction(template => document.querySelector('#appContent').dataset.shellPage === template.replaceAll('_', '-'), template);
-      assert.equal((await skin(page, '#appContent .panel')).radius, '24px');
+      assert.equal((await skin(page, '#appContent .panel')).radius, '12px');
       await checkTheme(page);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, url);
       if (template === 'management_integrations') {
@@ -182,7 +182,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 640, 390, 320]
         assert.equal(await page.locator('.management-statistics-work-time-table th').count(), 7);
         assert.doesNotMatch(await page.locator('#managementStatisticsWorkTimeSummary').innerText(), /Общее время/);
         for (const selector of ['.management-statistics-summary', '.management-statistics-table-wrap']) {
-          assert.equal(await page.locator(selector).first().evaluate(el => getComputedStyle(el).borderRadius), '16px');
+          assert.equal(await page.locator(selector).first().evaluate(el => getComputedStyle(el).borderRadius), '12px');
         }
         await page.locator('[data-statistics-tab="statuses"]').click();
         await page.waitForSelector('#managementStatisticsStatusesTableBody tr');
@@ -206,7 +206,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 640, 390, 320]
         await page.locator('.quick-reply-card').click();
         await page.waitForSelector('#quickReplyModal:not(.hidden)');
         assert.equal(await page.locator('#quickReplyTitleInput').inputValue(), 'Проверка подключения');
-        assert.equal((await skin(page, '#quickReplyModal .modal-dialog')).radius, '24px');
+        assert.equal((await skin(page, '#quickReplyModal .modal-dialog')).radius, '12px');
         await checkTypography(page, template);
         assert.equal(await page.locator('#quickReplyModal .modal-dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
         await page.locator('#closeQuickReplyModalBtn').click();
@@ -222,7 +222,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 640, 390, 320]
     await page.locator('[data-shell-back]').click();
     await page.waitForURL('**/management/saved-files');
     await page.waitForFunction(() => document.querySelector('#appContent').dataset.shellPage === 'management-saved-files');
-    assert.equal((await skin(page, '#appContent .panel')).radius, '24px');
+    assert.equal((await skin(page, '#appContent .panel')).radius, '12px');
     await page.evaluate(() => window.HelpdeskErrorDialog.show({ title: 'Проверка сообщения', message: 'Текст ошибки', error: 'Подробности ошибки' }));
     await page.waitForSelector('#appErrorDialog:not(.hidden)');
     assert.equal(await page.locator('#appErrorDialogDetails').evaluate(el => getComputedStyle(el).fontSize), '21px');
@@ -396,26 +396,26 @@ test('status board disables rapid same-employee clicks while PATCH is pending', 
 
 
 test('status admin resource versions stay synchronized across templates and CSS imports', () => {
-  const cssVersion = '20261116-task-panel-v1';
+  const cssVersion = '20261116-task-panel-v1-radius-v1-seam-v1';
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const html = fs.readFileSync(path.join('api/app/templates', file), 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const urls = html.match(new RegExp('/static/' + resource.replace('.', '\\.') + '(?:\\?[^"\\s<>]*)?', 'g')) || [];
-      const stylesVersion = file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3' : cssVersion;
-      const version = resource === 'styles.css' ? stylesVersion : '20261117-settings-users-cache-v1';
+      const stylesVersion = file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3-radius-v1-seam-v1' : cssVersion;
+      const version = resource === 'styles.css' ? stylesVersion : '20261117-appearance-escape-v1';
       for (const url of urls) assert.equal(url, `/static/${resource}?v=${version}`, file);
     }
   }
-  assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes(`/static/desk-v2.css?v=${cssVersion}`));
-  assert.ok(fs.readFileSync('api/app/static/desk-v2.css', 'utf8').includes(`/static/admin-pages-v2.css?v=20261115-statistics-layout-v1`));
+  assert.ok(fs.readFileSync('api/app/static/styles.css', 'utf8').includes('/static/desk-v2.css?v=20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1'));
+  assert.ok(fs.readFileSync('api/app/static/desk-v2.css', 'utf8').includes(`/static/admin-pages-v2.css?v=20261115-statistics-layout-v1-radius-v1`));
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
   assert.match(shell, /\["\/statuses",.*"\/static\/status_transitions.js\?v=20261111-status-source-v1"/);
 });
 
 for (const start of ['/statuses', '/tickets']) test(`status admin resources load directly or through SPA from ${start}`, async t => {
   const { page } = await setup(t, 'light', 1440, start);
-  assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1"]').count(), 1);
-  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261117-settings-users-cache-v1"]').count(), 1);
+  assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1"]').count(), 1);
+  assert.equal(await page.locator('script[src="/static/app_shell.js?v=20261117-appearance-escape-v1"]').count(), 1);
   await page.evaluate(() => { window.statusCacheDocument = document; window.statusCacheSidebar = document.querySelector('.sidebar'); });
   if (start === '/tickets') {
     await page.locator('.sidebar a[href="/statuses"]').click();
@@ -432,7 +432,7 @@ for (const start of ['/statuses', '/tickets']) test(`status admin resources load
   for (const resource of ['styles.css', 'desk-v2.css', 'admin-pages-v2.css', 'app_shell.js', 'status_transitions.js']) {
     const matching = resources.filter(url => url.startsWith('/static/' + resource + '?'));
     assert.ok(matching.length > 0, resource);
-    const version = resource === 'admin-pages-v2.css' ? '20261115-statistics-layout-v1' : resource.endsWith('.css') ? '20261116-task-panel-v1' : resource === 'app_shell.js' ? '20261117-settings-users-cache-v1' : '20261111-status-source-v1';
+    const version = resource === 'desk-v2.css' ? '20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1' : resource === 'admin-pages-v2.css' ? '20261115-statistics-layout-v1-radius-v1' : resource === 'styles.css' ? '20261116-task-panel-v1-radius-v1-seam-v1' : resource === 'app_shell.js' ? '20261117-appearance-escape-v1' : '20261111-status-source-v1';
     assert.ok(matching.every(url => url === '/static/' + resource + '?v=' + version), matching.join(', '));
   }
 });

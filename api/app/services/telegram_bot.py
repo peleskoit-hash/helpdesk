@@ -353,6 +353,8 @@ def send_document(
     parse_mode: str | None = None,
     reply_to_message_id: str | int | None = None,
     timeout: int = 60,
+    *,
+    disable_content_type_detection: bool = False,
 ) -> dict:
     binary_content: bytes | None = None
     if isinstance(file_path, (bytes, bytearray)):
@@ -361,7 +363,11 @@ def send_document(
     else:
         path = Path(file_path)
     payload = {"chat_id": chat_id}
-    if (mime_type or "").lower() == "image/webp" or Path(filename or path.name).suffix.lower() == ".webp":
+    if (
+        disable_content_type_detection
+        or (mime_type or "").lower() == "image/webp"
+        or Path(filename or path.name).suffix.lower() == ".webp"
+    ):
         payload["disable_content_type_detection"] = "true"
     if caption:
         payload["caption"] = caption

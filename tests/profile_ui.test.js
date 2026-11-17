@@ -50,7 +50,7 @@ test("profile rows are separate data cards in a constrained left column", () => 
   assert.match(styles, /\.profile-details\s*\{[\s\S]*gap:\s*10px;[\s\S]*width:\s*min\(100%,\s*760px\);[\s\S]*max-width:\s*760px;[\s\S]*justify-self:\s*start;/);
   assert.match(
     styles,
-    /\.profile-row\s*\{[\s\S]*border:\s*1px solid[\s\S]*border-radius:\s*12px;[\s\S]*padding:\s*14px 16px;[\s\S]*box-shadow:/,
+    /\.profile-row\s*\{[\s\S]*border:\s*1px solid[\s\S]*border-radius:\s*var\(--desk-radius\);[\s\S]*padding:\s*14px 16px;[\s\S]*box-shadow:/,
   );
   assert.doesNotMatch(styles, /\.profile-row\s*\{[\s\S]*border-bottom:\s*1px solid var\(--border\);/);
 });

@@ -75,8 +75,8 @@ async function toggleStyles(page, disabled) {
 for (const theme of ['light', 'dark']) {
   test(`Contacts V2 list actions and contrast: ${theme}`, async t => {
     const { page, queries, assets } = await setup(t, theme);
-    assert.ok(assets.includes('/static/contacts-v2.css?v=20261024-contacts-labels-v2'));
-    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '24px');
+    assert.ok(assets.includes('/static/contacts-v2.css?v=20261024-contacts-labels-v2-radius-v1'));
+    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await contrast(page, ['.management-user-primary', '.management-user-muted', '.management-user-row-blocked td', 'th', '#managementUsersSearch', '#managementUsersSearchBtn', '.management-users-filters .active', '#managementUsersPageSummary']);
     await page.locator('.management-user-row-blocked').hover();
     await contrast(page, ['.management-user-row-blocked td']);
@@ -120,7 +120,7 @@ for (const theme of ['light', 'dark']) {
     await page.waitForSelector('#profileRoot:not(.hidden)');
     await page.goBack();
     await page.waitForSelector('.management-user-row');
-    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '24px');
+    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     if (process.env.CONTACTS_V2_SCREENSHOTS) {
       fs.mkdirSync(process.env.CONTACTS_V2_SCREENSHOTS, { recursive: true });
       await page.screenshot({ path: path.join(process.env.CONTACTS_V2_SCREENSHOTS, `${theme}.png`) });
@@ -129,7 +129,7 @@ for (const theme of ['light', 'dark']) {
   test(`Contacts V2 style is role independent; agent access remains restricted: ${theme}`, async t => {
     const { page, queries } = await setup(t, theme, 'agent');
     assert.equal(queries.length, 0);
-    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '24px');
+    assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await contrast(page, ['#managementUsersStatus']);
   });
 }

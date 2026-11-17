@@ -106,7 +106,7 @@ async function assertContrast(page, selectors) {
 for (const theme of ['light', 'dark']) {
   test(`personal data V2: ${theme}, edit and save login/password`, async t => {
     const { page, writes } = await setup(t, 'profile', theme);
-    assert.equal((await style(page, '.profile-row')).radius, '16px');
+    assert.equal((await style(page, '.profile-row')).radius, '12px');
     await assertContrast(page, ['.profile-label', '.profile-value', '.profile-login-hero', '#changeAvatarBtn']);
     await screenshot(page, `${theme}-profile`);
     const originalAvatar = await page.locator('#profileAvatar').boundingBox();
@@ -226,7 +226,7 @@ for (const theme of ['light', 'dark']) {
     await assertContrast(page, ['.notification-enabled-row', '.bot-telegram-preview']);
     await page.goBack();
     await page.waitForSelector('#profileRoot:not(.hidden)');
-    assert.equal((await style(page, '.profile-row')).radius, '16px');
+    assert.equal((await style(page, '.profile-row')).radius, '12px');
   });
 }
 

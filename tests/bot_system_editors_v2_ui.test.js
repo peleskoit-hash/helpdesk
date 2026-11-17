@@ -64,8 +64,8 @@ for (const theme of ['light', 'dark']) test(`system event editors V2: ${theme}`,
         background: getComputedStyle(section).backgroundColor, expected: getComputedStyle(document.querySelector('#botButtonsBreadcrumb')).backgroundColor,
         font: css.fontSize, inputRadius: getComputedStyle(input).borderRadius, inputColor: getComputedStyle(input).color, color: css.color };
     });
-    assert.equal(styles.radius, '24px'); assert.equal(styles.section, '16px'); assert.equal(styles.background, styles.expected);
-    assert.equal(styles.font, '16.8px'); assert.equal(styles.inputRadius, '10px'); assert.equal(styles.inputColor, styles.color);
+    assert.equal(styles.radius, '12px'); assert.equal(styles.section, '12px'); assert.equal(styles.background, styles.expected);
+    assert.equal(styles.font, '16.8px'); assert.equal(styles.inputRadius, '12px'); assert.equal(styles.inputColor, styles.color);
     assert.equal(await page.locator('[data-system-editor] .action-primary').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await page.locator('[data-system-editor] input').first().focus();
     assert.equal(await page.locator('[data-system-editor] input').first().evaluate(el => getComputedStyle(el).outlineStyle), 'solid');
@@ -79,7 +79,7 @@ for (const theme of ['light', 'dark']) test(`system event editors V2: ${theme}`,
   for (const [button, value] of [['SystemText', 'Новый системный текст'], ['InstructionText', 'Новая инструкция']]) {
     await page.locator(`#editSystemFirstConnection${button}Btn`).click();
     assert.equal(await page.locator('#botTextEditorTextarea').inputValue(), button === 'SystemText' ? 'Системный текст' : 'Инструкция');
-    assert.equal(await page.locator('.bot-text-editor-dialog').evaluate(el => getComputedStyle(el).borderRadius), '24px');
+    assert.equal(await page.locator('.bot-text-editor-dialog').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await page.locator('#botTextEditorTextarea').fill(value);
     await page.locator('#botTextEditorApplyBtn').click();
   }
@@ -111,7 +111,7 @@ for (const theme of ['light', 'dark']) test(`system event editors V2: ${theme}`,
     await page.locator('#backFromSystemButtonGroupBtn').click();
   }
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css']) {
-    const version = file === "bot-buttons-browser-v2.css" ? "20261116-bot-structure-layout-v2" : "20261116-task-panel-v1";
+    const version = file === "desk-v2.css" ? "20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1" : file === "bot-buttons-browser-v2.css" ? "20261116-bot-structure-layout-v2-radius-v1" : "20261116-task-panel-v1-radius-v1-seam-v1";
     assert.ok(resources.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);

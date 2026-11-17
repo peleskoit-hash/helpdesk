@@ -194,8 +194,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261105-field-config/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261117-ticket-list-escape-v1/);
-  assert.match(appShellSource, /ticket\.js\?v=20261117-ticket-list-escape-v1/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261117-appearance-escape-v1/);
+  assert.match(appShellSource, /ticket\.js\?v=20261117-appearance-escape-v1/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261105-field-config/);
 });
 
@@ -324,7 +324,7 @@ test('settings client card tab switching keeps loaded config and toolbar actions
 test('settings client card uses V2 workspace bounds and internal scrolling', () => {
   const css = fs.readFileSync('api/app/static/client-card-settings-v2.css', 'utf8');
   assert.match(css, /padding: 14px 16px 16px/);
-  assert.match(css, /height: 100%;[\s\S]*overflow: auto;[\s\S]*border-radius: 24px/);
+  assert.match(css, /height: 100%;[\s\S]*overflow: auto;[\s\S]*border-radius: var\(--desk-radius, 12px\)/);
 });
 
 test('settings client card UI exposes delete actions only for custom config entries', () => {
@@ -3349,7 +3349,7 @@ test('quick replies editor route and static wiring exist', () => {
   const mainSource = fs.readFileSync('api/app/main.py', 'utf8');
   assert.match(mainSource, /@app\.get\("\/quick-replies"\)/);
   assert.match(appShellSource, /\["\/quick-replies", \{ page: "quick-replies", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/quick_replies\.js\?v=20261106-columns-v1"\] \}\]/);
-  assert.match(quickRepliesTemplate, /styles\.css\?v=20261106-ticket-table-v2/);
+  assert.match(quickRepliesTemplate, /styles\.css\?v=20261116-task-panel-v1-radius-v1-seam-v1/);
   assert.match(quickRepliesTemplate, /quick_replies\.js\?v=20261106-columns-v1/);
   assert.match(quickRepliesTemplate, /data-shell-page="quick-replies"/);
 });
@@ -3457,7 +3457,7 @@ test('quick replies management navigation and file attachment editor are present
 });
 
 test('ticket quick reply button sits between add files and send', () => {
-  assert.match(ticketTemplate, /styles\.css\?v=20261106-ticket-table-v2/);
+  assert.match(ticketTemplate, /styles\.css\?v=20261116-task-panel-v1-radius-v1-seam-v1/);
   assert.match(ticketTemplate, /<div class="composer-send-actions">[\s\S]*id="addFilesBtn"[\s\S]*id="quickRepliesBtn"[\s\S]*id="sendNowBtn"/);
   assert.doesNotMatch(ticketTemplate, /quick-replies-anchor/);
   assert.match(ticketTemplate, /<\/div>\s*<div id="quickRepliesPanel" class="quick-replies-panel hidden">/);

@@ -60,7 +60,7 @@ for (const theme of ['light', 'dark']) for (const width of [1440, 390]) {
     assert.equal(metrics.inputFont, '21px');
     assert.equal(metrics.titleFont, '28.08px');
     assert.equal(metrics.background, metrics.expectedBackground);
-    assert.equal(metrics.radius, '24px');
+    assert.equal(metrics.radius, '12px');
     assert.ok(metrics.fits && !metrics.overflow);
     const alert = page.waitForEvent('dialog').then(async dialog => { assert.match(dialog.message(), /Название обязательно/); await dialog.accept(); });
     await page.locator('#applyCreateItemBtn').click();

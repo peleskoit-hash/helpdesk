@@ -58,6 +58,8 @@ for (const theme of ['light', 'dark']) for (const workflow of ['ticket', 'task']
   assert.deepEqual(await snapshot(), reply);
   assert.equal(await input.inputValue(), 'Текст черновика');
   assert.equal(await input.getAttribute('placeholder'), 'Текст ответа клиенту');
-  for (const file of ['styles.css', 'desk-v2.css']) assert.ok(assets.includes(`/static/${file}?v=20261106-ticket-table-v2`), `Fresh asset: ${file}`);
+  for (const [file, version] of [['styles.css', '20261116-task-panel-v1-radius-v1-seam-v1'], ['desk-v2.css', '20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1']]) {
+    assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
+  }
   assert.deepEqual(errors, []);
 });

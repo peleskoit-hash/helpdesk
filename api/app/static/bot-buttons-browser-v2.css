@@ -1,16 +1,16 @@
-body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-breadcrumb { display: flex; align-items: center; box-sizing: border-box; min-height: 66px; margin: 0 0 18px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); font: 700 21px/1.2 var(--desk-font); }
+body #appContent.main[data-shell-page="settings-bot-buttons"] .bot-buttons-breadcrumb { display: flex; align-items: center; box-sizing: border-box; min-height: 66px; margin: 0 0 18px; padding: 12px 16px; border-radius: var(--desk-radius, 12px); border: 1px solid var(--desk-border); background: var(--desk-soft); color: var(--desk-text); font: 700 21px/1.2 var(--desk-font); }
 /* Scoped V2 styles for button browsing, structure and the concrete editor. */
 body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v2-browse) {
   min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr);
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
-  & .bot-buttons-v2-browse { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; padding: 21px; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); font: 21px/1.5 var(--desk-font); }
+  & .bot-buttons-v2-browse { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; padding: 21px; border-radius: var(--desk-radius, 12px); border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); font: 21px/1.5 var(--desk-font); }
   & .bot-buttons-description { color: var(--desk-muted); font-size: 18px; }
   & .bot-buttons-v2-list { display: block; }
   & .bot-buttons-split-left { width: 100%; min-width: 0; padding: 0; }
   & .bot-buttons-level-list { display: grid; gap: 12px; }
   & .bot-buttons-row { display: flex; gap: 12px; }
   & .bot-structure-item { flex: 1 1 0; min-width: 0; }
-  & .bot-buttons-level-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; box-sizing: border-box; width: 100%; min-width: 0; min-height: 64px; padding: 16px 20px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); color: var(--desk-text); font: 21px/1.5 var(--desk-font); text-align: left; overflow-wrap: anywhere; box-shadow: none; }
+  & .bot-buttons-level-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; box-sizing: border-box; width: 100%; min-width: 0; min-height: 64px; padding: 16px 20px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); font: 21px/1.5 var(--desk-font); text-align: left; overflow-wrap: anywhere; box-shadow: none; }
   & .bot-buttons-level-item:hover { background: var(--desk-hover); }
   & .bot-buttons-level-item:active { background: var(--desk-tint); }
   & :is(button, select, summary):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
@@ -23,32 +23,32 @@ body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v
   & .bot-buttons-level-item:is(.bot-button-color-primary, .bot-button-color-success, .bot-button-color-danger)::after { border-color: #0f172a; }
   & .bot-button-disabled { opacity: .6; }
   & .bot-button-leaf-removed { border-style: dashed; }
-  & .bot-button-type-tag { display: inline-block; flex-shrink: 0; max-width: 100%; padding: 3px 10px; border-radius: 999px; background: var(--desk-surface); color: var(--desk-on-tint); font-size: 16px; font-weight: 600; overflow-wrap: normal; white-space: normal; }
+  & .bot-button-type-tag { display: inline-block; flex-shrink: 0; max-width: 100%; padding: 3px 10px; border-radius: var(--desk-radius, 12px); background: var(--desk-surface); color: var(--desk-on-tint); font-size: 16px; font-weight: 600; overflow-wrap: normal; white-space: normal; }
   & [data-menu-name] { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 18px; }
   & .bot-menu-card-title { font-weight: 700; }
   & .bot-menu-card-meta { grid-column: 1; color: var(--desk-muted); font-size: 18px; }
   & .bot-menu-card-counts { grid-column: 2; grid-row: 1 / 3; display: flex; flex-wrap: wrap; gap: 8px; }
   & .bot-root-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
-  & :is(.bot-menu-bindings-panel, .bot-menu-management-panel) { margin: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); color: var(--desk-text); }
+  & :is(.bot-menu-bindings-panel, .bot-menu-management-panel) { margin: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); }
   & .bot-menu-management-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   & .bot-menu-bindings-title { margin: 0 0 8px; }
   & :is(.bot-menu-bindings-title, .bot-layout-mode-badge) { color: var(--desk-text); font-size: 21px; background: transparent; }
   & .bot-menu-binding-chip { background: var(--desk-tint); color: var(--desk-on-tint); font-size: 18px; }
   & .bot-layout-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
   & .bot-menu-bindings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-  & .bot-buttons-v2-list :is(.action, select) { box-sizing: border-box; max-width: 100%; min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); color: var(--desk-text); font: 20px/1.4 var(--desk-font); white-space: normal; box-shadow: none; }
+  & .bot-buttons-v2-list :is(.action, select) { box-sizing: border-box; max-width: 100%; min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); color: var(--desk-text); font: 20px/1.4 var(--desk-font); white-space: normal; box-shadow: none; }
   & .bot-buttons-v2-list .action:hover { background: var(--desk-hover); }
   & .bot-buttons-v2-list .action-danger { background: var(--desk-danger-bg); color: var(--desk-danger); }
   & .bot-layout-help { font-size: 16px; color: var(--desk-muted); }
-  & :is(.bot-layout-row-edit, .bot-layout-new-row-drop) { border: 1px dashed var(--desk-border); border-radius: 12px; padding: 8px; background: var(--desk-surface); color: var(--desk-muted); }
+  & :is(.bot-layout-row-edit, .bot-layout-new-row-drop) { border: 1px dashed var(--desk-border); border-radius: var(--desk-radius, 12px); padding: 8px; background: var(--desk-surface); color: var(--desk-muted); }
   & .bot-layout-new-row-drop { min-height: 32px; font-size: 16px; }
   & .bot-layout-new-row-drop[hidden] { display: none; }
   & .bot-structure-submenu > .bot-buttons-level-list { margin-top: 10px; }
   & .bot-layout-drop-active { outline: 2px solid var(--desk-accent); background: var(--desk-tint); }
   & .bot-layout-drop-forbidden { outline: 2px solid var(--desk-danger); }
-  & .bot-structure-submenu { padding: 12px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-surface); font-size: 18px; }
+  & .bot-structure-submenu { padding: 12px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); font-size: 18px; }
   & .bot-structure-submenu summary { cursor: pointer; color: var(--desk-on-tint); }
-  & .bot-layout-error { margin: 12px 0; padding: 12px; border: 1px solid var(--desk-danger); border-radius: 12px; background: var(--desk-danger-bg); color: var(--desk-danger); font-size: 18px; }
+  & .bot-layout-error { margin: 12px 0; padding: 12px; border: 1px solid var(--desk-danger); border-radius: var(--desk-radius, 12px); background: var(--desk-danger-bg); color: var(--desk-danger); font-size: 18px; }
   & .bot-layout-edit-shell [draggable="false"] { cursor: not-allowed; }
   & .bot-layout-edit-shell button:disabled { opacity: .6; cursor: wait; }
   @media (max-width: 960px) {
@@ -68,13 +68,13 @@ body #appContent.main[data-shell-page="settings-bot-buttons"]:has(.bot-buttons-v
 /* Shared V2 surfaces for concrete button and system-event editors. */
 body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-editor, [data-system-editor]) {
   & > .content { padding: 14px 16px 16px; min-width: 0; min-height: 0; overflow: hidden; }
-  & .bot-buttons-panel { box-sizing: border-box; height: 100%; padding: 20px; overflow: auto; border-radius: 24px; border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); }
+  & .bot-buttons-panel { box-sizing: border-box; height: 100%; padding: 20px; overflow: auto; border-radius: var(--desk-radius, 12px); border: 1px solid var(--desk-border); background: var(--desk-surface); color: var(--desk-text); box-shadow: var(--desk-shadow); }
   & .bot-buttons-breadcrumb { position: relative; top: 1px; }
   & :is(.bot-instruction-editor, [data-system-editor]) { padding: 0; border: 0; background: transparent; box-shadow: none; font: 16.8px/1.5 var(--desk-font); }
   & [data-system-editor] { display: grid; gap: 12px; min-width: 0; }
   & [data-system-editor] .bot-editor-title { font-size: 21px; font-weight: 700; overflow-wrap: anywhere; }
   & [data-system-editor] .bot-info-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-  & [data-system-editor] .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none; }
+  & [data-system-editor] .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); font: inherit; box-shadow: none; }
   & [data-system-editor] .action:hover { background: var(--desk-hover); }
   & [data-system-editor] .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
   & [data-system-editor] .action-primary:hover { filter: brightness(1.05); }
@@ -83,9 +83,9 @@ body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-ed
   & [data-system-editor] .bot-button-style-base { background: var(--desk-surface); }
   & [data-system-editor] .bot-button-style-option:hover { filter: brightness(1.08); }
   & [data-system-editor] .bot-button-style-option.is-selected { outline: 2px solid var(--desk-accent); outline-offset: 2px; }
-  & .bot-editor-section { background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); padding: 16px; border-radius: 16px; }
+  & .bot-editor-section { background: var(--desk-soft); border-color: var(--desk-border); color: var(--desk-text); padding: 16px; border-radius: var(--desk-radius, 12px); }
   & :is(.bot-instruction-editor, [data-system-editor]) :is(.field-label, .checkbox-label, .bot-removed-title, input, select, button) { font: inherit; color: var(--desk-text); }
-  & :is(input:not([type="checkbox"]), select) { padding: 8px 10px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); box-sizing: border-box; }
+  & :is(input:not([type="checkbox"]), select) { padding: 8px 10px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); box-sizing: border-box; }
   & .checkbox-label { display: flex; align-items: center; gap: 10px; width: fit-content; cursor: pointer; }
   & input[type="checkbox"]:not(.desk-toggle) { width: 18px; height: 18px; accent-color: var(--desk-accent); }
   & .bot-creation-parameters .checkbox-label { color: var(--desk-text) !important; }
@@ -102,18 +102,18 @@ body #appContent[data-shell-page="settings-bot-buttons"]:has(.bot-instruction-ed
 /* The shared create-item classes also serve menu creation; scope this to button creation. */
 body:has(#appContent[data-shell-page="settings-bot-buttons"]) .modal-overlay:has(#botCreateLabelInput) {
   background: #14122166; backdrop-filter: blur(4px);
-  & .bot-create-item-dialog { box-sizing: border-box; width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--desk-border); border-radius: 24px; background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; font: 24px/1.5 var(--desk-font); }
+  & .bot-create-item-dialog { box-sizing: border-box; width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; font: 24px/1.5 var(--desk-font); }
   & :is(.modal-header, .modal-footer) { padding: 18px 24px; border-color: var(--desk-border); }
   & .modal-header h3 { margin: 0; font-size: 1.17em; line-height: 1.3; }
   & .modal-body { min-height: 0; padding: 20px 24px; gap: 16px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }
-  & .bot-create-item-section { min-width: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: 16px; background: var(--desk-soft); }
+  & .bot-create-item-section { min-width: 0; padding: 16px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); }
   & .bot-create-item-label { color: var(--desk-text); margin-bottom: 12px; }
   & .bot-create-item-types { gap: 12px; }
   & :is(.bot-create-item-type, .bot-create-item-active, .bot-create-item-note) { font-size: 19.5px; line-height: 1.5; color: var(--desk-text); gap: 12px; }
   & :is(input[type="radio"], input[type="checkbox"]) { width: 24px !important; height: 24px !important; min-height: 24px !important; accent-color: var(--desk-accent); cursor: pointer; }
-  & #botCreateLabelInput { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-surface); color: var(--desk-text); font: 21px/1.5 var(--desk-font); box-shadow: none; }
+  & #botCreateLabelInput { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); color: var(--desk-text); font: 21px/1.5 var(--desk-font); box-shadow: none; }
   & .modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
-  & .action { min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: 20px/1.4 var(--desk-font); }
+  & .action { min-height: 48px; padding: 10px 16px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); font: 20px/1.4 var(--desk-font); }
   & .action:hover { background: var(--desk-hover); }
   & .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
   & :is(button, input):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
@@ -123,16 +123,16 @@ body:has(#appContent[data-shell-page="settings-bot-buttons"]) .modal-overlay:has
 body:has(#appContent[data-shell-page="settings-bot-buttons"]) #botTextEditorModal {
   --surface: var(--desk-surface); --text: var(--desk-text); --muted: var(--desk-muted); --border: var(--desk-border);
   font: 16.8px/1.5 var(--desk-font); color: var(--desk-text);
-  & .bot-text-editor-dialog { width: min(1456px, calc(100vw - 24px)); height: min(1014px, calc(100dvh - 24px)); max-height: min(1014px, calc(100dvh - 24px)); border: 1px solid var(--desk-border); border-radius: 24px; background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; }
+  & .bot-text-editor-dialog { width: min(1456px, calc(100vw - 24px)); height: min(1014px, calc(100dvh - 24px)); max-height: min(1014px, calc(100dvh - 24px)); border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-surface); color: var(--desk-text); box-shadow: 0 24px 80px #00000026; }
   & :is(.modal-head, .modal-foot) { padding: 14px 17px; border-color: var(--desk-border); }
   & .modal-foot { gap: 10px; flex-wrap: wrap; }
   & .modal-body { padding: 18px; gap: 12px; overflow: auto; }
   & .bot-text-editor-body.bot-text-editor-body-split.bot-text-editor-body-toolbar { grid-template-rows: auto minmax(180px, 1fr) minmax(180px, 1fr); }
-  & :is(textarea, .bot-telegram-preview) { padding: 12px; border: 1px solid var(--desk-border); border-radius: 10px; background: var(--desk-soft); color: var(--desk-text); font: 16.8px/1.5 var(--desk-font); }
+  & :is(textarea, .bot-telegram-preview) { padding: 12px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); font: 16.8px/1.5 var(--desk-font); }
   & .bot-telegram-preview-wrap { display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--desk-soft); border-color: var(--desk-border); }
   & .bot-telegram-preview-title { color: var(--desk-text); font-size: 14.4px; }
   & .bot-text-toolbar { flex-wrap: wrap; gap: 8px; }
-  & .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: 12px; background: var(--desk-soft); color: var(--desk-text); font: inherit; }
+  & .action { min-height: 42px; padding: 10px 14px; border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px); background: var(--desk-soft); color: var(--desk-text); font: inherit; }
   & .action-primary { background: var(--desk-primary, var(--desk-on-tint)); color: var(--desk-on-accent, var(--desk-surface)); }
   & .bot-text-toolbar .action { min-height: 34px; height: auto; padding: 6px 10px; font-size: 14.4px; }
   & :is(textarea, .bot-telegram-preview, .modal-body) { scrollbar-width: thin; scrollbar-color: var(--desk-muted) var(--desk-soft); }

@@ -79,7 +79,7 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
  for(const width of [1440,768,320]){
   await page.setViewportSize({width,height:1000});
   const metrics=await dialog.evaluate(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el),probe=document.createElement('span');el.append(probe);probe.style.color='var(--desk-surface)';const matches=s.backgroundColor===getComputedStyle(probe).color;probe.remove();return {radius:s.borderRadius,matches,fits:r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight,overflow:el.scrollWidth>el.clientWidth+1};});
-  assert.deepEqual(metrics,{radius:'24px',matches:true,fits:true,overflow:false});
+  assert.deepEqual(metrics,{radius:'12px',matches:true,fits:true,overflow:false});
   assert.ok(Math.abs(await dialog.evaluate(el=>el.getBoundingClientRect().width)-Math.min(576,width-24))<=1);
   assert.equal(await dialog.evaluate(el=>getComputedStyle(el).overflow),'hidden');
   assert.equal(await modal.locator('.modal-body').evaluate(el=>getComputedStyle(el).scrollbarWidth),'thin');

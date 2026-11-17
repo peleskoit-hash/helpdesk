@@ -1946,7 +1946,7 @@ function bindPageHandlers() {
         [el.messageContextMenu, el.imagePreviewModal, el.errorModal, el.clientModal,
           el.wrongProblemModal, el.specialConfirmModal, el.adminActionModal, el.instructionModal]
           .some(popup => popup && !popup.classList.contains("hidden")) ||
-        Boolean(document.querySelector("[data-sidebar-user-menu]:not([hidden])"));
+        Boolean(document.querySelector("[data-sidebar-user-menu]:not([hidden]), #appearanceMenu:popover-open"));
       if (nativeDialogOpen) return;
       if (appErrorDialog || editMessageOpen) {
         e.preventDefault();

@@ -364,7 +364,7 @@ function initThemeToggle() {
       const styles = document.createElement("link");
       styles.id = "appearancePatternStyles";
       styles.rel = "stylesheet";
-      styles.href = "/static/appearance-pattern.css?v=20261029-contour-delete-only-v1";
+      styles.href = "/static/appearance-pattern.css?v=20261029-contour-delete-only-v1-radius-v1";
       document.head.appendChild(styles);
     }
     appearanceMenu?.querySelector('.appearance-pattern')?.dispatchEvent(new Event('contour-destroy'));
@@ -433,7 +433,7 @@ function initThemeToggle() {
     const createContourButton = patternSection.querySelector('[data-contour-create]');
     createContourButton.addEventListener('click', async () => {
       try {
-        const { openContourEditor } = await import('/static/contour_editor.js?v=20261102-file-cancel-v1');
+        const { openContourEditor } = await import('/static/contour_editor.js?v=20261102-file-cancel-v1-radius-v1');
         if (createContourButton.isConnected) await openContourEditor(createContourButton);
       } catch {
         patternSection.querySelector('#contourCreateHint').textContent = 'Не удалось открыть редактор. Попробуйте ещё раз.';

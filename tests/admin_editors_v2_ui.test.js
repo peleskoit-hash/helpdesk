@@ -51,7 +51,7 @@ async function setup(t, theme, width) {
 async function checkPage(page){
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  const skin=await page.locator('#appContent .panel').evaluate(el=>({radius:getComputedStyle(el).borderRadius,font:getComputedStyle(el).fontSize}));
- assert.deepEqual(skin,{radius:'24px',font:'21px'});
+ assert.deepEqual(skin,{radius:'12px',font:'21px'});
  if (page.viewportSize().width <= 700) {
    const inset=await page.locator('#appContent').evaluate(main=>{
      const m=main.getBoundingClientRect(), p=main.querySelector('.panel').getBoundingClientRect(), toolbar=main.querySelector('.toolbar').getBoundingClientRect();
@@ -72,7 +72,7 @@ async function checkPage(page){
 async function checkDialog(page,selector){
  const dialog=page.locator(selector);await dialog.waitFor({state:'visible'});
  assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
- assert.equal(await dialog.evaluate(el=>getComputedStyle(el).borderRadius),'24px');
+ assert.equal(await dialog.evaluate(el=>getComputedStyle(el).borderRadius),'12px');
  assert.equal(await dialog.evaluate(el=>{
    const probe=document.createElement('span');el.append(probe);probe.style.color='var(--desk-surface)';
    const match=getComputedStyle(el).backgroundColor===getComputedStyle(probe).color;probe.remove();return match;
@@ -142,7 +142,7 @@ for(const theme of ['light','dark'])for(const width of [320,700,1920])test(`seco
  await page.waitForFunction(()=>document.querySelector('#internalTaskModal').classList.contains('hidden'));
  assert.ok(calls.some(c=>c.path.endsWith('/internal-tasks/recurring')&&c.method==='POST'));
  await activate(page,'[data-internal-task-tab="scheduled"]');await page.waitForSelector('#internalTasksScheduledBody tr');
- assert.equal(await page.locator('#internalTasksScheduledBody td').first().evaluate(el=>getComputedStyle(el).borderTopLeftRadius),'16px');
+ assert.equal(await page.locator('#internalTasksScheduledBody td').first().evaluate(el=>getComputedStyle(el).borderTopLeftRadius),'12px');
  assert.equal(await page.locator('.management-tasks-table').first().evaluate(el=>getComputedStyle(el).borderCollapse),'separate');
 
  await activate(page,'#internalTasksScheduledBody button');await checkDialog(page,'#internalTaskModal .modal-dialog');
@@ -196,7 +196,7 @@ for(const theme of ['light','dark'])test(`four editor bubbles keep mobile geomet
      const m=main.getBoundingClientRect(), p=main.querySelector('.panel').getBoundingClientRect(), bar=main.querySelector('.toolbar').getBoundingClientRect();
      return {top:p.top-bar.bottom,left:p.left-m.left,right:m.right-p.right,bottom:m.bottom-p.bottom,radius:getComputedStyle(main.querySelector('.panel')).borderRadius};
    });
-   assert.deepEqual(bounds,{top:12,left:12,right:12,bottom:12,radius:'24px'},url);
+   assert.deepEqual(bounds,{top:12,left:12,right:12,bottom:12,radius:'12px'},url);
  }
 });
 

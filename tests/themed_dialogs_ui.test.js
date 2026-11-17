@@ -83,7 +83,7 @@ for (const theme of ['light', 'dark']) {
         radius: s.borderRadius, blur: back.backdropFilter, centered: Math.abs(r.x + r.width / 2 - innerWidth / 2) < 1,
         top: document.elementFromPoint(r.x + 20, r.y + 20) === el, cancelFocus: document.activeElement === el.querySelector('[data-dialog-cancel]') };
     });
-    assert.equal(appearance.font, '28px'); assert.equal(appearance.radius, '24px'); assert.equal(appearance.blur, 'blur(6px)');
+    assert.equal(appearance.font, '28px'); assert.equal(appearance.radius, '12px'); assert.equal(appearance.blur, 'blur(6px)');
     assert.ok(appearance.centered && appearance.top && appearance.cancelFocus);
     assert.equal(await dialog(page).evaluate(el => { const probe = document.createElement('span'); probe.style.color = 'var(--desk-surface)'; el.appendChild(probe); const color = getComputedStyle(probe).color; probe.remove(); return color; }), appearance.background);
     await page.keyboard.press('Tab'); assert.equal(await accept(page).evaluate(el => document.activeElement === el), true);

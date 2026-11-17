@@ -164,14 +164,17 @@ test('CSS is ticket scoped; fields scroll, footer and header do not shrink, bord
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*animation: none/);
 });
 
-test('only the client card scroll viewport uses native thin scrollbars with cache-busted scoped CSS', () => {
+test('client card scrollbars are scoped, inset vertically and delivered with cache-busted CSS', () => {
   const selector = '[data-shell-page="ticket-card"] .ticket-client-side > #clientDynamicCard';
   const rule = css.slice(css.indexOf(selector)).split('}')[0];
   assert.ok(css.includes(selector));
   assert.equal(rule.slice(rule.indexOf('{') + 1).trim(), 'scrollbar-width: thin;');
-  assert.equal([...css.matchAll(/scrollbar-width:/g)].length, 1);
-  assert.doesNotMatch(css, /::-webkit-scrollbar|scrollbar-color:/);
-  assert.match(template, /appContent[\s\S]*ticket_client_card\.css\?v=20261117-round-telegram-avatar-v1"/);
+  assert.equal([...css.matchAll(/scrollbar-width:/g)].length, 2);
+  const customRules = [...css.matchAll(/^(.+?)::-webkit-scrollbar(?:-track|-thumb)?(?::vertical)?[ \t]*\{/gm)];
+  assert.ok(customRules.length > 0);
+  assert.ok(customRules.every(([, scope]) => scope.trim() === selector));
+  assert.match(css, /#clientDynamicCard::-webkit-scrollbar-track:vertical \{\s*margin-block: 14px;/);
+  assert.match(template, /appContent[\s\S]*ticket_client_card\.css\?v=20261117-ticket-scrollbar-inset-v1"/);
 });
 
 test('open and clean cancel switch modes without confirm or PATCH; fields retain identity', async () => {
@@ -369,7 +372,7 @@ test('resource versions agree in every direct and AppShell connection', () => {
   for (const resource of ['ticket_client_card.js', 'ticket.js', 'app_shell.js']) {
     const versions = files.flatMap((file) => [...fs.readFileSync(file, 'utf8').matchAll(new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map((match) => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261117-settings-users-cache-v1' : resource === 'ticket.js' ? '20261117-ticket-list-escape-v1' : '20261105-field-config']);
+    assert.deepEqual([...new Set(versions)], [resource === 'app_shell.js' ? '20261117-appearance-escape-v1' : resource === 'ticket.js' ? '20261117-appearance-escape-v1' : '20261105-field-config']);
   }
 });
 
@@ -385,8 +388,9 @@ test('actual AppShell navigation/back guard keeps declined draft and confirms ac
     addEventListener(name, handler) { events[name] = handler; },
     history: { back() { backCalls += 1; } },
   };
-  const document = { scripts: [], readyState: 'loading', getElementById: () => root, addEventListener() {}, querySelectorAll: () => [] };
+  const document = { documentElement: { spellcheck: false }, scripts: [], readyState: 'loading', getElementById: () => root, addEventListener() {}, querySelectorAll: () => [] };
   vm.runInNewContext(shell, { window, document, URL, console, setTimeout: () => 1, clearTimeout() {}, fetch: async () => { requests += 1; throw new Error('fixture fetch'); } });
+  assert.equal(document.documentElement.spellcheck, true);
   window.HelpdeskAppShell.registerPage('ticket-card', () => ({ destroy: f.destroy, canNavigateAway: f.close }));
   assert.equal(await window.HelpdeskAppShell.navigate('/tickets/ticket-2'), false);
   assert.equal(requests, 0);
@@ -453,8 +457,9 @@ test('BFCache pagehide keeps AppShell lifecycle initialized without duplicate in
     location: { href: 'http://desk/tickets/ticket-1', origin: 'http://desk', pathname: '/tickets/ticket-1', search: '' },
     addEventListener(name, handler) { events[name] = handler; },
   };
-  const document = { scripts: [], readyState: 'loading', getElementById: () => root, addEventListener() {}, querySelectorAll: () => [] };
+  const document = { documentElement: { spellcheck: false }, scripts: [], readyState: 'loading', getElementById: () => root, addEventListener() {}, querySelectorAll: () => [] };
   vm.runInNewContext(shell, { window, document, URL, console });
+  assert.equal(document.documentElement.spellcheck, true);
   window.HelpdeskAppShell.registerPage('ticket-card', () => {
     initializations += 1;
     return { destroy() { destructions += 1; } };

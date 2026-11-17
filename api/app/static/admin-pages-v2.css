@@ -29,7 +29,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
     height: 100%;
     min-width: 0;
     min-height: 0;
-    border-radius: 24px;
+    border-radius: var(--desk-radius, 12px);
     background: var(--desk-surface);
     border-color: var(--desk-border);
     box-shadow: var(--desk-shadow);
@@ -38,7 +38,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & :is(button, input, select, textarea) { font-family: var(--desk-font); }
   & :is(.panel, .modal) button.action {
     border: 1px solid var(--desk-border);
-    border-radius: 12px;
+    border-radius: var(--desk-radius, 12px);
     padding: 13.5px 18px;
     background: var(--desk-soft);
     color: var(--desk-text);
@@ -64,7 +64,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
     min-width: 0;
     max-width: 100%;
     border: 1px solid var(--desk-border);
-    border-radius: 12px;
+    border-radius: var(--desk-radius, 12px);
     padding: 12px 18px;
     background: var(--desk-soft);
     color: var(--desk-text);
@@ -95,11 +95,11 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .integration-log-filters label { max-width: 100%; font-size: 18px; gap: 7.5px; }
   & .integration-log-filters :is(input, select) { font-size: 19.5px; min-height: 57px; line-height: 1.5; }
   & .status-board-grid { overflow-y: auto; padding: 18px; gap: 24px; }
-  & .status-user-column { background: var(--desk-soft); border-color: var(--desk-border); border-radius: 16px; align-content: start; flex-basis: min(480px, 100%); min-width: 0; padding: 27px; gap: 21px; }
+  & .status-user-column { background: var(--desk-soft); border-color: var(--desk-border); border-radius: var(--desk-radius, 12px); align-content: start; flex-basis: min(480px, 100%); min-width: 0; padding: 27px; gap: 21px; }
   & .status-user-head { border-color: var(--desk-border); gap: 21px; padding-bottom: 18px; }
   & .status-user-name { font-size: 27px; }
   & .status-user-avatar { width: 72px; height: 72px; font-size: 30px; background: var(--desk-tint); color: var(--desk-on-tint); }
-  & .status-board-btn { border-radius: 12px; padding: 15px 18px; font: 600 21px/1.4 var(--desk-font); box-shadow: none; transform: none; min-width: 0; overflow-wrap: anywhere; }
+  & .status-board-btn { border-radius: var(--desk-radius, 12px); padding: 15px 18px; font: 600 21px/1.4 var(--desk-font); box-shadow: none; transform: none; min-width: 0; overflow-wrap: anywhere; }
   & .status-board-btn-time { font-size: 19.5px; }
   & .status-board-btn.active { flex-wrap: wrap; gap: 12px; }
   & .quick-replies-workspace { grid-template-rows: auto minmax(0, 1fr); gap: 18px; }
@@ -109,7 +109,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .quick-reply-card-title { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
   & .quick-reply-card:hover { background: var(--desk-hover); border-color: var(--desk-accent); }
   & .modal { font: 21px/1.5 var(--desk-font); }
-  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: 24px; box-shadow: var(--desk-shadow); backdrop-filter: none; max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; }
+  & .modal-dialog { background: var(--desk-surface); color: var(--desk-text); border-color: var(--desk-border); border-radius: var(--desk-radius, 12px); box-shadow: var(--desk-shadow); backdrop-filter: none; max-height: calc(100dvh - 24px); overflow: hidden; grid-template-rows: auto minmax(0, 1fr) auto; }
   & :is(.modal-head, .modal-foot, .card-head) { border-color: var(--desk-border); }
   & :is(.modal-head, .modal-foot) { padding: 15px 18px; gap: 12px; flex-wrap: wrap; }
   & .card-head { padding: 15px 18px; gap: 12px; flex-wrap: wrap; }
@@ -178,7 +178,7 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .status-log-viewport {
     box-sizing: border-box; width: calc((100% - 42px) * 11 / 15); margin: 0 auto 21px 21px;
     min-width: 0; min-height: 240px; flex: 1 0 240px; overflow-y: auto; overflow-x: hidden;
-    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
+    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px);
     container-type: inline-size;
   }
   & .status-log-table { width: 100%; min-width: 0; margin: 0; table-layout: fixed; border-collapse: collapse; font-size: 21px; }
@@ -195,13 +195,13 @@ body #appContent.main:is([data-shell-page="statuses"], [data-shell-page="managem
   & .status-log-sort:focus-visible { outline: 2px solid var(--desk-focus); }
   & .management-statistics-summary {
     margin: 18px 21px; padding: 12px 18px; border: 1px solid var(--desk-border);
-    border-radius: 16px; background: var(--desk-soft); width: fit-content; max-width: calc(100% - 42px);
+    border-radius: var(--desk-radius, 12px); background: var(--desk-soft); width: fit-content; max-width: calc(100% - 42px);
     box-sizing: border-box;
   }
   & .management-statistics-inner-card { margin: 0; }
   & .management-statistics-table-wrap {
     margin: 0 21px 21px; padding: 0; width: fit-content; max-width: calc(100% - 42px); align-self: start;
-    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: 16px;
+    background: var(--desk-soft); border: 1px solid var(--desk-border); border-radius: var(--desk-radius, 12px);
   }
   & .management-statistics-table th { background: var(--desk-soft); }
   & .management-statistics-work-time-table th[scope="colgroup"] {
