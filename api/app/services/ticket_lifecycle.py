@@ -1071,11 +1071,15 @@ def close_ticket_by_actor(
     return "closed"
 
 
+def format_freeze_until(freeze_until: datetime) -> str:
+    return freeze_until.astimezone(ZoneInfo(settings.app_timezone)).strftime("%d.%m.%Y, %H:%M")
+
+
 def freeze_ticket(
     db: Session,
     ticket: Ticket,
     *,
-    freeze_until,
+    freeze_until: datetime | None,
     add_message_fn,
 ) -> None:
     was_frozen = bool(ticket.is_frozen)
@@ -1085,7 +1089,10 @@ def freeze_ticket(
     if not was_frozen:
         sync_work_interval_after_freeze(db, ticket, now=frozen_at)
     clear_ticket_auto_close_timer(ticket)
-    add_message_fn(db, ticket, MessageType.SYSTEM, "Заявка заморожена", None)
+    body = "Заявка заморожена"
+    if freeze_until is not None:
+        body += f" до {format_freeze_until(freeze_until)}"
+    add_message_fn(db, ticket, MessageType.SYSTEM, body, None, agent_visible=True)
 
 
 def unfreeze_ticket(
@@ -1101,7 +1108,7 @@ def unfreeze_ticket(
     ticket.freeze_until = None
     if was_frozen:
         sync_work_interval_after_unfreeze(db, ticket, now=unfrozen_at)
-    add_message_fn(db, ticket, MessageType.SYSTEM, "Заявка разморожена", None)
+    add_message_fn(db, ticket, MessageType.SYSTEM, "Заявка разморожена", None, agent_visible=True)
     refresh_ticket_auto_close(db, ticket, restart_from_now=True, refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer_fn)
 
 

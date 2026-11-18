@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from api.app.auth import CurrentUser
+from api.app.config import settings
 from api.app.db import Base, get_db
 from api.app.models import (
     Client,
@@ -149,6 +150,12 @@ def _system_messages(session, ticket: Ticket) -> list[TicketMessage]:
     ).scalars().all()
 
 
+def _assert_system_history(client, ticket, expected):
+    card = client.get(f"/api/v1/tickets/{ticket.id}")
+    assert card.status_code == 200, card.text
+    assert [message["body"] for message in card.json()["messages"] if message["message_type"] == "system"] == expected
+
+
 def test_scheduler_unfreezes_due_tickets_and_tasks_once():
     with _session() as db:
         company = _company(db)
@@ -177,7 +184,10 @@ def test_scheduler_unfreezes_due_tickets_and_tasks_once():
         for item in (ticket, task):
             assert not item.is_frozen and item.freeze_until is None
             assert item.status == TicketStatus.PENDING.value and item.assignee_id == agent.id
-            assert [msg.body for msg in _system_messages(db, item)] == ["Заявка разморожена"]
+            assert [(msg.body, msg.agent_visible) for msg in _system_messages(db, item)] == [
+                ("Заявка разморожена", True),
+            ]
+            _assert_system_history(_client(db, agent), item, ["Заявка разморожена"])
         assert ticket.auto_close_due_at is not None and task.auto_close_due_at is None
         assert future.is_frozen and future.freeze_until > now
         assert closed.is_frozen and closed.freeze_until == now
@@ -218,7 +228,9 @@ def test_scheduler_rolls_back_failed_unfreeze_and_continues(monkeypatch):
 
 
 @pytest.mark.parametrize("workflow", ["ticket", "task"])
-def test_update_freeze_until_only_changes_date(workflow):
+def test_update_freeze_until_logs_only_initial_date(workflow, monkeypatch):
+    monkeypatch.setattr(settings, "app_timezone", "Asia/Yekaterinburg")
+    expected = "Добавлена дата авторазморозки: 01.01.2099, 10:15"
     with _session() as db:
         company = _company(db)
         agent = _user(db, company, "agent")
@@ -231,7 +243,9 @@ def test_update_freeze_until_only_changes_date(workflow):
             assert client.patch(url, json={}).status_code == 422
             assert client.patch(url, json={"freeze_until": "invalid"}).status_code == 422
             assert client.patch(url, json={"freeze_until": "2000-01-01T00:00:00Z"}).status_code == 422
-            response = client.patch(url, json={"freeze_until": "2099-01-01T08:15:00+03:00"})
+            assert not _system_messages(db, ticket)
+            deadline = {"freeze_until": "2099-01-01T08:15:00+03:00"}
+            response = client.patch(url, json=deadline)
             assert response.status_code == 200
             assert datetime.fromisoformat(response.json()["freeze_until"].replace("Z", "+00:00")) == datetime(
                 2099, 1, 1, 5, 15, tzinfo=timezone.utc,
@@ -239,12 +253,15 @@ def test_update_freeze_until_only_changes_date(workflow):
             db.refresh(ticket)
             assert ticket.freeze_until == datetime(2099, 1, 1, 5, 15)
             assert {key: getattr(ticket, key) for key in before} == before
+            assert client.patch(url, json=deadline).status_code == 200
+            assert client.patch(url, json={"freeze_until": "2099-01-02T05:15:00Z"}).status_code == 200
             response = client.patch(url, json={"freeze_until": None})
             assert response.status_code == 200 and response.json()["freeze_until"] is None
             db.refresh(ticket)
             assert ticket.freeze_until is None
             assert {key: getattr(ticket, key) for key in before} == before
-            assert not _system_messages(db, ticket)
+            assert [(msg.body, msg.agent_visible) for msg in _system_messages(db, ticket)] == [(expected, True)]
+            _assert_system_history(client, ticket, [expected])
 
 
 @pytest.mark.parametrize("is_frozen,status", [(False, "new"), (True, "closed")])
@@ -256,8 +273,11 @@ def test_update_freeze_until_rejects_ineligible_tickets(is_frozen, status):
         ticket = _ticket(db, company, contact, is_frozen=is_frozen, status=status)
         db.commit()
         with _client(db, admin) as client:
-            response = client.patch(f"/api/v1/tickets/{ticket.id}/freeze-until", json={"freeze_until": None})
+            response = client.patch(
+                f"/api/v1/tickets/{ticket.id}/freeze-until", json={"freeze_until": "2099-01-01T05:15:00Z"},
+            )
             assert response.status_code == 409
+            assert not _system_messages(db, ticket)
 
 
 def test_admin_bulk_freeze_requires_admin():
@@ -330,8 +350,39 @@ def test_admin_bulk_freeze_freezes_tickets_and_tasks_through_lifecycle():
     assert ticket_interval.end_reason == "freeze"
     assert task_interval.ended_at is not None
     assert task_interval.end_reason == "freeze"
-    assert [message.body for message in _system_messages(session, ticket)] == ["Заявка заморожена"]
-    assert [message.body for message in _system_messages(session, task)] == ["Заявка заморожена"]
+    with _client(session, agent) as client:
+        for item in (ticket, task):
+            assert [(msg.body, msg.agent_visible) for msg in _system_messages(session, item)] == [
+                ("Заявка заморожена", True),
+            ]
+            _assert_system_history(client, item, ["Заявка заморожена"])
+
+
+def test_freeze_with_date_creates_one_visible_message_and_can_unfreeze(monkeypatch):
+    monkeypatch.setattr(settings, "app_timezone", "Asia/Yekaterinburg")
+    with _session() as db:
+        company = _company(db)
+        admin = _user(db, company, "admin")
+        agent = _user(db, company, "agent")
+        ticket = _ticket(db, company, _contact(db, company), assignee=agent)
+        db.add(TicketMessage(
+            id=str(uuid.uuid4()), ticket_id=ticket.id, message_type=MessageType.SYSTEM.value,
+            body="Заявка заморожена", agent_visible=False, created_at=datetime(2025, 1, 1),
+        ))
+        db.commit()
+        url = f"/api/v1/tickets/{ticket.id}"
+        with _client(db, admin) as client:
+            response = client.post(f"{url}/freeze", json={"freeze_until": "2099-01-01T08:15:00+03:00"})
+            assert response.status_code == 200, response.text
+            assert ticket.freeze_until == datetime(2099, 1, 1, 5, 15)
+            assert client.post(f"{url}/unfreeze").status_code == 200
+            expected = ["Заявка заморожена до 01.01.2099, 10:15", "Заявка разморожена"]
+            _assert_system_history(client, ticket, ["Заявка заморожена", *expected])
+        with _client(db, agent) as client:
+            _assert_system_history(client, ticket, expected)
+        assert [(msg.body, msg.agent_visible) for msg in _system_messages(db, ticket)] == [
+            ("Заявка заморожена", False), *((body, True) for body in expected),
+        ]
 
 
 def test_admin_bulk_unfreeze_unfreezes_tickets_and_tasks_through_lifecycle_without_rerouting():

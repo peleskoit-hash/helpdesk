@@ -449,8 +449,9 @@ def run_ticket_auto_unfreeze_once(
                 unfreeze_ticket(
                     db,
                     ticket,
-                    add_message_fn=lambda db, ticket, kind, body, author: add_message(
+                    add_message_fn=lambda db, ticket, kind, body, author, *, agent_visible: add_message(
                         db=db, ticket=ticket, message_type=kind, body=body, author_user_id=author,
+                        agent_visible=agent_visible,
                     ),
                     refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
                 )

@@ -147,7 +147,7 @@
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/ticket_composer.js?v=20261111-shared-drafts-v1",
-        "/static/ticket_controls.js?v=20261118-freeze-until-v1",
+        "/static/ticket_controls.js?v=20261118-quick-actions-v1",
         "/static/ticket_message_view.js?v=20261117-message-clipboard-v1",
         "/static/ticket.js?v=20261118-freeze-until-v1",
       ],

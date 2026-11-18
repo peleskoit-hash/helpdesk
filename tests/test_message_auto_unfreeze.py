@@ -205,7 +205,12 @@ def test_greeting_uses_actual_actor_and_ack(case,monkeypatch,owner,ack):
     c=case;actor=c.users['admin']
     c.ticket.assignee_id=actor.id if owner else c.users['agent'].id;c.db.commit()
     monkeypatch.setattr(tickets,'_send_to_telegram_client',lambda *a,**k: {'result':{'message_id':100}} if ack else None)
-    tickets.greeting(c.ticket.id,db=c.db,user=actor)
+    if ack:
+        tickets.greeting(c.ticket.id,db=c.db,user=actor)
+    else:
+        with pytest.raises(HTTPException) as exc:
+            tickets.greeting(c.ticket.id,db=c.db,user=actor)
+        assert exc.value.detail["error"]["code"] == "telegram_send_failed"
     assert c.ticket.is_frozen is not (owner and ack)
 
 

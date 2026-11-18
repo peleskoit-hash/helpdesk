@@ -369,24 +369,24 @@ test("visible restore and wrong-problem actions retain every previous availabili
   }
 });
 
-test("quick action sequence unlocks clarification and onsite after greeting button use", () => {
+test("all quick actions are available before greeting and only used actions are disabled", () => {
   const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
   ctx.greetingAllowed = () => true;
 
   controls.renderTicketControlsView(ctx);
 
   assert.equal(greetingBtn.disabled, false);
-  assert.equal(clarificationBtn.disabled, true);
-  assert.equal(onsiteBtn.disabled, true);
+  assert.equal(clarificationBtn.disabled, false);
+  assert.equal(onsiteBtn.disabled, false);
 
-  ctx.state.card.quick_actions_used = { greeting: true };
+  ctx.state.card.quick_actions_used = { greeting: true, onsite: true };
   ctx.state.card.greeting_used = true;
   ctx.state.card.messages = [{ message_type: "agent", body: "Добрый день" }];
   controls.renderTicketControlsView(ctx);
 
   assert.equal(greetingBtn.disabled, true);
   assert.equal(clarificationBtn.disabled, false);
-  assert.equal(onsiteBtn.disabled, false);
+  assert.equal(onsiteBtn.disabled, true);
 });
 
 test("internal task keeps all quick actions visible but disabled", () => {
@@ -407,87 +407,81 @@ test("internal task keeps all quick actions visible but disabled", () => {
 });
 
 test("quick action reload preserves current composer draft", () => {
-  assert.match(ticketPageSource, /preserveComposerDraft/);
-  assert.match(ticketControlsSource, /loadCard\(\{ preserveComposerDraft: true \}\)/);
+  assert.match(ticketPageSource, /if \(!options\.preserveComposerDraft\) \{\s*applyServerDraft\(card\)/);
 });
 
-test("quick message send error reload preserves composer draft", async () => {
-  const { controls, clarificationBtn, ctx } = controlsRenderCtx();
-  const loadCardCalls = [];
-  const errors = [];
-  ctx.apiPost = async () => {
-    throw new Error("send failed");
-  };
-  ctx.apiPatch = async () => {};
-  ctx.loadCard = async (options) => loadCardCalls.push(options || {});
-  ctx.setStatus = () => {};
-  ctx.showError = (message) => errors.push(message);
-  ctx.action = () => {};
-  ctx.openInstructionModal = () => {};
-  ctx.closeInstructionModal = () => {};
-  ctx.closeOnBackdropClick = () => {};
-  ctx.assignCurrentTicket = async () => {};
-  ctx.saveClientProfile = async () => {};
-  ctx.openClientModal = () => {};
-  ctx.closeClientModal = () => {};
+for (const actionName of ["greeting", "clarification", "onsite"]) {
+  test(`quick action ${actionName} can retry a failed send but stays used after a failed card reload`, async () => {
+    const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
+    const buttons = { greeting: greetingBtn, clarification: clarificationBtn, onsite: onsiteBtn };
+    const button = buttons[actionName];
+    const otherButtons = Object.values(buttons).filter(other => other !== button);
+    const apiCalls = [];
+    const loads = [];
+    const errors = [];
+    const statuses = [];
+    let rejectSend;
+    ctx.greetingAllowed = () => true;
+    ctx.state.ticketId = "ticket-1";
+    ctx.apiPost = async (url, body) => {
+      apiCalls.push({ url, body });
+      if (apiCalls.length === 1) await new Promise((_resolve, reject) => { rejectSend = reject; });
+    };
+    ctx.loadCard = async (options) => {
+      loads.push({ ...options });
+      ctx.state.card = { ...ctx.state.card, quick_actions_used: {} };
+      controls.renderTicketControlsView(ctx);
+      if (!options.silent) throw new Error("card reload failed");
+    };
+    ctx.setStatus = (message) => statuses.push(message);
+    ctx.showError = (message) => errors.push(message);
+    ctx.closeOnBackdropClick = () => {};
 
-  controls.bindTicketControlHandlers(ctx);
-  await clarificationBtn.handlers.click();
+    controls.renderTicketControlsView(ctx);
+    controls.bindTicketControlHandlers(ctx);
+    const firstSend = button.handlers.click();
+    assert.equal(button.disabled, true);
+    await button.handlers.click();
+    await otherButtons[0].handlers.click();
+    assert.equal(apiCalls.length, 1);
 
-  assert.deepEqual(errors, ["send failed"]);
-  assert.equal(loadCardCalls.length, 1);
-  assert.equal(loadCardCalls[0].silent, true);
-  assert.equal(loadCardCalls[0].preserveComposerDraft, true);
+    rejectSend(new Error("send failed"));
+    await firstSend;
+    assert.equal(button.disabled, false);
+    assert.ok(otherButtons.every(other => !other.disabled));
+    assert.deepEqual(errors, ["send failed"]);
+
+    await button.handlers.click();
+    assert.equal(button.disabled, true);
+    assert.ok(otherButtons.every(other => !other.disabled));
+    await button.handlers.click();
+    assert.deepEqual(apiCalls, [apiCalls[0], apiCalls[0]]);
+    if (actionName === "greeting") {
+      assert.equal(apiCalls[0].url, "/api/v1/tickets/ticket-1/greeting");
+    } else {
+      assert.equal(apiCalls[0].url, "/api/v1/tickets/ticket-1/reply");
+      assert.equal(apiCalls[0].body.quick_action, actionName);
+    }
+    assert.deepEqual(loads, [
+      { silent: true, preserveComposerDraft: true },
+      { preserveComposerDraft: true, forceBottom: true },
+    ]);
+    assert.deepEqual(errors, ["send failed", "card reload failed"]);
+    assert.equal(statuses.at(-1), actionName === "greeting" ? "Приветствие отправлено" : "Сообщение отправлено");
+  });
+}
+
+test("closed requests and readonly roles disable every quick action", () => {
+  for (const restriction of ["closed", "readonly", "auto"]) {
+    const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
+    ctx.greetingAllowed = () => true;
+    if (restriction === "closed") ctx.state.card.status = "closed";
+    if (restriction === "readonly") ctx.state.role = "chiki_piki";
+    if (restriction === "auto") ctx.state.card.workflow_type = "auto";
+    controls.renderTicketControlsView(ctx);
+    assert.ok([greetingBtn, clarificationBtn, onsiteBtn].every(button => button.disabled), restriction);
+  }
 });
-
-test("successful greeting unlocks next quick actions before card reload finishes", async () => {
-  const { controls, greetingBtn, clarificationBtn, onsiteBtn, ctx } = controlsRenderCtx();
-  const apiCalls = [];
-  let loadStarted = false;
-  let loadFinished = false;
-  ctx.greetingAllowed = () => true;
-  ctx.state.ticketId = "ticket-1";
-  ctx.apiPost = async (url, body) => {
-    apiCalls.push({ url, body });
-    return { ok: true };
-  };
-  ctx.apiPatch = async () => {};
-  ctx.loadCard = async () => {
-    loadStarted = true;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    loadFinished = true;
-  };
-  ctx.setStatus = () => {};
-  ctx.showError = () => {};
-  ctx.action = () => {};
-  ctx.openInstructionModal = () => {};
-  ctx.closeInstructionModal = () => {};
-  ctx.closeOnBackdropClick = () => {};
-  ctx.assignCurrentTicket = async () => {};
-  ctx.saveClientProfile = async () => {};
-  ctx.openClientModal = () => {};
-  ctx.closeClientModal = () => {};
-
-  controls.bindTicketControlHandlers(ctx);
-  await greetingBtn.handlers.click();
-
-  assert.equal(loadStarted, true);
-  assert.equal(loadFinished, false);
-  assert.equal(greetingBtn.disabled, true);
-  assert.equal(clarificationBtn.disabled, false);
-  assert.equal(onsiteBtn.disabled, false);
-
-  const clarificationRun = clarificationBtn.handlers.click();
-  await Promise.resolve();
-  await Promise.resolve();
-
-  assert.equal(apiCalls.length, 2);
-  assert.equal(apiCalls[1].url, "/api/v1/tickets/ticket-1/reply");
-  assert.equal(apiCalls[1].body.quick_action, "clarification");
-
-  await clarificationRun;
-});
-
 
 test("move to special stays visible for admin and disables closed, special or unsupported workflows", () => {
   for (const workflow of ["ticket", "task", "auto", "unsupported"]) {

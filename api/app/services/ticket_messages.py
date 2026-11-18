@@ -115,8 +115,6 @@ def _prepare_quick_action(ticket: Ticket, action: str | None, text: str | None, 
         _error(409, "quick_action_ticket_only", "Быстрое действие доступно только для обычной заявки")
     if _quick_action_used(ticket, action):
         _error(409, "quick_action_already_used", "Быстрое действие уже использовано")
-    if not _quick_action_used(ticket, "greeting"):
-        _error(409, "quick_action_greeting_required", "Сначала отправьте приветствие")
     expected_text = QUICK_ACTION_TEXTS[action]
     if str(text or "").strip() != expected_text:
         _error(400, "quick_action_text_mismatch", "Текст быстрого действия не совпадает с серверным шаблоном")
@@ -344,11 +342,11 @@ async def reply_to_ticket(
         _error(403, "readonly_role", "Нет прав на быстрые действия")
     if quick_action:
         ticket = _lock_ticket_for_quick_action(db, ticket)
+        if ticket.status == TicketStatus.CLOSED.value:
+            _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
     text = _prepare_quick_action(ticket, quick_action, text, is_internal_comment=is_internal_comment)
     if quick_action and (uploaded_files or preloaded_attachment_ids or quote_message_id):
         _error(400, "quick_action_plain_text_only", "Быстрое действие отправляется только обычным текстом")
-    if quick_action:
-        _mark_quick_action_used(ticket, quick_action)
 
     quote_telegram_message_id = None
     saved_quote_message_id = None
@@ -470,6 +468,9 @@ async def reply_to_ticket(
                 text,
                 reply_to_message_id=quote_telegram_message_id,
             )
+            sent_message_id = telegram_message_id_from_response(response)
+            if quick_action and not sent_message_id:
+                _error(502, "telegram_send_failed", "Telegram не подтвердил отправку сообщения")
         except HTTPException as exc:
             if _http_error_code(exc) == "telegram_send_failed":
                 persist_client_delivery_failure(
@@ -478,7 +479,6 @@ async def reply_to_ticket(
                     body="Не удалось отправить сообщение клиенту в Telegram.",
                 )
             raise
-        sent_message_id = telegram_message_id_from_response(response)
 
     agent_message = add_message(
         db=db,
@@ -582,7 +582,9 @@ async def reply_to_ticket(
         if ticket.status == TicketStatus.NEW.value:
             ticket.status = TicketStatus.PENDING.value
         refresh_ticket_auto_close(db, ticket, True)
-    if not quick_action and not is_readonly_chiki_piki(user):
+    if quick_action:
+        _mark_quick_action_used(ticket, quick_action)
+    elif not is_readonly_chiki_piki(user):
         clear_ticket_draft(db, ticket)
     db.commit()
     if ticket.channel == "web" and workflow_type != TicketWorkflowType.TASK.value:

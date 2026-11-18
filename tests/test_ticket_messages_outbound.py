@@ -9,12 +9,13 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from itertools import permutations
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -1504,7 +1505,7 @@ def test_static_contract_keeps_single_attachment_marker_and_bumps_versions():
     ticket_static_version = "20261111-shared-drafts-v1"
     ticket_attachments_template_version = "20261117-message-clipboard-v1"
     ticket_attachments_shell_version = "20261117-message-clipboard-v1"
-    ticket_controls_version = "20261118-freeze-until-v1"
+    ticket_controls_version = "20261118-quick-actions-v1"
     ticket_page_version = "20261118-freeze-until-v1"
     ticket_styles_version = "20261118-ticket-table-centering-v1"
     composer = (repo_root / "api" / "app" / "static" / "ticket_composer.js").read_text(encoding="utf-8")
@@ -3847,54 +3848,143 @@ async def _send_quick_action_reply(session, ticket, payload, *, sent_messages):
     )
 
 
-def test_quick_clarification_requires_greeting_and_does_not_send_on_failure():
-    _engine, _Session, session = _session_bundle()
+@pytest.fixture
+def quick_action_api():
+    _engine, Session, session = _session_bundle()
     ticket = _seed_ticket(session)
-    sent_messages = []
+    # Give the readonly role access to the ticket so the action permission is exercised.
+    ticket.button_config_key = "Колл Центр|Проблема"
+    session.commit()
+    user = SimpleNamespace(id="admin-1", role="admin")
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(_send_quick_action_reply(
-            session,
-            ticket,
-            {
-                "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
-                "quick_action": "clarification",
-            },
-            sent_messages=sent_messages,
-        ))
+    def request_db():
+        with Session() as db:
+            yield db
 
-    assert exc.value.detail["error"]["code"] == "quick_action_greeting_required"
-    assert sent_messages == []
-    assert _messages(session, ticket.id) == []
+    app = FastAPI()
+    app.include_router(tickets_router.router)
+    app.dependency_overrides[tickets_router.get_db] = request_db
+    app.dependency_overrides[tickets_router.get_current_user] = lambda: user
+    with TestClient(app) as http:
+        yield http, session, ticket, user
+    session.close()
+
+
+def _post_quick_action(http, ticket, action, *, text=None):
+    url = f"/api/v1/tickets/{ticket.id}"
+    if action == "greeting":
+        return http.post(f"{url}/greeting")
+    if text is None:
+        text = ticket_messages_service.QUICK_ACTION_TEXTS[action]
+    return http.post(f"{url}/reply", json={"text": text, "quick_action": action})
+
+
+@pytest.mark.parametrize("order", list(permutations(("greeting", "clarification", "onsite"))))
+@pytest.mark.parametrize("channel", ["telegram", "web"])
+def test_quick_actions_any_order_and_api_rejects_repeats(quick_action_api, monkeypatch, order, channel):
+    http, session, ticket, _user = quick_action_api
+    ticket.channel = channel
+    session.commit()
+    sent = []
+
+    def send(_chat_id, body, **_kwargs):
+        sent.append(body)
+        return {"result": {"message_id": len(sent)}}
+
+    monkeypatch.setattr(tickets_router, "send_message", send)
+    used = {}
+    for action in order:
+        response = _post_quick_action(http, ticket, action)
+        assert response.status_code == 200, response.text
+        used[action] = True
+        session.refresh(ticket)
+        assert ticket.quick_action_state_json == used
+        messages = _messages(session, ticket.id)
+        assert len(messages) == len(used)
+        assert all(message.message_type == MessageType.AGENT.value for message in messages)
+        if channel == "telegram":
+            assert [message.body for message in messages] == sent
+            assert messages[-1].telegram_message_id == str(len(used))
+        else:
+            assert sent == []
+            assert messages[-1].telegram_message_id is None
+
+        duplicate = _post_quick_action(http, ticket, action)
+        assert duplicate.status_code == 409
+        expected = "greeting_already_sent" if action == "greeting" else "quick_action_already_used"
+        assert duplicate.json()["detail"]["error"]["code"] == expected
+        assert len(_messages(session, ticket.id)) == len(used)
+        assert len(sent) == (len(used) if channel == "telegram" else 0)
+
+
+@pytest.mark.parametrize("action", ["greeting", "clarification", "onsite"])
+@pytest.mark.parametrize("failure", ["rejected", "no_confirmation"])
+def test_quick_action_delivery_failure_allows_retry(quick_action_api, monkeypatch, action, failure):
+    http, session, ticket, _user = quick_action_api
+    other_action = "onsite" if action == "clarification" else "clarification"
+    should_fail = True
+    send_to_telegram = tickets_router._send_to_telegram_client
+
+    def check_flag_before_send(db, current_ticket, *args, **kwargs):
+        assert not (current_ticket.quick_action_state_json or {}).get(action)
+        return send_to_telegram(db, current_ticket, *args, **kwargs)
+
+    def send(*_args, **_kwargs):
+        if should_fail:
+            if failure == "rejected":
+                raise telegram_bot_service.TelegramApiError("message rejected")
+            return {"result": {}}
+        return {"result": {"message_id": 901}}
+
+    monkeypatch.setattr(tickets_router, "_send_to_telegram_client", check_flag_before_send)
+    monkeypatch.setattr(tickets_router, "send_message", send)
+    response = _post_quick_action(http, ticket, action)
+    assert response.status_code == 502, response.text
+    assert response.json()["detail"]["error"]["code"] == "telegram_send_failed"
     session.refresh(ticket)
     assert not ticket.quick_action_state_json
+    assert [message.message_type for message in _messages(session, ticket.id)] == [MessageType.SYSTEM.value]
 
-
-def test_quick_clarification_marks_action_only_after_success_and_repeat_is_rejected():
-    _engine, _Session, session = _session_bundle()
-    ticket = _seed_ticket(session)
-    ticket.quick_action_state_json = {"greeting": True}
-    session.commit()
-    sent_messages = []
-    payload = {
-        "text": "Могли бы Вы, пожалуйста, уточнить, что именно произошло?",
-        "quick_action": "clarification",
-    }
-
-    result = asyncio.run(_send_quick_action_reply(session, ticket, payload, sent_messages=sent_messages))
-
-    assert result == {"ok": True}
+    should_fail = False
+    for retry_action in (other_action, action):
+        response = _post_quick_action(http, ticket, retry_action)
+        assert response.status_code == 200, response.text
     session.refresh(ticket)
-    assert ticket.quick_action_state_json == {"greeting": True, "clarification": True}
-    assert [message.body for message in _messages(session, ticket.id)] == [payload["text"]]
-    assert len(sent_messages) == 1
+    assert ticket.quick_action_state_json == {other_action: True, action: True}
+    assert len([m for m in _messages(session, ticket.id) if m.message_type == MessageType.AGENT.value]) == 2
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(_send_quick_action_reply(session, ticket, payload, sent_messages=sent_messages))
 
-    assert exc.value.detail["error"]["code"] == "quick_action_already_used"
-    assert len(sent_messages) == 1
-    assert len(_messages(session, ticket.id)) == 1
+@pytest.mark.parametrize("action", ["greeting", "clarification", "onsite"])
+@pytest.mark.parametrize("restriction", ["task", "auto", "closed", "readonly"])
+def test_quick_action_restrictions(quick_action_api, monkeypatch, action, restriction):
+    http, session, ticket, user = quick_action_api
+    if restriction == "readonly":
+        user.role = "chiki_piki"
+        expected = "readonly_role"
+    elif restriction == "closed":
+        ticket.status = TicketStatus.CLOSED.value
+        expected = "ticket_closed_readonly"
+    else:
+        ticket.workflow_type = restriction
+        expected = "greeting_not_allowed" if action == "greeting" else "quick_action_ticket_only"
+    session.commit()
+    monkeypatch.setattr(tickets_router, "_send_to_telegram_client", lambda *_a, **_kw: pytest.fail("unexpected send"))
+    response = _post_quick_action(http, ticket, action)
+    assert response.status_code == (403 if restriction == "readonly" else 409), response.text
+    assert response.json()["detail"]["error"]["code"] == expected
+    session.refresh(ticket)
+    assert not ticket.quick_action_state_json
+    assert not _messages(session, ticket.id)
+
+
+def test_quick_action_still_validates_template(quick_action_api, monkeypatch):
+    http, session, ticket, _user = quick_action_api
+    monkeypatch.setattr(tickets_router, "_send_to_telegram_client", lambda *_a, **_kw: pytest.fail("unexpected send"))
+    response = _post_quick_action(http, ticket, "clarification", text="Другой текст")
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"]["code"] == "quick_action_text_mismatch"
+    session.refresh(ticket)
+    assert not ticket.quick_action_state_json
 
 
 def test_quick_clarification_preserves_saved_draft():

@@ -245,7 +245,7 @@
     const hasAgentMessage = card.messages.some((m) => m.message_type === "agent");
     const hasAnyMessage = card.messages.length > 0;
     const greetedByMessage = card.messages.some((m) => m.message_type === "agent" && /^добр/i.test((m.body || "").trim()));
-    const quickActionsUsed = card.quick_actions_used || {};
+    const quickActionsUsed = { ...card.quick_actions_used, ...state.confirmedQuickActions };
     const greetingButtonUsed = Boolean(quickActionsUsed.greeting);
     const greeted = greetedByMessage || Boolean(card.greeting_used);
     const workflowType = card.workflow_type || "ticket";
@@ -258,11 +258,10 @@
       Math.ceil((Number(state.restoreCloseCooldownUntil || 0) - Date.now()) / 1000),
     );
     const restoreCloseCooldownActive = restoreCloseCooldownSeconds > 0;
-    const isGreetingFlow = workflowType !== "task" && workflowType !== "auto";
-    const canSendQuickAction = !isReadonly && !isClosed && isGreetingFlow && greetingAllowed();
+    const canSendQuickAction = !isReadonly && !isClosed && workflowType === "ticket" && greetingAllowed();
     const canUseGreeting = canSendQuickAction && !greeted && !greetingButtonUsed;
-    const canUseClarification = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.clarification;
-    const canUseOnsite = canSendQuickAction && greetingButtonUsed && !quickActionsUsed.onsite;
+    const canUseClarification = canSendQuickAction && !quickActionsUsed.clarification;
+    const canUseOnsite = canSendQuickAction && !quickActionsUsed.onsite;
     const showClose = !isReadonly && (state.role === "admin" || state.role === "agent");
     const taskUploadsActive = hasActiveTaskUploads(state);
     const canClose = !isClosed && !taskUploadsActive && (state.role === "admin" || (hasAnyMessage && hasAgentMessage));
@@ -348,57 +347,42 @@
     if (ctx.el.adminSkipClientNotification) ctx.el.adminSkipClientNotification.checked = false;
     const { el, state, action, apiPost, apiPatch, loadCard, setStatus, showError, setVisible, openInstructionModal, closeInstructionModal, closeOnBackdropClick, assignCurrentTicket, saveClientProfile, openClientModal, closeClientModal } = ctx;
 
-    if (el.greetingBtn) {
-      el.greetingBtn.addEventListener("click", async (event) => {
-        if (quickActionInFlight) return;
-        try {
-          quickActionInFlight = "greeting";
-          renderTicketControlsView(ctx);
-          setStatus("Отправляю приветствие...");
-          await apiPost(`/api/v1/tickets/${state.ticketId}/greeting`);
-          if (state.card) {
-            state.card.greeting_used = true;
-            state.card.quick_actions_used = {
-              ...(state.card.quick_actions_used || {}),
-              greeting: true,
-            };
-          }
-          quickActionInFlight = null;
-          renderTicketControlsView(ctx);
-          loadCard({ preserveComposerDraft: true, forceBottom: true }).catch((loadError) => showError(loadError.message));
-          setStatus("Приветствие отправлено");
-        } catch (e) {
-          showError(e.message);
-          await loadCard({ silent: true, preserveComposerDraft: true });
-        } finally {
-          quickActionInFlight = null;
-          renderTicketControlsView(ctx);
-        }
-      });
-    }
-
     async function sendQuickMessage(actionName) {
       if (quickActionInFlight) return;
-      const text = QUICK_ACTION_TEXTS[actionName];
-      if (!text) return;
+      const isGreeting = actionName === "greeting";
+      const ticketUrl = `/api/v1/tickets/${state.ticketId}`;
       try {
         quickActionInFlight = actionName;
         renderTicketControlsView(ctx);
-        setStatus("Отправляю быстрое сообщение...");
-        await apiPost(`/api/v1/tickets/${state.ticketId}/reply`, { text, quick_action: actionName });
-        await loadCard({ preserveComposerDraft: true, forceBottom: true });
-        setStatus("Сообщение отправлено");
-      } catch (e) {
-        showError(e.message);
-        await loadCard({ silent: true, preserveComposerDraft: true });
+        setStatus(isGreeting ? "Отправляю приветствие..." : "Отправляю быстрое сообщение...");
+        if (isGreeting) {
+          await apiPost(`${ticketUrl}/greeting`);
+        } else {
+          await apiPost(`${ticketUrl}/reply`, { text: QUICK_ACTION_TEXTS[actionName], quick_action: actionName });
+        }
+        // A card reload already in progress may still return the old flags.
+        state.confirmedQuickActions = { ...state.confirmedQuickActions, [actionName]: true };
+      } catch (error) {
+        showError(error.message);
+        await loadCard({ silent: true, preserveComposerDraft: true }).catch((loadError) => showError(loadError.message));
+        return;
       } finally {
         quickActionInFlight = null;
         renderTicketControlsView(ctx);
       }
+      loadCard({ preserveComposerDraft: true, forceBottom: true }).catch((loadError) => showError(loadError.message));
+      setStatus(isGreeting ? "Приветствие отправлено" : "Сообщение отправлено");
     }
 
-    if (el.clarificationBtn) el.clarificationBtn.addEventListener("click", () => sendQuickMessage("clarification"));
-    if (el.onsiteBtn) el.onsiteBtn.addEventListener("click", () => sendQuickMessage("onsite"));
+    for (const [actionName, button] of [
+      ["greeting", el.greetingBtn],
+      ["clarification", el.clarificationBtn],
+      ["onsite", el.onsiteBtn],
+    ]) {
+      button?.addEventListener("click", () => {
+        if (!button.disabled) return sendQuickMessage(actionName);
+      });
+    }
 
     if (el.freezeDate) {
       const save = () => {

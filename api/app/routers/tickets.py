@@ -86,6 +86,7 @@ from ..services.ticket_lifecycle import (
     task_has_active_attachment_uploads,
     format_task_closed_without_answer_text,
     finalize_group_parent_if_ready,
+    format_freeze_until,
     freeze_ticket,
     refresh_ticket_auto_close,
     unfreeze_ticket,
@@ -123,8 +124,6 @@ SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT = (
     "Клиент начал создание обращения",
     "Клиент выбрал кнопку:",
     "Клиент нажал /start",
-    "Заявка заморожена",
-    "Заявка разморожена",
     "Заявка возвращена в работу.",
     "Сотрудник подсказал клиенту правильный пункт меню:",
     "Клиенту ушёл текст в бота:",
@@ -603,6 +602,8 @@ def _is_support_visible_system_message(message: TicketMessage) -> bool:
     text = (message.body or "").strip()
     if not text:
         return False
+    if text.startswith(("Заявка заморожена", "Заявка разморожена", "Добавлена дата авторазморозки:")):
+        return message.agent_visible is True
     if text.startswith(SYSTEM_HIDDEN_PREFIXES_FOR_SUPPORT):
         return False
     return True
@@ -1814,7 +1815,7 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     ).scalar_one()
     if ticket.status == TicketStatus.CLOSED.value:
         _error(409, "ticket_closed_readonly", "Закрытая заявка только для чтения")
-    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) in {TicketWorkflowType.TASK.value, TicketWorkflowType.AUTO.value}:
+    if (ticket.workflow_type or TicketWorkflowType.TICKET.value) != TicketWorkflowType.TICKET.value:
         _error(409, "greeting_not_allowed", "Приветствие доступно только для обычной заявки")
     if bool((ticket.quick_action_state_json or {}).get("greeting")):
         _error(409, "greeting_already_sent", "Приветствие уже отправлялось по этой заявке")
@@ -1841,12 +1842,12 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     profile = _get_or_create_client_profile(db, ticket.client_id)
     contact = _telegram_contact_for_client(db, ticket.client_id)
     text = _format_greeting_text(greet, profile.contact_name, contact)
-    quick_state = dict(ticket.quick_action_state_json or {})
-    quick_state["greeting"] = True
-    ticket.quick_action_state_json = quick_state
 
     try:
         response = _send_to_telegram_client(db, ticket, text)
+        sent_message_id = _telegram_message_id(response)
+        if ticket.channel != "web" and not sent_message_id:
+            _error(502, "telegram_send_failed", "Telegram не подтвердил отправку сообщения")
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}
         error = detail.get("error") if isinstance(detail, dict) else {}
@@ -1857,8 +1858,8 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
                 body="Не удалось отправить клиенту приветствие в Telegram.",
             )
         raise
-    _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=_telegram_message_id(response))
-    if user.id and ticket.assignee_id == user.id and (ticket.channel == "web" or _telegram_message_id(response)):
+    _add_message(db, ticket, MessageType.AGENT, text, user.id, telegram_message_id=sent_message_id)
+    if user.id and ticket.assignee_id == user.id and (ticket.channel == "web" or sent_message_id):
         was_frozen = bool(ticket.is_frozen)
         unfreeze_ticket_on_message(ticket)
         if was_frozen and not ticket.is_frozen:
@@ -1872,6 +1873,9 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
         restart_from_now=True,
         refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
     )
+    quick_state = dict(ticket.quick_action_state_json or {})
+    quick_state["greeting"] = True
+    ticket.quick_action_state_json = quick_state
     db.commit()
     return {"ok": True, "text": text}
 
@@ -1901,13 +1905,22 @@ def update_freeze_until(
     if freeze_until is not None and freeze_until <= datetime.now(timezone.utc):
         _error(422, "invalid_freeze_until", "Дата авторазморозки должна быть в будущем")
 
-    result = db.execute(
+    date_update = (
         update(Ticket)
         .where(Ticket.id == ticket.id, Ticket.is_frozen.is_(True), Ticket.status != TicketStatus.CLOSED.value)
         .values(freeze_until=freeze_until)
         .execution_options(synchronize_session=False)
     )
-    if result.rowcount != 1:
+    if freeze_until is not None and db.execute(date_update.where(Ticket.freeze_until.is_(None))).rowcount == 1:
+        updated_at = ticket.updated_at
+        _add_message(
+            db, ticket, MessageType.SYSTEM,
+            f"Добавлена дата авторазморозки: {format_freeze_until(freeze_until)}",
+            None, agent_visible=True,
+        )
+        # Editing the deadline preserves the ticket's activity timestamp.
+        ticket.updated_at = updated_at
+    elif db.execute(date_update).rowcount != 1:
         _error(409, "freeze_until_unavailable", "Дата доступна только для открытой замороженной заявки")
     db.commit()
     return {"ok": True, "freeze_until": freeze_until}
