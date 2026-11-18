@@ -11,11 +11,11 @@ test('ticket header overflow decoration is removed and CSS cache versions match 
   assert.doesNotMatch(css, /#ticketsTable\s+thead::after/);
   assert.match(css, /#ticketsTable thead \{ position: sticky; top: 6px; z-index: 3; background: var\(--desk-surface\); box-shadow: 0 -12px 0 12px var\(--desk-surface\); \}/);
   assert.match(css, /& \*::-webkit-scrollbar-track:vertical \{\s*margin-block: var\(--desk-scrollbar-track-inset\);/);
-  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261118-freeze-until-v1/);
+  assert.match(fs.readFileSync('api/app/static/styles.css', 'utf8'), /desk-v2\.css\?v=20261118-ticket-table-centering-v1/);
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const [, version] of source.matchAll(/styles\.css\?v=([^"']+)/g)) {
-      assert.equal(version, '20261118-freeze-until-v1', file);
+      assert.equal(version, '20261118-ticket-table-centering-v1', file);
     }
   }
 });

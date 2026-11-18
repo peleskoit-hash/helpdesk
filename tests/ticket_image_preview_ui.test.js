@@ -47,7 +47,7 @@ async function setup(t, theme, width, kind, { showPreview = true, originalReady 
       if (originalReady) await originalReady;
       return route.continue();
     }
-    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261118-freeze-until-v1"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
+    return route.fulfill({ contentType: 'text/html', body: `<html><head><meta charset="utf-8"><link rel="stylesheet" href="/static/styles.css?v=20261118-ticket-table-centering-v1"></head><body data-theme="${theme}"><div id="attachments"></div></body></html>` });
   });
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${origin}/tickets/${kind === 'task' ? 531 : 530}`);

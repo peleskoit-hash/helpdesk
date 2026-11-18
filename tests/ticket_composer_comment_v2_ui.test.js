@@ -58,7 +58,7 @@ for (const theme of ['light', 'dark']) for (const workflow of ['ticket', 'task']
   assert.deepEqual(await snapshot(), reply);
   assert.equal(await input.inputValue(), 'Текст черновика');
   assert.equal(await input.getAttribute('placeholder'), 'Текст ответа клиенту');
-  for (const [file, version] of [['styles.css', '20261118-freeze-until-v1'], ['desk-v2.css', '20261118-freeze-until-v1']]) {
+  for (const [file, version] of [['styles.css', '20261118-ticket-table-centering-v1'], ['desk-v2.css', '20261118-ticket-table-centering-v1']]) {
     assert.ok(assets.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);

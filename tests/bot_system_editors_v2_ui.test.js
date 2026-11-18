@@ -111,7 +111,7 @@ for (const theme of ['light', 'dark']) test(`system event editors V2: ${theme}`,
     await page.locator('#backFromSystemButtonGroupBtn').click();
   }
   for (const file of ['styles.css', 'desk-v2.css', 'bot-buttons-browser-v2.css']) {
-    const version = file === "desk-v2.css" ? "20261118-freeze-until-v1" : file === "bot-buttons-browser-v2.css" ? "20261116-bot-structure-layout-v2-radius-v1-scrollbars-v1" : "20261118-freeze-until-v1";
+    const version = file === "desk-v2.css" ? "20261118-ticket-table-centering-v1" : file === "bot-buttons-browser-v2.css" ? "20261116-bot-structure-layout-v2-radius-v1-scrollbars-v1" : "20261118-ticket-table-centering-v1";
     assert.ok(resources.includes(`/static/${file}?v=${version}`), `Fresh asset: ${file}`);
   }
   assert.deepEqual(errors, []);
