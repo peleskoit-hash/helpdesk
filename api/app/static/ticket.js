@@ -2,7 +2,7 @@
 function initTicketCardPage() {
 // ===== state/elements =====
 const ticketId = window.location.pathname.split("/").pop();
-const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);
+const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze", "freeze-until"]);
 const TICKET_LIST_TABS = new Set(["active", "unassigned", "special", "frozen", "closed"]);
 const RESTORE_CLOSE_COOLDOWN_MS = 10_000;
 
@@ -124,6 +124,11 @@ const el = {
   sendByEnterCheckbox: document.getElementById("sendByEnterCheckbox"),
   sendHotkeyHint: document.getElementById("sendHotkeyHint"),
   freezeUntil: document.getElementById("freezeUntil"),
+  freezeDate: document.getElementById("freezeDate"),
+  freezeDateSave: document.getElementById("freezeDateSave"),
+  freezeDateSaved: document.getElementById("freezeDateSaved"),
+  freezeDateText: document.getElementById("freezeDateText"),
+  freezeDateClear: document.getElementById("freezeDateClear"),
   autoCloseBox: document.getElementById("autoCloseBox"),
   autoCloseDueText: document.getElementById("autoCloseDueText"),
   autoCloseDisabledCheckbox: document.getElementById("autoCloseDisabledCheckbox"),
@@ -1618,7 +1623,18 @@ async function action(name, body = null) {
       renderTicketStateControls();
     }
     setStatus("Выполняю действие...");
-    await apiPost(`/api/v1/tickets/${state.ticketId}/${name}`, body);
+    const url = `/api/v1/tickets/${state.ticketId}/${name}`;
+    if (name === "freeze-until") {
+      const result = await apiPatch(url, body);
+      if (state.card?.is_frozen) {
+        state.card.freeze_until = result.freeze_until;
+        renderTicketStateControls();
+      }
+      await loadCard({ preserveComposerDraft: true });
+      setStatus("Готово");
+      return;
+    }
+    await apiPost(url, body);
     if (name === "restore") {
       startRestoreCloseCooldown();
     }

@@ -334,12 +334,12 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
     await page.locator('#columnsSettingsBtn').click();
     assert.equal(await page.locator('#columnsModal').isVisible(), true);
     await page.locator('#closeColumnsModalBtn').click();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261118-freeze-until-v1"]').count(), 1);
     await row.locator('.ticket-row-link').first().click();
     await page.waitForSelector('.message');
     await page.locator('#backToListBtn').click(); await page.waitForSelector('.ticket-row');
     await page.locator('.ticket-row-link').first().hover();
-    assert.equal(await page.locator('link[href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1"]').count(), 1);
+    assert.equal(await page.locator('link[href="/static/styles.css?v=20261118-freeze-until-v1"]').count(), 1);
     assert.equal(await page.locator('td.ticket-channel-col').first().evaluate(el => getComputedStyle(el).textOverflow), 'clip');
   });
 }
@@ -532,6 +532,116 @@ for (const theme of ['light', 'dark']) for (const role of ['admin', 'agent']) {
       await page.locator('.ticket-control-wrap').evaluate(el => el.scrollTop = el.scrollHeight);
       await page.screenshot({ path: path.join(process.env.TICKET_ACTIONS_SCREENSHOT_DIR, `${role}-${theme}.png`) });
     }
+  });
+}
+
+for (const [theme, workflowType] of [['light', 'ticket'], ['dark', 'task']]) {
+  test(`auto-unfreeze date controls: ${workflowType}, ${theme}`, async t => {
+    const cardPatch = { is_frozen: false, freeze_until: null };
+    const pageName = workflowType === 'task' ? 'tickets' : 'ticket';
+    const { page } = await setup(t, { width: 1366, height: 768, theme, pageName, workflowType, cardPatch });
+    if (pageName === 'tickets') {
+      await page.evaluate(() => window.HelpdeskAppShell.navigate('/tickets/demo-0'));
+      await page.locator('.message').first().waitFor();
+    }
+    const input = page.locator('#freezeUntil'), toggle = page.locator('#freezeToggleBtn');
+    const save = page.locator('#freezeDateSave'), clear = page.locator('#freezeDateClear');
+    const saved = page.locator('#freezeDateSaved'), time = page.locator('#freezeDateText');
+    const actions = [];
+    let failSave = true;
+    let releaseSave;
+    const saveGate = new Promise(resolve => { releaseSave = resolve; });
+    t.after(releaseSave);
+    await page.route(/\/api\/v1\/tickets\/demo-0\/(freeze|unfreeze|freeze-until)$/, async route => {
+      const action = new URL(route.request().url()).pathname.split('/').pop();
+      const body = route.request().postDataJSON();
+      actions.push([action, route.request().method(), body]);
+      if (action === 'freeze-until' && failSave) {
+        failSave = false;
+        return route.fulfill({ status: 409, json: { detail: { error: { message: 'Дата не сохранена' } } } });
+      }
+      if (action === 'freeze') cardPatch.is_frozen = true;
+      if (action === 'unfreeze') cardPatch.is_frozen = false;
+      if (action === 'freeze-until' && body.freeze_until) await saveGate;
+      cardPatch.freeze_until = body?.freeze_until ?? null;
+      return route.fulfill({ json: { ok: true, freeze_until: cardPatch.freeze_until } });
+    });
+
+    const future = '2099-01-01T12:34';
+    const instant = await page.evaluate(value => new Date(value).toISOString(), future);
+    await input.fill(future);
+    assert.equal(await save.isVisible(), false);
+    await input.press('Enter');
+    assert.deepEqual(actions, []);
+    await input.fill('');
+    await toggle.click();
+    await page.waitForFunction(() => document.querySelector('#freezeToggleBtn').textContent === 'Разморозить');
+    assert.deepEqual(actions, [['freeze', 'POST', { freeze_until: null }]]);
+    assert.equal(await save.isVisible(), false);
+
+    await input.fill('2000-01-01T12:34');
+    assert.equal(await save.isVisible(), false);
+    await input.fill(future);
+    await save.waitFor();
+    const cdp = await page.context().newCDPSession(page);
+    const { root } = await cdp.send('DOM.getDocument');
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#freezeUntil' });
+    const { node } = await cdp.send('DOM.describeNode', { nodeId, depth: -1, pierce: true });
+    function findPseudo(node, name) {
+      if (node.attributes?.includes(name)) return node;
+      return [...(node.shadowRoots ?? []), ...(node.children ?? [])]
+        .map(child => findPseudo(child, name)).find(Boolean);
+    }
+    const picker = findPseudo(node, '-webkit-calendar-picker-indicator');
+    const text = findPseudo(node, '-webkit-datetime-edit-fields-wrapper');
+    const box = async node => (await cdp.send('DOM.getBoxModel', { backendNodeId: node.backendNodeId })).model.border;
+    const saveBox = await save.boundingBox();
+    assert.ok((await box(text))[2] <= saveBox.x);
+    assert.ok(saveBox.x + saveBox.width <= (await box(picker))[0]);
+    await cdp.detach();
+    await input.fill('');
+    assert.equal(await save.isVisible(), false);
+    await input.fill(future);
+    assert.equal(actions.length, 1);
+
+    await save.click();
+    await page.locator('#errorModal').waitFor();
+    assert.match(await page.locator('#errorModal').innerText(), /Дата не сохранена/);
+    assert.equal(await saved.isVisible(), false);
+    await page.keyboard.press('Escape');
+    assert.equal(await input.inputValue(), future);
+
+    await input.press('Enter');
+    await page.waitForFunction(() => document.querySelector('#freezeDateSave').disabled);
+    assert.equal(await toggle.isDisabled(), true);
+    assert.equal(await input.isDisabled(), true);
+    await save.evaluate(el => el.click());
+    releaseSave();
+    await saved.waitFor();
+    assert.equal(actions.length, 3);
+    assert.deepEqual(actions[2], ['freeze-until', 'PATCH', { freeze_until: instant }]);
+    assert.equal(await input.isVisible(), false);
+    assert.equal(await save.isVisible(), false);
+    assert.equal(await time.getAttribute('datetime'), instant);
+    assert.equal(await time.innerText(), await page.evaluate(value => new Date(value).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }), instant));
+
+    await page.reload();
+    await saved.waitFor();
+    await clear.click();
+    await input.waitFor();
+    assert.deepEqual(actions[3], ['freeze-until', 'PATCH', { freeze_until: null }]);
+    assert.equal(await input.inputValue(), '');
+    assert.equal(await save.isVisible(), false);
+    assert.equal(await toggle.innerText(), 'Разморозить');
+
+    await toggle.click();
+    await page.waitForFunction(() => document.querySelector('#freezeToggleBtn').textContent === 'Заморозить');
+    assert.deepEqual(actions[4], ['unfreeze', 'POST', null]);
+    await input.fill(future);
+    assert.equal(await save.isVisible(), false);
+    await toggle.click();
+    await saved.waitFor();
+    assert.deepEqual(actions[5], ['freeze', 'POST', { freeze_until: instant }]);
   });
 }
 

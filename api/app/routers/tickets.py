@@ -1,4 +1,4 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from functools import partial
 import logging
 from pathlib import Path
@@ -30,7 +30,7 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import BotButtonSetting, BotMenuDestinationBinding, ClientProfile, MessageType, TelegramContact, Ticket, TicketAttachment, TicketAttachmentPreload, TicketIntakeState, TicketMessage, TicketStatus, TicketTaskKind, TicketView, TicketWorkflowType, User
-from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketReadPayload, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
+from ..schemas import AdminBulkTicketsPayload, AdminCloseResult, AdminDeleteResult, AdminFreezeResult, AdminUnfreezeResult, AssignTicketsPayload, BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate, FreezePayload, FreezeUntilPayload, TaskPanelItem, TextPayload, TicketAutoClosePayload, TicketCard, TicketReadPayload, TicketCountsOut, TicketDraftOut, TicketDraftPayload, TicketListResponse, WrongProblemPayload
 from ..services.assignment import append_system_message, assign_ticket_by_admin, assignee_change_message, assignee_label, notify_client_about_assignee, schedule_employee_assignment_notification
 from ..services.auto_close import AUTO_CLOSE_MINUTES, can_use_auto_close_controls, clear_ticket_auto_close_timer, refresh_ticket_auto_close_timer
 from ..services.telegram_bot import TelegramApiError, delete_message, get_file, remove_inline_keyboard, send_document, send_message
@@ -1226,7 +1226,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser 
         intake_state=t.intake_state or TicketIntakeState.READY.value,
         status=t.status,
         is_frozen=t.is_frozen,
-        freeze_until=t.freeze_until,
+        freeze_until=_freeze_until_utc(t.freeze_until),
         closed_at=t.closed_at,
         assignee_id=t.assignee_id,
         assignee_name=assignee.full_name if assignee else t.assignee_name_snapshot,
@@ -1876,6 +1876,43 @@ def greeting(ticket_id: str, db: Session = Depends(get_db), user: CurrentUser = 
     return {"ok": True, "text": text}
 
 
+def _freeze_until_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+@router.patch("/{ticket_id}/freeze-until")
+def update_freeze_until(
+    ticket_id: str,
+    payload: FreezeUntilPayload,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    ticket = _get_ticket_or_404(db, ticket_id, user, assign_number=False)
+    if not can_manage_ticket(user):
+        _error(403, "readonly_role", "Нет прав на управление заявкой")
+    try:
+        freeze_until = _freeze_until_utc(payload.freeze_until)
+    except (OverflowError, ValueError):
+        _error(422, "invalid_freeze_until", "Некорректная дата авторазморозки")
+    if freeze_until is not None and freeze_until <= datetime.now(timezone.utc):
+        _error(422, "invalid_freeze_until", "Дата авторазморозки должна быть в будущем")
+
+    result = db.execute(
+        update(Ticket)
+        .where(Ticket.id == ticket.id, Ticket.is_frozen.is_(True), Ticket.status != TicketStatus.CLOSED.value)
+        .values(freeze_until=freeze_until)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        _error(409, "freeze_until_unavailable", "Дата доступна только для открытой замороженной заявки")
+    db.commit()
+    return {"ok": True, "freeze_until": freeze_until}
+
+
 @router.post("/{ticket_id}/freeze")
 def freeze(ticket_id: str, payload: FreezePayload, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     ticket = _get_ticket_or_404(db, ticket_id, user)
@@ -1889,7 +1926,7 @@ def freeze(ticket_id: str, payload: FreezePayload, db: Session = Depends(get_db)
     freeze_ticket(
         db,
         ticket,
-        freeze_until=payload.freeze_until,
+        freeze_until=_freeze_until_utc(payload.freeze_until),
         add_message_fn=_add_message,
     )
     db.commit()

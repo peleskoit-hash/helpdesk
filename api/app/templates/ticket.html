@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES DESK - Карточка заявки</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/chert.svg?v=20261028-favicon-v1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118-freeze-until-v1" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -238,7 +238,16 @@
             <div class="freeze-box">
               <button id="freezeToggleBtn" class="action">Заморозить</button>
               <div class="status">Авторазморозка</div>
-              <input id="freezeUntil" type="datetime-local" />
+              <div class="freeze-date" id="freezeDate">
+                <input id="freezeUntil" type="datetime-local" aria-label="Дата и время авторазморозки" />
+                <button id="freezeDateSave" class="freeze-date-button hidden" type="button" aria-label="Сохранить дату авторазморозки" title="Сохранить дату авторазморозки">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 3h13l4 4v14H3V3h1zm3 0v6h10V3M7 21v-8h10v8"/></svg>
+                </button>
+                <div id="freezeDateSaved" class="freeze-date-saved hidden">
+                  <time id="freezeDateText"></time>
+                  <button id="freezeDateClear" class="freeze-date-button" type="button" aria-label="Сбросить дату авторазморозки" title="Сбросить дату авторазморозки">×</button>
+                </div>
+              </div>
             </div>
             <div class="ticket-right-actions wrong-problem-wrap">
               <button id="wrongProblemBtn" class="action" disabled>Неверная проблема</button>
@@ -319,14 +328,14 @@
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
   <script src="/static/task_panel_layout.js?v=20261116-task-panel-v2"></script>
-  <script src="/static/app_shell.js?v=20261118-card-columns-v2"></script>
+  <script src="/static/app_shell.js?v=20261118-freeze-until-v1"></script>
   <script src="/static/ticket_api.js?v=20261102-error-status-v1"></script>
   <script src="/static/ticket_attachments.js?v=20261117-message-clipboard-v1"></script>
   <script src="/static/client_web_credentials.js?v=20261018-web-empty-autofill"></script>
   <script src="/static/ticket_client_card.js?v=20261105-field-config"></script>
   <script src="/static/ticket_composer.js?v=20261111-shared-drafts-v1"></script>
-  <script src="/static/ticket_controls.js?v=20261027-dialogs-complete-v3"></script>
+  <script src="/static/ticket_controls.js?v=20261118-freeze-until-v1"></script>
   <script src="/static/ticket_message_view.js?v=20261117-message-clipboard-v1"></script>
-  <script src="/static/ticket.js?v=20261117-appearance-escape-v1"></script>
+  <script src="/static/ticket.js?v=20261118-freeze-until-v1"></script>
 </body>
 </html>

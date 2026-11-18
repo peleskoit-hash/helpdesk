@@ -146,8 +146,7 @@ test('direct and shell resources share new versions', () => {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');
     for (const resource of ['styles.css', 'app_shell.js']) {
       const versions = [...source.matchAll(new RegExp(`/static/${resource.replace('.', '\\.')}\\?v=([^"\\s]+)`, 'g'))].map(match => match[1]);
-      const stylesVersion = file === 'mass_notifications.html' ? '20261117-mass-editor-width-v3-radius-v1-seam-v1-scrollbars-v1' : '20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1';
-      if (versions.length) assert.deepEqual([...new Set(versions)], [resource === 'styles.css' ? stylesVersion : '20261118-card-columns-v2'], `${file}: ${resource}`);
+      if (versions.length) assert.deepEqual([...new Set(versions)], ['20261118-freeze-until-v1'], `${file}: ${resource}`);
     }
   }
 });

@@ -5,11 +5,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import InternalTaskDefinition, InternalTaskDefinitionState, InternalTaskOccurrence, InternalTaskScheduleKind
+from ..models import InternalTaskDefinition, InternalTaskDefinitionState, InternalTaskOccurrence, InternalTaskScheduleKind, Ticket, TicketStatus
 from .internal_task_recurrence import (
     CYCLE_END_AT,
     CYCLE_END_COUNT,
@@ -17,6 +17,9 @@ from .internal_task_recurrence import (
     has_recurrence_capacity,
     validate_recurrence_end_rule,
 )
+from .auto_close import refresh_ticket_auto_close_timer
+from .ticket_lifecycle import unfreeze_ticket
+from .ticket_messages import add_message
 from .internal_tasks import materialize_internal_task
 from .telegram_client_avatar_nightly import run_avatar_cleanup_once
 from .telegram_after_hours_cleanup import run_telegram_after_hours_cleanup_once
@@ -418,6 +421,46 @@ def run_internal_task_recurring_once(
     return processed
 
 
+def run_ticket_auto_unfreeze_once(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    now_utc: datetime | None = None,
+) -> int:
+    cutoff = (_utc_naive(now_utc) or datetime.utcnow()).replace(tzinfo=timezone.utc)
+    due = (
+        Ticket.is_frozen.is_(True),
+        Ticket.status != TicketStatus.CLOSED.value,
+        Ticket.freeze_until <= cutoff,
+    )
+    with session_factory() as db:
+        ticket_ids = list(db.scalars(select(Ticket.id).where(*due)))
+
+    processed = 0
+    for ticket_id in ticket_ids:
+        try:
+            with session_factory() as db:
+                # Claim the date atomically, with rollback if the lifecycle fails.
+                claimed = db.execute(
+                    update(Ticket).where(Ticket.id == ticket_id, *due).values(freeze_until=None)
+                )
+                if claimed.rowcount != 1:
+                    continue
+                ticket = db.get(Ticket, ticket_id)
+                unfreeze_ticket(
+                    db,
+                    ticket,
+                    add_message_fn=lambda db, ticket, kind, body, author: add_message(
+                        db=db, ticket=ticket, message_type=kind, body=body, author_user_id=author,
+                    ),
+                    refresh_ticket_auto_close_timer_fn=refresh_ticket_auto_close_timer,
+                )
+                db.commit()
+            processed += 1
+        except Exception:
+            logger.exception("Scheduled unfreeze failed for ticket %s", ticket_id)
+    return processed
+
+
 async def internal_task_scheduler_loop() -> None:
     while True:
         try:
@@ -456,4 +499,10 @@ async def internal_task_scheduler_loop() -> None:
             raise
         except Exception:
             logger.exception("Employee notification backlog pass failed")
+        try:
+            await asyncio.to_thread(run_ticket_auto_unfreeze_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ticket auto-unfreeze pass failed")
         await asyncio.sleep(INTERNAL_TASK_SCHEDULER_INTERVAL_SECONDS)

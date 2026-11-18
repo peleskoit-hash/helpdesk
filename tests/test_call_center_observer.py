@@ -81,6 +81,9 @@ def test_observer_cannot_reply_or_manage_and_cannot_unfreeze_by_comment(case, wo
     ]:
         response = case.http.post(case.base + "/" + action, json=payload)
         assert response.status_code == 403, (action, response.text)
+    response = case.http.patch(case.base + "/freeze-until", json={"freeze_until": None})
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"]["code"] == "readonly_role"
     response = case.http.post(case.base + "/comment", json={"text": "Observation"})
     assert response.status_code == 200, response.text
     assert case.unfreezes == []

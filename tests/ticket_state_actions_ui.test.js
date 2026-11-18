@@ -205,7 +205,7 @@ test("existing card polling and composer updates refresh task controls without n
 
 test("state action guard blocks duplicate freeze request while first request is in flight", async () => {
   const helperSource = [
-    'const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze"]);',
+    'const STATE_ACTION_NAMES = new Set(["close", "restore", "freeze", "unfreeze", "freeze-until"]);',
     "const RESTORE_CLOSE_COOLDOWN_MS = 10_000;",
     sourceBetween(ticketPageSource, "let restoreCloseCooldownTimer = null;", "function shellNavigateOrReload(urlLike) {"),
     sourceBetween(ticketPageSource, "async function action(name, body = null) {", "async function assignCurrentTicket(assigneeId) {"),

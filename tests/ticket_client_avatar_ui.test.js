@@ -320,7 +320,7 @@ test('avatar resources use matching versions on direct pages and AppShell mounts
     const versions = files.flatMap(file => [...fs.readFileSync(file, 'utf8').matchAll(
       new RegExp(`/static/${resource.replaceAll('.', '\\.')}\\?v=([^"']+)`, 'g'))].map(match => match[1]));
     assert.ok(versions.length >= 2);
-    assert.deepEqual([...new Set(versions)], [resource === 'ticket_client_card.js' ? '20261105-field-config' : resource === 'ticket.js' ? '20261117-appearance-escape-v1' : '20261117-message-clipboard-v1']);
+    assert.deepEqual([...new Set(versions)], [resource === 'ticket_client_card.js' ? '20261105-field-config' : resource === 'ticket.js' ? '20261118-freeze-until-v1' : '20261117-message-clipboard-v1']);
   }
 });
 

@@ -449,7 +449,35 @@ body #appContent.main[data-shell-page="ticket-card"] {
   & .freeze-box { background: var(--desk-blue-bg); display: grid; gap: 6px; padding-block: 10px; }
   & .freeze-box #freezeToggleBtn { width: 100%; }
   & #autoCloseDueText { min-height: 20px; line-height: 20px; white-space: nowrap; }
-  & #freezeUntil { width: 100%; min-width: 0; padding: 8px 6px; font-size: 13px; }
+  & .freeze-date { position: relative; min-width: 0; }
+  & #freezeUntil,
+  & .freeze-date-saved { width: 100%; min-width: 0; padding: 8px 6px; font-size: 13px; box-sizing: border-box; }
+  & .freeze-date:has(#freezeDateSave:not(.hidden)) #freezeUntil::-webkit-datetime-edit { padding-inline-end: 24px; }
+  & .freeze-date-saved {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 36px;
+    padding-block: 4px;
+    border: 1px solid var(--desk-border);
+    border-radius: var(--desk-radius, 12px);
+    background: var(--desk-surface);
+    color: var(--desk-text);
+  }
+  & .freeze-date-button {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--desk-text);
+    font-size: 17px;
+    cursor: pointer;
+  }
+  & .freeze-date-button:disabled { opacity: .5; cursor: default; }
+  & #freezeDateSave { position: absolute; inset-inline-end: 27px; top: 50%; transform: translateY(-50%); }
   & :is(.admin-skip-client, .auto-close-toggle) { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   & .ticket-right-actions .action { min-height: 42px; }
   & .ticket-quick-actions .quick-action-btn { font-weight: 600; }

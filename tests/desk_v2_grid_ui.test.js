@@ -95,8 +95,8 @@ for (const theme of ['light', 'dark']) {
       assert.deepEqual(line, sibling, 'sibling surfaces share grid phase');
       assert.ok(line.every((value, i) => Math.abs(value - crossing[i]) <= 1), 'crossing strokes match within compositor rounding');
       if (template === 'ticket') assert.equal(await page.locator('#messages').evaluate(el => getComputedStyle(el).getPropertyValue('--desk-grid-base').trim() === getComputedStyle(el).getPropertyValue('--desk-soft').trim()), true);
-      assert.ok(assets.includes('/static/styles.css?v=20261116-task-panel-v1-radius-v1-seam-v1-scrollbars-v1'));
-      assert.ok(assets.includes('/static/desk-v2.css?v=20261117-ticket-scrollbar-inset-v1-radius-v1-seam-v1-scrollbars-v1'));
+      assert.ok(assets.includes('/static/styles.css?v=20261118-freeze-until-v1'));
+      assert.ok(assets.includes('/static/desk-v2.css?v=20261118-freeze-until-v1'));
     });
   }
   test(`grid contrast is stable across appearance hue and intensity: ${theme}`, async t => {

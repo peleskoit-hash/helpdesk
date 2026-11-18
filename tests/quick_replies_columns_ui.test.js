@@ -115,7 +115,7 @@ test('quick reply page bundles have versioned URLs', () => {
   for (const file of fs.readdirSync('api/app/templates')) {
     if (!file.endsWith('.html')) continue;
     const content = fs.readFileSync('api/app/templates/' + file, 'utf8');
-    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261118-card-columns-v2'), file);
+    if (content.includes('/static/app_shell.js?')) assert.ok(content.includes('/static/app_shell.js?v=20261118-freeze-until-v1'), file);
   }
 });
 

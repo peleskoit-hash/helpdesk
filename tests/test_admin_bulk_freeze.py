@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -24,6 +26,7 @@ from api.app.models import (
     User,
 )
 from api.app.routers import tickets
+from api.app.services import internal_task_scheduler
 
 
 def _session():
@@ -144,6 +147,117 @@ def _system_messages(session, ticket: Ticket) -> list[TicketMessage]:
         .where(TicketMessage.ticket_id == ticket.id, TicketMessage.message_type == MessageType.SYSTEM.value)
         .order_by(TicketMessage.created_at)
     ).scalars().all()
+
+
+def test_scheduler_unfreezes_due_tickets_and_tasks_once():
+    with _session() as db:
+        company = _company(db)
+        agent = _user(db, company, "agent")
+        contact = _contact(db, company)
+        now = datetime.utcnow()
+        options = dict(assignee=agent, is_frozen=True, freeze_until=now, status=TicketStatus.PENDING.value)
+        ticket = _ticket(db, company, contact, **options)
+        task = _ticket(db, company, contact, workflow_type=TicketWorkflowType.TASK.value, **options)
+        future = _ticket(db, company, contact, **{**options, "freeze_until": now + timedelta(seconds=1)})
+        closed = _ticket(db, company, contact, **{**options, "status": TicketStatus.CLOSED.value})
+        unfrozen = _ticket(db, company, contact, **{**options, "is_frozen": False})
+        no_date = _ticket(db, company, contact, **{**options, "freeze_until": None})
+        db.add(TicketMessage(
+            id=str(uuid.uuid4()), ticket_id=ticket.id, message_type=MessageType.AGENT.value, body="Reply",
+        ))
+        db.commit()
+
+        run = internal_task_scheduler.run_ticket_auto_unfreeze_once
+        cutoff = now.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=3)))
+        sessions = sessionmaker(bind=db.get_bind(), autoflush=False)
+        assert run(session_factory=sessions, now_utc=cutoff) == 2
+        assert run(session_factory=sessions, now_utc=cutoff) == 0
+
+        db.expire_all()
+        for item in (ticket, task):
+            assert not item.is_frozen and item.freeze_until is None
+            assert item.status == TicketStatus.PENDING.value and item.assignee_id == agent.id
+            assert [msg.body for msg in _system_messages(db, item)] == ["Заявка разморожена"]
+        assert ticket.auto_close_due_at is not None and task.auto_close_due_at is None
+        assert future.is_frozen and future.freeze_until > now
+        assert closed.is_frozen and closed.freeze_until == now
+        assert not unfrozen.is_frozen and unfrozen.freeze_until == now
+        assert no_date.is_frozen and no_date.freeze_until is None
+        intervals = db.scalars(select(StatsWorkInterval)).all()
+        assert {interval.object_id for interval in intervals} == {ticket.id, task.id}
+        assert len(intervals) == 2 and all(interval.ended_at is None for interval in intervals)
+
+
+def test_scheduler_rolls_back_failed_unfreeze_and_continues(monkeypatch):
+    with _session() as db:
+        company = _company(db)
+        contact = _contact(db, company)
+        now = datetime.utcnow()
+        failed = _ticket(db, company, contact, is_frozen=True, freeze_until=now)
+        succeeds = _ticket(db, company, contact, is_frozen=True, freeze_until=now)
+        db.commit()
+        failed_id = failed.id
+        original = internal_task_scheduler.unfreeze_ticket
+
+        def fail_one(db, ticket, **kwargs):
+            original(db, ticket, **kwargs)
+            if ticket.id == failed_id:
+                raise RuntimeError("test failure after lifecycle")
+
+        monkeypatch.setattr(internal_task_scheduler, "unfreeze_ticket", fail_one)
+        sessions = sessionmaker(bind=db.get_bind(), autoflush=False)
+        run = internal_task_scheduler.run_ticket_auto_unfreeze_once
+        assert run(session_factory=sessions, now_utc=now) == 1
+        db.expire_all()
+        assert failed.is_frozen and failed.freeze_until == now
+        assert not _system_messages(db, failed)
+        assert not succeeds.is_frozen and succeeds.freeze_until is None
+
+        monkeypatch.setattr(internal_task_scheduler, "unfreeze_ticket", original)
+        assert run(session_factory=sessions, now_utc=now) == 1
+
+
+@pytest.mark.parametrize("workflow", ["ticket", "task"])
+def test_update_freeze_until_only_changes_date(workflow):
+    with _session() as db:
+        company = _company(db)
+        agent = _user(db, company, "agent")
+        contact = _contact(db, company)
+        ticket = _ticket(db, company, contact, assignee=agent, workflow_type=workflow, is_frozen=True)
+        db.commit()
+        url = f"/api/v1/tickets/{ticket.id}/freeze-until"
+        before = {column.key: getattr(ticket, column.key) for column in Ticket.__table__.columns if column.key != "freeze_until"}
+        with _client(db, agent) as client:
+            assert client.patch(url, json={}).status_code == 422
+            assert client.patch(url, json={"freeze_until": "invalid"}).status_code == 422
+            assert client.patch(url, json={"freeze_until": "2000-01-01T00:00:00Z"}).status_code == 422
+            response = client.patch(url, json={"freeze_until": "2099-01-01T08:15:00+03:00"})
+            assert response.status_code == 200
+            assert datetime.fromisoformat(response.json()["freeze_until"].replace("Z", "+00:00")) == datetime(
+                2099, 1, 1, 5, 15, tzinfo=timezone.utc,
+            )
+            db.refresh(ticket)
+            assert ticket.freeze_until == datetime(2099, 1, 1, 5, 15)
+            assert {key: getattr(ticket, key) for key in before} == before
+            response = client.patch(url, json={"freeze_until": None})
+            assert response.status_code == 200 and response.json()["freeze_until"] is None
+            db.refresh(ticket)
+            assert ticket.freeze_until is None
+            assert {key: getattr(ticket, key) for key in before} == before
+            assert not _system_messages(db, ticket)
+
+
+@pytest.mark.parametrize("is_frozen,status", [(False, "new"), (True, "closed")])
+def test_update_freeze_until_rejects_ineligible_tickets(is_frozen, status):
+    with _session() as db:
+        company = _company(db)
+        admin = _user(db, company, "admin")
+        contact = _contact(db, company)
+        ticket = _ticket(db, company, contact, is_frozen=is_frozen, status=status)
+        db.commit()
+        with _client(db, admin) as client:
+            response = client.patch(f"/api/v1/tickets/{ticket.id}/freeze-until", json={"freeze_until": None})
+            assert response.status_code == 409
 
 
 def test_admin_bulk_freeze_requires_admin():

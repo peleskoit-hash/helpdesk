@@ -209,6 +209,31 @@
         && (message.attachments || []).some((attachment) => active(attachment.telegram_delivery_status)));
   }
 
+  function pendingFreezeDate(input) {
+    const date = new Date(input.value);
+    return input.validity.valid && date.getTime() > Date.now() ? date.toISOString() : null;
+  }
+
+  function renderFreezeDate(ctx, canEdit, locked) {
+    const { el, state, setVisible } = ctx;
+    if (!el.freezeDate) return;
+    const card = state.card;
+    const saved = card.is_frozen ? card.freeze_until : null;
+    if (saved) {
+      const date = new Date(saved);
+      el.freezeDateText.dateTime = saved;
+      el.freezeDateText.textContent = date.toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+      el.freezeUntil.value = "";
+    }
+    setVisible(el.freezeDateSaved, Boolean(saved));
+    setVisible(el.freezeUntil, !saved);
+    setVisible(el.freezeDateClear, canEdit);
+    setVisible(el.freezeDateSave, canEdit && card.is_frozen && !saved && Boolean(pendingFreezeDate(el.freezeUntil)));
+    el.freezeUntil.disabled = !canEdit || locked;
+    el.freezeDateClear.disabled = !canEdit || locked;
+    el.freezeDateSave.disabled = !canEdit || locked;
+  }
+
   function renderTicketControlsView(ctx) {
     const { state, el, setVisible, minutesLeftToDue, greetingAllowed } = ctx;
     const card = state.card;
@@ -224,7 +249,7 @@
     const greetingButtonUsed = Boolean(quickActionsUsed.greeting);
     const greeted = greetedByMessage || Boolean(card.greeting_used);
     const workflowType = card.workflow_type || "ticket";
-    const stateActionInFlight = ["close", "restore", "freeze", "unfreeze"].includes(state.stateActionInFlight)
+    const stateActionInFlight = ["close", "restore", "freeze", "unfreeze", "freeze-until"].includes(state.stateActionInFlight)
       ? state.stateActionInFlight
       : null;
     const stateActionLocked = Boolean(stateActionInFlight);
@@ -304,6 +329,7 @@
     }
     if (el.restoreBtn) el.restoreBtn.disabled = !showRestore || stateActionLocked;
     if (el.freezeToggleBtn) el.freezeToggleBtn.disabled = !showFreezeToggle || !canFreezeToggle || stateActionLocked;
+    renderFreezeDate(ctx, showFreezeToggle && canFreezeToggle, stateActionLocked);
     if (el.autoCloseDisabledCheckbox) {
       el.autoCloseDisabledCheckbox.checked = Boolean(card.auto_close_disabled);
       el.autoCloseDisabledCheckbox.disabled = !showAutoCloseBox;
@@ -373,6 +399,27 @@
 
     if (el.clarificationBtn) el.clarificationBtn.addEventListener("click", () => sendQuickMessage("clarification"));
     if (el.onsiteBtn) el.onsiteBtn.addEventListener("click", () => sendQuickMessage("onsite"));
+
+    if (el.freezeDate) {
+      const save = () => {
+        const date = pendingFreezeDate(el.freezeUntil);
+        if (date && !el.freezeUntil.disabled && state.card?.is_frozen && !state.card.freeze_until) {
+          action("freeze-until", { freeze_until: date });
+        }
+      };
+      el.freezeUntil.addEventListener("input", () => {
+        if (!el.freezeUntil.disabled) renderFreezeDate(ctx, true, false);
+      });
+      el.freezeUntil.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") save();
+      });
+      el.freezeDateSave.addEventListener("click", save);
+      el.freezeDateClear.addEventListener("click", () => {
+        if (!el.freezeDateClear.disabled && state.card?.is_frozen && state.card.freeze_until) {
+          action("freeze-until", { freeze_until: null });
+        }
+      });
+    }
 
     if (el.freezeToggleBtn) {
       el.freezeToggleBtn.addEventListener("click", () => {

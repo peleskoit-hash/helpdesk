@@ -291,6 +291,10 @@ class TicketDraftOut(BaseModel):
     revision: int = 0
 
 
+class FreezeUntilPayload(BaseModel):
+    freeze_until: datetime | None
+
+
 class FreezePayload(BaseModel):
     freeze_until: datetime | None = None
 
