@@ -196,7 +196,7 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261118-freeze-until-v1/);
   assert.match(appShellSource, /ticket\.js\?v=20261118-freeze-until-v1/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261118-card-columns-v2/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261118-scroll-reset-v1/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -1821,7 +1821,7 @@ test('management users template contains pagination controls', () => {
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {
   assert.match(ticketsListSource, /requester: \{ title: "Заявка от", className: "ticket-client-col", sortKey: "requester_display_name"/);
-  assert.match(ticketsTemplate, /list\.js\?v=20261116-task-panel-v1/);
+  assert.match(ticketsTemplate, /list\.js\?v=20261118-scroll-reset-v1/);
   assert.match(ticketsListSource, /case "requester_display_name":\s+return String\(ticket\.requester_display_name \|\| ""\)\.toLocaleLowerCase\("ru"\);/);
   assert.match(ticketsListSource, /const textKeys = new Set\(\["subject", "requester_display_name", "assignee_name", "requester_department", "requester_location_type", "ticket_type"\]\)/);
   assert.match(ticketsListSource, /linkedCell\("ticket-client-col", ticket\.requester_display_name \?\? "", column\.width\)/);

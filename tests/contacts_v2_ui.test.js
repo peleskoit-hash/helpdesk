@@ -118,7 +118,7 @@ for (const theme of ['light', 'dark']) {
   test(`Contacts V2 list actions and contrast: ${theme}`, async t => {
     const { page, queries, assets } = await setup(t, theme);
     assert.ok(assets.includes('/static/contacts-v2.css?v=20261118-users-columns-v1'));
-    assert.ok(assets.includes('/static/management_users.js?v=20261118-card-columns-v2'));
+    assert.ok(assets.includes('/static/management_users.js?v=20261118-scroll-reset-v1'));
     assert.ok(assets.includes('/static/management_user_columns.js?v=20261118-card-columns-v2'));
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await contrast(page, ['#managementUsersTable td', '.management-user-row-blocked td', 'th', '#managementUsersSearch', '#managementUsersSearchBtn', '.management-users-filters .active', '#managementUsersPageSummary']);

@@ -132,7 +132,8 @@ function openUserModal(user = null) {
   fillModal(user);
   el.deleteUserBtn?.classList.toggle("hidden", !user);
   el.userModal.classList.remove("hidden");
-  el.fFullName.focus();
+  el.userModal.querySelector(".modal-body").scrollTop = 0;
+  el.fFullName.focus({ preventScroll: true });
 }
 
 function closeUserModal() {

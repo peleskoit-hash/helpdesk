@@ -42,6 +42,9 @@ let pollTimer = null;
 let unsubscribeSidebar = null;
 let ownsPopState = false;
 let pendingLoadOptions = null;
+let loadedPage = null;
+let renderedPage = null;
+let resetScrollOnRender = false;
 let pageEventController = null;
 let colorLegendHideTimer = null;
 let columnAutoResizeObserver = null;
@@ -274,6 +277,7 @@ function normalizeLoadOptions(options = {}) {
   return {
     silent: Boolean(options.silent),
     historyMode: options.historyMode || null,
+    resetScrollOnPageChange: Boolean(options.resetScrollOnPageChange),
   };
 }
 
@@ -282,6 +286,8 @@ function mergePendingLoadOptions(current, next) {
   return {
     silent: current.silent && next.silent,
     historyMode: next.historyMode || current.historyMode || null,
+    // Polling can join the queue without replacing the queued navigation.
+    resetScrollOnPageChange: next.historyMode ? next.resetScrollOnPageChange : current.resetScrollOnPageChange,
   };
 }
 
@@ -1496,6 +1502,11 @@ function renderTable() {
   renderPagination();
   // Rows and the auto-width control can change the vertical scrollbar after the initial read.
   refreshAutoColumnLayout();
+  if (resetScrollOnRender && loadedPage !== renderedPage) {
+    el.ticketsTable.closest(".table-scroll").scrollTop = 0;
+  }
+  resetScrollOnRender = false;
+  renderedPage = loadedPage;
 }
 
 function buildPaginationModel(totalPages, currentPage) {
@@ -1517,7 +1528,7 @@ async function goToPage(page) {
   const nextPage = parsePage(page);
   if (nextPage === state.page) return;
   state.page = nextPage;
-  await loadTickets({ historyMode: "push" });
+  await loadTickets({ historyMode: "push", resetScrollOnPageChange: true });
 }
 
 function renderPagination() {
@@ -1747,11 +1758,17 @@ async function loadTickets(options = {}) {
       fetchTaskPanelItems({ silent: true }),
     ]);
 
-    if (state.page !== requestedPage || state.tab !== requestedTab) return;
+    if (state.page !== requestedPage || state.tab !== requestedTab
+        || (state.appliedSearchQuery || "").trim() !== searchQuery) return;
     state.tickets = payload.items || [];
     state.total = payload.total || 0;
     state.pages = payload.pages || 1;
     state.page = payload.page || 1;
+    if (state.page !== loadedPage) {
+      // Column reordering can defer the actual render until the drag ends.
+      resetScrollOnRender = normalizedOptions.resetScrollOnPageChange;
+      loadedPage = state.page;
+    }
     if (historyMode) {
       syncListUrl(historyMode);
     }
@@ -1792,7 +1809,8 @@ async function handleListUrlChange() {
   const tabFromUrl = next.tab || DEFAULT_TAB;
   const pageFromUrl = parsePage(next.page);
   const qFromUrl = (next.q || "").trim();
-  const changed = state.tab !== tabFromUrl || state.page !== pageFromUrl || state.appliedSearchQuery !== qFromUrl;
+  const pageChanged = state.page !== pageFromUrl;
+  const changed = state.tab !== tabFromUrl || pageChanged || state.appliedSearchQuery !== qFromUrl;
   if (!changed) return;
   state.tab = tabFromUrl;
   state.page = pageFromUrl;
@@ -1802,7 +1820,10 @@ async function handleListUrlChange() {
   updateSearchUi();
   applyRoleUi();
   state.selectedTicketIds.clear();
-  await Promise.all([loadTickets({ silent: true, historyMode: "replace" }), loadCounts({ silent: true })]);
+  await Promise.all([
+    loadTickets({ silent: true, historyMode: "replace", resetScrollOnPageChange: pageChanged }),
+    loadCounts({ silent: true }),
+  ]);
 }
 
 function init() {
@@ -2011,14 +2032,12 @@ function init() {
 
   el.prevPageBtn.addEventListener("click", async () => {
     if (state.page <= 1) return;
-    state.page -= 1;
-    await loadTickets({ historyMode: "push" });
+    await goToPage(state.page - 1);
   }, { signal: pageSignal });
 
   el.nextPageBtn.addEventListener("click", async () => {
     if (state.page >= state.pages) return;
-    state.page += 1;
-    await loadTickets({ historyMode: "push" });
+    await goToPage(state.page + 1);
   }, { signal: pageSignal });
 
   pollTimer = window.setInterval(() => {

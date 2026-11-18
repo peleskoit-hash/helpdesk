@@ -348,7 +348,9 @@
     window.TicketClientCard.fillModal(clientCardCtx(root), profile || {});
     syncClientModalToggles(root);
     window.TicketClientCard.trackModalChanges(clientCardCtx(root));
-    els(root).clientModal.classList.remove("hidden");
+    const modal = els(root).clientModal;
+    modal.classList.remove("hidden");
+    modal.querySelector(".modal-body").scrollTop = 0;
     setStatus(root, "\u0413\u043e\u0442\u043e\u0432\u043e");
   }
 

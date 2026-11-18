@@ -69,6 +69,32 @@ async function checkPage(page){
 
  assert.equal(await page.locator('.toolbar button').first().evaluate(el=>getComputedStyle(el).fontSize),'14px');
 }
+
+test('employee editor starts at the top when switching employees or creating one',async t=>{
+ const {page}=await setup(t,'light',1000);
+ await page.setViewportSize({width:1000,height:460});
+ await page.goto('http://desk.test/settings/users');
+ const modal=page.locator('#userModal');
+ const body=modal.locator('.modal-body');
+ const name=modal.locator('#fFullName');
+ async function open(trigger,expectedName){
+  await page.locator(trigger).click();
+  await modal.waitFor({state:'visible'});
+  assert.equal(await name.inputValue(),expectedName);
+  assert.equal(await name.evaluate(el=>el===document.activeElement),true);
+  assert.equal(await body.evaluate(el=>el.scrollTop),0);
+ }
+ async function scrollAndClose(){
+  await body.evaluate(el=>{el.scrollTop=10;});
+  assert.equal(await body.evaluate(el=>el.scrollTop),10);
+  await page.locator('#closeUserModalBtn').click();
+ }
+ await open('[data-user-id="agent"]','Александр Иванов');
+ await scrollAndClose();
+ await open('[data-user-id="never"]','Без входов');
+ await scrollAndClose();
+ await open('#createUserBtn','');
+});
 async function checkDialog(page,selector){
  const dialog=page.locator(selector);await dialog.waitFor({state:'visible'});
  assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);

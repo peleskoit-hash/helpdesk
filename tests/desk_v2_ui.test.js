@@ -2851,7 +2851,7 @@ test('unread fix list resource loads on direct and SPA entry', async t => {
     const urls = await page.evaluate(() => performance.getEntriesByType('resource')
       .filter(entry => new URL(entry.name).pathname === '/static/list.js').map(entry => new URL(entry.name).search));
     assert.ok(urls.length > 0);
-    assert.ok(urls.every(query => query === '?v=20261116-task-panel-v1'), urls.join(', '));
+    assert.ok(urls.every(query => query === '?v=20261118-scroll-reset-v1'), urls.join(', '));
   }
 });
 

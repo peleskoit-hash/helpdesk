@@ -42,6 +42,7 @@ async function setup(t, theme = 'light', auto = true) {
     window.measureCalls = [];
     window.HelpdeskTicketColumnAutoWidth.measure = (...args) => { const result = original(...args); window.measureCalls.push(result); return result; };
   });
+  await page.addScriptTag({ path: 'api/app/static/task_panel_layout.js' });
   await page.addScriptTag({ path: 'api/app/static/list.js' });
   await page.evaluate(() => { window.listPage = window.initList(); });
   await page.waitForFunction(auto => document.querySelectorAll('.ticket-row').length === 30 && (!auto || window.measureCalls.length > 0), auto);

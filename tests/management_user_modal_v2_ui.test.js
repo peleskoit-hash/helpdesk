@@ -37,9 +37,10 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
   else if(p==='/api/v1/users/agents'||p==='/api/v1/users/by-role')data=[];
   else if(p.endsWith('/counts'))data={active:0,frozen:0,closed:0,special:0,unassigned:0,by_assignee:{}};
   else if(p.endsWith('/client-card-view-config'))data=config;
-  else if(p==='/api/v1/management/users')data={items:[{client_id:'client',column_values:{custom_fio:'Иван Иванов'},is_blocked:blocked}],columns:[{key:'custom_fio',label:'ФИО',type:'text'}],total:1};
+  else if(p==='/api/v1/management/users')data={items:[{client_id:'client',column_values:{custom_fio:'Иван Иванов'},is_blocked:blocked},{client_id:'another',column_values:{custom_fio:'Другой клиент'}}],columns:[{key:'custom_fio',label:'ФИО',type:'text'}],total:2};
   else if(p.endsWith('/block')||p.endsWith('/unblock')){blocked=p.endsWith('/block');data={is_blocked:blocked};}
-  else if(p.endsWith('/reset-data'))data={is_blocked:blocked,profile:{...profile,is_verified:false,custom_fields:{flag:false}}};
+  else if(p.endsWith('/reset-data'))data={is_blocked:blocked,profile:{...profile,contact_name:'Обновлённый профиль',is_verified:false,custom_fields:{flag:false}}};
+  else if(p.endsWith('/another/profile'))data={...profile,contact_name:'Другой клиент'};
   else if(p.endsWith('/profile')){if(req.method()==='PATCH')Object.assign(profile,req.postDataJSON());data=profile;}
   return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
  });
@@ -117,6 +118,24 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
   const previous=await page.evaluate(()=>window.testCloseCount);await page.keyboard.press('Escape');await page.locator('#clientModal').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>window.testCloseCount),previous+1);
  }
+ config.blocks[1].fields.push(...Array.from({length:12},(_,i)=>({key:`extra_${i}`,label:`Поле ${i}`,field_type:'text'})));
+ await page.locator('[data-client-id="client"] td').first().click();
+ await modal.waitFor({state:'visible'});
+ const body=modal.locator('.modal-body');
+ await body.evaluate(el=>{el.scrollTop=120;});
+ assert.equal(await body.evaluate(el=>el.scrollTop),120);
+ await Promise.all([
+  page.waitForResponse(r=>r.url().endsWith('/reset-data')),
+  page.locator('#resetClientDataBtn').click(),
+  answerConfirmation(true,/данны/i),
+ ]);
+ await page.waitForFunction(()=>document.querySelector('#fContactName')?.value==='Обновлённый профиль');
+ assert.equal(await body.evaluate(el=>el.scrollTop),120,'open profile refresh keeps scroll');
+ await page.locator('#closeClientModalBtn').click();
+ await page.locator('[data-client-id="another"] td').first().click();
+ await modal.waitFor({state:'visible'});
+ assert.equal(await modal.locator('#fContactName').inputValue(),'Другой клиент');
+ assert.equal(await body.evaluate(el=>el.scrollTop),0,'another profile opens at the top');
  assert.deepEqual(errors,[]);
 });
 

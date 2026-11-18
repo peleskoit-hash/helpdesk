@@ -25,7 +25,7 @@ test('column scripts and the changed app shell use consistent resource versions 
   const tickets = fs.readFileSync('api/app/templates/tickets.html', 'utf8');
   for (const source of [shell, tickets]) {
     assert.match(source, /ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1/);
-    assert.match(source, /\/static\/list\.js\?v=20261116-task-panel-v1/);
+    assert.match(source, /\/static\/list\.js\?v=20261118-scroll-reset-v1/);
   }
   for (const file of fs.readdirSync('api/app/templates').filter(file => file.endsWith('.html'))) {
     const source = fs.readFileSync(`api/app/templates/${file}`, 'utf8');

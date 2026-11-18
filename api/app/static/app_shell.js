@@ -65,7 +65,7 @@
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261027-dialogs-complete-v3"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_saved_files.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=user-deletion-complete-v2"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261118-scroll-reset-v1"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/settings_client_card.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
@@ -126,14 +126,14 @@
         "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
         "/static/management_user_columns.js?v=20261118-card-columns-v2",
-        "/static/management_users.js?v=20261118-card-columns-v2",
+        "/static/management_users.js?v=20261118-scroll-reset-v1",
       ],
     }],
     ["/management/integrations", {
       page: "management-integrations",
       scripts: ["/static/management_integrations.js?v=20261025-status-log-v2"],
     }],
-    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261116-task-panel-v2", "/static/list.js?v=20261116-task-panel-v1"] }],
+    ["/tickets", { page: "tickets-list", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/ticket_column_auto_width.js?v=20261106-column-auto-width-v1", "/static/task_panel_layout.js?v=20261116-task-panel-v2", "/static/list.js?v=20261118-scroll-reset-v1"] }],
   ]);
   const dynamicShellRoutes = [
     {
