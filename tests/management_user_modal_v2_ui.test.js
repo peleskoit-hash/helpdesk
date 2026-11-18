@@ -37,7 +37,7 @@ for (const theme of ['light', 'dark']) test(`management client modal V2: ${theme
   else if(p==='/api/v1/users/agents'||p==='/api/v1/users/by-role')data=[];
   else if(p.endsWith('/counts'))data={active:0,frozen:0,closed:0,special:0,unassigned:0,by_assignee:{}};
   else if(p.endsWith('/client-card-view-config'))data=config;
-  else if(p==='/api/v1/management/users')data={items:[{client_id:'client',display_name:'Иван Иванов',is_blocked:blocked}],total:1};
+  else if(p==='/api/v1/management/users')data={items:[{client_id:'client',column_values:{custom_fio:'Иван Иванов'},is_blocked:blocked}],columns:[{key:'custom_fio',label:'ФИО',type:'text'}],total:1};
   else if(p.endsWith('/block')||p.endsWith('/unblock')){blocked=p.endsWith('/block');data={is_blocked:blocked};}
   else if(p.endsWith('/reset-data'))data={is_blocked:blocked,profile:{...profile,is_verified:false,custom_fields:{flag:false}}};
   else if(p.endsWith('/profile')){if(req.method()==='PATCH')Object.assign(profile,req.postDataJSON());data=profile;}

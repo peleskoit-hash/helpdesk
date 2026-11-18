@@ -125,7 +125,8 @@
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
-        "/static/management_users.js?v=20261105-field-config",
+        "/static/management_user_columns.js?v=20261118-card-columns-v2",
+        "/static/management_users.js?v=20261118-card-columns-v2",
       ],
     }],
     ["/management/integrations", {

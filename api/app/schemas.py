@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_serializer
@@ -518,6 +518,17 @@ class BackgroundContourListOut(BaseModel):
     items: list[BackgroundContourOut]
 
 
+ManagementUsersColumnKey = Annotated[str, Field(min_length=1, max_length=100)]
+
+
+def normalize_management_users_columns(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    if "custom_fio" in value:
+        return [key for key in value if key != "display_name"]
+    return ["custom_fio" if key == "display_name" else key for key in value]
+
+
 class UserPreferencesOut(BaseModel):
     appearance_revision: str = ""
     background_patterns: dict[Literal["light", "dark"], BackgroundPatternThemeOut] | None = None
@@ -539,6 +550,7 @@ class UserPreferencesOut(BaseModel):
     accent_strength_dark: int = Field(default=50, ge=0, le=100, strict=True)
     client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
+    management_users_columns: list[ManagementUsersColumnKey] | None = None
 
 
 class AppearanceWrite(BaseModel):
@@ -570,6 +582,7 @@ class UserPreferencesUpdate(BaseModel):
     accent_hue_dark: int | None = Field(default=None, ge=0, le=360, strict=True)
     accent_strength_dark: int | None = Field(default=None, ge=0, le=100, strict=True)
     ticket_list_columns: list[TicketListColumnPreference] | None = None
+    management_users_columns: list[ManagementUsersColumnKey] | None = Field(default=None, max_length=500)
     client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     appearance_write: AppearanceWrite | None = None
 
@@ -587,6 +600,18 @@ class UserPreferencesUpdate(BaseModel):
         if value is None:
             return value
         return normalize_ticket_list_columns(value)
+
+    @field_validator("management_users_columns")
+    @classmethod
+    def validate_management_users_columns(cls, value):
+        if value is None:
+            return None
+        if len(value) != len(set(value)):
+            raise ValueError("User columns must be unique")
+        normalized = normalize_management_users_columns(value)
+        if "custom_fio" not in normalized:
+            raise ValueError("User columns must include custom_fio")
+        return normalized
 
 
 class AppearanceSessionCreate(BaseModel):

@@ -196,7 +196,7 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(ticketTemplate, /ticket\.js\?v=20261117-appearance-escape-v1/);
   assert.match(appShellSource, /ticket\.js\?v=20261117-appearance-escape-v1/);
-  assert.match(managementUsersTemplate, /management_users\.js\?v=20261105-field-config/);
+  assert.match(managementUsersTemplate, /management_users\.js\?v=20261118-card-columns-v2/);
 });
 
 test('ticket page binds static handlers before sidebar async initialization', () => {
@@ -1695,23 +1695,13 @@ test('management users helper keeps blocked view in page url state', () => {
   );
 });
 
-test('management users helper renders pagination summary', () => {
-  assert.equal(managementUsersHelpers.paginationSummary(0, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 1\u201350 \u0438\u0437 120');
-  assert.equal(managementUsersHelpers.paginationSummary(50, 50, 120, 50), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 51\u2013100 \u0438\u0437 120');
-  assert.equal(managementUsersHelpers.paginationSummary(100, 50, 120, 20), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 101\u2013120 \u0438\u0437 120');
-  assert.equal(managementUsersHelpers.paginationSummary(0, 50, 0, 0), '\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 0\u20130 \u0438\u0437 0');
-});
-
-test('management users search is triggered by button or enter, not input event', () => {
-  const source = fs.readFileSync('api/app/static/management_users.js', 'utf8');
-  assert.match(source, /searchBtn\?\.addEventListener\("click"/);
-  assert.match(source, /search\?\.addEventListener\("keydown"/);
-  assert.match(source, /event\.key !== "Enter"/);
-  assert.doesNotMatch(source, /addEventListener\("input"/);
-  assert.match(source, /state\.offset = 0;/);
-  assert.match(source, /nextBtn\?\.addEventListener\("click"/);
-  assert.match(source, /prevBtn\?\.addEventListener\("click"/);
-  assert.match(source, /state\.offset \+= state\.limit/);
+test('management users pagination shows nearby pages and boundaries', () => {
+  const pages = (...args) => Array.from(managementUsersHelpers.buildPaginationModel(...args));
+  assert.deepEqual(pages(1, 1), [1]);
+  assert.deepEqual(pages(3, 2), [1, 2, 3]);
+  assert.deepEqual(pages(10, 1), [1, 2, '\u2026', 10]);
+  assert.deepEqual(pages(10, 5), [1, '\u2026', 4, 5, 6, '\u2026', 10]);
+  assert.deepEqual(pages(10, 10), [1, '\u2026', 9, 10]);
 });
 
 test('management users helper keeps optional empty cells readable', () => {
@@ -1742,36 +1732,24 @@ test('management page contains users and mass notification tiles', () => {
   assert.match(management, /&#1052;&#1072;&#1089;&#1089;&#1086;&#1074;&#1099;&#1077; &#1086;&#1087;&#1086;&#1074;&#1077;&#1097;&#1077;&#1085;&#1080;&#1103;/);
 });
 
-test('management users table does not expose chat id in telegram summary', () => {
+test('management users table renders only the selected card values', () => {
   const html = managementUsersHelpers.tableRowHtml({
     client_id: 'client-1',
-    telegram_display_name: 'Ivan TG',
-    telegram_username: 'belfiss',
-    telegram_user_id: '453920478',
     telegram_chat_id: '-5267117449',
-    display_name: 'Ivan',
-    legacy_phone: '+7000',
-    internal_number: '4455',
-    last_activity_at: null,
-  });
-  assert.match(html, /Ivan TG/);
+    display_name: 'Computed Name',
+    column_values: { custom_fio: 'Card Name', telegram_username: 'belfiss', internal_number: '4455' },
+  }, [{ key: 'custom_fio' }, { key: 'telegram_username', type: 'username' }, { key: 'internal_number' }]);
+  assert.match(html, /Card Name/);
   assert.match(html, /@belfiss/);
-  assert.match(html, /TG ID: 453920478/);
   assert.match(html, /4455/);
-  assert.doesNotMatch(html, /\+7000/);
-  assert.doesNotMatch(html, /-5267117449/);
+  assert.doesNotMatch(html, /Computed Name|-5267117449/);
 });
 
 test('management users table shows dash for empty internal number', () => {
   const html = managementUsersHelpers.tableRowHtml({
     client_id: 'client-1',
-    telegram_display_name: 'Ivan TG',
-    telegram_username: 'belfiss',
-    telegram_user_id: '453920478',
-    display_name: 'Ivan',
-    internal_number: '',
-    last_activity_at: null,
-  });
+    column_values: { internal_number: '' },
+  }, [{ key: 'internal_number' }]);
   assert.match(html, /\u2014/);
 });
 
@@ -1784,8 +1762,7 @@ test('management users UI exposes block and unblock controls', () => {
     display_name: 'Ivan',
     internal_number: '4455',
     is_blocked: true,
-    last_activity_at: null,
-  });
+  }, [{ key: 'custom_fio' }]);
   assert.match(html, /data-is-blocked="1"/);
   assert.match(html, /management-user-row-blocked/);
   assert.doesNotMatch(html, /\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d/);
@@ -1824,11 +1801,12 @@ test('management users blocked view uses dedicated row styling while normal mode
   assert.doesNotMatch(managementUsersSource, /management-user-blocked-badge/);
 });
 
-test('management users template labels internal number and verification columns', () => {
-  const template = fs.readFileSync('api/app/templates/management_users.html', 'utf8');
-  assert.match(template, /&#1042;&#1085;&#1091;&#1090;&#1088;&#1077;&#1085;&#1085;&#1080;&#1081; &#1085;&#1086;&#1084;&#1077;&#1088;/);
-  assert.match(template, /&#1042;&#1077;&#1088;&#1080;&#1092;&#1080;&#1082;&#1072;&#1094;&#1080;&#1103;/);
-  assert.doesNotMatch(template, /&#1058;&#1077;&#1083;&#1077;&#1092;&#1086;&#1085;/);
+test('management users renders column headers from the catalog and ships the editor', () => {
+  assert.match(managementUsersTemplate, /id="managementUsersHeader"/);
+  assert.match(managementUsersTemplate, /id="managementUsersColumnsDialog"/);
+  assert.match(managementUsersTemplate, /management_user_columns\.js\?v=20261118-card-columns-v2/);
+  const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
+  assert.match(shell, /management_user_columns\.js\?v=20261118-card-columns-v2/);
 });
 
 test('management users template contains pagination controls', () => {
@@ -1836,8 +1814,9 @@ test('management users template contains pagination controls', () => {
   assert.match(template, /id="managementUsersPageSummary"/);
   assert.match(template, /id="managementUsersPrevBtn"/);
   assert.match(template, /id="managementUsersNextBtn"/);
-  assert.match(template, /&#1053;&#1072;&#1079;&#1072;&#1076;/);
-  assert.match(template, /&#1044;&#1072;&#1083;&#1077;&#1077;/);
+  assert.match(template, /id="managementUsersPages"/);
+  assert.match(template, /&lt;<\/button>/);
+  assert.match(template, /&gt;<\/button>/);
 });
 
 test('tickets list requester column uses backend requester_display_name without profile recomputation', () => {

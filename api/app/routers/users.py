@@ -28,6 +28,7 @@ from ..schemas import (
     UserStatusOut,
     UserStatusUpdate,
     dump_ticket_list_columns,
+    normalize_management_users_columns,
 )
 from ..services.assignment import assign_unassigned_fairly
 from ..services.user_appearance import (
@@ -261,6 +262,7 @@ def _preferences_out(user: User) -> UserPreferencesOut:
         accent_intensity_light=user.accent_intensity_light,
         accent_intensity_dark=user.accent_intensity_dark,
         ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+        management_users_columns=normalize_management_users_columns(user.management_users_columns_json),
         ticket_list_auto_width=bool(user.ticket_list_auto_width),
         client_card_collapsed_blocks=user.client_card_collapsed_blocks_json or {},
     )
@@ -342,6 +344,8 @@ def update_my_preferences(
         }
     if "ticket_list_auto_width" in updates:
         user.ticket_list_auto_width = bool(updates["ticket_list_auto_width"])
+    if "management_users_columns" in updates:
+        user.management_users_columns_json = updates["management_users_columns"]
     if "ticket_list_columns" in updates:
         user.ticket_list_columns_json = dump_ticket_list_columns(updates["ticket_list_columns"])
     if updates:

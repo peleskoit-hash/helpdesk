@@ -96,6 +96,7 @@ from .services.schema_evolution import (
     ensure_ticket_message_columns,
     ensure_ticket_reviews_tables,
     ensure_user_columns,
+    ensure_management_users_columns,
 )
 from .services.seed_data import ensure_demo_seed_data, ensure_system_seed_data
 from .services.bot_button_saved_file_migration import migrate_legacy_bot_button_pdf_saved_files
@@ -204,6 +205,7 @@ async def on_startup():
             ensure_telegram_contact_company_user_unique()
             ensure_telegram_notification_accounts_table()
             ensure_user_columns()
+            ensure_management_users_columns()
             ensure_ticket_columns()
             ensure_ticket_message_columns()
             ensure_ticket_attachment_table()

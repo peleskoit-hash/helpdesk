@@ -12,10 +12,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from api.app.db import Base
-from api.app.models import Client, ClientCardFieldConfig, ClientProfile, Company, PendingTaskIntent, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
+from api.app.models import Client, ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientProfile, Company, PendingTaskIntent, TelegramContact, Ticket, TicketStatus, TicketWorkflowType
 from api.app.routers import management_users, telegram
 from api.app.schemas import ClientProfileUpdate
-from api.app.services import telegram_onboarding
+from api.app.services import client_card, telegram_onboarding
 from scripts import merge_telegram_contact_duplicate
 
 
@@ -100,21 +100,289 @@ def _seed_user(
     return client, profile, contact
 
 
+
+def _search_field(key, *, block_key="profile", **overrides):
+    config = {
+        "label": key,
+        "field_type": "text",
+        "is_system": not key.startswith("custom_"),
+        **overrides,
+    }
+    return ClientCardFieldConfig(id=key, key=key, block_key=block_key, **config)
+
+
+def _configure_search(session, *fields):
+    session.add_all([
+        ClientCardBlockConfig(id="search-profile", key="profile", title="Profile"),
+        _search_field("contact_name"),
+        _search_field("last_name"),
+        _search_field("internal_number"),
+        *fields,
+    ])
+    session.commit()
+
+
 def test_management_users_list_searches_telegram_and_profile_fields():
     session = _session()
     client, _, _ = _seed_user(session, username="needle")
+    _configure_search(session)
 
     payload = management_users.list_management_users(q="needle", db=session, user=_admin())
 
     assert payload["total"] == 1
     assert payload["items"][0]["client_id"] == client.id
     assert payload["items"][0]["telegram_username"] == "needle"
+    assert payload["items"][0]["telegram_user_id"] == "100500"
+    assert payload["items"][0]["telegram_chat_id"] == "9001"
     assert payload["items"][0]["display_name"] == "Petrov Ivan"
     assert payload["items"][0]["internal_number"] == "100"
     assert "phone" not in payload["items"][0]
     assert payload["items"][0]["is_blocked"] is False
     assert payload["blocked_supported"] is True
     assert payload["items"][0]["last_activity_at"] is not None
+    for query in ("Ivan TG", "Fallback Name"):
+        assert management_users.list_management_users(q=query, db=session, user=_admin())["total"] == 1
+
+
+
+def test_management_users_searches_configured_card_fields_and_honors_visibility():
+    session = _session()
+    client, profile, _ = _seed_user(session)
+    session.add_all([
+        ClientCardBlockConfig(id="inactive", key="inactive", title="Inactive", is_active=False),
+        ClientCardBlockConfig(id="conditional", key="conditional", title="Conditional"),
+        ClientCardBlockConfig(id="editor", key="editor", title="Editor", show_in_card=False),
+        ClientCardRuleConfig(
+            id="hide-search-values", name="Hide configurable values", condition_field_key="destination",
+            condition_operator="equals", condition_value="Support",
+            actions_json=[
+                {"action": "hide", "scope": "both", "target_type": "block", "target_key": "conditional"},
+                {"action": "hide", "scope": "editor", "target_key": "custom_conditional_field"},
+            ],
+        ),
+    ])
+    _configure_search(
+        session,
+        _search_field("destination", field_type="select"),
+        _search_field("bitrix_login"),
+        _search_field("custom_inactive", block_key="inactive"),
+        _search_field("custom_hidden", is_visible=False, is_visible_in_editor=False),
+        _search_field("custom_conditional_field"),
+        _search_field("custom_conditional_block", block_key="conditional"),
+        _search_field("custom_editor", block_key="editor", is_visible=False),
+        _search_field("custom_admin", admin_only_edit=True),
+        _search_field("custom_select", field_type="select",
+                      options_json=["restricted-option"], admin_only_values_json=["restricted-option"]),
+    )
+    profile.bitrix_login = "work-login"
+    profile.custom_fields = {
+        "custom_new_office": "North Wing",
+        "custom_inactive": "inactive-marker",
+        "custom_hidden": "hidden-marker",
+        "custom_conditional_field": "conditional-field-marker",
+        "custom_conditional_block": "conditional-block-marker",
+        "custom_editor": "editor-marker",
+        "custom_admin": "admin-marker",
+        "custom_select": "restricted-option",
+    }
+    session.commit()
+
+    def search(query, user):
+        return management_users.list_management_users(q=query, db=session, user=user)
+
+    assert search("north wing", _agent())["total"] == 0
+    session.add(_search_field("custom_new_office", label="Office label"))
+    session.commit()
+    for query in ("North Wing", "Support", "work-login", "editor-marker", "Petrov Ivan"):
+        assert [item["client_id"] for item in search(query, _agent())["items"]] == [client.id]
+    for query in ("custom_new_office", "Office label", "inactive-marker", "hidden-marker",
+                  "conditional-field-marker", "conditional-block-marker"):
+        assert search(query, _admin())["total"] == 0
+    for query in ("admin-marker", "restricted-option"):
+        assert search(query, _admin())["total"] == 1
+        assert search(query, _agent())["total"] == 0
+
+
+def test_management_users_search_excludes_ids_secrets_and_unconfigured_profile_fields():
+    session = _session()
+    _, profile, _ = _seed_user(session, external_user_id="998877", external_chat_id="-887766")
+    _configure_search(
+        session,
+        _search_field("external_user_id"),
+        _search_field("bitrix_password", field_type="password"),
+        _search_field("custom_unmarked", field_type="password"),
+        _search_field("custom_api_token"),
+        _search_field("custom_sensitive", label="Access Secret"),
+        _search_field("custom_web_password", field_type="textarea"),
+        _search_field("custom_telegram_chat_id"),
+        _search_field("custom_nested"),
+        _search_field("custom_web_login"),
+    )
+    profile.external_user_id = "776655"
+    profile.bitrix_password = "bitrix-marker"
+    profile.web_password_encrypted = "encrypted-marker"
+    profile.web_login = "visible-web-login"
+    profile.email = "unconfigured@example.test"
+    profile.custom_fields = {
+        "custom_unmarked": "password-type-marker",
+        "custom_api_token": "token-marker",
+        "custom_sensitive": "label-protected-marker",
+        "custom_web_password": "legacy-web-password-marker",
+        "custom_telegram_chat_id": "665544",
+        "custom_nested": {"hidden": "nested-marker"},
+    }
+    session.commit()
+
+    for query in ("998877", "-887766", "776655", "665544", "bitrix-marker", "encrypted-marker",
+                  "password-type-marker", "token-marker", "label-protected-marker",
+                  "legacy-web-password-marker", "nested-marker", "unconfigured@example.test", "+70000000000"):
+        assert management_users.list_management_users(q=query, db=session, user=_admin())["total"] == 0
+    assert management_users.list_management_users(q="visible-web-login", db=session, user=_agent())["total"] == 1
+
+
+
+def test_management_users_columns_and_values_use_card_visibility_and_role():
+    session = _session()
+    _, profile, _ = _seed_user(session)
+    _configure_search(
+        session,
+        _search_field("destination", field_type="select", label="Assigned office",
+                      options_json=["restricted-choice"], admin_only_values_json=["restricted-choice"]),
+        _search_field("custom_new_office", label="New office"),
+        _search_field("custom_fio", label="ФИО"),
+        _search_field("telegram_chat_id", label="Configured chat ID"),
+        _search_field("custom_password_field", field_type="password"),
+        _search_field("custom_secret_token"),
+        _search_field("custom_hidden", is_visible=False, is_visible_in_editor=False),
+        _search_field("custom_staff_only", admin_only_edit=True),
+    )
+    profile.destination = "restricted-choice"
+    profile.custom_fields = {
+        "custom_new_office": "North",
+        "custom_fio": "Card name",
+        "custom_password_field": "private-password",
+        "custom_secret_token": "private-token",
+        "custom_hidden": "hidden-value",
+        "custom_staff_only": "staff-value",
+    }
+    session.commit()
+
+    agent = management_users.list_management_users(db=session, user=_agent())
+    admin = management_users.list_management_users(db=session, user=_admin())
+    columns = {column["key"]: column["label"] for column in agent["columns"]}
+    assert columns["custom_fio"] == "ФИО"
+    assert {"display_name", "telegram", "last_activity_at", "telegram_user_id"}.isdisjoint(columns)
+    assert columns["destination"] == "Assigned office"
+    assert columns["custom_new_office"] == "New office"
+    assert columns["telegram_chat_id"] == "Configured chat ID"
+    assert management_users.list_management_users(q="9001", db=session, user=_agent())["total"] == 0
+    assert {"custom_password_field", "custom_secret_token", "custom_hidden", "custom_staff_only"}.isdisjoint(columns)
+    row = agent["items"][0]
+    assert row["column_values"] == {
+        "contact_name": "Ivan", "last_name": "Petrov", "internal_number": "100", "custom_new_office": "North",
+        "custom_fio": "Card name", "telegram_chat_id": "9001",
+    }
+    assert row["destination"] is None
+    assert (row["telegram_user_id"], row["telegram_chat_id"]) == ("100500", "9001")
+    assert admin["items"][0]["column_values"]["custom_staff_only"] == "staff-value"
+    for item in (admin, agent):
+        snapshot = repr(item)
+        for secret in ("private-password", "private-token", "hidden-value"):
+            assert secret not in snapshot
+
+
+
+def test_management_users_columns_resolve_card_and_editor_visibility_per_row():
+    session = _session()
+    sand_client, sand, _ = _seed_user(session, username="sand")
+    sales_client, sales, _ = _seed_user(session, username="sales", external_user_id="100501", external_chat_id="9002")
+    other_client, other, _ = _seed_user(session, username="other", external_user_id="100502", external_chat_id="9003")
+
+    def rule(key, order, field, operator, value, *actions):
+        return ClientCardRuleConfig(
+            id=key, name=key, sort_order=order, condition_field_key=field,
+            condition_operator=operator, condition_value=value, actions_json=list(actions),
+        )
+
+    def visibility(key, action, scope, target="field"):
+        return {"target_type": target, "target_key": key, "action": action, "scope": scope}
+
+    session.add_all([
+        ClientCardBlockConfig(id="conditional", key="conditional", title="Conditional", show_in_card=False, show_in_editor=False),
+        ClientCardBlockConfig(id="inactive", key="inactive", title="Inactive", is_active=False),
+        rule("sand", 10, "destination", "equals", "Песок", visibility("sand_owner", "show", "editor")),
+        rule("sales", 20, "destination", "equals", "Отдел Продаж", visibility("sales_group", "show", "editor")),
+        rule("anydesk", 30, "location_type", "equals", "Удалённый", visibility("anydesk", "show", "both")),
+        rule("block", 40, "destination", "not_equals", "Песок", visibility("conditional", "show", "editor", "block")),
+        rule("hide-when-empty", 50, "custom_gate", "is_empty", None, visibility("custom_note", "hide", "card")),
+        rule("show-when-present", 60, "custom_gate", "is_not_empty", None, visibility("custom_present", "show", "card")),
+        rule("show-last", 70, "", "always", None, visibility("custom_note", "show", "card"),
+             visibility("custom_password", "show", "both"), visibility("inactive", "show", "both", "block")),
+    ])
+    hidden = {"is_visible": False, "is_visible_in_editor": False}
+    _configure_search(
+        session,
+        _search_field("destination", field_type="select"),
+        _search_field("location_type", field_type="select"),
+        _search_field("sand_owner", **hidden),
+        _search_field("sales_group", **hidden),
+        _search_field("anydesk", **hidden),
+        _search_field("custom_gate"),
+        _search_field("custom_note", is_visible=True, is_visible_in_editor=False),
+        _search_field("custom_present", **hidden),
+        _search_field("custom_conditional_block", block_key="conditional"),
+        _search_field("custom_inactive", block_key="inactive"),
+        _search_field("custom_password", field_type="password", **hidden),
+    )
+    sand.destination, sales.destination, other.destination = "Песок", "Отдел Продаж", "HR"
+    sand.location_type, sales.location_type, other.location_type = "Офисный", "Удалённый", "Офисный"
+    for profile in (sand, sales, other):
+        profile.sand_owner = "sand-marker"
+        profile.sales_group = "sales-marker"
+        profile.anydesk = "remote-marker"
+        profile.custom_fields = {
+            "custom_gate": " present " if profile is sales else "",
+            "custom_note": "card-marker",
+            "custom_present": "present-marker",
+            "custom_conditional_block": "block-marker",
+            "custom_password": "protected-marker",
+            "custom_inactive": "inactive-marker",
+        }
+    session.commit()
+
+    payload = management_users.list_management_users(db=session, user=_agent())
+    keys = {column["key"] for column in payload["columns"]}
+    conditional = {"sand_owner", "sales_group", "anydesk", "custom_note", "custom_conditional_block", "custom_present"}
+    assert conditional <= keys
+    assert {"custom_password", "custom_inactive"}.isdisjoint(keys)
+    values = {row["client_id"]: row["column_values"] for row in payload["items"]}
+    assert conditional & values[sand_client.id].keys() == {"sand_owner"}
+    assert conditional & values[sales_client.id].keys() == {
+        "sales_group", "anydesk", "custom_note", "custom_conditional_block", "custom_present",
+    }
+    assert conditional & values[other_client.id].keys() == {"custom_conditional_block"}
+    assert values[sand_client.id]["sand_owner"] == "sand-marker"
+    assert values[sales_client.id]["sales_group"] == "sales-marker"
+    assert "protected-marker" not in repr(payload)
+    for query in ("sand-marker", "sales-marker", "remote-marker", "card-marker", "block-marker", "present-marker",
+                  "protected-marker", "100500", "9001"):
+        assert management_users.list_management_users(q=query, db=session, user=_agent())["total"] == 0
+    assert management_users.list_management_users(q="Отдел Продаж", db=session, user=_agent())["total"] == 1
+
+
+def test_management_users_unknown_operator_does_not_show_column():
+    session = _session()
+    session.add(ClientCardRuleConfig(
+        id="show-note", name="Show note", condition_field_key="contact_name",
+        condition_operator="is_not_empty",
+        actions_json=[{"action": "show", "scope": "editor", "target_key": "custom_note"}],
+    ))
+    _configure_search(session, _search_field("custom_note", is_visible=False, is_visible_in_editor=False))
+    config = client_card._client_card_view_config(session)
+    config.rules[0] = config.rules[0].model_copy(update={"condition_operator": "unknown"})
+    rules = client_card._client_card_visibility_rules(config)
+
+    assert "custom_note" not in client_card._client_card_column_keys(config, rules, {"contact_name": "Ivan"})
 
 
 def test_management_users_blocked_filter_returns_only_blocked_contacts():
@@ -356,27 +624,37 @@ def test_management_users_paginates_after_dedupe():
 
 def test_management_users_searches_full_result_set_before_pagination():
     session = _session()
+    _configure_search(session)
     company = _company(session)
+    target_number = "needle-54"
     for index in range(55):
         _seed_user(
             session,
             company=company,
             username=f"user-{index:02d}",
-            internal_number="needle-54" if index == 54 else f"room-{index:02d}",
+            internal_number=target_number if index == 54 else f"room-{index:02d}",
             external_user_id=f"user-{index:02d}",
             external_chat_id=f"chat-{index:02d}",
-            updated_delta=index,
+            updated_delta=-1 if index == 54 else index,
         )
 
-    payload = management_users.list_management_users(q="needle-54", limit=50, offset=0, db=session, user=_admin())
+    first_page = management_users.list_management_users(limit=50, offset=0, db=session, user=_admin())
+    second_page = management_users.list_management_users(limit=50, offset=50, db=session, user=_admin())
+    assert len(first_page["items"]) == 50
+    assert all(item["internal_number"] != target_number for item in first_page["items"])
+    assert len(second_page["items"]) == 5
+    target = second_page["items"][-1]
+    assert target["internal_number"] == target_number
+
+    payload = management_users.list_management_users(q=target_number, limit=50, offset=0, db=session, user=_admin())
 
     assert payload["total"] == 1
-    assert len(payload["items"]) == 1
-    assert payload["items"][0]["internal_number"] == "needle-54"
+    assert payload["items"] == [target]
 
 
-def test_management_users_search_after_dedupe_by_username_user_id_and_profile():
+def test_management_users_search_by_username_and_profile_preserves_dedupe():
     session = _session(legacy_telegram_duplicates=True)
+    _configure_search(session)
     company = _company(session)
     canonical_client, profile, _ = _seed_user(
         session,
@@ -398,14 +676,14 @@ def test_management_users_search_after_dedupe_by_username_user_id_and_profile():
     profile.last_name = "Sidorov"
     session.commit()
 
-    for query in ("belfiss", "453920478", "Sidorov", "4455"):
+    for query in ("belfiss", "Sidorov", "4455"):
         payload = management_users.list_management_users(q=query, db=session, user=_admin())
         assert payload["total"] == 1
         assert payload["items"][0]["client_id"] == canonical_client.id
         assert payload["items"][0]["internal_number"] == "4455"
 
-    phone_payload = management_users.list_management_users(q="+79998887766", db=session, user=_admin())
-    assert phone_payload["total"] == 0
+    for query in ("453920478", "-5267117449"):
+        assert management_users.list_management_users(q=query, db=session, user=_admin())["total"] == 0
 
 
 def test_management_users_block_and_unblock_are_idempotent_and_sync_duplicates():
@@ -513,6 +791,7 @@ def test_management_users_dedupe_reports_blocked_when_duplicate_is_blocked():
 
 def test_management_users_search_preserves_blocked_state_across_hidden_duplicate():
     session = _session(legacy_telegram_duplicates=True)
+    _configure_search(session)
     company = _company(session)
     canonical_client, canonical_profile, canonical_contact = _seed_user(
         session,
@@ -549,6 +828,7 @@ def test_management_users_search_preserves_blocked_state_across_hidden_duplicate
 
 def test_management_users_blocked_state_stays_company_scoped_for_same_external_user_id():
     session = _session(legacy_telegram_duplicates=True)
+    _configure_search(session)
     company_a = _company(session)
     company_b = _company(session)
     client_a, profile_a, contact_a = _seed_user(

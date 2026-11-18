@@ -6,7 +6,7 @@ from typing import Annotated
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, or_, select, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, can_edit_client_profile, get_current_user, is_admin
@@ -14,10 +14,15 @@ from ..db import get_db
 from ..models import Client, ClientProfile, TelegramContact, Ticket
 from ..schemas import BitrixPasswordRevealOut, ClientCardRuntimeConfigResponse, ClientCardSourceRunRequest, ClientProfileOut, ClientProfileUpdate
 from ..services.client_card import (
+    _accessible_client_card_values,
+    _client_card_column_keys,
     _client_card_view_config,
+    _client_card_visibility_rules,
     _custom_field_map,
     _normalize_custom_field_value,
     _profile_out,
+    _permitted_client_card_fields,
+    _searchable_client_card_fields,
 )
 from ..services.client_card_derivation import (
     apply_client_card_profile_save_pipeline,
@@ -75,19 +80,33 @@ def _telegram_contact_for_client(db: Session, client_id: str) -> TelegramContact
     ).scalar_one_or_none()
 
 
-def _display_name(client: Client | None, profile: ClientProfile | None, contact: TelegramContact) -> str:
-    profile_parts = [profile.last_name if profile else None, profile.contact_name if profile else None]
-    profile_name = " ".join(str(part).strip() for part in profile_parts if part and str(part).strip())
-    return profile_name or (client.display_name if client else None) or contact.external_display_name or ""
+_CONTACT_COLUMN_ATTRIBUTES = {
+    "telegram_username": "external_username",
+    "telegram_display_name": "external_display_name",
+    "telegram_user_id": "external_user_id",
+    "telegram_chat_id": "external_chat_id",
+    "external_chat_id": "external_chat_id",
+}
 
+
+def _display_name(client: Client | None, contact: TelegramContact, values: dict[str, str]) -> str:
+    name = " ".join(values[key] for key in ("last_name", "contact_name") if key in values)
+    return name or (client.display_name if client else None) or contact.external_display_name or ""
+
+
+def _column_catalog(fields) -> list[dict]:
+    return [
+        {"key": field.key, "label": field.label, "type": "username" if field.key == "telegram_username" else field.field_type}
+        for field in fields
+    ]
 
 def _row_out(
     contact: TelegramContact,
     client: Client | None,
-    profile: ClientProfile | None,
     last_activity_at: datetime | None,
     *,
     is_blocked: bool | None = None,
+    values: dict[str, str],
 ):
     activity = last_activity_at or contact.updated_at or contact.created_at
     blocked = bool(contact.is_blocked) if is_blocked is None else bool(is_blocked)
@@ -98,14 +117,15 @@ def _row_out(
         "telegram_chat_id": contact.external_chat_id,
         "telegram_username": contact.external_username,
         "telegram_display_name": contact.external_display_name,
-        "display_name": _display_name(client, profile, contact),
-        "contact_name": profile.contact_name if profile else None,
-        "last_name": profile.last_name if profile else None,
-        "internal_number": profile.internal_number if profile else None,
-        "destination": profile.destination if profile else None,
-        "group_name": profile.group_name if profile else None,
-        "sales_group": profile.sales_group if profile else None,
-        "is_verified": bool(profile.is_verified) if profile else False,
+        "display_name": _display_name(client, contact, values),
+        "contact_name": values.get("contact_name"),
+        "last_name": values.get("last_name"),
+        "internal_number": values.get("internal_number"),
+        "destination": values.get("destination"),
+        "group_name": values.get("group_name"),
+        "sales_group": values.get("sales_group"),
+        "is_verified": values.get("is_verified") == "True",
+        "column_values": values,
         "is_blocked": blocked,
         "blocked": blocked,
         "blocked_supported": True,
@@ -246,6 +266,20 @@ def _payload_data(payload: ClientProfileUpdate) -> dict:
     return payload.dict(exclude_unset=True)
 
 
+def _matches_search(row, query, fields, *, admin: bool) -> bool:
+    contact, client, profile, _ = row
+    values = _accessible_client_card_values(profile, fields, admin=admin)
+    full_name = " ".join(values.get(key, "") for key in ("last_name", "contact_name")).strip()
+    candidates = (
+        contact.external_username,
+        contact.external_display_name,
+        client.display_name if client is not None else None,
+        full_name,
+        *values.values(),
+    )
+    return any(value and query in value.casefold() for value in candidates)
+
+
 @router.get("")
 def list_management_users(
     q: Annotated[str, Query(max_length=120)] = "",
@@ -268,43 +302,59 @@ def list_management_users(
         .join(last_ticket, last_ticket.c.client_id == TelegramContact.client_id, isouter=True)
     )
 
-    query = q.strip().lower()
+    query = q.strip().casefold()
+    ordered = base.order_by(
+        func.coalesce(last_ticket.c.last_activity_at, TelegramContact.updated_at, TelegramContact.created_at).desc()
+    )
+    admin = is_admin(user)
+    config = _client_card_view_config(db)
+    permitted_fields = _permitted_client_card_fields(
+        config, admin=admin, extra_system_keys=frozenset(_CONTACT_COLUMN_ATTRIBUTES),
+    )
+    visibility_rules = _client_card_visibility_rules(config)
+    catalog_keys = _client_card_column_keys(config, visibility_rules)
+    catalog_fields = [field for field in permitted_fields if field.key in catalog_keys]
     if query:
-        pattern = f"%{query}%"
-        base = base.where(
-            or_(
-                func.lower(TelegramContact.external_user_id).like(pattern),
-                func.lower(TelegramContact.external_chat_id).like(pattern),
-                func.lower(TelegramContact.external_username).like(pattern),
-                func.lower(TelegramContact.external_display_name).like(pattern),
-                func.lower(Client.display_name).like(pattern),
-                func.lower(ClientProfile.contact_name).like(pattern),
-                func.lower(ClientProfile.last_name).like(pattern),
-                func.lower(ClientProfile.internal_number).like(pattern),
-            )
-        )
-
-    rows = db.execute(
-        base.order_by(func.coalesce(last_ticket.c.last_activity_at, TelegramContact.updated_at, TelegramContact.created_at).desc())
-    ).all()
-    deduped_rows = _dedupe_rows(rows)
+        fields = [
+            field for field in _searchable_client_card_fields(config, permitted_fields, visibility_rules)
+            if field.key not in _CONTACT_COLUMN_ATTRIBUTES
+        ]
+        rows = db.execute(ordered.execution_options(yield_per=500))
+        deduped_rows = _dedupe_rows(row for row in rows if _matches_search(row, query, fields, admin=admin))
+    else:
+        deduped_rows = _dedupe_rows(db.execute(ordered))
     blocked_state = _blocked_state_by_dedupe_key(db, deduped_rows)
     if blocked:
         deduped_rows = [row for row in deduped_rows if blocked_state.get(_dedupe_key(row[0]), False)]
     else:
         deduped_rows = [row for row in deduped_rows if not blocked_state.get(_dedupe_key(row[0]), False)]
+    condition_keys = {rule.condition_field_key for rule, _ in visibility_rules}
+    condition_fields = [field for field in permitted_fields if field.key in condition_keys]
+
+    def column_values(contact, profile):
+        contact_values = {key: getattr(contact, attribute) for key, attribute in _CONTACT_COLUMN_ATTRIBUTES.items()}
+        conditions = _accessible_client_card_values(
+            profile, condition_fields, admin=admin, contact_values=contact_values, conditions=True,
+        )
+        visible_keys = _client_card_column_keys(config, visibility_rules, conditions)
+        return _accessible_client_card_values(
+            profile, [field for field in catalog_fields if field.key in visible_keys],
+            admin=admin, contact_values=contact_values,
+        )
+
     page_rows = deduped_rows[offset:offset + limit]
     return {
         "items": [
             _row_out(
                 contact,
                 client,
-                profile,
                 last_activity_at,
                 is_blocked=blocked_state.get(_dedupe_key(contact), False),
+                values=column_values(contact, profile),
             )
             for contact, client, profile, last_activity_at in page_rows
         ],
+        "columns": _column_catalog(catalog_fields),
         "total": len(deduped_rows),
         "limit": limit,
         "offset": offset,

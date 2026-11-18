@@ -17,6 +17,8 @@
     clientCardViewConfig: null,
   };
 
+  let usersRequest = 0;
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -60,33 +62,39 @@
     return `${url.pathname}${url.search}${url.hash}`;
   }
 
-  function paginationSummary(offset, limit, total, itemCount) {
-    const safeTotal = Math.max(0, Number(total || 0));
-    if (safeTotal === 0 || itemCount === 0) {
-      return "\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e 0\u20130 \u0438\u0437 0";
+  function buildPaginationModel(totalPages, currentPage) {
+    if (totalPages <= 1) return [1];
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+    const left = Math.max(2, currentPage - 1);
+    const right = Math.min(totalPages - 1, currentPage + 1);
+    const model = [1];
+    if (left > 2) model.push("\u2026");
+    for (let page = left; page <= right; page += 1) {
+      model.push(page);
     }
-    const start = Number(offset || 0) + 1;
-    const end = Math.min(Number(offset || 0) + Number(itemCount || limit || 0), safeTotal);
-    return `\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e ${start}\u2013${end} \u0438\u0437 ${safeTotal}`;
+    if (right < totalPages - 1) model.push("\u2026");
+    model.push(totalPages);
+    return model;
   }
 
-  function tableRowHtml(item) {
-    const username = item.telegram_username ? `@${item.telegram_username.replace(/^@/, "")}` : "";
-    const telegramBits = [username, item.telegram_user_id ? `TG ID: ${item.telegram_user_id}` : ""].filter(Boolean);
-    const department = item.destination || item.group_name || item.sales_group || "";
-    return `
-      <tr class="management-user-row ${item.is_blocked ? "management-user-row-blocked" : ""}" data-client-id="${escapeHtml(item.client_id)}" data-is-blocked="${item.is_blocked ? "1" : "0"}">
-        <td>
-          <div class="management-user-primary">${escapeHtml(formatCell(item.telegram_display_name || username || item.telegram_user_id))}</div>
-          <div class="management-user-muted">${escapeHtml(telegramBits.join(" \u00b7 ") || EMPTY)}</div>
-        </td>
-        <td>${escapeHtml(formatCell(item.display_name))}</td>
-        <td>${escapeHtml(formatCell(item.internal_number))}</td>
-        <td>${escapeHtml(formatCell(department))}</td>
-        <td>${item.is_verified ? "\u2713" : EMPTY}</td>
-        <td>${escapeHtml(formatDate(item.last_activity_at))}</td>
-      </tr>
-    `;
+  const DEFAULT_COLUMNS = [
+    "telegram_display_name", "telegram_username", "custom_fio", "internal_number", "destination", "is_verified",
+  ];
+
+  function tableRowHtml(item, columns) {
+    const cells = columns.map(({ key, type }) => {
+      let value = item.column_values?.[key];
+      if (type === "username" && value) value = "@" + value.replace(/^@/, "");
+      if (type === "checkbox") {
+        const checked = value === "True" || value === true;
+        const unchecked = value === "False" || value === false;
+        value = checked ? "✓" : unchecked && key !== "is_verified" ? "✕" : EMPTY;
+      }
+      const text = escapeHtml(formatCell(value));
+      return `<td title="${text}">${text}</td>`;
+    });
+    return `<tr class="management-user-row ${item.is_blocked ? "management-user-row-blocked" : ""}"
+      data-client-id="${escapeHtml(item.client_id)}" data-is-blocked="${item.is_blocked ? "1" : "0"}">${cells.join("")}</tr>`;
   }
 
   async function api(path, options = {}) {
@@ -162,9 +170,11 @@
       tableBody: root.querySelector("#managementUsersTableBody"),
       empty: root.querySelector("#managementUsersEmpty"),
       search: root.querySelector("#managementUsersSearch"),
+      clearBtn: root.querySelector("#managementUsersClearBtn"),
       searchBtn: root.querySelector("#managementUsersSearchBtn"),
       filters: [...root.querySelectorAll("[data-management-user-filter]")],
       pageSummary: root.querySelector("#managementUsersPageSummary"),
+      pages: root.querySelector("#managementUsersPages"),
       prevBtn: root.querySelector("#managementUsersPrevBtn"),
       nextBtn: root.querySelector("#managementUsersNextBtn"),
       clientModal: root.querySelector("#clientModal"),
@@ -217,25 +227,41 @@
     const items = Array.isArray(payload?.items) ? payload.items : [];
     state.total = Number(payload?.total || 0);
     state.limit = Number(payload?.limit || state.limit || PAGE_SIZE);
-    state.offset = Number(payload?.offset || state.offset || 0);
-    el.tableBody.innerHTML = items.map(tableRowHtml).join("");
+    state.offset = Number(payload?.offset ?? state.offset);
+    state.columns.render(payload?.columns || [], items);
     el.empty.classList.toggle("hidden", items.length > 0);
     el.empty.textContent = "\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0443\u0441\u0442";
-    if (el.pageSummary) {
-      el.pageSummary.textContent = paginationSummary(state.offset, state.limit, state.total, items.length);
-    }
-    if (el.prevBtn) {
-      el.prevBtn.disabled = state.offset <= 0;
-    }
-    if (el.nextBtn) {
-      el.nextBtn.disabled = state.offset + state.limit >= state.total;
-    }
+    el.pageSummary.textContent = `Всего: ${state.total}`;
+    el.prevBtn.disabled = state.offset <= 0;
+    el.nextBtn.disabled = state.offset + state.limit >= state.total;
+    const currentPage = Math.floor(state.offset / state.limit) + 1;
+    const totalPages = Math.max(1, Math.ceil(state.total / state.limit));
+    el.pages.replaceChildren(...buildPaginationModel(totalPages, currentPage).map((page) => {
+      const item = document.createElement(page === "\u2026" ? "span" : "button");
+      item.textContent = String(page);
+      if (page === "\u2026") {
+        item.className = "table-page-ellipsis";
+        item.setAttribute("aria-hidden", "true");
+      } else {
+        item.type = "button";
+        item.className = "table-page-number";
+        item.dataset.page = page;
+        if (page === currentPage) {
+          item.classList.add("active");
+          item.setAttribute("aria-current", "page");
+          item.disabled = true;
+        }
+      }
+      return item;
+    }));
   }
 
   function syncFilterButtons(root) {
     const el = els(root);
     el.filters.forEach((item) => {
-      item.classList.toggle("active", (item.dataset.managementUserFilter || "all") === state.filter);
+      const active = item.dataset.managementUserFilter === state.filter;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-pressed", String(active));
     });
   }
 
@@ -255,10 +281,21 @@
   }
 
   async function loadUsers(root) {
-    setStatus(root, "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...");
-    const payload = await api(buildUsersUrl({ query: state.query, filter: state.filter, limit: state.limit, offset: state.offset }));
-    renderUsers(root, payload);
-    setStatus(root, `\u041d\u0430\u0439\u0434\u0435\u043d\u043e: ${payload?.total ?? 0}`);
+    const request = ++usersRequest;
+    const options = { query: state.query, filter: state.filter, limit: state.limit, offset: state.offset };
+    setStatus(root, "");
+    try {
+      const payload = await api(buildUsersUrl(options));
+      if (request !== usersRequest) return;
+      const lastOffset = Math.max(0, Math.ceil(Number(payload?.total || 0) / options.limit) - 1) * options.limit;
+      if (options.offset > lastOffset) {
+        state.offset = lastOffset;
+        return loadUsers(root);
+      }
+      renderUsers(root, payload);
+    } catch (error) {
+      if (request === usersRequest) throw error;
+    }
   }
 
   function runSearch(root) {
@@ -371,31 +408,40 @@
 
   function bind(root) {
     const el = els(root);
-    el.searchBtn?.addEventListener("click", () => {
-      runSearch(root).catch((error) => setStatus(root, error.message));
+    const showLoadError = (error) => setStatus(root, error.message);
+    const syncClearButton = () => el.clearBtn.classList.toggle("hidden", !el.search.value);
+    el.search.addEventListener("input", syncClearButton);
+    syncClearButton();
+    el.clearBtn.addEventListener("click", () => {
+      el.search.value = "";
+      syncClearButton();
+      el.search.focus();
+      runSearch(root).catch(showLoadError);
     });
-    el.search?.addEventListener("keydown", (event) => {
+    el.searchBtn.addEventListener("click", () => runSearch(root).catch(showLoadError));
+    el.search.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
-      runSearch(root).catch((error) => setStatus(root, error.message));
+      runSearch(root).catch(showLoadError);
     });
     el.filters.forEach((button) => {
       button.addEventListener("click", () => {
         const nextFilter = button.dataset.managementUserFilter || "all";
         applyFilterState(root, nextFilter, { resetOffset: true });
         updatePageUrlForFilter(state.filter);
-        loadUsers(root).catch((error) => setStatus(root, error.message));
+        loadUsers(root).catch(showLoadError);
       });
     });
-    el.prevBtn?.addEventListener("click", () => {
-      if (state.offset <= 0) return;
-      state.offset = Math.max(0, state.offset - state.limit);
-      loadUsers(root).catch((error) => setStatus(root, error.message));
-    });
-    el.nextBtn?.addEventListener("click", () => {
-      if (state.offset + state.limit >= state.total) return;
-      state.offset += state.limit;
-      loadUsers(root).catch((error) => setStatus(root, error.message));
+    const goToOffset = (offset) => {
+      if (offset < 0 || offset >= state.total || offset === state.offset) return;
+      state.offset = offset;
+      loadUsers(root).catch(showLoadError);
+    };
+    el.prevBtn.addEventListener("click", () => goToOffset(state.offset - state.limit));
+    el.nextBtn.addEventListener("click", () => goToOffset(state.offset + state.limit));
+    el.pages.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (button) goToOffset((Number(button.dataset.page) - 1) * state.limit);
     });
     el.tableBody?.addEventListener("click", (event) => {
       const row = event.target.closest("[data-client-id]");
@@ -431,22 +477,38 @@
     const changed = nextFilter !== state.filter;
     applyFilterState(root, nextFilter, { resetOffset: changed });
     if (changed) {
-      await loadUsers(root);
+      await loadUsers(root).catch((error) => setStatus(root, error.message));
     }
   }
 
   function initManagementUsersPage({ root, url } = {}) {
     if (!root) return;
-    applyFilterState(root, filterFromPageUrl(url || window.location.href), { resetOffset: false });
+    state.query = "";
+    state.total = 0;
+    state.limit = PAGE_SIZE;
+    applyFilterState(root, filterFromPageUrl(url || window.location.href));
+    state.columns = window.ManagementUserColumns.mount(root, {
+      api,
+      defaults: DEFAULT_COLUMNS,
+      tableRowHtml,
+    });
+    const columns = state.columns;
     bind(root);
     const handlePageKeydown = (event) => {
       if (event.key === "Escape" && !els(root).clientModal?.classList.contains("hidden")) { event.preventDefault(); closeClientModal(root); }
     };
     document.addEventListener("keydown", handlePageKeydown);
-    const destroy = () => document.removeEventListener("keydown", handlePageKeydown);
+    let active = true;
+    const destroy = () => {
+      active = false;
+      usersRequest += 1;
+      columns.destroy();
+      document.removeEventListener("keydown", handlePageKeydown);
+    };
     (async () => {
       try {
         const sidebar = await window.HelpdeskSidebar?.init?.();
+        if (!active) return;
         if (sidebar?.role !== "admin" && sidebar?.role !== "agent") {
           setStatus(root, "Нет доступа к редактору пользователей");
           return;
@@ -455,10 +517,14 @@
         const { resetClientDataBtn, toggleClientBlockBtn } = els(root);
         resetClientDataBtn?.classList.toggle("hidden", state.role !== "admin");
         toggleClientBlockBtn?.classList.toggle("hidden", state.role !== "admin");
-        state.clientCardViewConfig = await api("/api/v1/management/users/client-card-view-config").catch(() => null);
-        await loadUsers(root);
+        await Promise.all([
+          loadUsers(root),
+          api("/api/v1/users/me/preferences", { cache: "no-store" }).then((saved) => {
+            if (active) columns.restore(saved?.management_users_columns);
+          }),
+        ]);
       } catch (error) {
-        setStatus(root, error.message);
+        if (active) setStatus(root, error.message);
       }
     })();
     return {
@@ -475,7 +541,7 @@
     filterFromPageUrl,
     formatCell,
     formatDate,
-    paginationSummary,
+    buildPaginationModel,
     tableRowHtml,
   };
 

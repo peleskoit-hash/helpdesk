@@ -44,7 +44,7 @@ async function fixture(t, contact, options = {}) {
     if (path.endsWith('/generate')) generationWire.push(wire);
     let result = {}, status = 200;
     if (path.endsWith('client-card-view-config')) result = config;
-    else if (path === '/api/v1/management/users') result = { items: [{ client_id: 'client', display_name: 'Synthetic' }], total: 1 };
+    else if (path === '/api/v1/management/users') result = { items: [{ client_id: 'client', column_values: { custom_fio: 'Synthetic' } }], columns: [{ key: 'custom_fio', label: 'ФИО', type: 'text' }], total: 1 };
     else if (path.endsWith('/generate')) {
       if (server.hold) await new Promise(resolve => { server.pending = resolve; });
       if (server.fail) { status = 422; result = { error: { message: 'Не удалось подготовить логин: заполните имя и фамилию' } }; }
@@ -71,6 +71,7 @@ async function fixture(t, contact, options = {}) {
     else await page.goto('http://helpdesk.test/');
     await page.addStyleTag({ content: fs.readFileSync('api/app/static/styles.css', 'utf8') });
     await page.addStyleTag({ content: fs.readFileSync('api/app/static/ticket_client_card.css', 'utf8') });
+    if (contact) await page.addStyleTag({ content: fs.readFileSync('api/app/static/contacts-v2.css', 'utf8') });
     await page.addScriptTag({ content: script('ticket_api') });
     await page.addScriptTag({ content: script('client_web_credentials') });
     await page.addScriptTag({ content: script('ticket_client_card') });
@@ -95,6 +96,7 @@ async function fixture(t, contact, options = {}) {
       window.ctx = ctx;
     }, { contact, config });
     if (contact) {
+      await page.addScriptTag({ content: script('management_user_columns') });
       await page.addScriptTag({ content: script('management_users') });
       await page.evaluate(() => window.initContacts({ root: document.body, url: window.location.href }));
     }

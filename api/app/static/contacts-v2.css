@@ -1,5 +1,58 @@
-/* Contacts list only. The shared shell and individual contact editor keep their styles. */
-body #appContent.main[data-shell-page="management-users"] { background-color: var(--desk-bg); }
+/* Contacts workspace uses the shared V2 body backdrop. */
+body #appContent.main[data-shell-page="management-users"] { --bg: var(--desk-bg); }
+body #appContent.main[data-shell-page="management-users"] > .toolbar {
+  padding-inline: 16px;
+
+  & .management-users-search { position: relative; flex: 0 0 auto; max-width: 100%; }
+  & .search-input-wrap { min-width: 0; }
+  & #managementUsersSearch {
+    box-sizing: border-box;
+    width: 220px;
+    max-width: 100%;
+    padding-right: 32px;
+  }
+  & #managementUsersSearch::placeholder { color: var(--desk-muted); opacity: 1; }
+  & #managementUsersSearchBtn {
+    background: var(--desk-primary, var(--desk-on-tint));
+    color: var(--desk-on-accent, var(--desk-surface));
+    border-color: var(--desk-accent);
+  }
+  & .search-clear-btn { color: var(--desk-muted); }
+  & .search-clear-btn:hover { background: var(--desk-hover); color: var(--desk-text); }
+  & :is(input, button):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 2px; }
+  & #managementUsersStatus {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    max-width: 100%;
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+    background: var(--desk-surface);
+    color: var(--desk-text);
+    border: 1px solid var(--desk-border);
+    border-radius: var(--desk-radius);
+  }
+  & .management-users-filters { margin-left: auto; }
+  & .management-users-filters .action {
+    position: relative;
+    padding-left: 26px;
+  }
+  & .management-users-filters .action.active {
+    background: var(--desk-tint);
+    color: var(--desk-on-tint);
+    border-color: var(--desk-accent);
+  }
+  & .management-users-filters .action.active::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    border-block: 4px solid transparent;
+    border-left: 6px solid currentColor;
+  }
+  & .display-settings { width: auto; margin-left: 0; }
+}
 body #appContent.main[data-shell-page="management-users"] > .management-users-page {
   --surface: var(--desk-surface);
   --border: var(--desk-border);
@@ -17,7 +70,6 @@ body #appContent.main[data-shell-page="management-users"] > .management-users-pa
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  & .management-users-search { translate: 8px 4px; }
   & :is(button, input) { font-family: var(--desk-font); }
   & button.action {
     padding: 9px 12px;
@@ -31,31 +83,26 @@ body #appContent.main[data-shell-page="management-users"] > .management-users-pa
     backdrop-filter: none;
   }
   & button.action:hover:not(:disabled) { background: var(--desk-hover); box-shadow: none; }
-  & button.action.primary, & button.action.primary:hover:not(:disabled) {
-    background: var(--desk-primary, var(--desk-on-tint));
-    color: var(--desk-on-accent, var(--desk-surface));
-    border-color: var(--desk-focus, var(--desk-accent));
-  }
-  & .management-users-filters button.action.active, & .management-users-filters button.action.active:hover {
-    background: var(--desk-tint);
-    color: var(--desk-on-tint);
-    border-color: var(--desk-accent);
-  }
-  & .management-users-search input {
-    padding: 10px 12px;
-    font-size: 14px;
-    line-height: 1.5;
-    background: var(--desk-soft);
-    color: var(--desk-text);
-    border: 1px solid var(--desk-border);
-    border-radius: var(--desk-radius, 12px);
-    box-shadow: none;
-    backdrop-filter: none;
-  }
-  & input::placeholder { color: var(--desk-muted); opacity: 1; }
   & :is(button, input):focus-visible { outline: 2px solid var(--desk-focus, var(--desk-accent)); outline-offset: 3px; }
   & button:disabled { cursor: not-allowed; }
-  & th { background: var(--desk-soft); color: var(--desk-muted); border-color: var(--desk-border); }
+  & .table-scroll { padding: 8px 12px 0; }
+  & table { margin: 0; width: 100%; border-spacing: 0 6px; }
+  & thead {
+    position: sticky;
+    top: 6px;
+    z-index: 3;
+    background: var(--desk-surface);
+    box-shadow: 0 -12px 0 12px var(--desk-surface);
+  }
+  & th {
+    padding: 0 12px;
+    vertical-align: middle;
+    background: var(--desk-surface);
+    color: var(--desk-muted);
+    border-color: var(--desk-border);
+    border-bottom-color: transparent;
+    font-size: 13px;
+  }
   & td { background: var(--desk-soft); color: var(--desk-text); border-color: var(--desk-border); box-shadow: none; }
   & .management-user-row td:first-child { border-radius: var(--desk-radius, 12px) 0 0 var(--desk-radius, 12px); }
   & .management-user-row td:last-child { border-radius: 0 var(--desk-radius, 12px) var(--desk-radius, 12px) 0; }
@@ -63,6 +110,93 @@ body #appContent.main[data-shell-page="management-users"] > .management-users-pa
   & .management-user-row-blocked td { background: var(--desk-danger-bg); }
   & .management-user-row-blocked:hover td { background: color-mix(in srgb, var(--desk-danger-bg) 90%, var(--desk-danger)); }
   & :is(.management-user-muted, .status, .table-pagination-total) { color: var(--desk-muted); }
-  & .management-users-pagination .table-page-btn { display: inline-flex; align-items: center; justify-content: center; padding-block: 0; }
-  & .management-users-pagination { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); background: var(--desk-surface); border-color: var(--desk-border); }
+  & .management-users-pagination {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    padding: 12px 14px;
+    background: var(--desk-surface);
+    border-color: var(--desk-border);
+  }
+  & .table-pagination-total { font-size: 14px; }
+  & button.action.table-page-btn,
+  & .table-page-number {
+    display: inline-grid;
+    place-items: center;
+    padding: 0 8px;
+    min-height: 36px;
+    min-width: 36px;
+    background: var(--desk-soft);
+    border-color: var(--desk-border);
+    color: var(--desk-text);
+    font: 600 14px/1 var(--desk-font);
+  }
+  & .table-page-number.active {
+    background: var(--desk-tint);
+    border-color: var(--desk-accent);
+    color: var(--desk-on-tint);
+  }
+  @media (max-width: 760px) {
+    & .management-users-pagination { grid-template-columns: 1fr; justify-items: center; }
+    & .table-pagination-nav { grid-column: 1; max-width: 100%; overflow-x: auto; }
+  }
+}
+
+body #appContent.main[data-shell-page="management-users"] {
+  & #managementUsersColumnsBtn img { display: block; width: 18px; height: 18px; }
+  & #managementUsersTable {
+    table-layout: fixed;
+    min-width: 0;
+  }
+  & .management-users-table { min-width: 0; }
+  & .management-users-table :is(th, td, .management-user-primary, .management-user-muted) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .management-users-width-probe {
+    position: fixed;
+    inset: 0 auto auto 0;
+    visibility: hidden;
+    pointer-events: none;
+    width: max-content !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+  }
+  & #managementUsersColumnsDialog {
+    box-sizing: border-box;
+    width: min(560px, calc(100% - 24px));
+    max-height: calc(100dvh - 24px);
+    padding: 0;
+    margin: auto;
+    color: var(--desk-text);
+    background: var(--desk-surface);
+    border: 1px solid var(--desk-border);
+    box-shadow: var(--desk-shadow);
+    font: 14px/1.5 var(--desk-font);
+  }
+  & #managementUsersColumnsDialog:not([open]) { display: none; }
+  & #managementUsersColumnsDialog::backdrop { background: rgb(14 17 28 / 55%); }
+  & #managementUsersColumnsDialog :is(.modal-head, .modal-foot, .columns-draft-list) {
+    background: var(--desk-surface);
+    border-color: var(--desk-border);
+  }
+  & #managementUsersColumnsDialog :is(select, .columns-draft-row, .action) {
+    color: var(--desk-text);
+    background: var(--desk-soft);
+    border-color: var(--desk-border);
+    box-shadow: none;
+  }
+  & #managementUsersColumnsDialog .primary {
+    color: var(--desk-on-accent, var(--desk-surface));
+    background: var(--desk-primary, var(--desk-on-tint));
+  }
+  & #managementUsersColumnsDialog .columns-draft-row:first-child { border-color: var(--desk-border); }
+  & #managementUsersColumnsDialog .columns-draft-row.column-reorder-dragging { border-color: var(--desk-accent); }
+  & #managementUsersColumnsDialog .columns-drag-handle {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: var(--desk-muted);
+  }
+  & #managementUsersColumnsDialog .columns-delete-btn { color: var(--desk-danger); }
+  & #managementUsersColumnsError { color: var(--desk-danger); }
 }

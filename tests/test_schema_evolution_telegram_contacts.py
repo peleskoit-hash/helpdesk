@@ -979,3 +979,18 @@ def test_user_auto_column_width_flag_is_added_idempotently(monkeypatch):
     with engine.connect() as conn:
         assert conn.execute(text("SELECT ticket_list_auto_width FROM users WHERE id = 'user-1'")).scalar_one() == 1
     assert "ticket_list_auto_width" in User.__table__.columns
+
+
+def test_management_users_columns_migration_is_separate_and_idempotent(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", future=True)
+    monkeypatch.setattr(schema_evolution, "engine", engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE users (id TEXT PRIMARY KEY, ticket_list_columns_json TEXT)"))
+        conn.execute(text("INSERT INTO users VALUES ('employee', '[1]')"))
+    schema_evolution.ensure_management_users_columns()
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT management_users_columns_json FROM users")).scalar_one() is None
+        conn.execute(text("UPDATE users SET management_users_columns_json = '[2]'"))
+    schema_evolution.ensure_management_users_columns()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT ticket_list_columns_json, management_users_columns_json FROM users")).one() == ("[1]", "[2]")

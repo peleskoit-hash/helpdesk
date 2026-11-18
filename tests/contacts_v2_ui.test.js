@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 let browser;
 test.before(async () => { browser = await chromium.launch({ channel: 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
-async function setup(t, theme, role = 'admin') {
+async function setup(t, theme, role = 'admin', initialColumns = null) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   t.after(() => page.close());
   const errors = [], queries = [], assets = [];
@@ -16,6 +16,23 @@ async function setup(t, theme, role = 'admin') {
   const items = [false, true].map((blocked, i) => ({ client_id: `client-${i}`, display_name: i ? 'Елена Волкова' : 'Мария Смирнова',
     telegram_display_name: i ? 'Елена' : 'Мария', telegram_username: i ? 'elena' : 'maria', telegram_user_id: `${100 + i}`,
     internal_number: '204', destination: 'Отдел Продаж', is_verified: !blocked, is_blocked: blocked, last_activity_at: '2026-10-24T08:00:00Z' }));
+  const saved = [];
+  let preferences = { theme_preference: theme, management_users_columns: initialColumns };
+  const catalog = [
+    ['telegram_display_name', 'Имя в TG', 'readonly'],
+    ['telegram_username', 'TG @username', 'username'],
+    ['custom_fio', 'ФИО', 'text'],
+    ['internal_number', 'Внутренний номер', 'text'],
+    ['destination', 'Отдел', 'text'],
+    ['is_verified', 'Верификация', 'checkbox'],
+    ['custom_office', 'Кабинет', 'text'],
+    ['custom_location', 'Расположение рабочего места', 'text'],
+    ['custom_office_other', 'Кабинет', 'text'],
+    ['custom_department_note', 'Должность в подразделении', 'text'],
+  ].map(([key, label, type]) => ({ key, label, type }));
+  const config = { blocks: [{ key: 'profile', title: 'Profile', fields: [
+    { key: 'contact_name', label: 'Name', field_type: 'text', is_system: true },
+  ] }], rules: [] };
   await page.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
     if (url.hostname !== 'desk.test') return route.abort();
@@ -25,31 +42,56 @@ async function setup(t, theme, role = 'admin') {
       return route.fulfill({ status: fs.existsSync(file) ? 200 : 404, body: fs.existsSync(file) ? fs.readFileSync(file) : '',
         contentType: { '.css': 'text/css', '.js': 'text/javascript', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' }[path.extname(file)] || 'application/octet-stream' });
     }
-    if (!p.startsWith('/api/')) return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${p === '/profile' ? 'profile' : 'management_users'}.html`, 'utf8') });
+    if (!p.startsWith('/api/')) return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${p === '/profile' ? 'profile' : p === '/management' ? 'management' : 'management_users'}.html`, 'utf8') });
     let result = {};
     if (p.endsWith('/appearance-session')) result = { writer_id: '00000000-0000-4000-8000-000000000001', preferences: { theme_preference: theme } };
-    else if (p.endsWith('/preferences')) result = { theme_preference: theme };
+    else if (p.endsWith('/preferences')) {
+      if (req.method() === 'PATCH') {
+        const changes = req.postDataJSON();
+        saved.push(changes);
+        preferences = { ...preferences, ...changes };
+      }
+      result = preferences;
+    }
     else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
     else if (p === '/api/v1/users/me' || p === '/api/v1/users/me/profile') result = me;
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me];
     else if (p.endsWith('/counts')) result = { active: 12, unassigned: 1, frozen: 0, closed: 595, special: 0, by_assignee: {} };
-    else if (p === '/api/v1/management/users/client-card-view-config') result = null;
+    else if (p === '/api/v1/management/users/client-card-view-config') result = config;
     else if (p === '/api/v1/management/users') {
       queries.push(Object.fromEntries(url.searchParams));
       if (url.searchParams.get('q') === 'error') return route.fulfill({ status: 500, body: 'Не удалось загрузить контакты' });
       const empty = url.searchParams.get('q') === 'missing';
-      result = { items: empty ? [] : url.searchParams.has('blocked') ? [items[1]] : items,
-        total: empty ? 0 : 101, limit: 50, offset: Number(url.searchParams.get('offset') || 0) };
+      const limit = Number(url.searchParams.get('limit'));
+      const offset = Number(url.searchParams.get('offset'));
+      const total = empty ? 0 : url.searchParams.has('blocked') ? 61 : 101;
+      const rows = Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, index) => {
+        const item = url.searchParams.has('blocked') ? items[1] : items[index % 2];
+        return { ...item, client_id: `client-${offset + index}`, telegram_chat_id: '9000',
+          column_values: {
+            custom_fio: index % 2 ? 'Волкова Елена' : 'Смирнова Мария',
+            telegram_display_name: item.telegram_display_name, telegram_username: item.telegram_username,
+            internal_number: item.internal_number, destination: item.destination, is_verified: item.is_verified,
+            custom_office_other: 'Южный корпус, кабинет 350', custom_department_note: 'Старший специалист первой линии поддержки',
+            custom_office: 'Северный корпус, кабинет 345', custom_location: 'Служба поддержки, 3 этаж, рабочее место номер 260' } };
+      });
+      result = { items: rows, columns: catalog, total, limit, offset };
     } else if (p.endsWith('/profile')) result = { contact_name: 'Мария', last_name: 'Смирнова', internal_number: '204', destination: 'Отдел Продаж', is_verified: true };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });
   });
-  await page.goto('http://desk.test/management/users');
+  if (theme === 'dark' && role === 'admin') {
+    await page.goto('http://desk.test/management');
+    await page.evaluate(() => { window.contactsEntryProbe = true; });
+    await page.locator('#appContent a[href="/management/users"]').click();
+    assert.equal(await page.evaluate(() => window.contactsEntryProbe), true);
+  } else {
+    await page.goto('http://desk.test/management/users');
+  }
   await page.waitForFunction(theme => document.body.dataset.theme === theme && document.body.dataset.sidebarReady === '1', theme);
-  if (role === 'admin') await page.waitForSelector('.management-user-row');
-  else await page.waitForFunction(() => document.querySelector('#managementUsersStatus').textContent.includes('админа'));
+  await page.waitForSelector('.management-user-row');
   await page.addStyleTag({ content: '* {transition:none !important; animation:none !important}' });
   t.after(() => assert.deepEqual(errors, []));
-  return { page, queries, assets };
+  return { page, queries, assets, saved };
 }
 async function contrast(page, selectors) {
   const checks = await page.evaluate(selectors => {
@@ -75,20 +117,46 @@ async function toggleStyles(page, disabled) {
 for (const theme of ['light', 'dark']) {
   test(`Contacts V2 list actions and contrast: ${theme}`, async t => {
     const { page, queries, assets } = await setup(t, theme);
-    assert.ok(assets.includes('/static/contacts-v2.css?v=20261024-contacts-labels-v2-radius-v1'));
+    assert.ok(assets.includes('/static/contacts-v2.css?v=20261118-users-columns-v1'));
+    assert.ok(assets.includes('/static/management_users.js?v=20261118-card-columns-v2'));
+    assert.ok(assets.includes('/static/management_user_columns.js?v=20261118-card-columns-v2'));
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
-    await contrast(page, ['.management-user-primary', '.management-user-muted', '.management-user-row-blocked td', 'th', '#managementUsersSearch', '#managementUsersSearchBtn', '.management-users-filters .active', '#managementUsersPageSummary']);
-    await page.locator('.management-user-row-blocked').hover();
+    await contrast(page, ['#managementUsersTable td', '.management-user-row-blocked td', 'th', '#managementUsersSearch', '#managementUsersSearchBtn', '.management-users-filters .active', '#managementUsersPageSummary']);
+    await page.locator('.management-user-row-blocked').first().hover();
     await contrast(page, ['.management-user-row-blocked td']);
     assert.equal(await page.locator('#managementUsersPrevBtn').isDisabled(), true);
     await Promise.all([page.waitForResponse(r => r.url().includes('/management/users?') && r.url().includes('offset=50')), page.locator('#managementUsersNextBtn').click()]);
-    assert.equal(queries.at(-1).offset, '50');
+    assert.deepEqual(queries.at(-1), { limit: '50', offset: '50' });
+    const current = page.locator('#managementUsersPages [aria-current="page"]');
+    await page.waitForFunction(() => document.querySelector('#managementUsersPages [aria-current]').textContent === '2');
+    assert.equal(await current.textContent(), '2');
+    assert.equal(await page.locator('#managementUsersPageSummary').textContent(), 'Всего: 101');
     await page.locator('#managementUsersSearch').fill('Мария');
     await Promise.all([page.waitForResponse(r => r.url().includes('/management/users?') && r.url().includes('q=')), page.locator('#managementUsersSearch').press('Enter')]);
     assert.equal(queries.at(-1).q, 'Мария'); assert.equal(queries.at(-1).offset, '0');
     await Promise.all([page.waitForResponse(r => r.url().includes('blocked=true')), page.locator('[data-management-user-filter="blocked"]').click()]);
-    assert.equal(await page.locator('.management-user-row-blocked').count(), 1);
+    await page.waitForFunction(() => document.querySelector('#managementUsersPageSummary').textContent === 'Всего: 61');
+    assert.equal(await page.locator('.management-user-row-blocked').count(), 50);
+    assert.equal(await page.locator('[data-management-user-filter="blocked"]').getAttribute('aria-pressed'), 'true');
+    const matchList = (params) => r => {
+      const url = new URL(r.url());
+      return url.pathname === '/api/v1/management/users' &&
+        Object.entries(params).every(([key, value]) => url.searchParams.get(key) === value);
+    };
+    await Promise.all([page.waitForResponse(matchList({ offset: '50', blocked: 'true', q: 'Мария' })),
+      page.getByRole('button', { name: '2', exact: true }).click()]);
+    await page.waitForFunction(() => document.querySelector('#managementUsersPages [aria-current]').textContent === '2');
+    const clear = page.getByRole('button', { name: 'Очистить поиск' });
+    await Promise.all([page.waitForResponse(matchList({ offset: '0', blocked: 'true', q: null })), clear.click()]);
+    assert.equal(await clear.isVisible(), false);
+    assert.equal(await page.locator('#managementUsersSearch').inputValue(), '');
+    await page.waitForFunction(() => document.querySelector('#managementUsersPages [aria-current]').textContent === '1');
     assert.match(page.url(), /view=blocked/);
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('#managementUsersPageSummary').textContent === 'Всего: 101');
+    assert.equal(await page.locator('[data-management-user-filter="all"]').getAttribute('aria-pressed'), 'true');
+    await page.goForward();
+    await page.waitForFunction(() => document.querySelector('#managementUsersPageSummary').textContent === 'Всего: 61');
     await page.locator('#managementUsersSearch').fill('missing');
     await Promise.all([page.waitForResponse(r => r.url().includes('q=missing')), page.locator('#managementUsersSearchBtn').click()]);
     assert.equal(await page.locator('#managementUsersEmpty').isVisible(), true);
@@ -100,10 +168,10 @@ for (const theme of ['light', 'dark']) {
     await contrast(page, ['#managementUsersStatus']);
   });
   test(`Contacts V2 scope, editor opening and AppShell: ${theme}`, async t => {
-    const { page } = await setup(t, theme);
+    const { page, queries } = await setup(t, theme);
     await page.locator('.management-user-row').first().click();
     await page.waitForSelector('#clientModal:not(.hidden)');
-    const snapshot = () => page.locator('.sidebar, .toolbar, #clientModal .modal-dialog, #clientModal input, #clientModal button').evaluateAll(nodes => nodes.map(el => {
+    const snapshot = () => page.locator('.sidebar, [data-shell-back], #themeToggleBtn, #clientModal .modal-dialog, #clientModal input, #clientModal button').evaluateAll(nodes => nodes.map(el => {
       const s = getComputedStyle(el), r = el.getBoundingClientRect();
       return [s.background, s.color, s.border, s.font, s.padding, s.boxShadow, r.width, r.height];
     }));
@@ -112,25 +180,27 @@ for (const theme of ['light', 'dark']) {
     assert.deepEqual(await snapshot(), enabled, 'shell and individual contact editor remain unchanged');
     await toggleStyles(page, false);
     await page.locator('#closeClientModalBtn').click();
-    await page.evaluate(() => {
-      const a = document.createElement('a'); a.id = 'test-profile-link'; a.href = '/profile'; a.textContent = 'Profile';
-      document.querySelector('#appContent').appendChild(a);
-    });
-    await page.locator('#test-profile-link').click();
+    await page.locator('#managementUsersSearch').fill('Мария');
+    await page.locator('#managementUsersSearchBtn').click();
+    await page.waitForFunction(() => document.querySelector('#managementUsersPages [aria-current]')?.textContent === '1');
+    await page.evaluate(() => { window.contactsSpaProbe = true; });
+    await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile'));
     await page.waitForSelector('#profileRoot:not(.hidden)');
     await page.goBack();
     await page.waitForSelector('.management-user-row');
+    assert.equal(await page.evaluate(() => window.contactsSpaProbe), true);
+    assert.deepEqual(queries.at(-1), { limit: '50', offset: '0' });
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     if (process.env.CONTACTS_V2_SCREENSHOTS) {
       fs.mkdirSync(process.env.CONTACTS_V2_SCREENSHOTS, { recursive: true });
       await page.screenshot({ path: path.join(process.env.CONTACTS_V2_SCREENSHOTS, `${theme}.png`) });
     }
   });
-  test(`Contacts V2 style is role independent; agent access remains restricted: ${theme}`, async t => {
+  test(`Contacts V2 style for agents: ${theme}`, async t => {
     const { page, queries } = await setup(t, theme, 'agent');
-    assert.equal(queries.length, 0);
+    assert.deepEqual(queries, [{ limit: "50", offset: "0" }]);
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
-    await contrast(page, ['#managementUsersStatus']);
+    await contrast(page, ['#managementUsersPageSummary']);
   });
 }
 
@@ -141,7 +211,7 @@ for (const theme of ['light', 'dark']) for (const width of [1024, 1366, 1920]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.locator('#managementUsersSearch').focus();
     const focus = await page.locator('#managementUsersSearch').evaluate(el => {
-      const r = el.getBoundingClientRect(), panel = el.closest('.management-users-table').getBoundingClientRect();
+      const r = el.getBoundingClientRect(), panel = el.closest('.toolbar').getBoundingClientRect();
       const s = getComputedStyle(el), extent = parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset);
       return { left: r.left - panel.left, top: r.top - panel.top - extent, outline: s.outlineStyle };
     });
@@ -157,13 +227,22 @@ for (const theme of ['light', 'dark']) for (const width of [1024, 1366, 1920]) {
       return { x: Math.abs((r.left + r.right - text.left - text.right) / 2), y: Math.abs((r.top + r.bottom - text.top - text.bottom) / 2) };
     }));
     for (const delta of textAlignment) { assert.ok(delta.x <= 1, JSON.stringify(delta)); assert.ok(delta.y <= 2, JSON.stringify(delta)); }
+    const filterButtons = page.locator('[data-management-user-filter]');
+    const sizes = () => filterButtons.evaluateAll(nodes => nodes.map(el => [el.offsetWidth, el.offsetHeight]));
+    const beforeSizes = await sizes();
+    await filterButtons.last().click();
+    assert.deepEqual(await sizes(), beforeSizes);
+    assert.notEqual(await filterButtons.last().evaluate(el => getComputedStyle(el, '::before').content), 'none');
+    await page.waitForFunction(() => document.querySelector('#managementUsersPageSummary').textContent === 'Всего: 61');
+    const sticky = await page.locator('.management-users-table .table-scroll').evaluate(el => {
+      const head = el.querySelector('thead');
+      const top = head.getBoundingClientRect().top;
+      el.scrollTop = 200;
+      return [el.scrollTop, head.getBoundingClientRect().top - top];
+    });
+    assert.deepEqual(sticky, [200, 0]);
     const before = await stable();
-    const filters = await page.locator('.management-users-filters').boundingBox();
-    const originalSearch = await page.addStyleTag({ content: '#appContent .management-users-search {margin-left:0 !important;translate:none !important}' });
-    assert.deepEqual(await stable(), before, 'search inset preserves panel and table geometry');
-    assert.deepEqual(await page.locator('.management-users-filters').boundingBox(), filters, 'filters stay in place');
-    await originalSearch.evaluate(el => el.remove());
-    for (const text of ['Показано 1–50 из 142', 'Показано 100001–100050 из 9999999999']) {
+    for (const text of ['Всего: 142', 'Всего: 9999999999']) {
       await page.locator('#managementUsersPageSummary').evaluate((el, text) => { el.textContent = text; }, text);
       const delta = await page.locator('.management-users-pagination').evaluate(el => {
         const panel = el.closest('.management-users-table').getBoundingClientRect();
@@ -175,3 +254,74 @@ for (const theme of ['light', 'dark']) for (const width of [1024, 1366, 1920]) {
     assert.deepEqual(await stable(), before, 'counter text does not resize the table');
   });
 }
+
+for (const theme of ['light', 'dark']) test(`Contacts column order, persistence and auto width: ${theme}`, async t => {
+  const { page, saved } = await setup(t, theme);
+  const gear = page.getByRole('button', { name: 'Настройка списка пользователей' });
+  const dialog = page.getByRole('dialog', { name: 'Настройка списка пользователей' });
+  const headers = () => page.locator('#managementUsersHeader th').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey));
+  const widthOf = (key) => page.locator(`#managementUsersHeader th[data-column-key="${key}"]`).evaluate(el => el.offsetWidth);
+  assert.deepEqual(await headers(), ['telegram_display_name', 'telegram_username', 'custom_fio', 'internal_number', 'destination', 'is_verified']);
+  const wideName = await widthOf('custom_fio');
+  const wideTelegram = await widthOf('telegram_display_name');
+
+  await gear.click();
+  const add = dialog.getByLabel('Добавить колонку');
+  assert.equal(await dialog.getByRole('button', { name: 'Удалить: ФИО', exact: true }).count(), 0);
+  const nameHandle = await dialog.getByRole('button', { name: 'Переместить: ФИО', exact: true }).boundingBox();
+  const firstHandle = await dialog.getByRole('button', { name: 'Переместить: Имя в TG', exact: true }).boundingBox();
+  await page.mouse.move(nameHandle.x + 8, nameHandle.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(firstHandle.x + 8, firstHandle.y + 2, { steps: 6 });
+  await page.mouse.up();
+  const draft = () => dialog.locator('.columns-draft-row').evaluateAll(nodes => nodes.map(el => el.dataset.columnKey));
+  assert.equal((await draft())[0], 'custom_fio');
+
+  const options = () => add.locator('option').evaluateAll(nodes => nodes.slice(1).map(el => el.value));
+  assert.deepEqual(await options(), ['custom_office', 'custom_location', 'custom_office_other', 'custom_department_note']);
+  await add.selectOption('custom_office');
+  assert.deepEqual(await options(), ['custom_location', 'custom_office_other', 'custom_department_note']);
+  await dialog.getByRole('button', { name: 'Удалить: Кабинет', exact: true }).click();
+  assert.ok((await options()).includes('custom_office'));
+  for (const key of ['custom_office', 'custom_location', 'custom_department_note']) await add.selectOption(key);
+  await dialog.getByRole('button', { name: 'Удалить: Верификация' }).click();
+  assert.ok((await options()).includes('is_verified'));
+  const expected = await draft();
+  await dialog.getByRole('button', { name: 'Сохранить' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  assert.deepEqual(saved, [{ management_users_columns: expected }]);
+  assert.deepEqual(await headers(), expected);
+  assert.ok(await page.getByText('Северный корпус, кабинет 345', { exact: true }).first().isVisible());
+  assert.ok(await page.getByText('Смирнова Мария', { exact: true }).first().isVisible());
+  assert.equal(await page.getByText('9000', { exact: true }).count(), 0);
+
+  await page.setViewportSize({ width: 1024, height: 1000 });
+  await page.waitForFunction(() => document.querySelector('#managementUsersHeader [data-column-key="custom_fio"]').offsetWidth === 180);
+  const dimensions = await page.locator('#managementUsersTable').evaluate(table => {
+    const scroller = table.parentElement;
+    return [scroller.scrollWidth, scroller.clientWidth];
+  });
+  assert.ok(dimensions[0] > dimensions[1]);
+  assert.ok(wideName > await widthOf('custom_fio'));
+  assert.equal(await widthOf('telegram_display_name'), wideTelegram);
+  await page.evaluate(() => { window.contactsColumnsSpaProbe = true; });
+  await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile'));
+  await page.waitForSelector('#profileRoot:not(.hidden)');
+  await page.goBack();
+  await page.waitForFunction(order => [...document.querySelectorAll('#managementUsersHeader th')].map(el => el.dataset.columnKey).join() === order.join(), expected);
+  assert.equal(await page.evaluate(() => window.contactsColumnsSpaProbe), true);
+  await page.reload();
+  await page.waitForFunction(order => [...document.querySelectorAll('#managementUsersHeader th')].map(el => el.dataset.columnKey).join() === order.join(), expected);
+});
+
+test('Contacts columns omit stale keys and restore mandatory name', async t => {
+  const { page, saved } = await setup(t, 'light', 'agent', ['custom_missing', 'telegram_chat_id', 'internal_number', 'custom_fio']);
+  await page.waitForFunction(() => document.querySelector('#managementUsersHeader th:last-child')?.dataset.columnKey === 'custom_fio');
+  assert.deepEqual(await page.locator('#managementUsersHeader th').allTextContents(), ['Внутренний номер', 'ФИО']);
+  await page.getByRole('button', { name: 'Настройка списка пользователей' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Настройка списка пользователей' });
+  await dialog.getByLabel('Добавить колонку').selectOption('custom_office');
+  await dialog.getByRole('button', { name: 'Закрыть' }).click();
+  assert.deepEqual(await page.locator('#managementUsersHeader th').allTextContents(), ['Внутренний номер', 'ФИО']);
+  assert.deepEqual(saved, []);
+});

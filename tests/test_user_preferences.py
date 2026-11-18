@@ -1222,3 +1222,46 @@ def test_auto_column_width_mode_persists_with_widths_and_partial_patches():
     disabled = users_router.update_my_preferences(UserPreferencesUpdate(ticket_list_auto_width=False), db=session, current_user=current)
     assert disabled.ticket_list_auto_width is False
     assert [column.model_dump() for column in disabled.ticket_list_columns] == columns
+
+
+@pytest.mark.parametrize("role", ["admin", "agent"])
+def test_management_users_column_preferences_are_independent_and_keep_order(tmp_path, role):
+    factory = sessionmaker(bind=create_engine(f"sqlite:///{(tmp_path / 'users.sqlite').as_posix()}"))
+    Base.metadata.create_all(factory.kw["bind"])
+    ticket_columns = [{"key": "subject", "width": 340}]
+    with factory() as session:
+        company = _company(session)
+        first = _user(session, company_id=company.id, full_name="First", role=role,
+                      ticket_list_columns_json=ticket_columns)
+        second = _user(session, company_id=company.id, full_name="Second", role=role)
+        actors = [_current_user(effective_user_id=user.id, real_user_id=user.id, role=role)
+                  for user in (first, second)]
+        order = ["telegram_chat_id", "custom_fio", "custom_new"]
+        users_router.update_my_preferences(UserPreferencesUpdate(management_users_columns=order), session, actors[0])
+        assert users_router.get_my_preferences(session, actors[1]).management_users_columns is None
+        users_router.update_my_preferences(
+            UserPreferencesUpdate(management_users_columns=["custom_fio"]), session, actors[1],
+        )
+    with factory() as session:
+        first_preferences = users_router.get_my_preferences(session, actors[0])
+        assert first_preferences.management_users_columns == order
+        assert [column.model_dump() for column in first_preferences.ticket_list_columns] == ticket_columns
+        assert users_router.get_my_preferences(session, actors[1]).management_users_columns == ["custom_fio"]
+
+
+@pytest.mark.parametrize("invalid", [[], ["telegram"], ["custom_fio", "custom_fio"]])
+def test_management_users_column_preferences_require_unique_keys_and_full_name(invalid):
+    with pytest.raises(ValidationError):
+        UserPreferencesUpdate(management_users_columns=invalid)
+
+
+def test_management_users_legacy_column_preferences_keep_name_position():
+    with _session() as session:
+        company = _company(session)
+        employee = _user(session, company_id=company.id, full_name="Employee")
+        employee.management_users_columns_json = ["telegram", "internal_number", "display_name"]
+        session.commit()
+        actor = _current_user(effective_user_id=employee.id, real_user_id=employee.id)
+        preferences = users_router.get_my_preferences(session, actor)
+        assert preferences.management_users_columns == ["telegram", "internal_number", "custom_fio"]
+        assert employee.management_users_columns_json == ["telegram", "internal_number", "display_name"]

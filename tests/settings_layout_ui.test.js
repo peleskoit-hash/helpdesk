@@ -286,14 +286,17 @@ test("local page actions live inside their work containers after toolbar unifica
 
   const managementUsers = fs.readFileSync(path.join(templatesDir, "management_users.html"), "utf8");
   const managementUsersPanel = findElement(managementUsers, (node) => hasClass(node, "management-users-table"), "management users panel");
-  const managementUsersControls = findElement(managementUsers, (node) => hasClass(node, "management-users-controls"), "management users controls");
+  const managementUsersToolbar = findElement(managementUsers, (node) => hasClass(node, "toolbar"), "management users toolbar");
+  const managementUsersFilters = findElement(managementUsers, (node) => hasClass(node, "management-users-filters"), "management users filters");
   const managementUsersSearch = findElement(managementUsers, (node) => hasClass(node, "management-users-search"), "management users search");
   const managementUsersStatus = findElement(managementUsers, (node) => node.attrs.id === "managementUsersStatus", "management users status");
   const managementUsersScroll = findElement(managementUsers, (node) => hasClass(node, "table-scroll"), "management users table scroll");
-  assert.ok(containsElement(managementUsersPanel, managementUsersControls));
+  assert.ok(containsElement(managementUsersToolbar, managementUsersSearch));
+  assert.ok(containsElement(managementUsersToolbar, managementUsersFilters));
+  assert.ok(managementUsersSearch.start < managementUsersFilters.start);
   assert.ok(containsElement(managementUsersSearch, managementUsersStatus));
   assert.ok(containsElement(managementUsersPanel, managementUsersScroll));
-  assert.ok(managementUsersControls.start < managementUsersScroll.start);
+  assert.ok(managementUsersToolbar.start < managementUsersScroll.start);
 
   const reviews = fs.readFileSync(path.join(templatesDir, "reviews.html"), "utf8");
   const reviewsPanel = findElement(reviews, (node) => hasClass(node, "reviews-page") && hasClass(node, "panel"), "reviews workspace panel");
@@ -350,13 +353,11 @@ test("management tasks sidebar item is the only active management task link", ()
 
 test("targeted page actions use scoped spacing and hide only neutral completion statuses", () => {
   assert.match(stylesSource, /\.main\[data-shell-page="settings-users"\] \.settings-panel > #createUserBtn[\s\S]*margin: 4px 4px 12px;[\s\S]*width: auto;/);
-  assert.match(stylesSource, /\.main\[data-shell-page="management-users"\] \.management-users-controls \{[\s\S]*padding: 4px 4px 12px;/);
   assert.match(stylesSource, /\.main\[data-shell-page="quick-replies"\] \.quick-replies-workspace > #createQuickReplyBtn/);
   assert.match(stylesSource, /\.main\[data-shell-page="settings-client-card"\] \.client-card-main-row/);
   assert.match(fs.readFileSync(path.join(root, "api", "app", "static", "management_tasks.js"), "utf8"), /el\.status\.hidden = !message \|\| message === "Готово"/);
   const managementUsersScript = fs.readFileSync(path.join(root, "api", "app", "static", "management_users.js"), "utf8");
   assert.match(managementUsersScript, /node\.hidden = !message \|\| message === "Готово"/);
-  assert.match(managementUsersScript, /setStatus\(root, `\\u041d\\u0430\\u0439\\u0434\\u0435\\u043d\\u043e: \$\{payload\?\.total \?\? 0\}`\)/);
   assert.match(managementUsersScript, /setStatus\(root, error\.message\)/);
 });
 

@@ -2289,3 +2289,15 @@ def ensure_user_deletion_schema() -> None:
             for name in nullable.get(table, ()):
                 if not columns[name]["nullable"]:
                     conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {name} DROP NOT NULL"))
+
+
+def ensure_management_users_columns() -> None:
+    """Add the independent user-list preference to existing employee records."""
+    with engine.begin() as conn:
+        if conn.dialect.name == "sqlite":
+            columns = inspect(conn).get_columns("users")
+            if any(column["name"] == "management_users_columns_json" for column in columns):
+                return
+            conn.execute(text("ALTER TABLE users ADD COLUMN management_users_columns_json TEXT"))
+        else:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS management_users_columns_json JSONB"))

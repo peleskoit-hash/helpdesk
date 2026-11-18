@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -9,9 +10,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ClientCardBlockConfig, ClientCardFieldConfig, ClientCardRuleConfig, ClientCardSourceConfig, ClientProfile
-from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
+from ..schemas import ClientCardBlockConfigOut, ClientCardFieldConfigOut, ClientCardRuleAction, ClientCardRuleConfigOut, ClientCardRuntimeConfigResponse, ClientCardSourceRuntimeOut, ClientProfileOut
 from .temporary_rop import with_temporary_rop_suffix
-from .web_credentials import without_web_fields
+from .web_credentials import WEB_COLUMNS, without_web_fields
+
+_SEARCHABLE_FIELD_TYPES = {"text", "textarea", "number", "date", "checkbox", "select", "phone", "url", "readonly"}
+_PROTECTED_FIELD_NAME = re.compile(
+    r"password|passwd|passphrase|pwd|secret|token|apikey|privatekey|encrypted|cipher|masked"
+    r"|\u043f\u0430\u0440\u043e\u043b|\u0441\u0435\u043a\u0440\u0435\u0442|\u0442\u043e\u043a\u0435\u043d"
+)
+_TELEGRAM_ID_NAME = re.compile(
+    r"(?:telegram|tg|external)(?:user|chat|contact|u)?id|(?:user|chat)id(?:telegram|tg)?|"
+    r"id(?:telegram|tg|external)(?:user|chat|contact)?|id\u0447\u0430\u0442\u0430"
+)
+
 
 SYSTEM_PROFILE_FIELD_KEYS = {
     "contact_name",
@@ -280,6 +292,161 @@ def _client_card_view_config(db: Session) -> ClientCardRuntimeConfigResponse:
             for source in sources
         ],
     )
+
+
+def _permitted_client_card_fields(
+    config: ClientCardRuntimeConfigResponse, *, admin: bool, extra_system_keys: frozenset[str]
+) -> list[ClientCardFieldConfigOut]:
+    fields = []
+    for block in config.blocks:
+        if not block.is_active:
+            continue
+        for field in block.fields:
+            if field.field_type not in _SEARCHABLE_FIELD_TYPES or (field.admin_only_edit and not admin):
+                continue
+            if field.key in WEB_COLUMNS:
+                continue
+            names = [re.sub(r"[\W_]+", "", name.casefold()) for name in (field.key, field.label)]
+            if any(_PROTECTED_FIELD_NAME.search(name) for name in names):
+                continue
+            if field.is_system:
+                if field.key not in SYSTEM_PROFILE_FIELD_KEYS and field.key not in extra_system_keys:
+                    continue
+            elif not field.key.startswith("custom_") or field.key in SYSTEM_PROFILE_FIELD_KEYS:
+                continue
+            fields.append(field)
+    return fields
+
+
+_VisibilityRules = list[tuple[ClientCardRuleConfigOut, list[ClientCardRuleAction]]]
+
+
+def _client_card_visibility_rules(config: ClientCardRuntimeConfigResponse) -> _VisibilityRules:
+    rules = []
+    for rule in sorted(config.rules, key=lambda rule: (rule.sort_order, rule.id)):
+        if not rule.is_active:
+            continue
+        actions = [
+            action for action in rule.actions
+            if action.action in {"show", "hide"} and action.scope in {"card", "editor", "both"}
+        ]
+        if actions:
+            rules.append((rule, actions))
+    return rules
+
+
+def _visible_client_card_field_keys(config: ClientCardRuntimeConfigResponse, overrides=None) -> set[str]:
+    overrides = overrides or {}
+    visible = set()
+    for block in config.blocks:
+        if not block.is_active:
+            continue
+        for view, block_shown in (("card", block.show_in_card), ("editor", block.show_in_editor)):
+            if overrides.get((view, "block", block.key), block_shown):
+                visible.update(
+                    field.key for field in block.fields
+                    if overrides.get((view, "field", field.key), field.is_visible if view == "card" else field.is_visible_in_editor)
+                )
+    return visible
+
+
+def _searchable_client_card_fields(
+    config: ClientCardRuntimeConfigResponse, fields: list[ClientCardFieldConfigOut], rules: _VisibilityRules
+) -> list[ClientCardFieldConfigOut]:
+    hidden_targets = {
+        (action.target_type, action.target_key)
+        for _, actions in rules for action in actions if action.action == "hide"
+    }
+    visible = _visible_client_card_field_keys(config)
+    return [
+        field for field in fields
+        if field.key in visible and ("field", field.key) not in hidden_targets
+        and ("block", field.block_key) not in hidden_targets and not _is_client_card_identifier(field)
+    ]
+
+
+def _visibility_rule_matches(rule: ClientCardRuleConfigOut, values: dict[str, str]) -> bool | None:
+    operator = rule.condition_operator
+    if operator == "always":
+        return True
+    if operator not in {"equals", "not_equals", "is_empty", "is_not_empty"}:
+        return False
+    if rule.condition_field_key not in values:
+        return None
+    current = values[rule.condition_field_key]
+    expected = (rule.condition_value or "").strip()
+    if operator == "equals":
+        return current == expected
+    if operator == "not_equals":
+        return current != expected
+    if operator == "is_empty":
+        return current == ""
+    return current != ""
+
+
+def _client_card_column_keys(
+    config: ClientCardRuntimeConfigResponse, rules: _VisibilityRules, condition_values: dict[str, str] | None = None,
+) -> set[str]:
+    overrides = {}
+    resolved = set()
+    withheld = set()
+    for rule, actions in rules:
+        match = True if condition_values is None else _visibility_rule_matches(rule, condition_values)
+        for action in actions:
+            show = action.action == "show"
+            target = (action.target_type, action.target_key)
+            views = ("card", "editor") if action.scope == "both" else (action.scope,)
+            if condition_values is None:  # Catalog includes targets that can become visible.
+                if show:
+                    overrides.update({(view, *target): True for view in views})
+                continue
+            conflict_key = (action.scope, *target)
+            if match is None and not show:
+                withheld.update((view, *target) for view in views)
+            elif match and conflict_key not in resolved:
+                resolved.add(conflict_key)
+                overrides.update({(view, *target): show for view in views})
+    overrides.update(dict.fromkeys(withheld, False))
+    return _visible_client_card_field_keys(config, overrides)
+
+
+def _is_client_card_identifier(field: ClientCardFieldConfigOut) -> bool:
+    names = (re.sub(r"[\W_]+", "", name.casefold()) for name in (field.key, field.label))
+    return any(_TELEGRAM_ID_NAME.search(name) for name in names)
+
+
+def _client_card_raw_value(profile, field, contact_values):
+    if field.is_system and field.key in contact_values:
+        return contact_values[field.key]
+    if profile is None:
+        return None
+    if field.key == "custom_web_login":
+        return profile.web_login
+    if field.is_system:
+        return getattr(profile, field.key)
+    return profile.custom_fields.get(field.key) if isinstance(profile.custom_fields, dict) else None
+
+
+def _accessible_client_card_values(
+    profile: ClientProfile | None, fields: list[ClientCardFieldConfigOut], *, admin: bool,
+    contact_values: dict[str, str | None] | None = None, conditions: bool = False,
+) -> dict[str, str]:
+    values = {}
+    for field in fields:
+        value = _client_card_raw_value(profile, field, contact_values or {})
+        if conditions and value is None:
+            values[field.key] = ""
+            continue
+        if not isinstance(value, (str, int, float, bool)):
+            continue
+        if not conditions and field.field_type == "checkbox" and value is False and not field.show_when_false:
+            continue
+        text = str(value).strip()
+        if not admin and text in (field.admin_only_values or ()):
+            continue
+        if conditions or text:
+            values[field.key] = text.lower() if conditions and isinstance(value, bool) else text
+    return values
 
 
 def _custom_field_map(db: Session) -> dict[str, ClientCardFieldConfig]:
