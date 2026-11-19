@@ -2301,3 +2301,14 @@ def ensure_management_users_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN management_users_columns_json TEXT"))
         else:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS management_users_columns_json JSONB"))
+
+
+def ensure_management_tasks_sort() -> None:
+    """Add per-tab task sorting without rewriting existing user records."""
+    with engine.begin() as conn:
+        if conn.dialect.name == "sqlite":
+            if any(column["name"] == "management_tasks_sort_json" for column in inspect(conn).get_columns("users")):
+                return
+            conn.execute(text("ALTER TABLE users ADD COLUMN management_tasks_sort_json TEXT"))
+        else:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS management_tasks_sort_json JSONB"))

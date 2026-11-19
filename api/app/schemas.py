@@ -533,6 +533,22 @@ def normalize_management_users_columns(value: list[str] | None) -> list[str] | N
     return ["custom_fio" if key == "display_name" else key for key in value]
 
 
+ManagementTaskTab = Literal["active", "scheduled", "recurring", "completed"]
+MANAGEMENT_TASK_SORT_COLUMNS = {
+    "active": {"title", "assignee", "responsible", "materialized_at", "status", "deadline_at"},
+    "scheduled": {"title", "scheduled_for", "assignment", "responsible", "deadline_at"},
+    "recurring": {"title", "recurrence", "responsible", "next_occurrence_at", "state"},
+    "completed": {"title", "assignee", "responsible", "closed_at"},
+}
+
+
+class ManagementTaskSort(BaseModel):
+    column: str
+    direction: Literal["asc", "desc"]
+
+    model_config = {"extra": "forbid"}
+
+
 class UserPreferencesOut(BaseModel):
     appearance_revision: str = ""
     background_patterns: dict[Literal["light", "dark"], BackgroundPatternThemeOut] | None = None
@@ -555,6 +571,7 @@ class UserPreferencesOut(BaseModel):
     client_card_collapsed_blocks: dict[str, StrictBool] = Field(default_factory=dict)
     ticket_list_columns: list[TicketListColumnPreference] = Field(default_factory=default_ticket_list_columns)
     management_users_columns: list[ManagementUsersColumnKey] | None = None
+    management_tasks_sort: dict[ManagementTaskTab, ManagementTaskSort] = Field(default_factory=dict)
 
 
 class AppearanceWrite(BaseModel):
@@ -596,6 +613,16 @@ class UserPreferencesUpdate(BaseModel):
     def validate_appearance_preference(cls, value):
         if value is None:
             raise ValueError("appearance preference cannot be null")
+        return value
+
+    management_tasks_sort: dict[ManagementTaskTab, ManagementTaskSort] = Field(default_factory=dict)
+
+    @field_validator("management_tasks_sort")
+    @classmethod
+    def validate_management_tasks_sort(cls, value):
+        for tab, sort in value.items():
+            if sort.column not in MANAGEMENT_TASK_SORT_COLUMNS[tab]:
+                raise ValueError("Invalid task sort column for tab")
         return value
 
     @field_validator("ticket_list_columns")

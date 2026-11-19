@@ -262,6 +262,7 @@ def _preferences_out(user: User) -> UserPreferencesOut:
         accent_intensity_light=user.accent_intensity_light,
         accent_intensity_dark=user.accent_intensity_dark,
         ticket_list_columns=dump_ticket_list_columns(user.ticket_list_columns_json),
+        management_tasks_sort=user.management_tasks_sort_json or {},
         management_users_columns=normalize_management_users_columns(user.management_users_columns_json),
         ticket_list_auto_width=bool(user.ticket_list_auto_width),
         client_card_collapsed_blocks=user.client_card_collapsed_blocks_json or {},
@@ -344,6 +345,10 @@ def update_my_preferences(
         }
     if "ticket_list_auto_width" in updates:
         user.ticket_list_auto_width = bool(updates["ticket_list_auto_width"])
+    if "management_tasks_sort" in updates:
+        user.management_tasks_sort_json = {
+            **(user.management_tasks_sort_json or {}), **updates["management_tasks_sort"],
+        }
     if "management_users_columns" in updates:
         user.management_users_columns_json = updates["management_users_columns"]
     if "ticket_list_columns" in updates:

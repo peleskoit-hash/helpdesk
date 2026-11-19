@@ -1265,3 +1265,45 @@ def test_management_users_legacy_column_preferences_keep_name_position():
         preferences = users_router.get_my_preferences(session, actor)
         assert preferences.management_users_columns == ["telegram", "internal_number", "custom_fio"]
         assert employee.management_users_columns_json == ["telegram", "internal_number", "display_name"]
+
+
+def test_task_sort_http_roundtrip_merge_and_personal_isolation(appearance_context, preferences_client):
+    factory, actor, _, other_id = appearance_context
+    assert preferences_client.get('/api/v1/users/me/preferences').json()['management_tasks_sort'] == {}
+    expected = {}
+    for tab, column in [('active', 'materialized_at'), ('scheduled', 'assignment'), ('recurring', 'recurrence'), ('completed', 'closed_at')]:
+        expected[tab] = {'column': column, 'direction': 'desc'}
+        response = preferences_client.patch('/api/v1/users/me/preferences', json={'management_tasks_sort': {tab: expected[tab]}})
+        assert response.status_code == 200, response.text
+        assert response.json()['management_tasks_sort'] == expected
+    assert preferences_client.get('/api/v1/users/me/preferences').json()['management_tasks_sort'] == expected
+    with factory() as db:
+        other = _current_user(effective_user_id=other_id, real_user_id=other_id, role='admin')
+        assert users_router.get_my_preferences(db=db, current_user=other).management_tasks_sort == {}
+        users_router.update_my_preferences(UserPreferencesUpdate(management_tasks_sort={'active': {'column': 'title', 'direction': 'asc'}}), db=db, current_user=other)
+        assert db.get(User, actor.real_user_id).management_tasks_sort_json == expected
+    assert preferences_client.get('/api/v1/users/me/preferences').json()['management_tasks_sort'] == expected
+
+
+@pytest.mark.parametrize('sort', [None, {'unknown': {'column': 'title', 'direction': 'asc'}}, {'active': {'column': 'actions', 'direction': 'asc'}}, {'completed': {'column': 'deadline_at', 'direction': 'asc'}}, {'active': {'column': 'title', 'direction': 'sideways'}}, {'active': {'column': 'title', 'direction': 'asc', 'extra': True}}])
+def test_task_sort_invalid_http_is_atomic(preferences_client, sort):
+    before = preferences_client.get('/api/v1/users/me/preferences').json()['management_tasks_sort']
+    response = preferences_client.patch('/api/v1/users/me/preferences', json={'management_tasks_sort': sort})
+    assert response.status_code == 422
+    assert preferences_client.get('/api/v1/users/me/preferences').json()['management_tasks_sort'] == before
+
+
+def test_task_sort_schema_upgrade_is_idempotent_and_preserves_rows(tmp_path, monkeypatch):
+    from sqlalchemy import text, inspect
+    from api.app.services import schema_evolution
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.sqlite'}")
+    with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE users (id TEXT PRIMARY KEY, full_name TEXT)'))
+        conn.execute(text("INSERT INTO users VALUES ('admin', 'Admin')"))
+    monkeypatch.setattr(schema_evolution, 'engine', engine)
+    schema_evolution.ensure_management_tasks_sort()
+    schema_evolution.ensure_management_tasks_sort()
+    with engine.begin() as conn:
+        assert conn.execute(text('SELECT id, full_name, management_tasks_sort_json FROM users')).one() == ('admin', 'Admin', None)
+        assert len([c for c in inspect(conn).get_columns('users') if c['name'] == 'management_tasks_sort_json']) == 1
+    engine.dispose()

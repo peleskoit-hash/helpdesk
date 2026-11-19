@@ -633,3 +633,25 @@ test("server errors show neutral text while structured business messages remain 
   assert.doesNotMatch(jsonServer.el.Validation.textContent, /Internal Server Error/);
   assert.match(jsonServer.el.Validation.textContent, /Не удалось выполнить запрос\. Попробуйте ещё раз\./);
 });
+
+test("task sorting uses dates, text, stable ties and empty-last in both directions", async () => {
+  const { hooks } = await load();
+  for (const tab of ["active", "scheduled", "recurring", "completed"]) {
+    const items = [{title: "Я"}, {title: "А"}, {title: " "}, {title: null}, {title: "А"}];
+    delete hooks.state.sort[tab];
+    assert.equal(hooks.sortedItems(items, tab), items);
+    hooks.state.sort[tab] = {column: "title", direction: "asc"};
+    assert.deepEqual(Array.from(hooks.sortedItems(items, tab)), [items[1],items[4],items[0],items[2],items[3]]);
+    hooks.state.sort[tab].direction = "desc";
+    assert.deepEqual(Array.from(hooks.sortedItems(items, tab)), [items[0],items[1],items[4],items[2],items[3]]);
+    assert.equal(items[0].title, "Я");
+  }
+  const rows = [{materialized_at:"2026-01-31T23:00:00"}, {materialized_at:"2026-02-01T03:00:00+03:00"}, {}, {materialized_at:"bad"}];
+  hooks.state.sort.active = {column:"materialized_at",direction:"asc"};
+  assert.deepEqual(Array.from(hooks.sortedItems(rows,"active")), rows);
+  hooks.state.sort.active.direction = "desc";
+  assert.deepEqual(Array.from(hooks.sortedItems(rows,"active")), [rows[1],rows[0],rows[2],rows[3]]);
+  assert.equal(hooks.sortValue({current_assignee:{full_name:"Агент"}}, "assignee"), "Агент");
+  assert.equal(hooks.sortValue({ticket_status:"pending"}, "status"), "В работе");
+  assert.equal(hooks.sortValue({state:"paused"}, "state"), "На паузе");
+});

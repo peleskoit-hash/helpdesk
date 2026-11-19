@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ES DESK - Управление - Задачи</title>
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/chert.svg?v=20261028-favicon-v1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118-ticket-table-centering-v1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119-task-tables-v1" />
 </head>
 <body data-sidebar-ready="0">
   <div class="layout">
@@ -81,13 +81,13 @@
               <table class="management-statistics-table management-tasks-table">
                 <thead>
                   <tr>
-                    <th scope="col">Название</th>
-                    <th scope="col">Сотрудник</th>
-                    <th scope="col">Ответственный</th>
-                    <th scope="col">Создана</th>
-                    <th scope="col">Статус</th>
-                    <th scope="col">Дедлайн</th>
-                    <th scope="col">Task</th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="title" disabled>Название<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="assignee" disabled>Сотрудник<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="responsible" disabled>Ответственный<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="materialized_at" disabled>Создана<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="status" disabled>Статус<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="deadline_at" disabled>Дедлайн<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col">Действия</th>
                   </tr>
                 </thead>
                 <tbody id="internalTasksActiveBody"></tbody>
@@ -100,11 +100,11 @@
               <table class="management-statistics-table management-tasks-table">
                 <thead>
                   <tr>
-                    <th scope="col">Название</th>
-                    <th scope="col">Когда создать</th>
-                    <th scope="col">Назначение</th>
-                    <th scope="col">Ответственный</th>
-                    <th scope="col">Дедлайн</th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="title" disabled>Название<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="scheduled_for" disabled>Когда создать<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="assignment" disabled>Назначение<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="responsible" disabled>Ответственный<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="deadline_at" disabled>Дедлайн<span class="task-sort-direction" aria-hidden="true"></span></button></th>
                     <th scope="col">Действия</th>
                   </tr>
                 </thead>
@@ -118,11 +118,11 @@
               <table class="management-statistics-table management-tasks-table">
                 <thead>
                   <tr>
-                    <th scope="col">Название</th>
-                    <th scope="col">Повторение</th>
-                    <th scope="col">Ответственный</th>
-                    <th scope="col">Следующее создание</th>
-                    <th scope="col">Состояние</th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="title" disabled>Название<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="recurrence" disabled>Повторение<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="responsible" disabled>Ответственный<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="next_occurrence_at" disabled>Следующее создание<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="state" disabled>Состояние<span class="task-sort-direction" aria-hidden="true"></span></button></th>
                     <th scope="col">Действия</th>
                   </tr>
                 </thead>
@@ -136,11 +136,11 @@
               <table class="management-statistics-table management-tasks-table">
                 <thead>
                   <tr>
-                    <th scope="col">Название</th>
-                    <th scope="col">Сотрудник</th>
-                    <th scope="col">Ответственный</th>
-                    <th scope="col">Завершена</th>
-                    <th scope="col">Task</th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="title" disabled>Название<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="assignee" disabled>Сотрудник<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="responsible" disabled>Ответственный<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col" aria-sort="none"><button type="button" class="task-sort-btn" data-task-sort="closed_at" disabled>Завершена<span class="task-sort-direction" aria-hidden="true"></span></button></th>
+                    <th scope="col">Действия</th>
                   </tr>
                 </thead>
                 <tbody id="internalTasksCompletedBody"></tbody>
@@ -296,7 +296,7 @@
   <script src="/static/sidebar.js?v=20261118-profile-modal-v1"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
-  <script src="/static/app_shell.js?v=20261118-profile-modal-v1"></script>
-  <script src="/static/management_tasks.js?v=20261027-dialogs-complete-v3"></script>
+  <script src="/static/app_shell.js?v=20261119-task-tables-v1"></script>
+  <script src="/static/management_tasks.js?v=20261119-task-tables-v1"></script>
 </body>
 </html>

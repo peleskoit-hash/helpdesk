@@ -21,6 +21,8 @@
     7: "Вс",
   };
   const state = {
+    sort: {},
+    preferencesLoaded: false,
     tab: "active",
     scope: "all",
     appTimezone: "UTC",
@@ -507,8 +509,68 @@
     `;
   }
 
-  function renderTable(body, empty, items, rowFn, emptyText) {
-    body.innerHTML = items.map(rowFn).join("");
+  const SORT_COLUMNS = {
+    active: ["title", "assignee", "responsible", "materialized_at", "status", "deadline_at"],
+    scheduled: ["title", "scheduled_for", "assignment", "responsible", "deadline_at"],
+    recurring: ["title", "recurrence", "responsible", "next_occurrence_at", "state"],
+    completed: ["title", "assignee", "responsible", "closed_at"],
+  };
+  const collator = new Intl.Collator("ru", { sensitivity: "base", numeric: true });
+
+  function sortValue(item, column) {
+    if (["materialized_at", "scheduled_for", "deadline_at", "next_occurrence_at", "closed_at"].includes(column)) {
+      return parseApiDateTime(item[column])?.getTime() ?? null;
+    }
+    const value = column === "assignee" ? userLabel(item.current_assignee || item.effective_assignee)
+      : column === "responsible" ? userLabel(item.responsible_admin)
+      : column === "assignment" ? assignmentLabel(item)
+      : column === "recurrence" ? recurrenceSummary(item)
+      : column === "status" ? STATUS_LABELS[item.ticket_status] || item.ticket_status
+      : column === "state" ? RECURRING_STATE_LABELS[item.state] || item.state
+      : item[column];
+    const text = String(value ?? "").trim();
+    return !text || text === EMPTY ? null : text;
+  }
+
+  function sortedItems(items, tab) {
+    const sort = state.sort[tab];
+    if (!sort || !SORT_COLUMNS[tab]?.includes(sort.column)) return items;
+    return [...items].sort((a, b) => {
+      const left = sortValue(a, sort.column), right = sortValue(b, sort.column);
+      if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1;
+      const result = typeof left === "number" ? left - right : collator.compare(left, right);
+      return sort.direction === "desc" ? -result : result;
+    });
+  }
+
+  function fitTable(root) {
+    const panel = root.querySelector(`[data-internal-task-panel="${state.tab}"]`);
+    const table = panel?.querySelector("table");
+    if (!table || !table.parentElement.clientWidth) return;
+    const probe = table.cloneNode(true);
+    probe.querySelector("colgroup")?.remove();
+    probe.classList.add("management-tasks-width-probe");
+    probe.style.cssText = "";
+    probe.setAttribute("aria-hidden", "true");
+    table.parentElement.appendChild(probe);
+    let widths;
+    try {
+      widths = [...probe.tHead.rows[0].cells].map(cell => Math.ceil(cell.getBoundingClientRect().width));
+    } finally { probe.remove(); }
+    // Reserve the table's horizontal padding; title absorbs the remaining space.
+    const style = getComputedStyle(table);
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    widths[0] = Math.max(220, Math.floor(table.parentElement.clientWidth - padding - widths.slice(1).reduce((a, b) => a + b, 0)));
+    let group = table.querySelector("colgroup");
+    if (!group) { group = document.createElement("colgroup"); table.prepend(group); }
+    group.replaceChildren(...widths.map(width => {
+      const col = document.createElement("col"); col.style.width = `${width}px`; return col;
+    }));
+    table.style.width = `${widths.reduce((a, b) => a + b, padding)}px`;
+  }
+
+  function renderTable(body, empty, items, rowFn, emptyText, tab) {
+    body.innerHTML = sortedItems(items, tab).map(rowFn).join("");
     empty.hidden = items.length > 0;
     empty.textContent = emptyText;
   }
@@ -524,10 +586,19 @@
     el.panels.forEach((panel) => {
       panel.hidden = panel.dataset.internalTaskPanel !== state.tab;
     });
-    renderTable(el.activeBody, el.activeEmpty, state.overview.active || [], activeRow, "Активных внутренних задач нет");
-    renderTable(el.scheduledBody, el.scheduledEmpty, state.overview.scheduled || [], scheduledRow, "Запланированных задач нет");
-    renderTable(el.recurringBody, el.recurringEmpty, state.overview.recurring || [], recurringRow, "Регулярных задач нет");
-    renderTable(el.completedBody, el.completedEmpty, state.overview.completed || [], completedRow, "Завершённых задач нет");
+    renderTable(el.activeBody, el.activeEmpty, state.overview.active || [], activeRow, "Активных внутренних задач нет", "active");
+    renderTable(el.scheduledBody, el.scheduledEmpty, state.overview.scheduled || [], scheduledRow, "Запланированных задач нет", "scheduled");
+    renderTable(el.recurringBody, el.recurringEmpty, state.overview.recurring || [], recurringRow, "Регулярных задач нет", "recurring");
+    renderTable(el.completedBody, el.completedEmpty, state.overview.completed || [], completedRow, "Завершённых задач нет", "completed");
+    root.querySelectorAll("[data-task-sort]").forEach(button => {
+      const tab = button.closest("[data-internal-task-panel]").dataset.internalTaskPanel;
+      const sort = state.sort[tab];
+      const active = sort?.column === button.dataset.taskSort;
+      button.closest("th").setAttribute("aria-sort", active ? (sort.direction === "asc" ? "ascending" : "descending") : "none");
+      button.querySelector(".task-sort-direction").textContent = active ? (sort.direction === "asc" ? "▲" : "▼") : "";
+      button.disabled = !state.preferencesLoaded;
+    });
+    fitTable(root);
   }
 
   function recurrenceConfig(root) {
@@ -606,10 +677,12 @@
     setStatus(root, "Загрузка...");
     setValidation(root, "");
     try {
-      const [options, overview] = await Promise.all([
+      const [options, overview, preferences] = await Promise.all([
         state.options ? Promise.resolve(state.options) : api("/api/v1/management/internal-tasks/options"),
         api(`/api/v1/management/internal-tasks/overview?scope=${encodeURIComponent(state.scope)}`),
+        state.preferencesLoaded ? Promise.resolve(null) : api("/api/v1/users/me/preferences"),
       ]);
+      if (preferences) { state.sort = preferences.management_tasks_sort || {}; state.preferencesLoaded = true; }
       state.options = options;
       state.appTimezone = options?.app_timezone || "UTC";
       state.overview = overview || state.overview;
@@ -776,12 +849,31 @@
 
   function initManagementTasksPage({ root }) {
     const el = els(root);
+    state.sort = {};
+    state.options = null;
+    state.preferencesLoaded = false;
+    let saveQueue = Promise.resolve();
     const listeners = [];
     function listen(target, event, handler) {
       if (!target) return;
       target.addEventListener(event, handler);
       listeners.push(() => target.removeEventListener(event, handler));
     }
+
+    root.querySelectorAll("[data-task-sort]").forEach(button => listen(button, "click", () => {
+      if (!state.preferencesLoaded) return;
+      const tab = button.closest("[data-internal-task-panel]").dataset.internalTaskPanel;
+      const column = button.dataset.taskSort;
+      const previous = state.sort[tab];
+      const sort = { column, direction: previous?.column === column && previous.direction === "asc" ? "desc" : "asc" };
+      state.sort[tab] = sort;
+      render(root);
+      saveQueue = saveQueue.then(() => api("/api/v1/users/me/preferences", {
+        method: "PATCH", body: JSON.stringify({ management_tasks_sort: { [tab]: sort } }),
+      })).catch(error => setValidation(root, `Не удалось сохранить сортировку: ${error.message}`));
+    }));
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => fitTable(root));
+    if (resizeObserver) resizeObserver.observe(root);
 
     listen(el.createBtn, "click", () => openModal(root));
     listen(el.closeModalBtn, "click", () => closeModal(root));
@@ -869,6 +961,7 @@
     return {
       canNavigateAway: () => shouldCloseModal(root),
       destroy() {
+        resizeObserver?.disconnect();
         listeners.forEach((remove) => remove());
       },
     };
@@ -879,6 +972,9 @@
     fallbackFutureLocalInput,
     collectPayload,
     assignmentLabel,
+    sortValue,
+    sortedItems,
+    state,
   };
 
   if (window.HelpdeskAppShell?.registerPage) {

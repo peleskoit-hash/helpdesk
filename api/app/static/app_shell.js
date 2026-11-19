@@ -62,7 +62,7 @@
     ["/management/reviews", { page: "reviews", scripts: ["/static/reviews.js?v=20261105-review-employee-name-v1"] }],
     ["/management/feedback", { page: "management-feedback", scripts: ["/static/management_feedback.js?v=20260909b"] }],
     ["/management/statistics", { page: "management-statistics", scripts: ["/static/management_statistics.js?v=20261115-statistics-ui-v1"] }],
-    ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261027-dialogs-complete-v3"] }],
+    ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261119-task-tables-v1"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_saved_files.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
     ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261118-scroll-reset-v1"] }],
