@@ -257,10 +257,24 @@ def test_legacy_worker_and_callback_protect_schedule_and_connected_legacy(env, c
         assert callback(env, "p")["ignored"]
         assert callback(env, "p", "no")["ignored"]
         backlog.run_employee_notification_backlog_once(session_factory=env.factory, now_utc=env.now)
+        assert rows(env, Backlog) == before and len(rows(env, Period)) == 1
+        assert not env.sent
+        if mode == "schedule":
+            period = rows(env, Period)[0]
+            assert period["message_id"] is None and period["offer_state"] == "invalidated"
+            assert period["window_state"] == "unresolved" and period["work_date"] is None
+            assert env.deleted == [(("deleteMessage",), {
+                "payload": {"chat_id": "a", "message_id": 101},
+                "bot_token": "synthetic-token",
+            })]
+        else:
+            assert rows(env, Period)[0]["message_id"] == "101"
+            assert not env.deleted
+        deleted = list(env.deleted)
         env.now = local("2026-11-09T20:00:00")
         backlog.run_employee_notification_backlog_once(session_factory=env.factory, now_utc=env.now)
         assert rows(env, Backlog) == before and len(rows(env, Period)) == 1
-        assert not env.sent and not env.deleted
+        assert not env.sent and env.deleted == deleted
     else:
         assert callback(env, "p")["backlog"]
         assert not rows(env, Backlog) and env.sent[0][1] == "keep"

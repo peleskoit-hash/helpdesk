@@ -233,10 +233,164 @@ def _expired(period: EmployeeNotificationPeriod, local: datetime) -> bool:
     return local >= datetime.combine(period.work_date, time(19), tzinfo=MOSCOW)
 
 
+def _invalidate_offer(period, prompts):
+    if period.message_id is not None:
+        prompts.append((period.chat_id, period.message_id))
+    period.message_id = None
+    period.offered = False
+    period.offer_generation += 1
+    period.offer_state = "invalidated"
+
+
+def _process_schedule_periods(db, user, binding, periods, local, prompts):
+    schedule = [p for p in periods if p.period_mode == "schedule"]
+    if not schedule:
+        return
+    if not user.is_active:
+        # Deactivation pauses delivery, not a previously confirmed storage window.
+        # Do not call the resolver: user_inactive would erase that confirmation.
+        now = local.astimezone(timezone.utc).replace(tzinfo=None)
+        for period in schedule:
+            if period.message_id is not None or period.offered or period.offer_state == "offered":
+                _invalidate_offer(period, prompts)
+            if (binding is None or period.window_state != "resolved" or period.work_date is None
+                    or period.offer_at is None or period.expires_at is None
+                    or period.offer_at >= period.expires_at or period.schedule_revision is None):
+                continue
+            revision = (db.scalar(select(Snapshot.revision).where(
+                Snapshot.month == period.work_date.strftime("%Y-%m")))
+                if inspect(db.connection()).has_table(Snapshot.__tablename__) else None)
+            # A missing or changed revision cannot confirm the saved deadline.
+            # Reactivation takes the normal recalculation path before any expiry.
+            if revision == period.schedule_revision and now >= period.expires_at:
+                _clear(db, period)
+                db.delete(period)
+        db.flush()
+        return
+    legacy_dates = {p.work_date for p in periods if p.period_mode == "legacy"}
+    groups = {}
+    cache = {}
+    for period in schedule:
+        items = list(db.scalars(select(EmployeeNotificationBacklog).where(
+            EmployeeNotificationBacklog.period_id == period.id
+        ).order_by(EmployeeNotificationBacklog.id).with_for_update()))
+        for item in items:
+            # Historical NULL timestamps cannot reliably place individual messages.
+            anchor = item.created_at
+            window = None
+            if user.is_active and binding is not None and anchor is not None:
+                if anchor not in cache:
+                    cache[anchor] = _first_schedule_window(db, user.id, _moscow_now(anchor))
+                window = cache[anchor]
+            if window is not None and window.date in legacy_dates:
+                window = None
+            key = window.date if window else None
+            group = groups.setdefault(key, {"window": window, "items": [], "origins": set(), "anchors": []})
+            group["items"].append(item)
+            group["origins"].add(period.id)
+            if anchor is not None:
+                group["anchors"].append(anchor)
+            elif period.anchor_at is not None:
+                group["anchors"].append(period.anchor_at)
+
+    # If distribution changed, stage all rows in the sole unresolved period.
+    # Release old dates before inserting targets, including date swaps and merges.
+    unchanged = (len(groups) == len(schedule) and all(
+        len(g["origins"]) == 1 and any(p.id in g["origins"] and p.work_date == day for p in schedule)
+        for day, g in groups.items()))
+    if not unchanged and schedule:
+        staging = next((p for p in schedule if p.work_date is None), schedule[0])
+        for p in schedule:
+            _invalidate_offer(p, prompts)
+            if p is not staging:
+                db.execute(update(EmployeeNotificationBacklog).where(EmployeeNotificationBacklog.period_id == p.id)
+                           .values(period_id=staging.id).execution_options(synchronize_session=False))
+                db.delete(p)
+        db.flush()
+        staging.work_date = None
+        db.flush()
+    else:
+        staging = None
+
+    targets = []
+    for day, group in groups.items():
+        window = group["window"]
+        offer = window.start_at.astimezone(timezone.utc).replace(tzinfo=None) if window else None
+        expiry = window.end_at.astimezone(timezone.utc).replace(tzinfo=None) if window else None
+        revision = db.scalar(select(Snapshot.revision).where(Snapshot.month == day.strftime("%Y-%m"))) if day else None
+        if unchanged:
+            target = next(p for p in schedule if p.id in group["origins"])
+        elif staging is not None and (day is None or None not in groups):
+            target, staging = staging, None
+        else:
+            target = EmployeeNotificationPeriod(id=str(uuid.uuid4()), user_id=user.id,
+                chat_id=schedule[0].chat_id, period_mode="schedule", work_date=day)
+            db.add(target)
+            db.flush()
+        state = "resolved" if window else "unresolved"
+        if unchanged and (target.offer_at, target.expires_at, target.schedule_revision, target.window_state) != (
+                offer, expiry, revision, state):
+            _invalidate_offer(target, prompts)
+        target.work_date, target.offer_at, target.expires_at = day, offer, expiry
+        target.schedule_revision, target.window_state = revision, state
+        target.anchor_at = min(group["anchors"], default=None)
+        for item in group["items"]:
+            item.period_id = target.id
+        targets.append(target)
+    db.flush()
+    if staging is not None:
+        db.delete(staging)
+    now = local.astimezone(timezone.utc).replace(tzinfo=None)
+    for target in targets:
+        if target.expires_at is not None and now >= target.expires_at:
+            _invalidate_offer(target, prompts)
+            _clear(db, target)
+            db.delete(target)
+    db.flush()
+
+
+def _maintain_backlog(session_factory, local):
+    cutoff = local.astimezone(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    with session_factory() as db:
+        users = list(db.scalars(select(EmployeeNotificationPeriod.user_id).distinct()))
+    for user_id in users:
+        prompts = []
+        with session_factory() as db:
+            user = _lock_user(db, user_id)
+            if user is None:
+                continue
+            binding = _schedule_binding(db, user_id)
+            if binding is not None and inspect(db.connection()).has_table(Snapshot.__tablename__):
+                list(db.scalars(select(Snapshot.month).order_by(Snapshot.month).with_for_update(read=True)))
+            periods = list(db.scalars(select(EmployeeNotificationPeriod).where(
+                EmployeeNotificationPeriod.user_id == user_id
+            ).order_by(EmployeeNotificationPeriod.id).with_for_update()))
+            remaining = []
+            for period in periods:
+                removed = db.execute(delete(EmployeeNotificationBacklog).where(
+                    EmployeeNotificationBacklog.period_id == period.id,
+                    EmployeeNotificationBacklog.created_at <= cutoff,
+                )).rowcount
+                if not _count(db, period):
+                    _invalidate_offer(period, prompts)
+                    db.delete(period)
+                else:
+                    if removed:
+                        _invalidate_offer(period, prompts)
+                    remaining.append(period)
+            db.flush()
+            _process_schedule_periods(db, user, binding, remaining, local, prompts)
+            db.commit()
+        if settings.employee_telegram_bot_token:
+            for chat_id, message_id in prompts:
+                _delete_prompt(chat_id, message_id)
+
+
 def run_employee_notification_backlog_once(*, session_factory=SessionLocal, now_utc: datetime | None = None) -> None:
+    local = _moscow_now(now_utc)
+    _maintain_backlog(session_factory, local)
     if not settings.employee_telegram_bot_token:
         return
-    local = _moscow_now(now_utc)
     with session_factory() as db:
         ids = list(db.execute(select(EmployeeNotificationPeriod.id, EmployeeNotificationPeriod.user_id).where(
             EmployeeNotificationPeriod.period_mode == "legacy",
