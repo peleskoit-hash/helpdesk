@@ -5,12 +5,14 @@ import uuid
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, inspect, select, text, update
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import EmployeeNotificationBacklog, EmployeeNotificationPeriod, TelegramNotificationAccount, User
+from ..models import (EmployeeNotificationBacklog, EmployeeNotificationPeriod, TelegramNotificationAccount, User,
+                      EmployeeScheduleBinding as Binding, EmployeeScheduleSnapshot as Snapshot)
+from .employee_schedule import resolve_employee_schedule
 from .telegram_bot import send_message, telegram_request
 
 logger = logging.getLogger(__name__)
@@ -38,33 +40,140 @@ def _work_date(local: datetime):
     return day
 
 
-def accumulate_delivery(delivery, *, session_factory=SessionLocal, now: datetime | None = None) -> bool:
+def _lock_user(db, user_id):
+    if db.get_bind().dialect.name == "sqlite":
+        # Earlier SELECTs may have opened only SQLAlchemy's virtual transaction.
+        if not db.connection().connection.driver_connection.in_transaction:
+            db.execute(text("BEGIN IMMEDIATE"))
+    return db.scalar(select(User).where(User.id == user_id).with_for_update()
+                     .execution_options(populate_existing=True))
+
+
+def _schedule_binding(db, user_id):
+    if not inspect(db.connection()).has_table(Binding.__tablename__):
+        return None
+    binding = db.scalar(select(Binding).where(Binding.user_id == user_id).with_for_update()
+                        .execution_options(populate_existing=True))
+    return binding if binding is not None and binding.enabled else None
+
+
+def _inside_shift(shift, local):
+    return (shift.start_at is not None and shift.end_at is not None
+            and shift.start_at.utcoffset() is not None and shift.end_at.utcoffset() is not None
+            and shift.start_at <= local < shift.end_at)
+
+
+def _first_schedule_window(db, user_id, anchor):
+    probe = anchor
+    while True:
+        shift = resolve_employee_schedule(db, user_id, probe)
+        if shift.status == "unknown":
+            return None
+        if shift.status in {"before_shift", "working", "after_shift"}:
+            if (shift.start_at is None or shift.end_at is None or shift.start_at.utcoffset() is None
+                    or shift.end_at.utcoffset() is None or shift.start_at >= shift.end_at):
+                return None
+            if shift.end_at > anchor:
+                return shift
+        elif shift.status != "non_working":
+            return None
+        if probe.date() == datetime.max.date():
+            return None
+        probe = datetime.combine(probe.date() + timedelta(days=1), time.min, tzinfo=MOSCOW)
+
+
+def _unresolved_period(db, user_id):
+    return db.scalar(select(EmployeeNotificationPeriod).where(
+        EmployeeNotificationPeriod.user_id == user_id, EmployeeNotificationPeriod.period_mode == "schedule",
+        EmployeeNotificationPeriod.work_date.is_(None),
+    ).with_for_update())
+
+
+def _release_schedule_date(db, period):
+    """Free a legacy target date without applying legacy expiry to Spark messages."""
+    unresolved = _unresolved_period(db, period.user_id)
+    if unresolved is None:
+        unresolved = period
+        unresolved.work_date = None
+    else:
+        # Reparent only: IDs retain the original global order, and all timestamps,
+        # Telegram parameters and send-attempt fields stay unchanged.
+        db.execute(update(EmployeeNotificationBacklog).where(EmployeeNotificationBacklog.period_id == period.id)
+                   .values(period_id=unresolved.id).execution_options(synchronize_session=False))
+        unresolved.anchor_at = min(
+            (anchor for anchor in (unresolved.anchor_at, period.anchor_at) if anchor is not None),
+            default=None,
+        )
+        db.delete(period)
+    unresolved.window_state = "unresolved"
+    unresolved.offer_at = unresolved.expires_at = unresolved.schedule_revision = None
+    db.flush()  # Release (user_id, work_date) before the legacy INSERT.
+
+
+def route_delivery(db, delivery, *, now: datetime | None = None, locked=False) -> str:
+    """Decide send/accumulate/suppress and stage accumulation; caller commits.
+
+    Lock order: User -> Spark binding -> snapshots -> period. locked=True is for
+    the final time recheck inside the same already-locked send transaction only.
+    """
+    user = db.get(User, delivery.user_id) if locked else _lock_user(db, delivery.user_id)
+    if user is None or not user.is_active:
+        return "suppress"
     local = _moscow_now(now)
-    if is_notification_work_time(local):
-        return False
-    with session_factory() as db:
-        # Serialize period creation for this recipient, including concurrent after-commit hooks.
-        db.execute(select(User.id).where(User.id == delivery.user_id).with_for_update()).scalar_one()
+    binding = _schedule_binding(db, user.id)
+    window = None
+    if binding is not None:
+        if inspect(db.connection()).has_table(Snapshot.__tablename__):
+            list(db.scalars(select(Snapshot.month).order_by(Snapshot.month).with_for_update(read=True)))
+        shift = resolve_employee_schedule(db, user.id, local)
+        if shift.status == "working" and _inside_shift(shift, local):
+            return "send"
+        window = _first_schedule_window(db, user.id, local)
+        day = window.date if window else None
+    else:
+        if is_notification_work_time(local):
+            return "send"
         day = _work_date(local)
-        period = db.execute(
-            select(EmployeeNotificationPeriod).where(
-                EmployeeNotificationPeriod.user_id == delivery.user_id,
-                EmployeeNotificationPeriod.work_date == day,
-            ).with_for_update()
-        ).scalar_one_or_none()
-        if period is None:
-            period = EmployeeNotificationPeriod(
-                id=str(uuid.uuid4()), user_id=delivery.user_id, work_date=day,
-                chat_id=delivery.telegram_chat_id,
-            )
-            db.add(period)
-            db.flush()
-        db.add(EmployeeNotificationBacklog(
-            period_id=period.id, text=delivery.text, parse_mode=delivery.parse_mode,
-            disable_link_preview=delivery.disable_link_preview, send_silently=delivery.send_silently,
-        ))
+    period = None
+    if day is not None:
+        period = db.scalar(select(EmployeeNotificationPeriod).where(
+            EmployeeNotificationPeriod.user_id == user.id, EmployeeNotificationPeriod.work_date == day,
+        ).with_for_update())
+        if binding is not None and period is not None and period.period_mode == "legacy":
+            day, window, period = None, None, None
+        elif binding is None and period is not None and period.period_mode == "schedule":
+            _release_schedule_date(db, period)
+            period = None
+    if binding is not None and day is None:
+        period = _unresolved_period(db, user.id)
+    utc = local.astimezone(timezone.utc).replace(tzinfo=None)
+    if period is None:
+        period = EmployeeNotificationPeriod(id=str(uuid.uuid4()), user_id=user.id, work_date=day,
+                                            chat_id=delivery.telegram_chat_id)
+        if binding is not None:
+            period.period_mode, period.anchor_at = "schedule", utc
+            period.window_state = "resolved" if window else "unresolved"
+            if window:
+                period.offer_at = window.start_at.astimezone(timezone.utc).replace(tzinfo=None)
+                period.expires_at = window.end_at.astimezone(timezone.utc).replace(tzinfo=None)
+                period.schedule_revision = db.scalar(select(Snapshot.revision).where(
+                    Snapshot.month == window.date.strftime("%Y-%m")))
+        db.add(period)
+        db.flush()
+    db.add(EmployeeNotificationBacklog(
+        period_id=period.id, text=delivery.text, parse_mode=delivery.parse_mode,
+        disable_link_preview=delivery.disable_link_preview, send_silently=delivery.send_silently,
+        created_at=utc if binding is not None else None, send_state="pending",
+    ))
+    return "accumulate"
+
+
+def accumulate_delivery(delivery, *, session_factory=SessionLocal, now: datetime | None = None) -> bool:
+    # Compatibility: True means handled, including suppression, never a send fallback.
+    with session_factory() as db:
+        decision = route_delivery(db, delivery, now=now)
         db.commit()
-    return True
+    return decision != "send"
 
 
 def _count(db: Session, period: EmployeeNotificationPeriod) -> int:
@@ -129,15 +238,18 @@ def run_employee_notification_backlog_once(*, session_factory=SessionLocal, now_
         return
     local = _moscow_now(now_utc)
     with session_factory() as db:
-        ids = list(db.scalars(select(EmployeeNotificationPeriod.id).where(
+        ids = list(db.execute(select(EmployeeNotificationPeriod.id, EmployeeNotificationPeriod.user_id).where(
+            EmployeeNotificationPeriod.period_mode == "legacy",
             EmployeeNotificationPeriod.work_date <= local.date()
         )))
-    for period_id in ids:
+    for period_id, user_id in ids:
         with session_factory() as db:
+            if _lock_user(db, user_id) is None or _schedule_binding(db, user_id) is not None:
+                continue
             period = db.scalar(select(EmployeeNotificationPeriod).where(
                 EmployeeNotificationPeriod.id == period_id
             ).with_for_update(skip_locked=True))
-            if period is None:
+            if period is None or period.period_mode != "legacy":
                 continue
             if _expired(period, local):
                 chat_id, message_id = period.chat_id, period.message_id
@@ -163,11 +275,15 @@ def handle_backlog_callback(db: Session, callback: dict, *, now: datetime | None
     chat = message.get("chat") or {}
     if chat.get("type") != "private":
         return ignored
+    user_id = db.scalar(select(EmployeeNotificationPeriod.user_id).where(EmployeeNotificationPeriod.id == parts[1]))
+    if user_id is None or _lock_user(db, user_id) is None or _schedule_binding(db, user_id) is not None:
+        db.rollback()
+        return ignored
     period = db.scalar(select(EmployeeNotificationPeriod).where(
         EmployeeNotificationPeriod.id == parts[1]
     ).with_for_update())
     local = _moscow_now(now)
-    if (period is None or period.message_id is None
+    if (period is None or period.period_mode != "legacy" or period.message_id is None
             or period.message_id != str(message.get("message_id"))
             or period.chat_id != str(chat.get("id"))
             or period.work_date != local.date() or not is_notification_work_time(local)):

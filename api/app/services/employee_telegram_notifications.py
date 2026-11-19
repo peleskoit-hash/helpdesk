@@ -33,7 +33,7 @@ from .automatic_messages import (
     get_notification_bot_basic_definition,
     render_notification_bot_basic_semantic_tags,
 )
-from .employee_notification_backlog import accumulate_delivery
+from .employee_notification_backlog import route_delivery
 from .telegram_bot import send_message
 from .telegram_employee_binding import REQUEST_STATUS_APPROVED
 from .telegram_text_format import prepare_telegram_html_message
@@ -902,29 +902,58 @@ def resolve_media_group_new_message_telegram_delivery(
 
 
 def _send_delivery(delivery: EmployeeTelegramDelivery) -> None:
-    if accumulate_delivery(delivery, session_factory=SessionLocal):
-        return
-    send_message(
-        delivery.telegram_chat_id,
-        delivery.text,
-        parse_mode=delivery.parse_mode,
-        bot_token=settings.employee_telegram_bot_token,
-        disable_web_page_preview=delivery.disable_link_preview,
-        disable_notification=delivery.send_silently,
-    )
+    _route_and_send_delivery(delivery, internal=False)
 
 
 def _send_internal_task_completion_delivery(delivery: InternalTaskCompletionTelegramDelivery) -> None:
-    if accumulate_delivery(delivery, session_factory=SessionLocal):
+    _route_and_send_delivery(delivery, internal=True)
+
+
+def _delivery_still_allowed(db, delivery, *, internal):
+    user = db.get(User, delivery.user_id, populate_existing=True)
+    if user is None or not user.is_active or (user.role != "admin" if internal else not _is_business_recipient(user)):
+        return False
+    account = _approved_account_for_user(db, user.id)
+    if account is None:
+        return False
+    db.refresh(account, with_for_update=True)
+    account = _approved_account_for_user(db, user.id)
+    if account is None or str(account.telegram_chat_id) != str(delivery.telegram_chat_id):
+        return False
+    preference = _preference_for_user(db, user.id)
+    if preference is not None:
+        db.refresh(preference, with_for_update=True)
+    if internal:
+        return _internal_task_completion_enabled(db, preference)
+    kind = delivery.delivery_kind
+    if kind not in {DELIVERY_KIND_NEW, DELIVERY_KIND_TRANSFER_TO, DELIVERY_KIND_TRANSFER_FROM, "new_message"}:
+        return False
+    return (_personal_switch_enabled(preference, kind)
+            and (kind == "new_message" or _global_enabled(db, kind)))
+
+
+def _route_and_send_delivery(delivery, *, internal):
+    if not settings.employee_telegram_bot_token:
         return
-    send_message(
-        delivery.telegram_chat_id,
-        delivery.text,
-        parse_mode=delivery.parse_mode,
-        bot_token=settings.employee_telegram_bot_token,
-        disable_web_page_preview=delivery.disable_link_preview,
-        disable_notification=delivery.send_silently,
-    )
+    try:
+        with SessionLocal() as db:
+            decision = route_delivery(db, delivery)
+            if decision == "suppress" or not _delivery_still_allowed(db, delivery, internal=internal):
+                return
+            if decision == "send":
+                # Checks may cross a shift boundary: use fresh time immediately
+                # before sending, under the same recipient/calendar locks.
+                decision = route_delivery(db, delivery, locked=True)
+                if decision == "send":
+                    send_message(
+                        delivery.telegram_chat_id, delivery.text, parse_mode=delivery.parse_mode,
+                        bot_token=settings.employee_telegram_bot_token,
+                        disable_web_page_preview=delivery.disable_link_preview,
+                        disable_notification=delivery.send_silently,
+                    )
+            db.commit()
+    except Exception:
+        logger.warning("Personal Telegram notification routing failed safely")
 
 
 def _media_group_attachment_count(

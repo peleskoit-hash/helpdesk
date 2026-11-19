@@ -100,9 +100,10 @@ def test_schedule(now, working):
 def test_daytime_sends_original_parameters_without_accumulation(env, monkeypatch, internal):
     monkeypatch.setattr(backlog, "_moscow_now", lambda now=None: local(9, 12))
     send = notifications._send_internal_task_completion_delivery if internal else notifications._send_delivery
-    send(delivery())
+    user = "b" if internal else "a"
+    send(delivery(user))
     assert count(env) == 0
-    assert env.sent == [("a", "<b>original</b>", {
+    assert env.sent == [(user, "<b>original</b>", {
         "parse_mode": "HTML", "bot_token": "employee-test-token",
         "disable_web_page_preview": False, "disable_notification": True})]
 
