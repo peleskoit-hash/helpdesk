@@ -856,14 +856,32 @@ class TelegramNotificationAccount(Base):
 
 class EmployeeNotificationPeriod(Base):
     __tablename__ = "employee_notification_periods"
-    __table_args__ = (UniqueConstraint("user_id", "work_date", name="uq_employee_notification_period_user_date"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "work_date", name="uq_employee_notification_period_user_date"),
+        Index("uq_employee_notification_schedule_unresolved_user", "user_id", unique=True,
+              sqlite_where=text("period_mode = 'schedule' AND work_date IS NULL"),
+              postgresql_where=text("period_mode = 'schedule' AND work_date IS NULL")),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
-    work_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    work_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     chat_id: Mapped[str] = mapped_column(String(100), nullable=False)
     message_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     offered: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    period_mode: Mapped[str] = mapped_column(String(16), CheckConstraint("period_mode IN ('legacy', 'schedule')",
+        name="ck_employee_notification_period_mode"), nullable=False, default="legacy", server_default="legacy")
+    # Schedule timestamps follow the project's naive UTC convention. Unknown
+    # historical times deliberately remain NULL, including on schema upgrade.
+    anchor_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    offer_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    schedule_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    window_state: Mapped[str] = mapped_column(String(16), CheckConstraint("window_state IN ('legacy', 'unresolved', 'resolved')",
+        name="ck_employee_notification_window_state"), nullable=False, default="legacy", server_default="legacy")
+    offer_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    offer_state: Mapped[str] = mapped_column(String(16), CheckConstraint("offer_state IN ('idle', 'offered', 'invalidated')",
+        name="ck_employee_notification_offer_state"), nullable=False, default="idle", server_default="idle")
 
 
 class EmployeeNotificationBacklog(Base):
@@ -875,6 +893,10 @@ class EmployeeNotificationBacklog(Base):
     parse_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
     disable_link_preview: Mapped[bool] = mapped_column(Boolean, nullable=False)
     send_silently: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    send_state: Mapped[str] = mapped_column(String(16), CheckConstraint("send_state IN ('pending', 'sending', 'unknown')",
+        name="ck_employee_notification_send_state"), nullable=False, default="pending", server_default="pending")
+    send_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class EmployeeNotificationPreference(Base):

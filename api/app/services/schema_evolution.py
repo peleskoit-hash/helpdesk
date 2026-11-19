@@ -2339,3 +2339,108 @@ def ensure_employee_schedule_binding_table(bind=None) -> None:
         raise ValueError("Employee schedule supports SQLite and PostgreSQL")
     with target.begin() as conn:
         EmployeeScheduleBinding.__table__.create(conn, checkfirst=True)
+
+
+def ensure_employee_notification_schedule_schema(bind=None) -> None:
+    """Explicit, atomic upgrade. Run with API/scheduler stopped, never at startup.
+
+    The application's users table must already exist. Only notification periods
+    and backlog are created/altered; no historical timestamps are manufactured.
+    """
+    import re
+    from sqlalchemy.schema import CreateColumn
+    from ..models import EmployeeNotificationBacklog, EmployeeNotificationPeriod
+
+    target = bind if bind is not None else engine
+    if target.dialect.name not in {"sqlite", "postgresql"}:
+        raise ValueError("Notification schedule supports SQLite and PostgreSQL")
+    period = EmployeeNotificationPeriod.__table__
+    backlog = EmployeeNotificationBacklog.__table__
+    additions = {
+        period.name: {"period_mode", "anchor_at", "offer_at", "expires_at", "schedule_revision",
+                      "window_state", "offer_generation", "offer_state"},
+        backlog.name: {"created_at", "send_state", "send_attempt_id"},
+    }
+
+    def upgrade(conn):
+        if not inspect(conn).has_table("users"):
+            raise RuntimeError("Notification schedule migration requires the existing users table")
+        for table in (period, backlog):
+            if not inspect(conn).has_table(table.name):
+                table.create(conn)
+                continue
+            existing = {column["name"] for column in inspect(conn).get_columns(table.name)}
+            if not (set(table.columns.keys()) - additions[table.name]) <= existing:
+                raise RuntimeError("Unsupported legacy notification schema; migration rolled back")
+            for column in table.columns:
+                if column.name in additions[table.name] and column.name not in existing:
+                    definition = str(CreateColumn(column).compile(dialect=conn.dialect))
+                    conn.exec_driver_sql(f"ALTER TABLE {table.name} ADD COLUMN {definition}")
+        columns = {column["name"]: column for column in inspect(conn).get_columns(period.name)}
+        if conn.dialect.name == "sqlite" and not columns["work_date"]["nullable"]:
+            temporary = "employee_notification_periods_schedule_upgrade"
+            if inspect(conn).has_table(temporary):
+                raise RuntimeError("Unexpected notification migration table; refusing to overwrite it")
+            ddl = conn.scalar(text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"),
+                              {"name": period.name})
+            ddl, changed = re.subn(
+                r'(?i)((?:^|[,(])\s*(?:"work_date"|`work_date`|\[work_date\]|work_date)\s+DATE\s+)NOT\s+NULL\b',
+                r'\1', ddl, count=1)
+            if changed != 1:
+                raise RuntimeError("Unsupported notification work_date declaration; migration rolled back")
+            ddl, changed = re.subn(
+                r'(?i)^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"employee_notification_periods"|'
+                r'`employee_notification_periods`|\[employee_notification_periods\]|employee_notification_periods)',
+                "CREATE TABLE " + temporary, ddl, count=1)
+            if changed != 1:
+                raise RuntimeError("Unsupported notification table declaration; migration rolled back")
+            extras = conn.scalars(text("SELECT sql FROM sqlite_master WHERE tbl_name=:name "
+                                       "AND type IN ('index', 'trigger') AND sql IS NOT NULL"),
+                                  {"name": period.name}).all()
+            names = ", ".join(conn.dialect.identifier_preparer.quote(name) for name in columns)
+            conn.exec_driver_sql(ddl)
+            conn.exec_driver_sql(f"INSERT INTO {temporary} ({names}) SELECT {names} FROM {period.name}")
+            # Never rename the OLD parent: that would rewrite the child's FK target.
+            conn.exec_driver_sql(f"DROP TABLE {period.name}")
+            conn.exec_driver_sql(f"ALTER TABLE {temporary} RENAME TO {period.name}")
+            for statement in extras:
+                conn.exec_driver_sql(statement)
+        elif conn.dialect.name == "postgresql":
+            conn.exec_driver_sql(f"ALTER TABLE {period.name} ALTER COLUMN work_date DROP NOT NULL")
+        for table in (period, backlog):
+            for index in table.indexes:
+                index.create(conn, checkfirst=True)
+        if not any(fk["constrained_columns"] == ["period_id"] and fk["referred_table"] == period.name
+                   and fk["referred_columns"] == ["id"] for fk in inspect(conn).get_foreign_keys(backlog.name)):
+            raise RuntimeError("Notification backlog FK target is invalid; migration rolled back")
+
+    if target.dialect.name == "postgresql":
+        with target.begin() as conn:
+            upgrade(conn)
+        return
+    with target.connect() as conn:
+        try:
+            # PRAGMA must run outside a transaction. All subsequent DDL is enclosed
+            # by a real SQLite transaction, including on Python's legacy sqlite driver.
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.commit()
+            if conn.exec_driver_sql("PRAGMA foreign_keys").scalar() != 0:
+                raise RuntimeError("Could not acquire safe SQLite migration mode")
+            conn.commit()
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            if conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall():
+                raise RuntimeError("Existing SQLite foreign key violations; migration rolled back")
+            upgrade(conn)
+            if conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall():
+                raise RuntimeError("SQLite foreign key check failed; migration rolled back")
+            conn.commit()
+        finally:
+            conn.rollback()
+            try:
+                conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+                conn.commit()
+                if conn.exec_driver_sql("PRAGMA foreign_keys").scalar() != 1:
+                    raise RuntimeError("Could not restore SQLite foreign key enforcement")
+            except BaseException:
+                conn.invalidate()  # Never return a connection with FK checks off to the pool.
+                raise
