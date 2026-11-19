@@ -7,6 +7,34 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
+class EmployeeScheduleSnapshot(Base):
+    """Only the latest two complete months; timestamps are UTC."""
+    __tablename__ = "employee_schedule_snapshots"
+
+    month: Mapped[str] = mapped_column(String(7), primary_key=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class EmployeeScheduleSyncState(Base):
+    """Explicitly migrated singleton. Lease and generation fence stale workers."""
+    __tablename__ = "employee_schedule_sync_state"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_employee_schedule_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="idle", server_default="idle")
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    worker_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class TicketStatus(str, Enum):
     UNASSIGNED = "unassigned"
     NEW = "new"

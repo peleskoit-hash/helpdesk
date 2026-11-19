@@ -182,7 +182,8 @@ def test_naive_datetime_is_rejected(case):
 def test_scheduler_runs_independent_job_and_survives_failure(monkeypatch):
     calls = []
     names = ["run_internal_task_scheduler_once", "run_internal_task_recurring_once", "run_avatar_cleanup_once",
-        "run_telegram_after_hours_cleanup_once", "run_employee_auto_offline_once"]
+        "run_telegram_after_hours_cleanup_once", "run_employee_auto_offline_once",
+        "run_employee_notification_backlog_once", "run_ticket_auto_unfreeze_once"]
     async def to_thread(fn):
         calls.append(fn.__name__)
         if fn is scheduler.run_employee_auto_offline_once:

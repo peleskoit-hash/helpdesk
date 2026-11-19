@@ -33,6 +33,7 @@ from .models import User
 from .services.login_throttle import StaffLoginThrottle
 from .routers.background_contours import router as background_contours_router
 from .routers.employee_notification_preferences import router as employee_notification_preferences_router
+from .routers.employee_schedule import router as employee_schedule_router
 from .routers.integrations import router as integrations_router
 from .routers.internal_tasks import router as internal_tasks_router
 from .routers.management_integrations import router as management_integrations_router
@@ -104,6 +105,7 @@ from .services.bot_button_saved_file_migration import migrate_legacy_bot_button_
 from .services.integration_tasks import cleanup_old_integration_logs_on_startup
 from .services.mass_notification_delivery import reconcile_stale_mass_notification_operations
 from .services.internal_task_scheduler import internal_task_scheduler_loop
+from .services.employee_schedule_sync import finish_schedule_sync
 from .services.employee_telegram_bot import set_employee_bot_commands
 from .services.employee_telegram_polling import employee_telegram_polling_loop
 from .services.telegram_bot import TelegramApiError, set_bot_commands
@@ -168,6 +170,7 @@ app.include_router(settings_users_router)
 app.include_router(settings_client_card_router)
 app.include_router(settings_notification_bot_basic_router)
 app.include_router(employee_notification_preferences_router)
+app.include_router(employee_schedule_router)
 app.include_router(mass_notifications_router)
 app.include_router(internal_tasks_router)
 app.include_router(management_integrations_router)
@@ -198,7 +201,7 @@ async def on_startup():
         try:
             # Technical chat, composer drafts and persistent numbering schemas are applied explicitly.
             Base.metadata.create_all(bind=engine, tables=[
-                table for table in Base.metadata.sorted_tables if table.name not in {"web_chat_messages", "ticket_number_counter", "web_client_drafts", "employee_notification_periods", "employee_notification_backlog"}
+                table for table in Base.metadata.sorted_tables if table.name not in {"web_chat_messages", "ticket_number_counter", "web_client_drafts", "employee_notification_periods", "employee_notification_backlog", "employee_schedule_snapshots", "employee_schedule_sync_state"}
             ])
             ensure_client_profile_columns()
             ensure_telegram_contact_columns()
@@ -313,6 +316,7 @@ async def on_shutdown():
         except asyncio.CancelledError:
             pass
         internal_task_scheduler_task = None
+    await finish_schedule_sync()
     if web_task_cleanup_task is not None:
         web_task_cleanup_task.cancel()
         try:

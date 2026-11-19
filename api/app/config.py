@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     app_public_base_url: str | None = None
     web_public_base_url: str | None = None
     app_timezone: str = "Europe/Moscow"
+    employee_schedule_enabled: bool = False
+    employee_schedule_api_base_url: str | None = None
+    employee_schedule_api_key: str | None = Field(default=None, repr=False)
+    employee_schedule_request_timeout_seconds: int = Field(default=10, ge=1, le=30)
+    employee_schedule_max_response_bytes: int = Field(default=8 * 1024 * 1024, ge=1024, le=32 * 1024 * 1024)
     telegram_bot_token: str | None = None
     telegram_http_proxy: str | None = Field(default=None, repr=False)
     employee_telegram_bot_token: str | None = None

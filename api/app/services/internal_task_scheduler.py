@@ -25,6 +25,7 @@ from .telegram_client_avatar_nightly import run_avatar_cleanup_once
 from .telegram_after_hours_cleanup import run_telegram_after_hours_cleanup_once
 from .employee_auto_offline import run_employee_auto_offline_once
 from .employee_notification_backlog import run_employee_notification_backlog_once
+from .employee_schedule_sync import schedule_sync_tick
 
 
 logger = logging.getLogger(__name__)
@@ -464,6 +465,12 @@ def run_ticket_auto_unfreeze_once(
 
 async def internal_task_scheduler_loop() -> None:
     while True:
+        try:
+            schedule_sync_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Employee schedule sync tick failed safely")
         try:
             await asyncio.to_thread(run_internal_task_scheduler_once)
         except asyncio.CancelledError:

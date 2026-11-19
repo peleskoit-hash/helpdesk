@@ -2312,3 +2312,20 @@ def ensure_management_tasks_sort() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN management_tasks_sort_json TEXT"))
         else:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS management_tasks_sort_json JSONB"))
+
+
+def ensure_employee_schedule_tables(bind=None) -> None:
+    """Explicit opt-in migration. Never called by API startup or the scheduler."""
+    from ..models import EmployeeScheduleSnapshot, EmployeeScheduleSyncState
+    target = bind if bind is not None else engine
+    if target.dialect.name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    elif target.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        raise ValueError("Employee schedule supports SQLite and PostgreSQL")
+    with target.begin() as conn:
+        EmployeeScheduleSnapshot.__table__.create(conn, checkfirst=True)
+        EmployeeScheduleSyncState.__table__.create(conn, checkfirst=True)
+        conn.execute(insert(EmployeeScheduleSyncState).values(id=1, generation=0, status="idle")
+                     .on_conflict_do_nothing(index_elements=["id"]))
