@@ -753,11 +753,10 @@ body:has(.layout > .main) #appContent.main .messages { --desk-grid-base: var(--d
 
 body:has(.layout > .main) .layout > .main > .toolbar { border-bottom-color: var(--desk-border); }
 
-/* The workspace contour shows through the toolbar's reserved border. */
+/* The toolbar owns the separator; the workspace contour keeps its other edges. */
 @media (min-width: 701px) {
   body:has(.layout > .main) .layout > .sidebar { border-right-color: transparent; }
   body:has(.layout > .main) .layout > .main > .toolbar {
-    border-bottom-color: transparent;
     background-clip: padding-box;
   }
   body:has(.layout > .main) #appContent.main {
@@ -772,7 +771,7 @@ body:has(.layout > .main) .layout > .main > .toolbar { border-bottom-color: var(
     inset: -1px 0 0;
     z-index: -1;
     border: solid var(--desk-border);
-    border-width: 1px;
+    border-width: 0 1px 1px;
     border-radius: var(--desk-radius, 12px) var(--desk-radius, 12px) 0 var(--desk-radius, 12px);
     background-color: var(--bg);
     background-image: inherit;
