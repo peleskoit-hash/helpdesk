@@ -2329,3 +2329,13 @@ def ensure_employee_schedule_tables(bind=None) -> None:
         EmployeeScheduleSyncState.__table__.create(conn, checkfirst=True)
         conn.execute(insert(EmployeeScheduleSyncState).values(id=1, generation=0, status="idle")
                      .on_conflict_do_nothing(index_elements=["id"]))
+
+
+def ensure_employee_schedule_binding_table(bind=None) -> None:
+    """Explicit opt-in migration of the binding table only. Never called at startup."""
+    from ..models import EmployeeScheduleBinding
+    target = bind if bind is not None else engine
+    if target.dialect.name not in {"sqlite", "postgresql"}:
+        raise ValueError("Employee schedule supports SQLite and PostgreSQL")
+    with target.begin() as conn:
+        EmployeeScheduleBinding.__table__.create(conn, checkfirst=True)

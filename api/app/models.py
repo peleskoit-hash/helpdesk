@@ -35,6 +35,21 @@ class EmployeeScheduleSyncState(Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class EmployeeScheduleBinding(Base):
+    __tablename__ = "employee_schedule_bindings"
+    __table_args__ = (UniqueConstraint("external_employee_id", name="uq_employee_schedule_external_employee"),)
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    external_employee_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    external_department_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_department_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    connected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_offline_work_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
 class TicketStatus(str, Enum):
     UNASSIGNED = "unassigned"
     NEW = "new"
