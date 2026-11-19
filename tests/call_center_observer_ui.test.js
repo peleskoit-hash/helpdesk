@@ -205,8 +205,8 @@ test('profile and settings display the new name while preserving the role key', 
 
 test('personal data renders Call Center Observer', async t => {
   const {page} = await setup(t,'chiki_piki');
-  await page.route('http://desk.test/profile', route => route.fulfill({contentType:'text/html',body:fs.readFileSync('api/app/templates/profile.html','utf8')}));
-  await page.goto('http://desk.test/profile');
+  await page.locator('[data-sidebar-user-menu-toggle]').click();
+  await page.locator('[data-sidebar-user-menu-item="profile"]').click();
   await page.waitForFunction(() => document.querySelector('#profileRole')?.textContent === 'Call Center Observer',null,{timeout:5000});
 });
 

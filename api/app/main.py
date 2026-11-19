@@ -529,7 +529,7 @@ def profile_notification_bot_page(request: Request, db: Session = Depends(get_db
 def profile_page(request: Request, db: Session = Depends(get_db)):
     if _require_page_auth(request, db) is None:
         return _redirect_login("/profile")
-    return FileResponse(str(BASE_DIR / "templates" / "profile.html"))
+    return RedirectResponse(url="/tickets", status_code=303)
 
 
 @app.get("/quick-replies")

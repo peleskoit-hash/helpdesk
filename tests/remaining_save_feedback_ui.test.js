@@ -151,7 +151,7 @@ test('changed scripts and shell have matching versions in every direct and dynam
     'list', 'management_tasks', 'management_saved_files', 'settings_bot_buttons', 'bot_buttons_level_view',
     'ticket_message_view', 'app_shell', 'bot_buttons_editor', 'bot_buttons_editor_view'];
   const versionsByScript = {
-    list: '20261118-scroll-reset-v1', app_shell: '20261118-freeze-until-v1',
+    list: '20261118-scroll-reset-v1', app_shell: '20261118-profile-modal-v1',
     settings_users: '20261118-scroll-reset-v1', management_users: '20261118-scroll-reset-v1',
     settings_client_card: '20261027-dialogs-complete-v3', ticket_client_card: '20261105-field-config',
     management_tasks: '20261027-dialogs-complete-v3', management_saved_files: '20261027-dialogs-complete-v3',

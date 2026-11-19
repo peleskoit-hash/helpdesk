@@ -1055,7 +1055,7 @@ test("sidebar avatar falls back to initials and profile page can update avatar s
   assert.equal(avatarButton.style.backgroundImage, "");
 });
 
-test("profile user menu entry navigates to profile page", async () => {
+test("profile user menu hands control to the modal without navigation", async () => {
   const { document } = buildSidebarDom();
   const window = await loadSidebar(document);
   const menu = document.querySelector("[data-sidebar-user-menu]");
@@ -1063,9 +1063,12 @@ test("profile user menu entry navigates to profile page", async () => {
   const navigations = [];
   window.HelpdeskAppShell = { navigate: (url) => navigations.push(url) };
 
+  const openers = [];
+  window.HelpdeskProfile = { open: (opener) => openers.push(opener) };
   item.dispatchEvent({ type: "click", target: item });
 
-  assert.deepEqual(navigations, ["/profile"]);
+  assert.deepEqual(navigations, []);
+  assert.deepEqual(openers, [document.querySelector("[data-sidebar-user-menu-toggle]")]);
   assert.equal(menu.hidden, true);
 });
 

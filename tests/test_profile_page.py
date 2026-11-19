@@ -24,20 +24,24 @@ def page_client(monkeypatch, role):
     monkeypatch.setattr(main, "_require_page_auth", lambda request, db: user)
     app = FastAPI()
     for route in main.app.routes:
-        if route.path == PAGE_ROUTE:
+        if route.path in {PAGE_ROUTE, "/profile/notification-bot"}:
             app.add_api_route(route.path, route.endpoint, methods=["GET"])
     app.dependency_overrides[get_db] = lambda: None
     return TestClient(app)
 
 
 @pytest.mark.parametrize("role", ["admin", "agent", "chiki_piki"])
-def test_profile_page_is_available_to_authenticated_roles(monkeypatch, role):
+def test_profile_page_redirects_authenticated_roles_to_tickets(monkeypatch, role):
     response = page_client(monkeypatch, role).get(PAGE_ROUTE, follow_redirects=False)
 
+    assert response.status_code == 303
+    assert response.headers["location"] == "/tickets"
+
+
+def test_personal_notification_page_stays_available(monkeypatch):
+    response = page_client(monkeypatch, "agent").get("/profile/notification-bot")
     assert response.status_code == 200
-    assert 'data-shell-page="profile"' in response.text
-    assert "/static/profile.js?v=20261025-roles-editor-v2" in response.text
-    assert "Личные данные" in response.text
+    assert 'data-shell-page="profile-notification-bot"' in response.text
 
 
 def test_profile_page_redirects_anonymous_to_login(monkeypatch):
@@ -49,10 +53,12 @@ def test_profile_page_redirects_anonymous_to_login(monkeypatch):
 
 def test_profile_shell_navigation_contract():
     shell = (ROOT / "api/app/static/app_shell.js").read_text(encoding="utf-8")
-    template = (ROOT / "api/app/templates/profile.html").read_text(encoding="utf-8")
+    template = (ROOT / "api/app/static/profile_modal.html").read_text(encoding="utf-8")
 
-    assert '["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }]' in shell
-    assert 'data-shell-page="profile"' in template
+    assert '["/profile",' not in shell
+    assert '["/profile/notification-bot",' in shell
+    assert not (ROOT / "api/app/templates/profile.html").exists()
+    assert '<dialog id="profileModal"' in template
     assert 'id="profileRoot"' in template
     assert 'id="loginModal"' in template
     assert 'id="passwordModal"' in template

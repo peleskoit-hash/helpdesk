@@ -4,8 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const template = fs.readFileSync(path.join(root, "api", "app", "templates", "profile.html"), "utf8");
+const template = fs.readFileSync(path.join(root, "api", "app", "static", "profile_modal.html"), "utf8");
 const script = fs.readFileSync(path.join(root, "api", "app", "static", "profile.js"), "utf8");
+const modalStyles = fs.readFileSync(path.join(root, "api/app/static/profile-modal.css"), "utf8");
 const styles = fs.readFileSync(path.join(root, "api", "app", "static", "styles.css"), "utf8");
 
 function sourceBetween(source, start, end) {
@@ -16,8 +17,8 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("profile page template contains expected read-only fields and edit modals", () => {
-  assert.match(template, /data-shell-page="profile"/);
+test("profile modal fragment contains expected read-only fields and edit modals", () => {
+  assert.match(template, /<dialog id="profileModal"/);
   assert.match(template, /id="profileAvatar"/);
   assert.match(template, /id="profileAvatarImage"/);
   assert.match(template, /id="profileAvatarInitials"/);
@@ -52,14 +53,14 @@ test("profile rows are separate data cards in a constrained left column", () => 
     styles,
     /\.profile-row\s*\{[\s\S]*border:\s*1px solid[\s\S]*border-radius:\s*var\(--desk-radius\);[\s\S]*padding:\s*14px 16px;[\s\S]*box-shadow:/,
   );
-  assert.doesNotMatch(styles, /\.profile-row\s*\{[\s\S]*border-bottom:\s*1px solid var\(--border\);/);
+  assert.doesNotMatch(styles, /\.profile-row\s*\{[^}]*border-bottom:\s*1px solid var\(--border\);/);
 });
 
-test("editable profile rows keep edit buttons outside the data card", () => {
+test("editable profile rows position edit buttons inside the data card", () => {
   assert.match(template, /class="profile-editable-row"[\s\S]*class="profile-row profile-row-editable"[\s\S]*id="profileLogin"[\s\S]*<\/div>\s*<button id="editLoginBtn"/);
   assert.match(template, /class="profile-editable-row"[\s\S]*class="profile-row profile-row-editable"[\s\S]*id="profilePasswordMask"[\s\S]*<\/div>\s*<button id="editPasswordBtn"/);
-  assert.match(styles, /\.profile-editable-row\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
-  assert.match(styles, /\.profile-edit-btn\s*\{[\s\S]*position:\s*absolute;[\s\S]*left:\s*calc\(100% \+ 10px\);/);
+  assert.match(modalStyles, /\.profile-editable-row \{ display: block; position: relative; \}/);
+  assert.match(modalStyles, /right: 10px;/);
   assert.doesNotMatch(styles, /grid-template-columns:\s*minmax\(180px,\s*280px\) minmax\(0,\s*1fr\) 36px/);
   assert.doesNotMatch(template, /profile-value-wrap profile-value-action/);
 });
@@ -152,7 +153,7 @@ test("profile script maps modal errors and runs delayed logout flow", () => {
   assert.match(script, /Старый пароль указан неверно/);
   assert.match(script, /password_confirmation_mismatch/);
   assert.match(script, /Новый пароль и подтверждение не совпадают/);
-  assert.match(script, /successMessage:\s*document\.getElementById\("profileSuccessMessage"\)/);
+  assert.match(script, /successMessage:\s*byId\("profileSuccessMessage"\)/);
   assert.match(script, /function showSuccessMessage\(message\)/);
   assert.match(script, /showSuccessMessage\(successText\);[\s\S]*setStatus\(successText\);[\s\S]*window\.setTimeout/);
   assert.match(script, /const RELOGIN_DELAY_MS = 2000;/);
@@ -161,9 +162,8 @@ test("profile script maps modal errors and runs delayed logout flow", () => {
   assert.match(script, /window\.location\.href = "\/login"/);
 });
 
-test("profile styles are scoped to profile shell page", () => {
-  assert.match(styles, /\.main\[data-shell-page="profile"\]/);
-  assert.match(styles, /\.profile-content/);
+test("profile modal styles are scoped to the dialog", () => {
+  assert.match(modalStyles, /^#profileModal \{/);
   assert.match(styles, /\.profile-avatar/);
   assert.match(styles, /\.profile-row/);
   assert.match(styles, /\.profile-success-message/);

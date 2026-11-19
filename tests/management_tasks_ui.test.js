@@ -12,7 +12,6 @@ const sidebarTemplateFiles = [
   "api/app/templates/management_tasks.html",
   "api/app/templates/management_users.html",
   "api/app/templates/mass_notifications.html",
-  "api/app/templates/profile.html",
   "api/app/templates/profile_notification_bot.html",
   "api/app/templates/reviews.html",
   "api/app/templates/settings.html",
@@ -221,15 +220,14 @@ test("admin sidebar structure is consistent across main template surfaces", () =
   for (const file of sidebarTemplateFiles) {
     const template = fs.readFileSync(file, "utf8");
     const links = sidebarLinks(template);
-    assert.deepEqual(
-      links.map((link) => link.href),
-      file.endsWith("/settings.html") ? ["/settings", "/statuses", "/management/tasks"] : ["/settings", "/management", "/statuses", "/management/tasks"],
-      file,
-    );
+    const expectedLinks = ["/settings", "/management", "/statuses", "/management/tasks"];
+    if (file.endsWith("/settings.html")) expectedLinks.splice(1, 1);
+    if (/\/tickets?\.html$/.test(file)) expectedLinks.unshift("/management/users");
+    assert.deepEqual(links.map((link) => link.href), expectedLinks, file);
     assert.match(template, /sidebar-admin-separator/, file);
     assert.doesNotMatch(links.map((link) => link.href).join(" "), /mass-notifications/, file);
-    assert.match(links[0].html, /settings-gear\.svg/, file);
-    assert.doesNotMatch(links[1].html, /settings-gear\.svg/, file);
+    assert.match(links.find(link => link.href === "/settings").html, /settings-gear\.svg/, file);
+    assert.ok(links.filter(link => link.href !== "/settings").every(link => !link.html.includes("settings-gear.svg")), file);
   }
 
   const expectedActive = new Map([

@@ -13,7 +13,7 @@ function load() {
     appendChild(node) { this.children.push(node); node.parent = this; },
   };
   const document = {
-    body, scripts: [], readyState: 'loading', addEventListener() {},
+    body, documentElement: {}, scripts: [], readyState: 'loading', addEventListener() {},
     createElement() {
       return {
         style: {}, attributes: {}, offsetHeight: 44,
@@ -26,6 +26,7 @@ function load() {
     },
   };
   const window = {
+    HelpdeskDialogs: { async alert() {} },
     addEventListener(name, fn) {
       if (!listeners.has(name)) listeners.set(name, new Set());
       listeners.get(name).add(fn);

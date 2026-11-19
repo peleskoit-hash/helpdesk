@@ -42,7 +42,7 @@ async function setup(t, theme, role = 'admin', initialColumns = null) {
       return route.fulfill({ status: fs.existsSync(file) ? 200 : 404, body: fs.existsSync(file) ? fs.readFileSync(file) : '',
         contentType: { '.css': 'text/css', '.js': 'text/javascript', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' }[path.extname(file)] || 'application/octet-stream' });
     }
-    if (!p.startsWith('/api/')) return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${p === '/profile' ? 'profile' : p === '/management' ? 'management' : 'management_users'}.html`, 'utf8') });
+    if (!p.startsWith('/api/')) return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${p === '/management' ? 'management' : 'management_users'}.html`, 'utf8') });
     let result = {};
     if (p.endsWith('/appearance-session')) result = { writer_id: '00000000-0000-4000-8000-000000000001', preferences: { theme_preference: theme } };
     else if (p.endsWith('/preferences')) {
@@ -181,15 +181,20 @@ for (const theme of ['light', 'dark']) {
     await toggleStyles(page, false);
     await page.locator('#closeClientModalBtn').click();
     await page.locator('#managementUsersSearch').fill('Мария');
-    await page.locator('#managementUsersSearchBtn').click();
+    await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).searchParams.get('q') === 'Мария'),
+      page.locator('#managementUsersSearchBtn').click(),
+    ]);
     await page.waitForFunction(() => document.querySelector('#managementUsersPages [aria-current]')?.textContent === '1');
     await page.evaluate(() => { window.contactsSpaProbe = true; });
-    await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile'));
+    await page.locator('[data-sidebar-user-menu-toggle]').click();
+    await page.locator('[data-sidebar-user-menu-item="profile"]').click();
     await page.waitForSelector('#profileRoot:not(.hidden)');
-    await page.goBack();
+    await page.locator('#closeProfileBtn').click();
     await page.waitForSelector('.management-user-row');
     assert.equal(await page.evaluate(() => window.contactsSpaProbe), true);
-    assert.deepEqual(queries.at(-1), { limit: '50', offset: '0' });
+    assert.deepEqual(queries.at(-1), { limit: '50', offset: '0', q: 'Мария' });
+    assert.equal(await page.locator('#managementUsersSearch').inputValue(), 'Мария');
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     if (process.env.CONTACTS_V2_SCREENSHOTS) {
       fs.mkdirSync(process.env.CONTACTS_V2_SCREENSHOTS, { recursive: true });
@@ -305,9 +310,10 @@ for (const theme of ['light', 'dark']) test(`Contacts column order, persistence 
   assert.ok(wideName > await widthOf('custom_fio'));
   assert.equal(await widthOf('telegram_display_name'), wideTelegram);
   await page.evaluate(() => { window.contactsColumnsSpaProbe = true; });
-  await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile'));
+  await page.locator('[data-sidebar-user-menu-toggle]').click();
+  await page.locator('[data-sidebar-user-menu-item="profile"]').click();
   await page.waitForSelector('#profileRoot:not(.hidden)');
-  await page.goBack();
+  await page.locator('#closeProfileBtn').click();
   await page.waitForFunction(order => [...document.querySelectorAll('#managementUsersHeader th')].map(el => el.dataset.columnKey).join() === order.join(), expected);
   assert.equal(await page.evaluate(() => window.contactsColumnsSpaProbe), true);
   await page.reload();

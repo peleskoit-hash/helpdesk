@@ -38,8 +38,9 @@ def test_sidebar_user_menu_static_contract() -> None:
     assert "\\u041b\\u0438\\u0447\\u043d\\u044b\\u0435 \\u0434\\u0430\\u043d\\u043d\\u044b\\u0435" in sidebar_js
     assert "\\u0423\\u0432\\u0435\\u0434\\u043e\\u043c\\u043b\\u0435\\u043d\\u0438\\u044f \\u0432 \\u0431\\u043e\\u0442\\u0435" in sidebar_js
     assert "\\u041e\\u0442\\u0437\\u044b\\u0432\\u044b" in sidebar_js
-    assert 'window.HelpdeskAppShell.navigate("/profile")' in sidebar_js
-    assert 'window.location.href = "/profile"' in sidebar_js
+    assert 'openPersonalProfile(toggle)' in sidebar_js
+    assert 'window.HelpdeskProfile.open(trigger)' in sidebar_js
+    assert 'window.HelpdeskAppShell.navigate("/profile")' not in sidebar_js
     assert 'Placeholder action: ${action || "unknown"}' in sidebar_js
     assert "logoutForm.requestSubmit();" in sidebar_js
     assert 'document.addEventListener("pointerdown"' in sidebar_js
@@ -89,7 +90,7 @@ def test_sidebar_template_entrypoints_use_versioned_sidebar_bundle() -> None:
         if "/static/sidebar.js" not in content:
             continue
         sidebar_entrypoints.append(template.name)
-        assert '/static/sidebar.js?v=20261106-personal-stats-v2' in content
+        assert '/static/sidebar.js?v=20261118-profile-modal-v1' in content
         assert '<script src="/static/sidebar.js"></script>' not in content
 
     assert sidebar_entrypoints

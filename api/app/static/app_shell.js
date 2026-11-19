@@ -42,7 +42,7 @@
       }
     }
     saveConfirmations.set(panel, cleanup);
-    document.body.appendChild(notice);
+    (options.container || document.body).appendChild(notice);
     position();
     window.addEventListener("scroll", position, true);
     window.addEventListener("resize", position);
@@ -109,7 +109,6 @@
         "/static/profile_notification_bot.js?v=20261027-dialogs-complete-v3",
       ],
     }],
-    ["/profile", { page: "profile", scripts: ["/static/profile.js?v=20261025-roles-editor-v2"] }],
     ["/statuses", { page: "statuses", scripts: ["/static/management_statistics.js?v=20261115-statistics-ui-v1", "/static/status_transitions.js?v=20261111-status-source-v1", "/static/statuses.js?v=20261025-status-log-v2"] }],
     ["/mass-notifications", { page: "mass-notifications", scripts: [
       "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",

@@ -26,7 +26,7 @@ test('all HTML pages expose the same versioned SVG favicon and retain page-speci
   await page.setContent(html('login.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
   assert.equal(await page.locator('#loginTitle').textContent(), 'ES DESK');
   const titles = { 'index.html': 'ES DESK', 'login.html': 'ES DESK', 'tickets.html': 'ES DESK - Список заявок',
-    'ticket.html': 'ES DESK - Карточка заявки', 'statuses.html': 'ES DESK - Статусы сотрудников', 'profile.html': 'ES DESK - Личные данные' };
+    'ticket.html': 'ES DESK - Карточка заявки', 'statuses.html': 'ES DESK - Статусы сотрудников' };
   for (const [file, title] of Object.entries(titles)) {
     await page.setContent(html(file).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
     assert.equal(await page.title(), title);
@@ -37,7 +37,7 @@ test('AppShell uses updated template titles on navigation without replacing the 
   const page = await browser.newPage(); t.after(() => page.close());
   await page.setContent(html('tickets.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
   await page.addScriptTag({ path: path.resolve('api/app/static/app_shell.js') });
-  for (const file of ['ticket.html', 'statuses.html', 'profile.html']) {
+  for (const file of ['ticket.html', 'statuses.html']) {
     const title = await page.evaluate(source => {
       const payload = HelpdeskAppShell.extractShellPayload(source);
       if (!HelpdeskAppShell.mountShellPayload(payload)) throw new Error('Mount failed');

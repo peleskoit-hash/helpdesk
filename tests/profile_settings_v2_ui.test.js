@@ -9,17 +9,26 @@ let browser;
 test.before(async () => { browser = await chromium.launch({ channel: 'msedge', headless: true }); });
 test.after(async () => { await browser?.close(); });
 const pages = {
-  profile: '/profile',
+  tickets: '/tickets',
   profile_notification_bot: '/profile/notification-bot',
   settings_notification_bot_basic: '/settings/notification-bot-basic',
 };
 const types = ['new_assignment', 'new_message', 'internal_task_completion', 'transfer_to_agent', 'transfer_from_agent'];
+const profileApi = '/api/v1/users/me/profile';
+async function openProfile(page) {
+  await page.locator('[data-sidebar-user-menu-toggle]').click();
+  await page.locator('[data-sidebar-user-menu-item="profile"]').click();
+  await page.locator('#profileModal').waitFor({ state: 'visible' });
+}
+
 async function setup(t, template, theme, role = 'agent') {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  page.setDefaultTimeout(6500);
   t.after(() => page.close());
   const errors = [], writes = [];
   page.on('pageerror', error => errors.push(error.message));
   const me = { id: 'demo-user', role, login: 'demo', full_name: 'Александр Иванов', legacy_ticket_count: 42, availability_status: 'online' };
+  const reads = [];
   const preferences = { theme_preference: theme, appearance_revision: '0' };
   const items = types.map(type => ({ type, title: type, enabled: true, use_base_settings: false,
     template: 'Уведомление <b>клиенту</b> {ticket_number}', html_enabled: true,
@@ -35,18 +44,29 @@ async function setup(t, template, theme, role = 'agent') {
         body: fs.existsSync(file) ? fs.readFileSync(file) : '',
         contentType: { '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' }[path.extname(file)] || 'application/octet-stream' });
     }
+    if (p === '/login') return route.fulfill({ contentType: 'text/html', body: '<title>Вход</title>' });
+    if (p === '/avatar.png') return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="blue"/></svg>' });
     if (!p.startsWith('/api/') && p !== '/logout') {
       const target = Object.keys(pages).find(key => pages[key] === p) || template;
       return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(`api/app/templates/${target}.html`, 'utf8') });
     }
     let result = {};
-    if (['PUT', 'PATCH', 'POST'].includes(req.method())) writes.push({ path: p, body: req.postDataJSON() });
+    if (['PUT', 'PATCH', 'POST', 'DELETE'].includes(req.method())) {
+      writes.push({ path: p, method: req.method(), body: p.endsWith('/me/avatar') ? req.postData() : req.postDataJSON() });
+    }
+    if (p === profileApi) reads.push(p);
     if (p.endsWith('/appearance-session')) result = { writer_id: '00000000-0000-4000-8000-000000000001', preferences };
     else if (p.endsWith('/preferences')) {
       if (req.method() === 'PATCH') Object.assign(preferences, req.postDataJSON());
       result = preferences;
     } else if (p === '/api/v1/auth/session') result = { real_user: me, effective_user: me, is_real_admin: role === 'admin', session_login_ts: 1, app_timezone: 'Europe/Moscow' };
-    else if (p === '/api/v1/users/me' || p === '/api/v1/users/me/profile') result = me;
+    else if (p === '/api/v1/users/me' || p === profileApi) result = me;
+    else if (p.endsWith('/me/avatar')) {
+      Object.assign(me, { avatar_present: req.method() === 'PUT', avatar_url: req.method() === 'PUT' ? '/avatar.png' : null });
+      result = me;
+    } else if (p === '/api/v1/tickets/active') {
+      result = { items: Array.from({ length: 40 }, (_, i) => ({ id: `ticket-${i}`, subject: `Заявка ${i}`, status: 'new' })), total: 40, page: 1, pages: 1 };
+    }
     else if (p === '/api/v1/users/agents' || p === '/api/v1/users/by-role') result = [me];
     else if (p.endsWith('/counts')) result = { active: 1, unassigned: 0, frozen: 0, closed: 0, special: 0, by_assignee: {} };
     else if (p === '/api/v1/me/notification-bot') {
@@ -65,12 +85,12 @@ async function setup(t, template, theme, role = 'agent') {
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) });
   });
   await page.goto('http://desk.test' + pages[template]);
-  await page.waitForSelector(template === 'profile' ? '#profileRoot:not(.hidden)' : '[data-template-textarea]');
+  await page.waitForSelector(template === 'tickets' ? '.ticket-row' : '[data-template-textarea]');
   await page.waitForFunction(theme => document.body.dataset.theme === theme, theme);
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
   t.after(() => assert.deepEqual(errors, []));
-  return { page, writes, preferences };
+  return { page, writes, preferences, reads };
 }
 async function screenshot(page, name) {
   if (!process.env.PROFILE_V2_SCREENSHOT_DIR) return;
@@ -104,28 +124,34 @@ async function assertContrast(page, selectors) {
   for (const result of results) assert.ok(result.ratio >= 4.5, JSON.stringify(result));
 }
 for (const theme of ['light', 'dark']) {
-  test(`personal data V2: ${theme}, edit and save login/password`, async t => {
-    const { page, writes } = await setup(t, 'profile', theme);
+  test(`personal data V2: ${theme}, edit credentials and relogin after closing`, async t => {
+    const { page, writes } = await setup(t, 'tickets', theme);
+    await openProfile(page);
+    await page.locator('#profileRoot').waitFor();
     assert.equal((await style(page, '.profile-row')).radius, '12px');
     await assertContrast(page, ['.profile-label', '.profile-value', '.profile-login-hero', '#changeAvatarBtn']);
     await screenshot(page, `${theme}-profile`);
     const originalAvatar = await page.locator('#profileAvatar').boundingBox();
     assert.equal(originalAvatar.width, 164);
-    await page.locator('#editLoginBtn').click();
-    await page.locator('#loginInput').fill('new-login');
-    await assertContrast(page, ['#loginInput', '#saveLoginBtn']);
-    await page.locator('#saveLoginBtn').click();
+    if (theme === 'light') {
+      await page.locator('#editLoginBtn').click();
+      await page.locator('#loginInput').fill('new-login');
+      await assertContrast(page, ['#loginInput', '#saveLoginBtn']);
+      await page.locator('#saveLoginBtn').click();
+    } else {
+      await page.locator('#editPasswordBtn').click();
+      await page.locator('#currentPasswordInput').fill('Old-password-123');
+      await page.locator('#newPasswordInput').fill('New-password-456');
+      await page.locator('#newPasswordConfirmationInput').fill('New-password-456');
+      await page.locator('#savePasswordBtn').click();
+    }
     await page.waitForFunction(() => !document.querySelector('#profileSuccessMessage').classList.contains('hidden'));
-    assert.deepEqual(writes.find(x => x.path.endsWith('/me/login')).body, { login: 'new-login' });
-    // Reload before the existing delayed logout; editing behavior is unchanged.
-    await page.reload();
-    await page.locator('#editPasswordBtn').click();
-    await page.locator('#currentPasswordInput').fill('Old-password-123');
-    await page.locator('#newPasswordInput').fill('New-password-456');
-    await page.locator('#newPasswordConfirmationInput').fill('New-password-456');
-    await page.locator('#savePasswordBtn').click();
-    await page.waitForFunction(() => !document.querySelector('#profileSuccessMessage').classList.contains('hidden'));
-    assert.equal(writes.find(x => x.path.endsWith('/me/password')).body.new_password, 'New-password-456');
+    if (theme === 'light') assert.deepEqual(writes.find(x => x.path.endsWith('/me/login')).body, { login: 'new-login' });
+    else assert.equal(writes.find(x => x.path.endsWith('/me/password')).body.new_password, 'New-password-456');
+    await page.locator('#closeProfileBtn').click();
+    await page.locator('#profileModal').waitFor({ state: 'hidden' });
+    await page.waitForURL('**/login');
+    assert.equal(writes.filter(x => x.path === '/logout' && x.method === 'POST').length, 1);
   });
   for (const role of ['agent', 'admin']) {
     test(`personal bot V2: ${theme}, ${role}, native toggles and saved settings`, async t => {
@@ -141,10 +167,9 @@ for (const theme of ['light', 'dark']) {
       assert.equal((await style(page, '[data-telegram-send-silently]', '::before')).transform, 'matrix(1, 0, 0, 1, 16, 0)');
       // Current accent follows Appearance immediately in either theme.
       await page.locator('#themeToggleBtn').click();
-      const sliders = page.locator('#appearanceMenu input[type=range]');
-      assert.equal(await sliders.count(), 4);
+      const accentHue = page.locator('#appearanceMenu [data-appearance-field="accent_hue"]');
       const before = (await style(page, '[data-telegram-send-silently]')).background;
-      await sliders.nth(2).evaluate(input => { input.value = '135'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+      await accentHue.evaluate(input => { input.value = '135'; input.dispatchEvent(new Event('input', { bubbles: true })); });
       assert.notEqual((await style(page, '[data-telegram-send-silently]')).background, before);
       await page.keyboard.press('Escape');
       await page.locator('[data-template-textarea]').fill('Новый текст <b>уведомления</b>');
@@ -192,43 +217,164 @@ for (const theme of ['light', 'dark']) {
 
 
 for (const theme of ['light', 'dark']) {
-  test(`AppShell and CSS scope: ${theme}`, async t => {
-    const { page } = await setup(t, 'profile', theme, 'admin');
-    const snapshot = () => page.locator('.sidebar, .toolbar, .sidebar input[type="checkbox"]').evaluateAll(nodes => nodes.map(el => {
-      const s = getComputedStyle(el), r = el.getBoundingClientRect();
-      return [s.color, s.background, s.border, s.font, s.boxShadow, s.appearance, r.width, r.height];
-    }));
-    const enabled = await snapshot();
-    const disable = disabled => page.evaluate(disabled => {
-      const visit = sheet => {
-        for (const rule of sheet.cssRules) {
-          if (rule.styleSheet && rule.href.includes('profile-settings-v2.css')) rule.styleSheet.disabled = disabled;
-          else if (rule.styleSheet) visit(rule.styleSheet);
-        }
+  test(`profile overlay preserves workspace through close and SPA navigation: ${theme}`, async t => {
+    const { page, reads } = await setup(t, 'tickets', theme);
+    const dialog = page.locator('#profileModal');
+    const toggle = page.locator('[data-sidebar-user-menu-toggle]');
+    const scroller = page.locator('#appContent .table-scroll');
+    const scroll = () => scroller.evaluate(el => el.scrollTop);
+    const url = page.url();
+    const before = reads.length;
+    assert.equal(await dialog.count(), 0);
+    assert.equal(await page.locator('script[src*="/static/profile.js"]').count(), 0);
+    await scroller.evaluate(el => { el.scrollTop = 220; });
+    assert.equal(await scroll(), 220);
+
+    await openProfile(page);
+    await page.locator('#profileRoot').waitFor();
+    assert.equal(await page.locator('#appContent #profileModal').count(), 0);
+    assert.equal(page.url(), url);
+    assert.equal(await page.locator('#profileFullName').textContent(), 'Александр Иванов');
+    assert.equal(await page.locator('#profileLegacyCount').textContent(), '42');
+    const geometry = await page.evaluate(() => {
+      const box = selector => document.querySelector(selector).getBoundingClientRect();
+      const details = [...document.querySelectorAll('.profile-row')];
+      const pencils = ['#editLoginBtn', '#editPasswordBtn'].map(box);
+      return {
+        modalWidth: box('#profileModal').width,
+        availableWidth: box('#profileRoot').width - 48,
+        rowInsets: details.map(el => {
+          const rect = el.getBoundingClientRect(), root = box('#profileRoot');
+          return [rect.left - root.left, root.right - rect.right];
+        }),
+        offset: (box('#profileModal').left + box('#profileModal').right - box('#appContent').left - box('#appContent').right) / 2,
+        rowWidths: details.map(el => el.getBoundingClientRect().width),
+        rowRights: details.map(el => el.getBoundingClientRect().right),
+        rowHeights: details.map(el => el.getBoundingClientRect().height),
+        pencils: pencils.map((rect, i) => [rect.left - details[i + 1].getBoundingClientRect().right, rect.width, rect.height]),
+        pencilAligned: pencils[0].left === pencils[1].left,
+        pencilCentered: pencils.every((rect, i) => {
+          const row = details[i + 1].getBoundingClientRect();
+          return Math.abs(rect.top + rect.height / 2 - row.top - row.height / 2) < 1;
+        }),
+        textClear: pencils.every((rect, i) => {
+          const value = details[i + 1].querySelector('.profile-value').getBoundingClientRect();
+          return value.right <= rect.left;
+        }),
       };
-      for (const sheet of document.styleSheets) visit(sheet);
-    }, disabled);
-    await disable(true);
-    assert.deepEqual(await snapshot(), enabled, 'sidebar and header are unchanged');
-    // Matching legacy classes on an unrelated page retain their old appearance.
-    await page.locator('#appContent').evaluate(el => { el.dataset.shellPage = 'settings-home'; });
-    const oldRow = await style(page, '.profile-row');
-    await disable(false);
-    assert.deepEqual(await style(page, '.profile-row'), oldRow);
-    await page.locator('#appContent').evaluate(el => { el.dataset.shellPage = 'profile'; });
-    await page.evaluate(() => {
-      const a = document.createElement('a'); a.href = '/profile/notification-bot'; a.textContent = 'Notification link';
-      a.id = 'test-nav'; document.querySelector('#appContent').appendChild(a);
     });
-    await page.locator('#test-nav').click();
+    assert.ok(Math.abs(geometry.offset) <= 1, JSON.stringify(geometry));
+    assert.equal(geometry.modalWidth, 892);
+    assert.deepEqual(geometry.rowWidths, Array(6).fill(geometry.availableWidth));
+    assert.deepEqual(geometry.rowInsets, Array.from({ length: 6 }, () => [24, 24]));
+    assert.deepEqual(geometry.rowHeights, Array(6).fill(68));
+    assert.deepEqual(geometry.rowRights, Array(6).fill(geometry.rowRights[0]));
+    assert.deepEqual(geometry.pencils, [[-58, 48, 48], [-58, 48, 48]]);
+    assert.equal(geometry.pencilAligned, true);
+    assert.equal(geometry.pencilCentered, true);
+    assert.equal(geometry.textClear, true);
+
+    for (const [button, nested] of [['#editLoginBtn', '#loginModal'], ['#editPasswordBtn', '#passwordModal']]) {
+      await page.locator(button).click();
+      await page.locator(nested).waitFor();
+      assert.equal(await page.locator(nested).evaluate(el => el.matches(':modal')), true);
+      await page.keyboard.press('Escape');
+      await page.locator(nested).waitFor({ state: 'hidden' });
+      assert.equal(await dialog.isVisible(), true);
+      assert.equal(await page.locator(button).evaluate(el => document.activeElement === el), true);
+    }
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await toggle.evaluate(el => document.activeElement === el), true);
+    assert.equal(await scroll(), 220);
+    await openProfile(page);
+    assert.equal(await dialog.count(), 1);
+    assert.equal(reads.length, before + 1);
+    await page.mouse.click(5, 5);
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await scroll(), 220);
+
+    await page.evaluate(() => window.HelpdeskAppShell.navigate('/profile/notification-bot'));
     await page.waitForSelector('[data-template-textarea]');
-    assert.equal((await style(page, '[data-use-base-settings]')).appearance, 'none');
-    await assertContrast(page, ['.notification-enabled-row', '.bot-telegram-preview']);
-    await page.goBack();
-    await page.waitForSelector('#profileRoot:not(.hidden)');
-    assert.equal((await style(page, '.profile-row')).radius, '12px');
+    const otherUrl = page.url();
+    await page.setViewportSize({ width: theme === 'light' ? 750 : 320, height: 540 });
+    await openProfile(page);
+    assert.equal(page.url(), otherUrl);
+    assert.equal(await dialog.count(), 1);
+    assert.equal(reads.length, before + 1);
+    const body = await page.locator('.profile-window-body').evaluate(el => {
+      el.scrollTop = el.scrollHeight;
+      return { scrollTop: el.scrollTop, overflowX: el.scrollWidth - el.clientWidth };
+    });
+    assert.ok(body.scrollTop > 0);
+    assert.equal(body.overflowX, 0);
+    await page.locator('#closeProfileBtn').click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('[data-template-textarea]').isVisible(), true);
   });
 }
+
+
+test('profile load can be retried and avatar dialogs update both images', async t => {
+  const { page, writes } = await setup(t, 'tickets', 'dark');
+  let fail = true;
+  await page.route('**' + profileApi, route => {
+    if (!fail) return route.fallback();
+    fail = false;
+    return route.fulfill({ status: 503, json: { detail: 'Недоступно' } });
+  });
+  await openProfile(page);
+  await page.locator('#profileError').waitFor();
+  assert.match(await page.locator('#profileError').textContent(), /Не удалось загрузить личные данные/);
+  await page.locator('#closeProfileBtn').click();
+  await openProfile(page);
+  await page.locator('#profileRoot').waitFor();
+
+  const avatar = page.locator('#profileAvatarImage');
+  const sidebar = page.locator('[data-sidebar-user-menu-toggle]');
+  const crop = page.locator('#avatarCropModal');
+  const removal = page.locator('#deleteAvatarModal');
+  const file = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 32;
+    canvas.getContext('2d').fillRect(0, 0, 32, 32);
+    return canvas.toDataURL().split(',')[1];
+  });
+  const selectImage = async () => {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#changeAvatarBtn').click()]);
+    await chooser.setFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: Buffer.from(file, 'base64') });
+    await crop.waitFor();
+  };
+  await selectImage();
+  assert.equal(await crop.evaluate(el => el.matches(':modal')), true);
+  await page.keyboard.press('Escape');
+  await crop.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('#profileModal').isVisible(), true);
+  await selectImage();
+  await page.locator('#saveAvatarCropBtn').click();
+  await crop.waitFor({ state: 'hidden' });
+  await page.locator('#profileModal .save-confirmation').waitFor();
+  await avatar.waitFor();
+  await page.locator('[data-sidebar-user-menu-toggle][data-sidebar-avatar-image="1"]').waitFor({ state: 'attached' });
+  const avatarUrl = await avatar.getAttribute('src');
+  assert.match(avatarUrl, /^\/avatar\.png\?/);
+  assert.ok((await sidebar.evaluate(el => el.style.backgroundImage)).includes(avatarUrl));
+  assert.equal(writes.filter(x => x.path.endsWith('/me/avatar') && x.method === 'PUT').length, 1);
+
+  await page.locator('#deleteAvatarBtn').click();
+  await removal.waitFor();
+  assert.equal(await removal.evaluate(el => el.matches(':modal')), true);
+  await page.keyboard.press('Escape');
+  await removal.waitFor({ state: 'hidden' });
+  assert.equal(await avatar.isVisible(), true);
+  await page.locator('#deleteAvatarBtn').click();
+  await page.locator('#confirmDeleteAvatarBtn').click();
+  await removal.waitFor({ state: 'hidden' });
+  await avatar.waitFor({ state: 'hidden' });
+  assert.equal(await sidebar.getAttribute('data-sidebar-avatar-image'), null);
+  assert.equal(await sidebar.evaluate(el => el.style.backgroundImage), '');
+  assert.equal(writes.filter(x => x.path.endsWith('/me/avatar') && x.method === 'DELETE').length, 1);
+});
 
 
 for (const theme of ['light', 'dark']) for (const [width, height] of [[1920, 1080], [1440, 1000], [1366, 768], [1024, 740]]) {

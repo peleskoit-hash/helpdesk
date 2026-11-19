@@ -87,6 +87,7 @@
   let initialized = false;
   let initPromise = null;
   let userMenuCleanup = null;
+  let profileScript = null;
   let avatarLoadToken = 0;
   let pollTimer = null;
   let refreshPromise = null;
@@ -542,6 +543,27 @@
     }
   }
 
+  async function openPersonalProfile(trigger) {
+    trigger.focus({ preventScroll: true });
+    if (!window.HelpdeskProfile) {
+      profileScript ||= new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "/static/profile.js?v=20261118-profile-modal-v1";
+        script.onload = resolve;
+        script.onerror = () => {
+          script.remove();
+          reject(new Error("Не удалось загрузить профиль"));
+        };
+        document.head.append(script);
+      }).catch((error) => {
+        profileScript = null;
+        throw error;
+      });
+      await profileScript;
+    }
+    await window.HelpdeskProfile.open(trigger);
+  }
+
   function bindUserMenu() {
     const structure = ensureUserMenuStructure();
     if (!structure) return;
@@ -620,11 +642,11 @@
           return;
         }
         if (action === "profile") {
-          if (window.HelpdeskAppShell?.navigate) {
-            window.HelpdeskAppShell.navigate("/profile");
-          } else {
-            window.location.href = "/profile";
-          }
+          openPersonalProfile(toggle).catch((error) => window.HelpdeskErrorDialog?.show?.({
+            title: "Личные данные",
+            message: "Не удалось открыть окно профиля.",
+            error,
+          }));
           return;
         }
         console.info(`[sidebar-user-menu] Placeholder action: ${action || "unknown"}`);

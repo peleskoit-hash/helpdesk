@@ -1,66 +1,13 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ES DESK - Личные данные</title>
-  <link rel="icon" type="image/svg+xml" sizes="any" href="/static/chert.svg?v=20261028-favicon-v1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118-ticket-table-centering-v1" />
-</head>
-<body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="sidebar-brand">ES DESK</div>
-      <h2 class="sidebar-title">Заявки</h2>
-      <div class="tab-list">
-        <a class="tab-btn" href="/tickets?tab=unassigned"><span class="tab-btn-label">Нераспределённые</span><span class="tab-btn-count" data-tab-count="unassigned">0</span></a>
-        <a class="tab-btn" href="/tickets?tab=active"><span class="tab-btn-label">Активные</span><span class="tab-btn-count" data-tab-count="active">0</span></a>
-        <a class="tab-btn" href="/tickets?tab=frozen"><span class="tab-btn-label">Замороженные</span><span class="tab-btn-count" data-tab-count="frozen">0</span></a>
-        <a class="tab-btn" href="/tickets?tab=closed"><span class="tab-btn-label">Закрытые</span><span class="tab-btn-count" data-tab-count="closed">0</span></a>
-        <a class="tab-btn admin-only hidden" href="/tickets?tab=special"><span class="tab-btn-label">Особые</span><span class="tab-btn-count" data-tab-count="special">0</span></a>
-      </div>
-      <div id="adminAgentFilter" class="admin-agent-filter admin-only hidden">
-        <label class="status-panel-title admin-agent-header">
-          <input id="adminAgentToggleAll" type="checkbox" />
-          <span>Все заявки</span>
-        </label>
-        <div id="adminAgentList" class="admin-agent-list"></div>
-      </div>
-      <a class="settings-link admin-only hidden" href="/settings">
-        <span>Настройки</span>
-        <img src="/static/settings-gear.svg" alt="" />
-      </a>
-      <a class="settings-link admin-only hidden" href="/management">
-        <span>Управление</span>
-      </a>
-      <div class="sidebar-admin-separator admin-only hidden"></div>
-      <a class="settings-link admin-only hidden" href="/statuses">
-        <span>Статусы</span>
-      </a>
-      <a class="settings-link admin-only hidden" href="/management/tasks">
-        <span>Задачи и Регулярки</span>
-      </a>
-      <div class="sidebar-bottom">
-        <div class="sidebar-user-actions">
-          <div class="agent-avatar" title="Пользователь">A</div>
-          <form action="/logout" method="post" data-sidebar-logout-form hidden></form>
-        </div>
-      </div>
-    </aside>
-
-    <main id="appContent" class="main" data-shell-page="profile">
-      <div class="toolbar">
-        <button id="backToTicketsBtn" class="action" type="button">Назад</button>
-        <div class="settings-title">Личные данные</div>
-        <div class="display-settings">
-          <button id="themeToggleBtn" class="action theme-toggle" type="button" aria-label="Оформление">Оформление</button>
-        </div>
-      </div>
-
-      <section class="content profile-content">
+<dialog id="profileModal" aria-labelledby="profileModalTitle">
+  <div class="profile-window content">
+    <header class="modal-head profile-window-head">
+      <h1 id="profileModalTitle">Личные данные</h1>
+      <button id="closeProfileBtn" class="action" type="button" autofocus>Закрыть</button>
+    </header>
+      <section class="modal-body profile-window-body">
         <div class="panel profile-panel">
           <div id="profileLoading" class="profile-state">Загрузка данных...</div>
-          <div id="profileError" class="profile-state profile-error hidden"></div>
+          <div id="profileError" class="profile-state profile-error hidden" role="alert"></div>
           <div id="profileSuccessMessage" class="profile-success-message hidden" role="status" aria-live="polite"></div>
           <div id="profileRoot" class="profile-root hidden">
             <section class="profile-hero">
@@ -130,7 +77,9 @@
         </div>
       </section>
 
-      <div id="loginModal" class="modal hidden">
+  </div>
+
+      <dialog id="loginModal" class="modal" aria-label="Введите новый логин">
         <div class="modal-dialog profile-modal-dialog">
           <div class="modal-head">
             <div class="profile-modal-title">Введите новый логин</div>
@@ -147,9 +96,9 @@
             <button id="saveLoginBtn" type="button" class="action primary">Сохранить</button>
           </div>
         </div>
-      </div>
+      </dialog>
 
-      <div id="passwordModal" class="modal hidden">
+      <dialog id="passwordModal" class="modal" aria-label="Изменение пароля">
         <div class="modal-dialog profile-modal-dialog">
           <div class="modal-head">
             <div class="profile-modal-title">Изменение пароля</div>
@@ -172,9 +121,9 @@
             <button id="savePasswordBtn" type="button" class="action primary">Сохранить</button>
           </div>
         </div>
-      </div>
+      </dialog>
 
-      <div id="avatarCropModal" class="modal hidden">
+      <dialog id="avatarCropModal" class="modal" aria-label="Настройте аватар">
         <div class="modal-dialog profile-modal-dialog profile-avatar-modal-dialog">
           <div class="modal-head">
             <div class="profile-modal-title">Настройте аватар</div>
@@ -195,9 +144,9 @@
             <button id="saveAvatarCropBtn" type="button" class="action primary">Сохранить</button>
           </div>
         </div>
-      </div>
+      </dialog>
 
-      <div id="deleteAvatarModal" class="modal hidden">
+      <dialog id="deleteAvatarModal" class="modal" aria-label="Удалить аватар?">
         <div class="modal-dialog profile-modal-dialog">
           <div class="modal-head">
             <div class="profile-modal-title">Удалить аватар?</div>
@@ -212,14 +161,5 @@
             <button id="confirmDeleteAvatarBtn" type="button" class="action danger">Удалить</button>
           </div>
         </div>
-      </div>
-    </main>
-  </div>
-
-  <script src="/static/theme.js?v=20261029-contour-delete-only-v1-radius-v1"></script>
-  <script src="/static/sidebar.js?v=20261106-personal-stats-v2"></script>
-  <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261118-freeze-until-v1"></script>
-  <script src="/static/profile.js?v=20261025-roles-editor-v2"></script>
-</body>
-</html>
+      </dialog>
+</dialog>

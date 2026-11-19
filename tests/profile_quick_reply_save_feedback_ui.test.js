@@ -13,10 +13,10 @@ function between(source, start, end) {
 for (const failure of [null, 'crop', 'api', 'avatar']) {
   test(`avatar confirmation follows close and avatar refresh; failure=${failure}`, async () => {
     const order = [], errors = [];
-    const panel = {};
+    const panel = {}, modal = {};
     const failAt = phase => { order.push(phase); if (failure === phase) throw Error(phase); };
     const ctx = vm.createContext({
-      cropState: {}, profile: {},
+      cropState: {}, profile: {}, modal,
       el: {root: {closest(selector) { assert.equal(selector, '.panel.profile-panel'); return panel; }},
         avatarCropError: {}, saveAvatarCropBtn: {disabled: false}},
       FormData: class { append() {} },
@@ -28,7 +28,11 @@ for (const failure of [null, 'crop', 'api', 'avatar']) {
       renderAvatar: () => failAt('avatar'),
       syncSidebarAvatar: () => order.push('sidebar'),
       showAvatarMessage() {}, setStatus() {}, avatarErrorMessage: error => error.message,
-      window: {HelpdeskAppShell: {showSaved(target) { assert.equal(target, panel); order.push('saved'); }}},
+      window: {HelpdeskAppShell: {showSaved(target, options) {
+        assert.equal(target, panel);
+        assert.equal(options.container, modal);
+        order.push('saved');
+      }}},
     });
     vm.runInContext(between(profile, 'async function saveAvatarCrop()', 'async function deleteAvatar()'), ctx);
     await ctx.saveAvatarCrop();
@@ -90,5 +94,5 @@ for (const editing of [false, true]) {
 
 test('login and password retain their separate relogin flow without saved feedback', () => {
   assert.doesNotMatch(between(profile, 'async function saveLogin()', 'async function savePassword()'), /showSaved/);
-  assert.doesNotMatch(between(profile, 'async function savePassword()', 'const handleKeydown'), /showSaved/);
+  assert.doesNotMatch(between(profile, 'async function savePassword()', 'function bind()'), /showSaved/);
 });

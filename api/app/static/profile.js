@@ -1,5 +1,5 @@
 (function () {
-function initProfilePage() {
+function initProfileModal(modal) {
 const roleLabels = { admin: "Администратор", agent: "Тех. поддержка", chiki_piki: "Call Center Observer" };
 const RELOGIN_DELAY_MS = 2000;
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
@@ -11,60 +11,62 @@ const avatarTypes = new Map([
   ["image/webp", { extension: "webp", outputType: "image/webp" }],
 ]);
 let profile = null;
-let reloginTimer = null;
+let profileLoad = null;
+let returnFocus = null;
 let avatarObjectUrl = "";
 let cropState = null;
 let activePointerId = null;
 
+const byId = (id) => modal.querySelector(`#${id}`);
 const el = {
-  backToTicketsBtn: document.getElementById("backToTicketsBtn"),
-  loading: document.getElementById("profileLoading"),
-  error: document.getElementById("profileError"),
-  successMessage: document.getElementById("profileSuccessMessage"),
-  root: document.getElementById("profileRoot"),
-  avatar: document.getElementById("profileAvatar"),
-  avatarImage: document.getElementById("profileAvatarImage"),
-  avatarInitials: document.getElementById("profileAvatarInitials"),
-  avatarFileInput: document.getElementById("avatarFileInput"),
-  changeAvatarBtn: document.getElementById("changeAvatarBtn"),
-  deleteAvatarBtn: document.getElementById("deleteAvatarBtn"),
-  avatarActionMessage: document.getElementById("avatarActionMessage"),
-  avatarCropModal: document.getElementById("avatarCropModal"),
-  closeAvatarCropBtn: document.getElementById("closeAvatarCropBtn"),
-  cancelAvatarCropBtn: document.getElementById("cancelAvatarCropBtn"),
-  saveAvatarCropBtn: document.getElementById("saveAvatarCropBtn"),
-  avatarCropFrame: document.getElementById("avatarCropFrame"),
-  avatarCropCanvas: document.getElementById("avatarCropCanvas"),
-  avatarZoomInput: document.getElementById("avatarZoomInput"),
-  avatarCropError: document.getElementById("avatarCropError"),
-  deleteAvatarModal: document.getElementById("deleteAvatarModal"),
-  closeDeleteAvatarBtn: document.getElementById("closeDeleteAvatarBtn"),
-  cancelDeleteAvatarBtn: document.getElementById("cancelDeleteAvatarBtn"),
-  confirmDeleteAvatarBtn: document.getElementById("confirmDeleteAvatarBtn"),
-  deleteAvatarError: document.getElementById("deleteAvatarError"),
-  fullNameHero: document.getElementById("profileFullNameHero"),
-  loginHero: document.getElementById("profileLoginHero"),
-  fullName: document.getElementById("profileFullName"),
-  login: document.getElementById("profileLogin"),
-  role: document.getElementById("profileRole"),
-  legacyCount: document.getElementById("profileLegacyCount"),
-  telegram: document.getElementById("profileTelegram"),
-  editLoginBtn: document.getElementById("editLoginBtn"),
-  editPasswordBtn: document.getElementById("editPasswordBtn"),
-  loginModal: document.getElementById("loginModal"),
-  closeLoginModalBtn: document.getElementById("closeLoginModalBtn"),
-  cancelLoginBtn: document.getElementById("cancelLoginBtn"),
-  saveLoginBtn: document.getElementById("saveLoginBtn"),
-  loginInput: document.getElementById("loginInput"),
-  loginModalError: document.getElementById("loginModalError"),
-  passwordModal: document.getElementById("passwordModal"),
-  closePasswordModalBtn: document.getElementById("closePasswordModalBtn"),
-  cancelPasswordBtn: document.getElementById("cancelPasswordBtn"),
-  savePasswordBtn: document.getElementById("savePasswordBtn"),
-  currentPasswordInput: document.getElementById("currentPasswordInput"),
-  newPasswordInput: document.getElementById("newPasswordInput"),
-  newPasswordConfirmationInput: document.getElementById("newPasswordConfirmationInput"),
-  passwordModalError: document.getElementById("passwordModalError"),
+  closeProfileBtn: byId("closeProfileBtn"),
+  loading: byId("profileLoading"),
+  error: byId("profileError"),
+  successMessage: byId("profileSuccessMessage"),
+  root: byId("profileRoot"),
+  avatar: byId("profileAvatar"),
+  avatarImage: byId("profileAvatarImage"),
+  avatarInitials: byId("profileAvatarInitials"),
+  avatarFileInput: byId("avatarFileInput"),
+  changeAvatarBtn: byId("changeAvatarBtn"),
+  deleteAvatarBtn: byId("deleteAvatarBtn"),
+  avatarActionMessage: byId("avatarActionMessage"),
+  avatarCropModal: byId("avatarCropModal"),
+  closeAvatarCropBtn: byId("closeAvatarCropBtn"),
+  cancelAvatarCropBtn: byId("cancelAvatarCropBtn"),
+  saveAvatarCropBtn: byId("saveAvatarCropBtn"),
+  avatarCropFrame: byId("avatarCropFrame"),
+  avatarCropCanvas: byId("avatarCropCanvas"),
+  avatarZoomInput: byId("avatarZoomInput"),
+  avatarCropError: byId("avatarCropError"),
+  deleteAvatarModal: byId("deleteAvatarModal"),
+  closeDeleteAvatarBtn: byId("closeDeleteAvatarBtn"),
+  cancelDeleteAvatarBtn: byId("cancelDeleteAvatarBtn"),
+  confirmDeleteAvatarBtn: byId("confirmDeleteAvatarBtn"),
+  deleteAvatarError: byId("deleteAvatarError"),
+  fullNameHero: byId("profileFullNameHero"),
+  loginHero: byId("profileLoginHero"),
+  fullName: byId("profileFullName"),
+  login: byId("profileLogin"),
+  role: byId("profileRole"),
+  legacyCount: byId("profileLegacyCount"),
+  telegram: byId("profileTelegram"),
+  editLoginBtn: byId("editLoginBtn"),
+  editPasswordBtn: byId("editPasswordBtn"),
+  loginModal: byId("loginModal"),
+  closeLoginModalBtn: byId("closeLoginModalBtn"),
+  cancelLoginBtn: byId("cancelLoginBtn"),
+  saveLoginBtn: byId("saveLoginBtn"),
+  loginInput: byId("loginInput"),
+  loginModalError: byId("loginModalError"),
+  passwordModal: byId("passwordModal"),
+  closePasswordModalBtn: byId("closePasswordModalBtn"),
+  cancelPasswordBtn: byId("cancelPasswordBtn"),
+  savePasswordBtn: byId("savePasswordBtn"),
+  currentPasswordInput: byId("currentPasswordInput"),
+  newPasswordInput: byId("newPasswordInput"),
+  newPasswordConfirmationInput: byId("newPasswordConfirmationInput"),
+  passwordModalError: byId("passwordModalError"),
 };
 
 function setStatus() {}
@@ -232,7 +234,7 @@ function resetAvatarInput() {
 }
 
 function closeAvatarCropModal() {
-  el.avatarCropModal?.classList.add("hidden");
+  el.avatarCropModal?.close();
   showModalError(el.avatarCropError, "");
   if (avatarObjectUrl) {
     URL.revokeObjectURL(avatarObjectUrl);
@@ -246,12 +248,12 @@ function closeAvatarCropModal() {
 
 function openDeleteAvatarModal() {
   showModalError(el.deleteAvatarError, "");
-  el.deleteAvatarModal?.classList.remove("hidden");
+  el.deleteAvatarModal?.showModal();
   el.confirmDeleteAvatarBtn?.focus();
 }
 
 function closeDeleteAvatarModal() {
-  el.deleteAvatarModal?.classList.add("hidden");
+  el.deleteAvatarModal?.close();
   showModalError(el.deleteAvatarError, "");
 }
 
@@ -344,11 +346,14 @@ function openCropModalForFile(file) {
   if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
   avatarObjectUrl = URL.createObjectURL(file);
   const image = new Image();
+  const objectUrl = avatarObjectUrl;
   image.onload = () => {
+    if (!modal.open || avatarObjectUrl !== objectUrl) return;
     initCropGeometry(image, avatarTypes.get(file.type.toLowerCase()).outputType, avatarTypes.get(file.type.toLowerCase()).extension);
-    el.avatarCropModal?.classList.remove("hidden");
+    el.avatarCropModal?.showModal();
   };
   image.onerror = () => {
+    if (avatarObjectUrl !== objectUrl) return;
     closeAvatarCropModal();
     showAvatarMessage("Не удалось распознать изображение");
   };
@@ -429,7 +434,7 @@ async function saveAvatarCrop() {
     syncSidebarAvatar(profile, bustedUrl);
     showAvatarMessage("");
     setStatus("Аватар обновлён");
-    window.HelpdeskAppShell?.showSaved?.(el.root?.closest(".panel.profile-panel"));
+    window.HelpdeskAppShell?.showSaved?.(el.root?.closest(".panel.profile-panel"), { container: modal });
   } catch (error) {
     showModalError(el.avatarCropError, avatarErrorMessage(error));
   } finally {
@@ -504,12 +509,12 @@ async function loadProfile() {
 function openLoginModal() {
   showModalError(el.loginModalError, "");
   if (el.loginInput) el.loginInput.value = profile?.login || "";
-  el.loginModal?.classList.remove("hidden");
+  el.loginModal?.showModal();
   el.loginInput?.focus();
 }
 
 function closeLoginModal() {
-  el.loginModal?.classList.add("hidden");
+  el.loginModal?.close();
 }
 
 function openPasswordModal() {
@@ -517,12 +522,12 @@ function openPasswordModal() {
   if (el.currentPasswordInput) el.currentPasswordInput.value = "";
   if (el.newPasswordInput) el.newPasswordInput.value = "";
   if (el.newPasswordConfirmationInput) el.newPasswordConfirmationInput.value = "";
-  el.passwordModal?.classList.remove("hidden");
+  el.passwordModal?.showModal();
   el.currentPasswordInput?.focus();
 }
 
 function closePasswordModal() {
-  el.passwordModal?.classList.add("hidden");
+  el.passwordModal?.close();
 }
 
 async function logoutAfterDelay(message) {
@@ -531,7 +536,7 @@ async function logoutAfterDelay(message) {
   const successText = message || "Данные изменены. Войдите снова.";
   showSuccessMessage(successText);
   setStatus(successText);
-  reloginTimer = window.setTimeout(async () => {
+  window.setTimeout(async () => {
     try {
       await fetch("/logout", {
         method: "POST",
@@ -607,22 +612,8 @@ async function savePassword() {
   }
 }
 
-const handleKeydown = (event) => {
-  if (event.key !== "Escape") return;
-  closeLoginModal();
-  closePasswordModal();
-  closeAvatarCropModal();
-  closeDeleteAvatarModal();
-};
-
 function bind() {
-  el.backToTicketsBtn?.addEventListener("click", () => {
-    if (window.HelpdeskAppShell?.goBack) {
-      window.HelpdeskAppShell.goBack();
-      return;
-    }
-    window.history.back();
-  });
+  el.closeProfileBtn.addEventListener("click", () => modal.close());
   el.editLoginBtn?.addEventListener("click", openLoginModal);
   el.editPasswordBtn?.addEventListener("click", openPasswordModal);
   el.changeAvatarBtn?.addEventListener("click", () => el.avatarFileInput?.click());
@@ -647,27 +638,103 @@ function bind() {
   el.closePasswordModalBtn?.addEventListener("click", closePasswordModal);
   el.cancelPasswordBtn?.addEventListener("click", closePasswordModal);
   el.savePasswordBtn?.addEventListener("click", savePassword);
-  closeOnBackdropClick(el.loginModal, closeLoginModal);
-  closeOnBackdropClick(el.passwordModal, closePasswordModal);
-  closeOnBackdropClick(el.avatarCropModal, closeAvatarCropModal);
-  closeOnBackdropClick(el.deleteAvatarModal, closeDeleteAvatarModal);
-  document.addEventListener("keydown", handleKeydown);
+  for (const [dialog, close] of [
+    [modal, () => modal.close()],
+    [el.loginModal, closeLoginModal],
+    [el.passwordModal, closePasswordModal],
+    [el.avatarCropModal, closeAvatarCropModal],
+    [el.deleteAvatarModal, closeDeleteAvatarModal],
+  ]) {
+    closeOnBackdropClick(dialog, close);
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      close();
+    });
+  }
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") event.stopPropagation();
+  });
 }
 
-bind();
-window.HelpdeskSidebar?.init?.({ onError: (error) => window.HelpdeskErrorDialog?.show?.({ title: "Ошибка загрузки страницы", message: "Не удалось обновить данные боковой панели.", error }) }).catch(() => {});
-loadProfile();
+const workspace = document.getElementById("appContent");
+const alignModal = () => {
+  const rect = workspace?.getBoundingClientRect();
+  if (!rect) return;
+  const viewport = document.documentElement.clientWidth;
+  const left = Math.max(0, rect.left);
+  const right = Math.max(0, viewport - rect.right);
+  // Some mobile pages keep a sidebar wider than their workspace.
+  const fitsWorkspace = viewport - left - right >= 280;
+  modal.style.setProperty("--profile-left", `${fitsWorkspace ? left : 0}px`);
+  modal.style.setProperty("--profile-right", `${fitsWorkspace ? right : 0}px`);
+};
+const observer = new ResizeObserver(alignModal);
 
-return () => {
-  document.removeEventListener("keydown", handleKeydown);
-  if (reloginTimer) window.clearTimeout(reloginTimer);
+modal.addEventListener("close", () => {
+  if (modal.open) return;
+  observer.disconnect();
+  window.removeEventListener("resize", alignModal);
   closeAvatarCropModal();
+  returnFocus?.focus({ preventScroll: true });
+  returnFocus = null;
+});
+bind();
+
+return (trigger) => {
+  if (modal.open) return;
+  returnFocus = trigger;
+  alignModal();
+  modal.showModal();
+  if (workspace) observer.observe(workspace);
+  window.addEventListener("resize", alignModal);
+  if (!profile && !profileLoad) profileLoad = loadProfile().finally(() => { profileLoad = null; });
 };
 }
 
-if (window.HelpdeskAppShell?.registerPage) {
-  window.HelpdeskAppShell.registerPage("profile", initProfilePage);
-} else {
-  initProfilePage();
+let controller;
+function loadStylesheet() {
+  return new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "/static/profile-modal.css?v=20261119-profile-fields-v3";
+    link.onload = resolve;
+    link.onerror = () => {
+      link.remove();
+      reject(new Error("Не удалось загрузить оформление профиля"));
+    };
+    document.head.append(link);
+  });
 }
+let stylesheet;
+async function mountProfileModal() {
+  stylesheet ||= loadStylesheet().catch((error) => {
+    stylesheet = null;
+    throw error;
+  });
+  const [html] = await Promise.all([
+    fetch("/static/profile_modal.html?v=20261118-profile-modal-v1").then((response) => {
+      if (!response.ok) throw new Error("Не удалось загрузить окно профиля");
+      return response.text();
+    }),
+    stylesheet,
+  ]);
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const modal = template.content.querySelector("#profileModal");
+  if (!modal) throw new Error("Окно профиля отсутствует");
+  const open = initProfileModal(modal);
+  document.body.append(modal);
+  return open;
+}
+
+window.HelpdeskProfile = {
+  async open(trigger) {
+    controller ||= mountProfileModal().catch((error) => {
+      controller = null;
+      throw error;
+    });
+    const open = await controller;
+    open(trigger);
+  },
+};
 })();

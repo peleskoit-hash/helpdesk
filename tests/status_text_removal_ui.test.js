@@ -25,7 +25,6 @@ test("top statusText element is removed from affected templates", () => {
     "settings.html",
     "index.html",
     "management.html",
-    "profile.html",
     "quick_replies.html",
     "profile_notification_bot.html",
     "settings_notification_bot_basic.html",
