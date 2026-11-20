@@ -1,5 +1,6 @@
 (function () {
   const REQUIRED = "custom_fio";
+  const EQUAL_WIDTH = "__equal_width__";
   const NAME_MIN_WIDTH = 180;
   const COLUMN_MAX_WIDTH = 440;
 
@@ -13,6 +14,7 @@
     const add = byId("managementUsersColumnAdd");
     const save = byId("managementUsersColumnsSave");
     const close = byId("managementUsersColumnsClose");
+    const equalWidth = byId("managementUsersColumnsEqualWidth");
     const errorText = byId("managementUsersColumnsError");
     const controller = new AbortController();
     const { signal } = controller;
@@ -27,7 +29,7 @@
     let naturalWidths = [];
 
     function normalize(keys) {
-      const result = [...new Set(keys)].filter((key) => available.has(key));
+      const result = [...new Set(keys)].filter((key) => key !== EQUAL_WIDTH && available.has(key));
       if (available.has(REQUIRED) && !result.includes(REQUIRED)) result.unshift(REQUIRED);
       return result;
     }
@@ -41,7 +43,9 @@
       let total = 0;
       [...table.querySelector("colgroup").children].forEach((col, index) => {
         const column = naturalWidths[index];
-        const width = column.key === REQUIRED
+        const width = preferences?.includes(EQUAL_WIDTH)
+          ? availableWidth / naturalWidths.length
+          : column.key === REQUIRED
           ? Math.max(NAME_MIN_WIDTH, Math.floor(availableWidth - usedWidth))
           : column.width;
         col.style.width = width + "px";
@@ -55,6 +59,12 @@
     }
 
     function measure(columns) {
+      if (preferences?.includes(EQUAL_WIDTH)) {
+        naturalWidths = columns.map(({ key }) => ({ key, width: 0 }));
+        cancelAnimationFrame(frame);
+        applyWidth();
+        return;
+      }
       const probe = table.cloneNode(true);
       probe.removeAttribute("id");
       probe.tHead.rows[0].removeAttribute("id");
@@ -143,6 +153,7 @@
 
     gear.addEventListener("click", () => {
       draft = normalize(preferences ?? defaults);
+      equalWidth.checked = preferences?.includes(EQUAL_WIDTH) ?? false;
       errorText.hidden = true;
       showDraft();
       dialog.showModal();
@@ -198,10 +209,11 @@
     }, { signal });
     dialog.addEventListener("close", stopDrag, { signal });
     save.addEventListener("click", async () => {
-      saving = save.disabled = close.disabled = add.disabled = list.inert = true;
+      saving = save.disabled = close.disabled = add.disabled = equalWidth.disabled = list.inert = true;
       errorText.hidden = true;
       const keys = normalize(draft);
       if (!keys.includes(REQUIRED)) keys.unshift(REQUIRED);
+      if (equalWidth.checked) keys.push(EQUAL_WIDTH);
       try {
         const result = await api("/api/v1/users/me/preferences", {
           method: "PATCH",
@@ -216,7 +228,7 @@
         errorText.textContent = error.message;
         errorText.hidden = false;
       } finally {
-        saving = save.disabled = close.disabled = list.inert = false;
+        saving = save.disabled = close.disabled = equalWidth.disabled = list.inert = false;
         add.disabled = add.options.length === 1;
       }
     }, { signal });

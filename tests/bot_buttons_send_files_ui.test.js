@@ -194,8 +194,8 @@ test('client card script cache busting is updated for changed JS files', () => {
   assert.match(ticketTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(managementUsersTemplate, /ticket_client_card\.js\?v=20261105-field-config/);
   assert.match(appShellSource, /ticket_client_card\.js\?v=20261105-field-config/);
-  assert.match(ticketTemplate, /ticket\.js\?v=20261118-freeze-until-v1/);
-  assert.match(appShellSource, /ticket\.js\?v=20261118-freeze-until-v1/);
+  assert.match(ticketTemplate, /ticket\.js\?v=20261120-send-scroll-queue-v1/);
+  assert.match(appShellSource, /ticket\.js\?v=20261120-send-scroll-queue-v1/);
   assert.match(managementUsersTemplate, /management_users\.js\?v=20261118-scroll-reset-v1/);
 });
 
@@ -1804,9 +1804,9 @@ test('management users blocked view uses dedicated row styling while normal mode
 test('management users renders column headers from the catalog and ships the editor', () => {
   assert.match(managementUsersTemplate, /id="managementUsersHeader"/);
   assert.match(managementUsersTemplate, /id="managementUsersColumnsDialog"/);
-  assert.match(managementUsersTemplate, /management_user_columns\.js\?v=20261118-card-columns-v2/);
+  assert.match(managementUsersTemplate, /management_user_columns\.js\?v=20261120-users-equal-width-v1/);
   const shell = fs.readFileSync('api/app/static/app_shell.js', 'utf8');
-  assert.match(shell, /management_user_columns\.js\?v=20261118-card-columns-v2/);
+  assert.match(shell, /management_user_columns\.js\?v=20261120-users-equal-width-v1/);
 });
 
 test('management users template contains pagination controls', () => {
@@ -3717,4 +3717,42 @@ test('ticket Back and bot level-up are distinct DOM controls with independent ha
   assert.doesNotMatch(ticket, /botButtonsBackBtn|На уровень вверх/);
   assert.match(bot, /const isRoot = state\.view === "menu_types";[\s\S]*isRoot \? "Назад" : "На уровень вверх"/);
   assert.match(bot, /el\.backButton\?\.addEventListener\("click", \(\) => \{[\s\S]*if \(state\.view === "menu_types"\)[\s\S]*handleBack\(\);/);
+});
+
+
+test('queued card reload preserves local-send scroll intent across the in-flight render', async () => {
+  const loadSource = sourceBetween(ticketPageSource, 'async function loadCard(options = {})', 'async function sendByMode');
+  const onSent = ticketPageSource.match(/onMessageSent: (\(\) => \{[^}]+\})/)[1];
+  for (const sent of [false, true]) {
+    const response = Promise.withResolvers();
+    const rendered = [];
+    let requests = 0;
+    const state = { ticketId: 'one', card: { id: 'one' }, initialComposerFocusApplied: true,
+      clientCardInline: { open: true }, pendingCardReloadOptions: null };
+    const context = vm.createContext({
+      state, destroyed: false, scrollAfterLocalSend: false, console,
+      api: async url => url.endsWith('/client-card-view-config') ? null
+        : (++requests === 1 ? response.promise : { id: 'one', messages: [{ id: 'outgoing' }] }),
+      TicketComposer: {}, composerCtx: () => ({}), applyServerDraft: () => {},
+      setStatus: () => {}, applyComposeModeUi: () => {}, consumePendingQuickReplyUse: async () => {},
+      loadTaskPanel: async () => {},
+      renderCard: () => {
+        rendered.push(context.scrollAfterLocalSend);
+        context.scrollAfterLocalSend = false;
+      },
+    });
+    vm.runInContext(`${loadSource}\nglobalThis.onMessageSent = ${onSent};`, context);
+    const backgroundLoad = context.loadCard({ silent: true });
+    if (sent) context.onMessageSent();
+    await context.loadCard({ silent: true, preserveComposerDraft: true });
+    await context.loadCard({ silent: false });
+    assert.equal(state.pendingCardReloadOptions.forceBottom, sent);
+    assert.equal(state.pendingCardReloadOptions.silent, false);
+    assert.equal(state.pendingCardReloadOptions.preserveComposerDraft, true);
+    response.resolve({ id: 'one', messages: [] });
+    await backgroundLoad;
+    assert.equal(requests, 2);
+    assert.deepEqual(rendered, [sent, sent], 'queued reload retains intent after the first render clears it');
+    assert.equal(state.pendingCardReloadOptions, null);
+  }
 });

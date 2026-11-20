@@ -117,9 +117,9 @@ async function toggleStyles(page, disabled) {
 for (const theme of ['light', 'dark']) {
   test(`Contacts V2 list actions and contrast: ${theme}`, async t => {
     const { page, queries, assets } = await setup(t, theme);
-    assert.ok(assets.includes('/static/contacts-v2.css?v=20261118-users-columns-v1'));
+    assert.ok(assets.includes('/static/contacts-v2.css?v=20261120-users-toggle-row-v1'));
     assert.ok(assets.includes('/static/management_users.js?v=20261118-scroll-reset-v1'));
-    assert.ok(assets.includes('/static/management_user_columns.js?v=20261118-card-columns-v2'));
+    assert.ok(assets.includes('/static/management_user_columns.js?v=20261120-users-equal-width-v1'));
     assert.equal(await page.locator('.management-users-table').evaluate(el => getComputedStyle(el).borderRadius), '12px');
     await contrast(page, ['#managementUsersTable td', '.management-user-row-blocked td', 'th', '#managementUsersSearch', '#managementUsersSearchBtn', '.management-users-filters .active', '#managementUsersPageSummary']);
     await page.locator('.management-user-row-blocked').first().hover();
@@ -330,4 +330,86 @@ test('Contacts columns omit stale keys and restore mandatory name', async t => {
   await dialog.getByRole('button', { name: 'Закрыть' }).click();
   assert.deepEqual(await page.locator('#managementUsersHeader th').allTextContents(), ['Внутренний номер', 'ФИО']);
   assert.deepEqual(saved, []);
+});
+
+
+const equalWidthMarker = '__equal_width__';
+async function assertEqualUserWidths(page, count) {
+  await page.waitForFunction(count => {
+    const table = document.querySelector('#managementUsersTable');
+    const cells = [...table.tHead.rows[0].cells];
+    const widths = cells.map(cell => cell.getBoundingClientRect().width);
+    const scroll = table.parentElement, style = getComputedStyle(scroll);
+    const available = scroll.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    return widths.length === count && Math.max(...widths) - Math.min(...widths) < 1
+      && Math.abs(table.getBoundingClientRect().width - available) < 2;
+  }, count);
+}
+
+for (const theme of ['light', 'dark']) test(`Contacts equal widths save, restore, cancel and standard mode: ${theme}`, async t => {
+  const original = ['custom_fio', 'internal_number', 'telegram_display_name'];
+  const { page, saved } = await setup(t, theme, 'admin', original);
+  const gear = page.getByRole('button', { name: 'Настройка списка пользователей' });
+  const dialog = page.getByRole('dialog', { name: 'Настройка списка пользователей' });
+  const checkbox = dialog.getByRole('checkbox', { name: 'Одинаковая ширина столбцов' });
+  const widths = () => page.locator('#managementUsersHeader th').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().width));
+  await page.waitForFunction(() => document.querySelector('#managementUsersHeader th')?.dataset.columnKey === 'custom_fio');
+  const standard = await widths();
+  assert.ok(standard[0] > standard[1]);
+  await gear.click();
+  const alignment = await checkbox.evaluate(input => {
+    const label = input.closest('label'), text = label.querySelector('span');
+    const box = input.getBoundingClientRect(), caption = text.getBoundingClientRect();
+    return { left: box.right <= caption.left, offset: Math.abs((box.top + box.height / 2) - (caption.top + caption.height / 2)),
+      lines: caption.height / parseFloat(getComputedStyle(text).lineHeight) };
+  });
+  assert.equal(alignment.left, true);
+  assert.ok(alignment.offset < 1, JSON.stringify(alignment));
+  assert.ok(alignment.lines <= 1.1, JSON.stringify(alignment));
+  assert.equal(await checkbox.isChecked(), false, 'legacy settings default to standard mode');
+  await checkbox.check();
+  await dialog.getByLabel('Добавить колонку').selectOption('destination');
+  await dialog.getByRole('button', { name: 'Закрыть' }).click();
+  assert.deepEqual(await widths(), standard, 'cancel keeps widths and columns');
+  assert.deepEqual(saved, []);
+  await gear.click();
+  assert.equal(await checkbox.isChecked(), false);
+  assert.equal(await dialog.locator('.columns-draft-row').count(), 3);
+  await checkbox.check();
+  await dialog.getByLabel('Добавить колонку').selectOption('destination');
+  await dialog.getByRole('button', { name: 'Сохранить' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  const expected = [...original, 'destination', equalWidthMarker];
+  assert.deepEqual(saved, [{ management_users_columns: expected }]);
+  await assertEqualUserWidths(page, 4);
+  await page.reload();
+  await page.waitForSelector('.management-user-row');
+  await assertEqualUserWidths(page, 4);
+  await gear.click();
+  assert.equal(await checkbox.isChecked(), true);
+  assert.equal(await dialog.locator('.columns-draft-row').count(), 4, 'marker is not an editable column');
+  assert.equal(await dialog.getByLabel('Добавить колонку').locator(`option[value="${equalWidthMarker}"]`).count(), 0);
+  await checkbox.uncheck();
+  await dialog.getByRole('button', { name: 'Закрыть' }).click();
+  await assertEqualUserWidths(page, 4);
+  await gear.click();
+  assert.equal(await checkbox.isChecked(), true, 'cancel preserves saved equal mode');
+  await checkbox.uncheck();
+  await dialog.getByRole('button', { name: 'Удалить: Отдел', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Сохранить' }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  assert.deepEqual(saved.at(-1), { management_users_columns: original });
+  assert.deepEqual(await widths(), standard, 'turning equal mode off restores the original algorithm');
+});
+
+for (const count of [1, 3, 6, 10]) test(`Contacts equal widths resize with ${count} columns`, async t => {
+  const keys = ['custom_fio', 'internal_number', 'telegram_display_name', 'telegram_username', 'destination',
+    'is_verified', 'custom_office', 'custom_location', 'custom_office_other', 'custom_department_note'].slice(0, count);
+  const { page } = await setup(t, 'light', 'agent', [...keys, equalWidthMarker]);
+  for (const width of [700, 1024, 1920]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await assertEqualUserWidths(page, count);
+  }
+  await page.locator('#managementUsersTable').evaluate(table => { table.parentElement.style.width = '650px'; });
+  await assertEqualUserWidths(page, count);
 });

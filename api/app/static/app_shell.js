@@ -124,7 +124,7 @@
         "/static/client_web_credentials.js?v=20261018-web-empty-autofill",
         "/static/ticket_client_card.js?v=20261105-field-config",
         "/static/desk_dialogs.js?v=20261027-dialog-prompts-v4",
-        "/static/management_user_columns.js?v=20261118-card-columns-v2",
+        "/static/management_user_columns.js?v=20261120-users-equal-width-v1",
         "/static/management_users.js?v=20261118-scroll-reset-v1",
       ],
     }],
@@ -148,7 +148,7 @@
         "/static/ticket_composer.js?v=20261111-shared-drafts-v1",
         "/static/ticket_controls.js?v=20261118-quick-actions-v1",
         "/static/ticket_message_view.js?v=20261117-message-clipboard-v1",
-        "/static/ticket.js?v=20261118-freeze-until-v1",
+        "/static/ticket.js?v=20261120-send-scroll-queue-v1",
       ],
     },
   ];

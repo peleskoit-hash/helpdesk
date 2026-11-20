@@ -270,3 +270,50 @@ for(const role of ['admin','agent']) test(`quick replies remain accessible by bu
   assert.equal(await page.locator('#quickRepliesPanel').isVisible(),true);
   assert.ok(quickRequests.some(url => url.includes('/search')));
 });
+
+
+for (const role of ['admin', 'agent']) test(`Ctrl+Q respects focus and modal boundaries: ${role}`, async t => {
+  const { page } = await setup(t, role);
+  await page.evaluate(() => {
+    const fixture = document.createElement('div');
+    fixture.innerHTML = `<button id="hotkeyButton">Button</button><a id="hotkeyLink" href="#">Link</a>
+      <div id="hotkeyPlain" tabindex="0">Plain</div><input id="hotkeyInput">
+      <textarea id="hotkeyTextarea"></textarea><select id="hotkeySelect"><option>Option</option></select>
+      <div contenteditable="true"><span id="hotkeyEditable" tabindex="0">Editable</span></div>
+      <div id="hotkeyModal" class="modal hidden"><button id="hotkeyModalButton">Modal</button></div>
+      <dialog id="hotkeyDialog"><button id="hotkeyDialogButton">Dialog</button></dialog>`;
+    document.querySelector('#appContent').append(fixture);
+    document.addEventListener('keydown', event => {
+      if (event.code === 'KeyQ') window.hotkeyPrevented = event.defaultPrevented;
+    });
+  });
+  const panel = page.locator('#quickRepliesPanel');
+  for (const selector of ['body', '#hotkeyButton', '#hotkeyLink', '#hotkeyPlain', '#ticketMessageBody']) {
+    await page.locator(selector).focus();
+    await page.keyboard.press('Control+q');
+    await panel.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => window.hotkeyPrevented), true, selector);
+    // Also toggle from ordinary focused elements while the panel is already open.
+    if (['#hotkeyButton', '#hotkeyLink', '#hotkeyPlain'].includes(selector)) await page.locator(selector).focus();
+    await page.keyboard.press('Control+q');
+    await panel.waitFor({ state: 'hidden' });
+  }
+  for (const selector of ['#hotkeyInput', '#hotkeyTextarea', '#hotkeySelect', '#hotkeyEditable']) {
+    await page.locator(selector).focus();
+    await page.keyboard.press('Control+q');
+    assert.equal(await page.evaluate(() => window.hotkeyPrevented), false, selector);
+    assert.equal(await panel.isVisible(), false, selector);
+  }
+  await page.locator('#hotkeyModal').evaluate(node => node.classList.remove('hidden'));
+  await page.locator('#hotkeyModalButton').focus();
+  await page.keyboard.press('Control+q');
+  assert.equal(await page.evaluate(() => window.hotkeyPrevented), false);
+  assert.equal(await panel.isVisible(), false);
+  await page.locator('#hotkeyModal').evaluate(node => node.classList.add('hidden'));
+  await page.locator('#hotkeyDialog').evaluate(node => node.showModal());
+  await page.locator('#hotkeyDialogButton').focus();
+  await page.keyboard.press('Control+q');
+  assert.equal(await page.evaluate(() => window.hotkeyPrevented), false);
+  assert.equal(await panel.isVisible(), false);
+  await page.locator('#hotkeyDialog').evaluate(node => node.close());
+});

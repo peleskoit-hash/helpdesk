@@ -1225,7 +1225,8 @@ def test_auto_column_width_mode_persists_with_widths_and_partial_patches():
 
 
 @pytest.mark.parametrize("role", ["admin", "agent"])
-def test_management_users_column_preferences_are_independent_and_keep_order(tmp_path, role):
+@pytest.mark.parametrize("equal_width", [False, True])
+def test_management_users_column_preferences_are_independent_and_keep_order(tmp_path, role, equal_width):
     factory = sessionmaker(bind=create_engine(f"sqlite:///{(tmp_path / 'users.sqlite').as_posix()}"))
     Base.metadata.create_all(factory.kw["bind"])
     ticket_columns = [{"key": "subject", "width": 340}]
@@ -1237,6 +1238,8 @@ def test_management_users_column_preferences_are_independent_and_keep_order(tmp_
         actors = [_current_user(effective_user_id=user.id, real_user_id=user.id, role=role)
                   for user in (first, second)]
         order = ["telegram_chat_id", "custom_fio", "custom_new"]
+        if equal_width:
+            order.append("__equal_width__")
         users_router.update_my_preferences(UserPreferencesUpdate(management_users_columns=order), session, actors[0])
         assert users_router.get_my_preferences(session, actors[1]).management_users_columns is None
         users_router.update_my_preferences(
@@ -1247,6 +1250,15 @@ def test_management_users_column_preferences_are_independent_and_keep_order(tmp_
         assert first_preferences.management_users_columns == order
         assert [column.model_dump() for column in first_preferences.ticket_list_columns] == ticket_columns
         assert users_router.get_my_preferences(session, actors[1]).management_users_columns == ["custom_fio"]
+        assert session.get(User, actors[0].id).management_users_columns_json == order
+        if equal_width:
+            standard = [key for key in order if key != "__equal_width__"]
+            users_router.update_my_preferences(
+                UserPreferencesUpdate(management_users_columns=standard), session, actors[0],
+            )
+            session.expire_all()
+            assert users_router.get_my_preferences(session, actors[0]).management_users_columns == standard
+            assert users_router.get_my_preferences(session, actors[1]).management_users_columns == ["custom_fio"]
 
 
 @pytest.mark.parametrize("invalid", [[], ["telegram"], ["custom_fio", "custom_fio"]])

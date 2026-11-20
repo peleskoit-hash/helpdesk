@@ -1532,7 +1532,7 @@ async function loadCard(options = {}) {
         ? Boolean(state.pendingCardReloadOptions.silent) && Boolean(options.silent)
         : Boolean(options.silent),
       preserveComposerDraft: Boolean(state.pendingCardReloadOptions?.preserveComposerDraft) || Boolean(options.preserveComposerDraft),
-      forceBottom: Boolean(state.pendingCardReloadOptions?.forceBottom) || Boolean(options.forceBottom),
+      forceBottom: Boolean(state.pendingCardReloadOptions?.forceBottom) || Boolean(options.forceBottom) || scrollAfterLocalSend,
     };
     return;
   }
@@ -1943,9 +1943,12 @@ function bindPageHandlers() {
 
   keydownHandler = (e) => {
     if (isQuickRepliesHotkey(e)) {
-      const tag = String(document.activeElement?.tagName || "").toLowerCase();
-      const inModal = Boolean(document.activeElement?.closest?.(".modal"));
-      if (!inModal && (document.activeElement === el.messageInput || tag === "body" || document.activeElement === el.quickRepliesSearchInput)) {
+      const active = document.activeElement;
+      const inModal = [...document.querySelectorAll('.modal, dialog[open], [aria-modal="true"]')]
+        .some((modal) => modal.getClientRects().length > 0);
+      const composerField = active === el.messageInput || active === el.quickRepliesSearchInput;
+      const otherEditable = !composerField && (active?.matches?.("input, textarea, select") || active?.isContentEditable);
+      if (!inModal && !otherEditable) {
         e.preventDefault();
         void toggleQuickRepliesPanel({ focusSearch: true }).catch((err) => showError(`Не удалось открыть быстрые ответы.\n\n${err.message || "Неизвестная ошибка"}`));
         return;

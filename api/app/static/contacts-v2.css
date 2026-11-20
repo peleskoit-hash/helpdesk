@@ -200,3 +200,15 @@ body #appContent.main[data-shell-page="management-users"] {
   & #managementUsersColumnsDialog .columns-delete-btn { color: var(--desk-danger); }
   & #managementUsersColumnsError { color: var(--desk-danger); }
 }
+
+body #appContent.main[data-shell-page="management-users"] #managementUsersColumnsDialog .columns-task-panel-toggle {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+body #appContent.main[data-shell-page="management-users"] #managementUsersColumnsEqualWidth {
+  flex: 0 0 auto;
+  margin: 0;
+}

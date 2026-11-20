@@ -57,7 +57,7 @@
     </aside>
 
     <main id="appContent" class="main" data-shell-page="management-users">
-      <link rel="stylesheet" href="/static/contacts-v2.css?v=20261118-users-columns-v1" />
+      <link rel="stylesheet" href="/static/contacts-v2.css?v=20261120-users-toggle-row-v1" />
       <div class="toolbar">
         <button class="action" type="button" data-shell-back>Назад</button>
         <div class="settings-title">Пользователи</div>
@@ -110,6 +110,10 @@
             <select id="managementUsersColumnAdd"></select>
           </label>
           <div id="managementUsersColumnDraft" class="columns-draft-list"></div>
+          <label class="columns-task-panel-toggle">
+            <input id="managementUsersColumnsEqualWidth" type="checkbox" class="desk-toggle" />
+            <span>Одинаковая ширина столбцов</span>
+          </label>
           <div id="managementUsersColumnsError" class="status" role="alert" hidden></div>
         </div>
         <div class="modal-foot columns-modal-foot">
@@ -215,10 +219,10 @@
   <script src="/static/sidebar.js?v=20261118-profile-modal-v1"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
   <script src="/static/desk_dialogs.js?v=20261027-dialog-prompts-v4"></script>
-  <script src="/static/app_shell.js?v=20261120-assignee-polling-v1"></script>
+  <script src="/static/app_shell.js?v=20261120-send-scroll-queue-v1"></script>
   <script src="/static/client_web_credentials.js?v=20261018-web-empty-autofill"></script>
   <script src="/static/ticket_client_card.js?v=20261105-field-config"></script>
-  <script src="/static/management_user_columns.js?v=20261118-card-columns-v2"></script>
+  <script src="/static/management_user_columns.js?v=20261120-users-equal-width-v1"></script>
   <script src="/static/management_users.js?v=20261118-scroll-reset-v1"></script>
 </body>
 </html>
