@@ -1,13 +1,13 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user, is_admin
 from ..db import get_db
 from ..services.employee_schedule_sync import claim_sync, run_sync, sync_status
-from ..services.employee_schedule import BindingError, binding_status, set_binding
+from ..services.employee_schedule import BindingError, binding_status, list_employees, remove_binding, set_binding
 
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -58,6 +58,15 @@ def start_sync(background_tasks: BackgroundTasks, db: Session = Depends(get_db))
 class BindingUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
+    external_employee_id: StrictStr | None = Field(default=None, min_length=1, max_length=100)
+
+
+class EmployeeOut(BaseModel):
+    external_employee_id: str
+    full_name: str
+    department_id: str
+    department_name: str
+    available: bool
 
 
 class ShiftOut(BaseModel):
@@ -89,6 +98,14 @@ def _binding_error(exc: BindingError):
     raise HTTPException(exc.status, detail={"error": {"code": exc.code, "message": exc.message}}) from None
 
 
+@router.get("/employee-schedule/employees", response_model=list[EmployeeOut], dependencies=[Depends(require_admin)])
+def get_employees(user_id: str | None = None, db: Session = Depends(get_db)):
+    try:
+        return list_employees(db, user_id=user_id)
+    except BindingError as exc:
+        _binding_error(exc)
+
+
 @router.get("/users/{user_id}/schedule", response_model=BindingOut, dependencies=[Depends(require_admin)])
 def get_binding(user_id: str, db: Session = Depends(get_db)):
     try:
@@ -100,7 +117,16 @@ def get_binding(user_id: str, db: Session = Depends(get_db)):
 @router.patch("/users/{user_id}/schedule", response_model=BindingOut, dependencies=[Depends(require_admin)])
 def update_binding(user_id: str, payload: BindingUpdate, db: Session = Depends(get_db)):
     try:
-        set_binding(db, user_id, payload.enabled)
+        set_binding(db, user_id, payload.enabled, external_employee_id=payload.external_employee_id)
+        return binding_status(db, user_id)
+    except BindingError as exc:
+        _binding_error(exc)
+
+
+@router.delete("/users/{user_id}/schedule", response_model=BindingOut, dependencies=[Depends(require_admin)])
+def delete_binding(user_id: str, db: Session = Depends(get_db)):
+    try:
+        remove_binding(db, user_id)
         return binding_status(db, user_id)
     except BindingError as exc:
         _binding_error(exc)

@@ -240,13 +240,41 @@ def test_individual_exact_end_and_actual_utc_history(case, shift, before, end):
     assert (rows[1].change_source, rows[1].change_source_time, rows[1].changed_by_admin) == ("workday_end", shift[-5:], False)
 
 
-def test_individual_late_shift_is_excluded_from_1901(case):
+def test_individual_late_shift_uses_1901_insurance_without_duplicate_transition(case):
     user = employee(case)
     binding = individual(case, user, shift="13:00-22:30")
-    assert case.run() == 0
+    assert case.run() == 1
     case.db.refresh(user); case.db.refresh(binding)
-    assert user.availability_status == "online" and binding.last_offline_work_date is None
-    assert case.run(moscow("2026-11-02T22:30:00")) == 1
+    assert user.availability_status == "offline" and binding.last_offline_work_date is None
+    assert case.run(moscow("2026-11-02T22:30:00")) == 0
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 2
+
+
+@pytest.mark.parametrize("connected", [False, True])
+@pytest.mark.parametrize("status", ["online", "offline"])
+def test_1901_insurance_for_all_agents_only_in_window_once(case, connected, status):
+    user = employee(case, status=status)
+    if connected:
+        individual(case, user, shift="13:00-22:30")
+    assert case.run(moscow("2026-11-02T19:00:59")) == 0
+    case.db.refresh(user)
+    assert user.availability_status == status
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 1
+    assert case.run() == (1 if status == "online" else 0)
+    case.db.refresh(user)
+    assert user.availability_status == "offline"
+    intervals = case.db.scalars(select(StatsUserStatusInterval).order_by(StatsUserStatusInterval.started_at)).all()
+    assert len(intervals) == (2 if status == "online" else 1)
+    if status == "online":
+        assert intervals[-1].started_at == datetime(2026, 11, 2, 16, 1)
+        assert (intervals[-1].change_source, intervals[-1].change_source_time) == ("workday_end", "19:00")
+        set_user_availability_status(case.db, user, "online", now=datetime(2026, 11, 2, 16, 1, 10))
+        case.db.commit()
+    before = len(case.db.scalars(select(StatsUserStatusInterval)).all())
+    assert case.run(moscow("2026-11-02T19:01:30")) == 0
+    case.db.refresh(user)
+    assert user.availability_status == status
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == before
 
 
 @pytest.mark.parametrize("connected_utc,expected", [
@@ -266,7 +294,7 @@ def test_individual_shift_must_end_strictly_after_connection(case, connected_utc
     assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 1 + expected
 
 
-def test_individual_repeat_restart_and_manual_online_are_not_overridden(case, monkeypatch):
+def test_individual_marker_survives_restart_and_manual_online_until_1901_insurance(case, monkeypatch):
     user = employee(case)
     binding = individual(case, user)
     assert case.run(moscow("2026-11-02T17:00:00")) == 1
@@ -276,11 +304,17 @@ def test_individual_repeat_restart_and_manual_online_are_not_overridden(case, mo
     # Clearing the old in-memory guard simulates a process restart; the binding is persistent.
     monkeypatch.setattr(offline, "_last_processed_date", None)
     assert case.run(moscow("2026-11-02T17:02:00")) == 0
-    assert case.run() == 0
-    assert case.run(moscow("2026-11-02T23:59:00")) == 0
     case.db.refresh(user); case.db.refresh(binding)
     assert user.availability_status == "online" and binding.last_offline_work_date == date(2026, 11, 2)
     assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 3
+    assert case.run() == 1
+    case.db.refresh(user); case.db.refresh(binding)
+    assert user.availability_status == "offline" and binding.last_offline_work_date == date(2026, 11, 2)
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 4
+    assert case.run(moscow("2026-11-02T23:59:00")) == 0
+    case.db.refresh(user); case.db.refresh(binding)
+    assert user.availability_status == "offline" and binding.last_offline_work_date == date(2026, 11, 2)
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 4
 
 
 def test_individual_already_offline_only_records_date_and_counts_transitions(case):
@@ -304,7 +338,7 @@ def test_individual_working_sunday(case):
 
 
 @pytest.mark.parametrize("kind", ["missing_month", "missing_employee", "missing_date", "non_working", "bad_shift"])
-def test_individual_unknown_or_nonworking_never_falls_back_to_1901(case, kind):
+def test_individual_unknown_or_nonworking_still_has_1901_insurance(case, kind):
     user = employee(case)
     binding = individual(case, user)
     row = case.db.get(Snapshot, "2026-11")
@@ -319,10 +353,10 @@ def test_individual_unknown_or_nonworking_never_falls_back_to_1901(case, kind):
         else: worker["days"][1]["shift"] = "22:00-06:00"
         row.payload_json = value
     case.db.commit()
-    assert case.run() == 0
+    assert case.run() == 1
     case.db.refresh(user); case.db.refresh(binding)
-    assert user.availability_status == "online" and binding.last_offline_work_date is None
-    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 1
+    assert user.availability_status == "offline" and binding.last_offline_work_date is None
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 2
 
 
 def test_individual_schedule_edits_later_earlier_and_cancellation(case):
@@ -332,14 +366,17 @@ def test_individual_schedule_edits_later_earlier_and_cancellation(case):
     edit_day(case, binding, "2026-11-02", shift="11:00-21:00")
     assert case.run(moscow("2026-11-02T17:00:00")) == 0
     edit_day(case, binding, "2026-11-02", work_day=False, shift="", mark="vacation")
-    assert case.run() == 0
+    assert case.run() == 1
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 2
     edit_day(case, binding, "2026-11-02", work_day=True, shift="11:00-16:00", mark="")
-    assert case.run(moscow("2026-11-02T19:02:00")) == 1
+    assert case.run(moscow("2026-11-02T19:02:00")) == 0
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 2
     # Extending a processed shift cannot automatically bring the employee Online.
     edit_day(case, binding, "2026-11-02", shift="11:00-23:00")
     assert case.run(moscow("2026-11-02T20:00:00")) == 0
     case.db.refresh(user)
     assert user.availability_status == "offline"
+    assert len(case.db.scalars(select(StatsUserStatusInterval)).all()) == 2
 
 
 @pytest.mark.parametrize("at,processed", [("2026-11-02T18:15:00", date(2026, 11, 2)),
@@ -448,15 +485,15 @@ def test_individual_only_active_agents(case, role, active):
     assert user.availability_status == "online" and binding.last_offline_work_date is None
 
 
-def test_individual_resolver_error_does_not_block_legacy_or_fall_back(case, monkeypatch):
+def test_individual_resolver_error_does_not_block_1901_insurance(case, monkeypatch):
     managed = employee(case)
     binding = individual(case, managed)
     legacy = employee(case)
     def fail(*args): raise RuntimeError("Synthetic failure")
     monkeypatch.setattr(offline, "resolve_employee_schedule", fail)
-    assert case.run() == 1
+    assert case.run() == 2
     case.db.refresh(managed); case.db.refresh(legacy); case.db.refresh(binding)
-    assert managed.availability_status == "online" and legacy.availability_status == "offline"
+    assert managed.availability_status == "offline" and legacy.availability_status == "offline"
     assert binding.last_offline_work_date is None
 
 

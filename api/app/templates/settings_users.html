@@ -107,11 +107,76 @@
             <div id="telegramNotificationStatus" class="settings-telegram-card-title">Бот уведомлений: не привязан</div>
             <div id="telegramNotificationDisplay" class="settings-telegram-card-meta hidden"></div>
           </div>
+          <div id="sparkBlock" class="settings-telegram-card hidden" aria-live="polite">
+            <div class="spark-summary"><strong>Расписание Spark</strong>
+              <span id="sparkSummary">Состояние загружается…</span></div>
+            <button id="openSparkBtn" type="button" class="action">Синхронизация с расписанием</button>
+          </div>
         </div>
       </div>
       <div class="modal-foot">
         <button id="deleteUserBtn" type="button" class="action hidden">Удалить сотрудника</button>
         <button id="saveUserBtn" type="button" class="action primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sparkModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sparkTitle">
+    <style>
+      #sparkModal .spark-actions { display:flex; flex-wrap:wrap; gap:8px; }
+      #sparkBlock .spark-summary { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; }
+      #sparkBlock { gap:8px; padding:10px 12px; }
+      #sparkModal .spark-content { display:grid; gap:10px; }
+      #sparkModal .settings-telegram-card { padding:10px 12px; margin:0; }
+      #sparkModal .spark-content p { margin:0; white-space:pre-line; overflow-wrap:anywhere; }
+      #sparkModal #sparkPicker { display:grid; gap:8px; }
+      #sparkModal label { display:grid; gap:6px; }
+      #sparkModal select { width:100%; max-width:100%; min-width:0; }
+      #sparkModal .spark-confirm { display:flex; align-items:center; gap:8px; }
+      #sparkModal #sparkFeedback { color:var(--desk-danger); }
+    </style>
+    <div class="modal-dialog settings-user-dialog">
+      <div class="modal-head"><strong id="sparkTitle">Расписание Spark</strong>
+        <button id="closeSparkBtn" type="button" class="action">Назад к пользователю</button></div>
+      <div class="modal-body spark-content">
+        <p id="sparkLocalName"></p>
+        <div class="settings-telegram-card" aria-live="polite">
+          <strong id="sparkBindingStatus">Загрузка…</strong>
+          <p id="sparkIdentity"></p><p id="sparkShift"></p>
+        </div>
+        <div class="settings-telegram-card" aria-live="polite">
+          <strong id="sparkSyncStatus"></strong><p id="sparkSyncTimes"></p>
+        </div>
+        <p id="sparkFeedback" role="alert"></p>
+        <div class="spark-actions">
+          <button id="sparkReconnectBtn" type="button" class="action primary hidden" data-spark-action>Подключить снова</button>
+          <button id="sparkChooseBtn" type="button" class="action" data-spark-action>Выбрать сотрудника из Spark</button>
+          <button id="sparkRefreshBtn" type="button" class="action" data-spark-action>Обновить из Spark</button>
+          <button id="sparkDisableBtn" type="button" class="action hidden" data-spark-action>Отключить синхронизацию</button>
+          <button id="sparkUnlinkBtn" type="button" class="action hidden" data-spark-action>Отвязать от Spark</button>
+        </div>
+        <div id="sparkPicker" class="hidden">
+          <label>Поиск по ФИО, отделу или ID<input id="sparkSearch" type="search" autocomplete="off" /></label>
+          <label>Сотрудники Spark<select id="sparkEmployees" size="6" aria-label="Сотрудники Spark"></select></label>
+          <p id="sparkListInfo" class="status"></p>
+          <label class="spark-confirm"><input id="sparkConfirm" type="checkbox" class="desk-toggle" />
+            <span id="sparkConfirmText">Подтверждаю выбор сотрудника</span></label>
+          <button id="sparkBindBtn" type="button" class="action primary" data-spark-action disabled>Подключить выбранного</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmSparkUnlinkModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmSparkUnlinkTitle">
+    <div class="modal-dialog">
+      <div class="modal-head"><strong id="confirmSparkUnlinkTitle">Отвязать от Spark?</strong></div>
+      <div class="modal-body">
+        <p id="sparkUnlinkIdentity"></p>
+        <p>Привязка к расписанию будет удалена, а ID Spark освобождён для нового выбора. Пользователь ES DESK, его данные и текущий статус сохранятся.</p>
+      </div>
+      <div class="modal-foot">
+        <button id="cancelSparkUnlinkBtn" type="button" class="action">Отмена</button>
+        <button id="confirmSparkUnlinkBtn" type="button" class="action primary">Отвязать от Spark</button>
       </div>
     </div>
   </div>
@@ -182,7 +247,7 @@
   <script src="/static/theme.js?v=20261029-contour-delete-only-v1-radius-v1"></script>
   <script src="/static/sidebar.js?v=20261118-profile-modal-v1"></script>
   <script src="/static/error_dialog.js?v=20261011a"></script>
-  <script src="/static/app_shell.js?v=20261119-task-tables-v1"></script>
-  <script src="/static/settings_users.js?v=20261118-scroll-reset-v1"></script>
+  <script src="/static/app_shell.js?v=20261120-spark-unlink-modal-v5"></script>
+  <script src="/static/settings_users.js?v=20261120-spark-unlink-modal-v5"></script>
 </body>
 </html>

@@ -103,14 +103,10 @@ def run_employee_auto_offline_once(*, at: datetime | None = None, session_factor
     now = local.astimezone(timezone.utc).replace(tzinfo=None)
     with session_factory() as db:
         _write_lock(db)
-        has_bindings = inspect(db.connection()).has_table(Binding.__tablename__)
         users = db.scalars(select(User).where(
             User.is_active.is_(True), User.role == "agent", User.availability_status != "offline",
         ).order_by(User.id).with_for_update()).all()
         for user in users:
-            binding = db.get(Binding, user.id) if has_bindings else None
-            if binding is not None and binding.enabled:
-                continue
             set_user_availability_status(
                 db, user, "offline", now=now, changed_by_admin=False,
                 change_source="workday_end", change_source_time="19:00",

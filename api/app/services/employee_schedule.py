@@ -1,4 +1,4 @@
-"""Local schedule binding and read-only shift resolution. No network or automation."""
+"""Live administrative binding and read-only resolution of published shifts."""
 from __future__ import annotations
 
 import unicodedata
@@ -10,7 +10,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from ..models import EmployeeScheduleBinding as Binding, EmployeeScheduleSnapshot as Snapshot, User
-from .employee_schedule_client import ScheduleError, validate_export
+from .employee_schedule_client import ScheduleError, fetch_month, validate_export
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
@@ -52,23 +52,19 @@ def _user(db, user_id, *, lock=False):
     return user
 
 
-def _published_employees(db):
-    if not _has_table(db, Snapshot):
-        raise BindingError("schedule_unavailable", "No published schedule data")
-    # One statement reads a consistent pair. SHARE locks keep publication from
-    # replacing these rows until the short binding transaction finishes on PG.
-    rows = list(db.scalars(select(Snapshot).order_by(Snapshot.month).with_for_update(read=True)))
-    if not rows:
-        raise BindingError("schedule_unavailable", "No published schedule data")
+def _live_employees(at):
+    local = at.astimezone(MOSCOW)
+    following = date(local.year + (local.month == 12), local.month % 12 + 1, 1)
     result = {}
-    for row in rows:
+    for month in (local.strftime("%Y-%m"), following.strftime("%Y-%m")):
         try:
-            validate_export(row.payload_json, row.month)
-        except ScheduleError:
-            raise BindingError("invalid_snapshot", "Published schedule data is invalid") from None
-        for department in row.payload_json["departments"]:
+            payload = validate_export(fetch_month(month), month)
+        except ScheduleError as exc:
+            raise BindingError("spark_" + exc.code,
+                               "Не удалось получить актуальные данные Spark. Повторите запрос позже.", 503) from None
+        for department in payload["departments"]:
             for employee in department["employees"]:
-                result.setdefault(str(employee["id"]), []).append((row.month, employee, department))
+                result.setdefault(str(employee["id"]), []).append((month, employee, department))
     return result
 
 
@@ -81,38 +77,66 @@ def _identity(records, at):
     return next((record for record in records if record[0] == month), records[-1])
 
 
-def set_binding(db, user_id: str, enabled: bool, *, at: datetime | None = None):
+def list_employees(db, *, user_id: str | None = None, at: datetime | None = None):
+    at = _now(at)
+    _require_binding_table(db)
+    if user_id is not None:
+        _user(db, user_id)
+    # Release the request's authorization/preflight read before HTTP, on PG too.
+    db.rollback()
+    employees = _live_employees(at)
+    _require_binding_table(db)
+    if user_id is not None:
+        _user(db, user_id)
+    occupied = dict(db.execute(select(Binding.external_employee_id, Binding.user_id)).all())
+    result = []
+    for ident, records in employees.items():
+        if ident in occupied:
+            continue
+        _, employee, department = _identity(records, at)
+        result.append({"external_employee_id": ident, "full_name": employee["full_name"],
+                       "department_id": str(department["id"]), "department_name": department["name"],
+                       "available": True})
+    return sorted(result, key=lambda employee: (normalize_name(employee["full_name"]), employee["external_employee_id"]))
+
+
+def set_binding(db, user_id: str, enabled: bool, *, external_employee_id: str | None = None,
+                at: datetime | None = None):
     at = _now(at)
     try:
-        # Request-local session: release the auth read before taking SQLite's write
-        # lock. PG serializes competing changes to this user with FOR UPDATE.
+        _require_binding_table(db)
+        user = _user(db, user_id)
+        if enabled and not user.is_active:
+            raise BindingError("user_inactive", "Only an active local user can be connected")
+        if enabled and external_employee_id is None and db.get(Binding, user_id) is None:
+            raise BindingError("external_id_required", "Select a Spark employee before connecting", 400)
+        db.rollback()
+        employees = _live_employees(at) if enabled else None
+        # Only now lock/recheck mutable local state. No HTTP runs in this transaction.
         if db.get_bind().dialect.name == "sqlite":
-            db.rollback()
             db.execute(text("BEGIN IMMEDIATE"))
         _require_binding_table(db)
         user = _user(db, user_id, lock=True)
         binding = db.get(Binding, user_id)
         if not enabled:
+            if external_employee_id is not None:
+                raise BindingError("external_id_on_disable", "An external ID cannot be selected while disabling", 400)
             if binding is not None:
                 binding.enabled = False
             db.commit()
             return
         if not user.is_active:
             raise BindingError("user_inactive", "Only an active local user can be connected")
-        employees = _published_employees(db)
-        if binding is None:
-            name = normalize_name(user.full_name)
-            matches = [ident for ident, records in employees.items()
-                       if any(normalize_name(employee["full_name"]) == name for _, employee, _ in records)]
-            if not matches:
-                raise BindingError("employee_not_found", "No employee matches the full name")
-            if len(matches) != 1:
-                raise BindingError("employee_ambiguous", "Multiple external IDs match the full name")
-            ident = matches[0]
+        if external_employee_id is not None:
+            ident = external_employee_id
+            if ident not in employees:
+                raise BindingError("employee_missing", "The selected external ID is absent from the live Spark response")
+        elif binding is None:
+            raise BindingError("external_id_required", "Select a Spark employee before connecting", 400)
         else:
             ident = binding.external_employee_id
             if ident not in employees:
-                raise BindingError("employee_missing", "The saved external ID is absent from published data")
+                raise BindingError("employee_missing", "The saved external ID is absent from the live Spark response")
         _, employee, department = _identity(employees[ident], at)
         occupied = db.scalar(select(Binding.user_id).where(Binding.external_employee_id == ident,
                                                          Binding.user_id != user_id))
@@ -122,6 +146,10 @@ def set_binding(db, user_id: str, enabled: bool, *, at: datetime | None = None):
         if binding is None:
             binding = Binding(user_id=user_id, external_employee_id=ident, connected_at=now)
             db.add(binding)
+        elif binding.external_employee_id != ident:
+            binding.external_employee_id = ident
+            binding.connected_at = now
+            binding.last_offline_work_date = None
         binding.enabled = True
         binding.external_full_name = employee["full_name"]
         binding.external_department_id = str(department["id"])
@@ -131,6 +159,23 @@ def set_binding(db, user_id: str, enabled: bool, *, at: datetime | None = None):
     except IntegrityError:
         db.rollback()
         raise BindingError("binding_conflict", "The external ID or user binding is already occupied") from None
+    except Exception:
+        db.rollback()
+        raise
+
+
+def remove_binding(db, user_id: str):
+    """Release only the local binding, including disabled reservations. No HTTP."""
+    try:
+        db.rollback()
+        if db.get_bind().dialect.name == "sqlite":
+            db.execute(text("BEGIN IMMEDIATE"))
+        _require_binding_table(db)
+        _user(db, user_id, lock=True)
+        binding = db.get(Binding, user_id)
+        if binding is not None:
+            db.delete(binding)
+        db.commit()
     except Exception:
         db.rollback()
         raise

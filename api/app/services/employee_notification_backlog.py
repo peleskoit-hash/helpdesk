@@ -218,15 +218,160 @@ def _offer(db: Session, period: EmployeeNotificationPeriod, *, sent: int | None 
     text = (f"В нерабочее время у Вас накопилось {remaining} уведомлений. Хотите их прочитать?"
             if sent is None else
             f"Выгрузил {sent} уведомлений. Осталось {remaining}. Показать следующие (максимум 5 за раз)?")
+    prefix = (f"nb:{period.id}:{period.offer_generation}" if period.period_mode == "schedule"
+              else f"nb:{period.id}")
     response = send_message(
         period.chat_id, text, bot_token=settings.employee_telegram_bot_token,
         reply_markup={"inline_keyboard": [[
-            {"text": "Да", "callback_data": f"nb:{period.id}:yes"},
-            {"text": "Нет", "callback_data": f"nb:{period.id}:no"},
+            {"text": "Да", "callback_data": f"{prefix}:yes"},
+            {"text": "Нет", "callback_data": f"{prefix}:no"},
         ]]},
     )
     period.message_id = str(response["result"]["message_id"])
     period.offered = True
+
+
+def _locked_schedule_period(db, period_id):
+    user_id = db.scalar(select(EmployeeNotificationPeriod.user_id).where(EmployeeNotificationPeriod.id == period_id))
+    if user_id is None or _lock_user(db, user_id) is None:
+        return None
+    _schedule_binding(db, user_id)
+    if inspect(db.connection()).has_table(Snapshot.__tablename__):
+        list(db.scalars(select(Snapshot.month).order_by(Snapshot.month).with_for_update(read=True)))
+    return db.scalar(select(EmployeeNotificationPeriod).where(EmployeeNotificationPeriod.id == period_id)
+                     .with_for_update().execution_options(populate_existing=True))
+
+
+def _schedule_delivery_allowed(db, period, now=None):
+    if (period is None or period.period_mode != "schedule" or not settings.employee_telegram_bot_token
+            or period.window_state != "resolved" or period.offer_at is None or period.expires_at is None
+            or _schedule_binding(db, period.user_id) is None):
+        return None
+    local = _moscow_now(now)
+    utc = local.astimezone(timezone.utc).replace(tzinfo=None)
+    if not period.offer_at <= utc < period.expires_at:
+        return None
+    shift = resolve_employee_schedule(db, period.user_id, local)
+    if (shift.status != "working" or not _inside_shift(shift, local) or shift.date != period.work_date
+            or shift.start_at.astimezone(timezone.utc).replace(tzinfo=None) != period.offer_at
+            or shift.end_at.astimezone(timezone.utc).replace(tzinfo=None) != period.expires_at):
+        return None
+    revision = db.scalar(select(Snapshot.revision).where(Snapshot.month == period.work_date.strftime("%Y-%m")))
+    if revision != period.schedule_revision:
+        return None
+    account = _eligible_account(db, period)
+    if account is not None:
+        db.refresh(account, with_for_update=True)
+        account = _eligible_account(db, period)
+    return account
+
+
+def _offer_schedule(db, period_id, *, now=None, sent=None):
+    period = _locked_schedule_period(db, period_id)
+    if (not _schedule_delivery_allowed(db, period, now) or period.offered or period.message_id is not None):
+        return
+    first = db.scalar(select(EmployeeNotificationBacklog).where(
+        EmployeeNotificationBacklog.period_id == period.id).order_by(EmployeeNotificationBacklog.id).limit(1))
+    if first is None or first.send_state != "pending":
+        return
+    period.offer_generation += 1
+    period.offer_state, period.offered = "offered", True
+    generation = period.offer_generation
+    # Persist the offer attempt: an ambiguous Telegram result must not cause
+    # another prompt on every worker pass or after restart.
+    db.commit()
+    period = _locked_schedule_period(db, period_id)
+    if (not _schedule_delivery_allowed(db, period, now) or period.offer_generation != generation
+            or period.offer_state != "offered" or not period.offered or period.message_id is not None):
+        if (period is not None and period.offer_generation == generation and period.message_id is None):
+            # The request has not started: this is a known unsent offer.
+            period.offered, period.offer_state = False, "idle"
+            db.commit()
+        return
+    try:
+        _offer(db, period, sent=sent)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("Could not confirm employee schedule backlog offer")
+
+
+def _handle_schedule_callback(db, callback, parts, now):
+    ignored = {"ok": True, "ignored": True}
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    period = _locked_schedule_period(db, parts[1])
+    account = _schedule_delivery_allowed(db, period, now)
+    if (account is None or period.offer_state != "offered" or not period.offered
+            or str(period.offer_generation) != parts[2] or period.message_id is None
+            or period.message_id != str(message.get("message_id"))
+            or period.chat_id != str(chat.get("id"))
+            or account.telegram_user_id != str((callback.get("from") or {}).get("id"))):
+        db.rollback()
+        return ignored
+    period_id = period.id
+    prompts = []
+    _invalidate_offer(period, prompts)
+    if parts[3] == "no":
+        _clear(db, period)
+    else:
+        period.offered = True  # Reserve this batch across durable per-item commits.
+    generation = period.offer_generation
+    sender_id = account.telegram_user_id
+    db.commit()  # Consume the button before any external action.
+    for chat_id, message_id in prompts:
+        _delete_prompt(chat_id, message_id)
+    if parts[3] == "no":
+        return {"ok": True, "backlog": True}
+    sent = 0
+    for _ in range(5):
+        period = _locked_schedule_period(db, period_id)
+        account = _schedule_delivery_allowed(db, period, now)
+        if account is None or account.telegram_user_id != sender_id or period.offer_generation != generation:
+            break
+        item = db.scalar(select(EmployeeNotificationBacklog).where(
+            EmployeeNotificationBacklog.period_id == period_id
+        ).order_by(EmployeeNotificationBacklog.id).limit(1).with_for_update())
+        if item is None or item.send_state != "pending":
+            break
+        item_id, attempt = item.id, str(uuid.uuid4())
+        item.send_state, item.send_attempt_id = "sending", attempt
+        db.commit()
+        period = _locked_schedule_period(db, period_id)
+        item = db.get(EmployeeNotificationBacklog, item_id, populate_existing=True)
+        if item is None or item.period_id != period_id or item.send_attempt_id != attempt:
+            break
+        account = _schedule_delivery_allowed(db, period, now)
+        if account is None or account.telegram_user_id != sender_id or period.offer_generation != generation:
+            item.send_state, item.send_attempt_id = "pending", None
+            db.commit()  # No network request was made.
+            break
+        try:
+            response = send_message(
+                period.chat_id, item.text, parse_mode=item.parse_mode,
+                bot_token=settings.employee_telegram_bot_token,
+                disable_web_page_preview=item.disable_link_preview, disable_notification=item.send_silently,
+                retry_only_parse_errors=True,
+            )
+        except Exception:
+            item.send_state = "unknown"
+            db.commit()
+            logger.warning("Employee schedule backlog delivery result is unknown")
+            break
+        if not response.get("ok"):
+            item.send_state, item.send_attempt_id = "pending", None
+            db.commit()
+            break
+        db.delete(item)
+        db.commit()
+        sent += 1
+    period = _locked_schedule_period(db, period_id)
+    if period is not None and period.offer_generation == generation:
+        period.offered = False
+        db.commit()
+    _offer_schedule(db, period_id, now=now, sent=sent)
+    db.rollback()  # Release locks if no next offer was needed.
+    return {"ok": True, "backlog": True}
 
 
 def _expired(period: EmployeeNotificationPeriod, local: datetime) -> bool:
@@ -392,6 +537,12 @@ def run_employee_notification_backlog_once(*, session_factory=SessionLocal, now_
     if not settings.employee_telegram_bot_token:
         return
     with session_factory() as db:
+        schedule_ids = list(db.scalars(select(EmployeeNotificationPeriod.id).where(
+            EmployeeNotificationPeriod.period_mode == "schedule")))
+    for period_id in schedule_ids:
+        with session_factory() as db:
+            _offer_schedule(db, period_id, now=now_utc)
+    with session_factory() as db:
         ids = list(db.execute(select(EmployeeNotificationPeriod.id, EmployeeNotificationPeriod.user_id).where(
             EmployeeNotificationPeriod.period_mode == "legacy",
             EmployeeNotificationPeriod.work_date <= local.date()
@@ -423,12 +574,14 @@ def run_employee_notification_backlog_once(*, session_factory=SessionLocal, now_
 def handle_backlog_callback(db: Session, callback: dict, *, now: datetime | None = None) -> dict:
     ignored = {"ok": True, "ignored": True}
     parts = str(callback.get("data") or "").split(":")
-    if len(parts) != 3 or parts[2] not in {"yes", "no"}:
+    if len(parts) not in {3, 4} or parts[-1] not in {"yes", "no"}:
         return ignored
     message = callback.get("message") or {}
     chat = message.get("chat") or {}
     if chat.get("type") != "private":
         return ignored
+    if len(parts) == 4:
+        return _handle_schedule_callback(db, callback, parts, now)
     user_id = db.scalar(select(EmployeeNotificationPeriod.user_id).where(EmployeeNotificationPeriod.id == parts[1]))
     if user_id is None or _lock_user(db, user_id) is None or _schedule_binding(db, user_id) is not None:
         db.rollback()

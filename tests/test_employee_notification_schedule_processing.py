@@ -62,14 +62,25 @@ def test_shift_move_cancellation_and_unknown_invalidate_old_offer(env):
     bind(env); publish(env)
     seed(env, times=("2026-11-09T09:00:00",), day=date(2026, 11, 9))
     run(env)
-    with env.factory.begin() as db:
-        p = db.get(Period, "p")
-        p.message_id, p.offered, p.offer_state = "111", True, "offered"
+    old = rows(env, Period)[0]
+    before = rows(env, Backlog)
+    assert len(env.sent) == 1 and old["message_id"] is not None
+    old_button = {"data": f"nb:p:{old['offer_generation']}:yes", "from": {"id": "a"},
+                  "message": {"message_id": old["message_id"], "chat": {"id": "a", "type": "private"}}}
     change(env, {"2026-11-09": "11:00-20:00", "2026-11-10": "11:00-17:00"})
     run(env, "2026-11-09T18:00:00")
     p = rows(env, Period)[0]
+    assert p["work_date"] == date(2026, 11, 9) and p["offer_at"] == datetime(2026, 11, 9, 8)
     assert p["expires_at"] == datetime(2026, 11, 9, 17)
-    assert p["message_id"] is None and p["offer_state"] == "invalidated" and env.deleted
+    assert p["message_id"] != old["message_id"] and p["offer_state"] == "offered"
+    assert p["offer_generation"] > old["offer_generation"] and len(env.sent) == 2
+    assert env.sent[-1][2]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"nb:p:{p['offer_generation']}:yes"
+    assert len(env.deleted) == 1 and env.deleted[0][1]["payload"]["message_id"] == int(old["message_id"])
+    assert rows(env, Backlog) == before
+    with env.factory() as db:
+        assert backlog.handle_backlog_callback(db, old_button, now=local("2026-11-09T18:00:00"))["ignored"]
+    run(env, "2026-11-09T18:00:00")
+    assert rows(env, Period)[0] == p and rows(env, Backlog) == before and len(env.sent) == 2
     change(env, {"2026-11-10": "11:00-17:00"})
     run(env, "2026-11-09T21:00:00")
     assert rows(env, Period)[0]["work_date"] == date(2026, 11, 10)
@@ -77,7 +88,9 @@ def test_shift_move_cancellation_and_unknown_invalidate_old_offer(env):
     run(env, "2026-11-11T20:00:00")
     p = rows(env, Period)[0]
     assert p["window_state"] == "unresolved" and p["work_date"] is p["expires_at"] is None
-    assert len(rows(env, Backlog)) == 1 and not env.sent
+    assert rows(env, Backlog) == before and len(env.sent) == 2
+    run(env, "2026-11-11T20:00:00")
+    assert rows(env, Backlog) == before and len(env.sent) == 2
 
 
 def test_split_unresolved_and_expire_only_confirmed_previous_window(env):
@@ -220,9 +233,18 @@ def test_shortened_shift_expires_on_new_confirmed_end(env):
     bind(env); publish(env)
     seed(env, times=("2026-11-09T09:00:00",))
     run(env)
+    old = rows(env, Period)[0]
+    assert len(env.sent) == 1 and old["message_id"] is not None
     change(env, {"2026-11-09": "11:00-13:00"})
     run(env, "2026-11-09T13:00:00")
-    assert not rows(env, Backlog) and not rows(env, Period) and not env.sent
+    assert not rows(env, Backlog) and not rows(env, Period) and len(env.sent) == 1
+    assert len(env.deleted) == 1 and env.deleted[0][1]["payload"]["message_id"] == int(old["message_id"])
+    old_button = {"data": f"nb:p:{old['offer_generation']}:yes", "from": {"id": "a"},
+                  "message": {"message_id": old["message_id"], "chat": {"id": "a", "type": "private"}}}
+    with env.factory() as db:
+        assert backlog.handle_backlog_callback(db, old_button, now=local("2026-11-09T13:00:00"))["ignored"]
+    run(env, "2026-11-09T13:00:00")
+    assert len(env.sent) == 1 and len(env.deleted) == 1
 
 
 def test_retention_commits_even_if_telegram_prompt_deletion_fails(env, monkeypatch):
@@ -270,7 +292,8 @@ def test_inactive_unknown_window_retained_until_thirty_days(env):
 
 
 def test_reactivated_recalculates_moved_shift_before_old_expiry(env):
-    confirmed_then_deactivate(env)
+    old = confirmed_then_deactivate(env)
+    before = rows(env, Backlog)
     run(env, "2026-11-09T10:00:00")
     change(env, {"2026-11-09": "11:00-20:00"})
     with env.factory.begin() as db:
@@ -278,10 +301,20 @@ def test_reactivated_recalculates_moved_shift_before_old_expiry(env):
         db.get(User, "a").is_active = True
     run(env, "2026-11-09T18:00:00")
     p = rows(env, Period)[0]
+    assert p["work_date"] == date(2026, 11, 9) and p["offer_at"] == datetime(2026, 11, 9, 8)
     assert p["expires_at"] == datetime(2026, 11, 9, 17) and p["schedule_revision"] == 43
-    assert len(rows(env, Backlog)) == 1 and not env.sent
+    assert rows(env, Backlog) == before and len(env.sent) == 1
+    assert p["message_id"] is not None and p["offer_state"] == "offered" and p["offer_generation"] > old["offer_generation"]
+    assert env.sent[-1][2]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"nb:p:{p['offer_generation']}:yes"
+    stale_button = {"data": f"nb:p:{old['offer_generation']}:yes", "from": {"id": "a"},
+                    "message": {"message_id": p["message_id"], "chat": {"id": "a", "type": "private"}}}
+    with env.factory() as db:
+        assert backlog.handle_backlog_callback(db, stale_button, now=local("2026-11-09T18:00:00"))["ignored"]
+    run(env, "2026-11-09T18:00:00")
+    assert rows(env, Period)[0] == p and rows(env, Backlog) == before and len(env.sent) == 1
     run(env, "2026-11-09T20:00:00")
-    assert not rows(env, Backlog)
+    assert not rows(env, Backlog) and not rows(env, Period) and len(env.sent) == 1
+    assert len(env.deleted) == 1 and env.deleted[0][1]["payload"]["message_id"] == int(p["message_id"])
 
 
 def test_deactivation_invalidates_active_button_but_keeps_window(env):

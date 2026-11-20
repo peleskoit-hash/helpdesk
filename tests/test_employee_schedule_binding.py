@@ -39,7 +39,7 @@ def payload(month="2026-11", ident=1, name=NAME):
 
 
 @pytest.fixture(params=["sqlite", "postgresql"])
-def store(request, tmp_path):
+def store(request, tmp_path, monkeypatch):
     if request.param == "postgresql":
         raw_url = os.environ.get("EMPLOYEE_SCHEDULE_TEST_DATABASE_URL")
         if not raw_url:
@@ -75,7 +75,13 @@ def store(request, tmp_path):
             db.add_all([User(id="a", company_id="c", full_name=NAME, role="agent", is_active=True, availability_status="online"),
                         User(id="b", company_id="c", full_name="Other Synthetic Employee", role="agent", is_active=True),
                         User(id="admin", company_id="c", full_name="Synthetic Admin", role="admin", is_active=True)])
-        yield SimpleNamespace(engine=engine, factory=factory)
+        live = {}
+        def fetch(month):
+            if month not in live:
+                raise schedule.ScheduleError("network_error")
+            return copy.deepcopy(live[month])
+        monkeypatch.setattr(schedule, "fetch_month", fetch)
+        yield SimpleNamespace(engine=engine, factory=factory, live=live)
     finally:
         try:
             with engine.begin() as conn:
@@ -91,6 +97,7 @@ def publish(store, months=("2026-11", "2026-12"), edit=None):
             value = payload(month)
             if edit:
                 edit(value)
+            store.live[month] = copy.deepcopy(value)
             row = db.get(Snapshot, month)
             if row is None:
                 row = Snapshot(month=month)
@@ -101,7 +108,8 @@ def publish(store, months=("2026-11", "2026-12"), edit=None):
 
 def connect(store, user="a", enabled=True, at=AT):
     with store.factory() as db:
-        schedule.set_binding(db, user, enabled, at=at)
+        ident = "1" if enabled and db.get(Binding, user) is None else None
+        schedule.set_binding(db, user, enabled, external_employee_id=ident, at=at)
 
 
 def resolve(store, at=AT):
@@ -159,14 +167,15 @@ def test_no_fuzzy_initials_or_word_reordering(store, name):
     publish(store)
     with store.factory.begin() as db:
         db.get(User, "a").full_name = name
-    with pytest.raises(schedule.BindingError, match="employee_not_found"):
-        connect(store)
+    with store.factory() as db:
+        with pytest.raises(schedule.BindingError, match="external_id_required"):
+            schedule.set_binding(db, "a", True, at=AT)
     with store.factory() as db:
         assert db.get(Binding, "a") is None
 
 
-@pytest.mark.parametrize("kind,code", [("homonyms", "employee_ambiguous"), ("conflicting_name", "inconsistent_employee"),
-                                      ("duplicate_id", "invalid_snapshot"), ("bad_calendar", "invalid_snapshot")])
+@pytest.mark.parametrize("kind,code", [("conflicting_name", "inconsistent_employee"),
+                                      ("duplicate_id", "spark_invalid_payload"), ("bad_calendar", "spark_invalid_payload")])
 def test_ambiguous_or_inconsistent_data_never_creates_binding(store, kind, code):
     def edit(value):
         employee = value["departments"][0]["employees"][0]
@@ -319,7 +328,7 @@ def test_unbound_missing_data_and_read_only_resolver(store):
     connect(store, enabled=False)
     with store.factory() as db:
         assert db.get(Binding, "a") is None
-    with pytest.raises(schedule.BindingError, match="schedule_unavailable"):
+    with pytest.raises(schedule.BindingError, match="spark_network_error"):
         connect(store)
     publish(store)
     connect(store)
@@ -364,7 +373,7 @@ def test_reenable_invalid_snapshot_preserves_existing_binding(store):
         row = db.get(Binding, "a")
         before = (row.external_employee_id, row.enabled, row.connected_at, row.last_checked_at)
     publish(store, edit=lambda p: p["departments"][0]["employees"][0]["days"].pop())
-    with pytest.raises(schedule.BindingError, match="invalid_snapshot"):
+    with pytest.raises(schedule.BindingError, match="spark_invalid_payload"):
         connect(store)
     with store.factory() as db:
         row = db.get(Binding, "a")
@@ -397,12 +406,13 @@ def test_admin_routes_validation_and_existing_routes_preserved(store):
             assert http.get(url).status_code == 403
             assert http.patch(url, json={"enabled": True}).status_code == 403
         actor.role = "admin"
-        for value in ({}, {"enabled": "true"}, {"enabled": 1}, {"enabled": None}, {"enabled": True, "external_employee_id": "2"}):
+        for value in ({}, {"enabled": "true"}, {"enabled": 1}, {"enabled": None}, {"enabled": True, "external_employee_id": 2}):
             assert http.patch(url, json=value).status_code == 422
         assert http.get("/api/v1/settings/users/missing/schedule").status_code == 404
         assert http.patch("/api/v1/settings/users/missing/schedule", json={"enabled": True}).status_code == 404
         assert http.get(url).json()["external_employee_id"] is None
-        result = http.patch(url, json={"enabled": True})
+        assert http.patch(url, json={"enabled": True}).status_code == 400
+        result = http.patch(url, json={"enabled": True, "external_employee_id": "1"})
         assert result.status_code == 200 and result.json()["external_employee_id"] == "1"
         assert "payload_json" not in result.text
         assert http.patch(url, json={"enabled": False}).json()["enabled"] is False

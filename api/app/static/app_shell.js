@@ -65,7 +65,7 @@
     ["/management/tasks", { page: "management-tasks", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_tasks.js?v=20261119-task-tables-v1"] }],
     ["/management/saved-files", { page: "management-saved-files", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/management_saved_files.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings", { page: "settings-home", scripts: ["/static/settings_home.js?v=20260602a"] }],
-    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261118-scroll-reset-v1"] }],
+    ["/settings/users", { page: "settings-users", scripts: ["/static/settings_users.js?v=20261120-spark-unlink-modal-v5"] }],
     ["/settings/client-card", { page: "settings-client-card", scripts: ["/static/desk_dialogs.js?v=20261027-dialog-prompts-v4", "/static/settings_client_card.js?v=20261027-dialogs-complete-v3"] }],
     ["/settings/bot-buttons", {
       page: "settings-bot-buttons",
