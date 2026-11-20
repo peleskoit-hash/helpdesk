@@ -42,6 +42,8 @@ let pollTimer = null;
 let unsubscribeSidebar = null;
 let ownsPopState = false;
 let pendingLoadOptions = null;
+let activeAssigneeSelect = null;
+let pendingAssigneeRender = false;
 let loadedPage = null;
 let renderedPage = null;
 let resetScrollOnRender = false;
@@ -780,7 +782,7 @@ async function measureLoadedAutoColumns() {
   state.ticketListColumns = window.HelpdeskTicketColumnAutoWidth.measure(el.ticketsTable,
     normalizeTicketColumns(state.ticketListColumns), [...el.ticketsTableBody.rows]);
   measuredAutoPage = signature;
-  renderTable();
+  renderTable({ background: true });
 }
 
 function fixedTableWidth(columns) {
@@ -1398,8 +1400,14 @@ function ticketCellHtml(column, ticket, ticketHref, linkedCell) {
   return "";
 }
 
-function renderTable() {
+function renderTable({ background = false } = {}) {
   if (state.columnReorderDrag) return;
+  if (background && activeAssigneeSelect?.isConnected) {
+    pendingAssigneeRender = true;
+    return false;
+  }
+  activeAssigneeSelect = null;
+  pendingAssigneeRender = false;
   const filtered = sortTickets(state.tickets);
   const activeColumns = activeTicketColumns();
   state.visibleTicketIds = filtered.map((t) => t.id);
@@ -1487,9 +1495,22 @@ function renderTable() {
     if (selectedId) {
       select.value = selectedId;
     }
+    const startAssigneeInteraction = () => { activeAssigneeSelect = select; };
+    select.addEventListener("focus", startAssigneeInteraction);
+    select.addEventListener("pointerdown", startAssigneeInteraction);
+    select.addEventListener("keydown", startAssigneeInteraction);
+    select.addEventListener("blur", () => {
+      if (activeAssigneeSelect !== select) return;
+      activeAssigneeSelect = null;
+      if (pendingAssigneeRender) {
+        renderTable();
+        measureLoadedAutoColumns();
+      }
+    });
     select.addEventListener("click", (event) => event.stopPropagation());
     select.addEventListener("change", async (event) => {
       event.stopPropagation();
+      activeAssigneeSelect = null;
       try {
         await assignTickets([select.dataset.ticketId], select.value || null);
       } catch (e) {
@@ -1774,8 +1795,9 @@ async function loadTickets(options = {}) {
     }
 
     renderTaskPanel();
-    renderTable();
-    measureLoadedAutoColumns();
+    if (renderTable({ background: silent && !historyMode }) !== false) {
+      measureLoadedAutoColumns();
+    }
     setStatus("Готово");
   } catch (e) {
     if (!silent) showError(`Не удалось загрузить список заявок.\n\n${e.message || "Неизвестная ошибка"}`);

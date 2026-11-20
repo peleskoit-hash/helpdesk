@@ -10,6 +10,14 @@ test.after(async () => { await browser?.close(); });
 async function setup(t, theme, width) {
   const page = await browser.newPage({ viewport: { width, height: 1000 } });
   t.after(() => page.close());
+  await page.addInitScript(() => {
+    const original = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay !== 5000) return original(callback, delay, ...args);
+      window.pollTickets = callback;
+      return 0;
+    };
+  });
   const errors = [], writes = [];
   let rejectAssignment = false;
   page.on('pageerror', e => errors.push(e.message));
@@ -32,6 +40,10 @@ async function setup(t, theme, width) {
     if (req.method() === 'POST') {
       writes.push({ path: p, body: req.postDataJSON() });
       if (rejectAssignment) return route.fulfill({ status: 409, json: { detail: 'Назначение отклонено' } });
+      if (p.endsWith('/assign')) {
+        const assignment = req.postDataJSON();
+        for (const item of items) if (assignment.ticket_ids.includes(item.id)) item.assignee_id = assignment.assignee_id;
+      }
       return route.fulfill({ json: {} });
     }
     if (p.endsWith('/preferences')) {
@@ -55,7 +67,7 @@ async function setup(t, theme, width) {
   await page.addScriptTag({ content: fs.readFileSync('api/app/static/list.js', 'utf8') });
   await page.evaluate(() => { window.listPage = window.initList(); });
   await page.waitForFunction(() => document.querySelectorAll('.ticket-row').length === 20);
-  return { page, writes, kinds, rejectAssignment: () => { rejectAssignment = true; } };
+  return { page, writes, kinds, items, rejectAssignment: () => { rejectAssignment = true; } };
 }
 
 for (const theme of ['light', 'dark']) for (const width of [1440, 700, 390]) {
@@ -144,4 +156,33 @@ test('row gradients preserve the base geometry and change only the first color',
   for (const kind of ['request', 'task', 'group-task', 'internal-task', 'frozen', 'closed']) {
     assert.ok(css.includes(`& tr.ticket-color-${kind} { background: linear-gradient(90deg, var(--ticket-type-${kind}-bg), var(--desk-surface) 70%); }`));
   }
+});
+
+for (const finish of ['change', 'blur']) test(`row assignee survives polling until ${finish}`, async t => {
+  const { page, writes, items } = await setup(t, 'light', 1440);
+  const select = page.locator('.row-assignee-select[data-ticket-id="1"]');
+  await select.focus();
+  await select.press('Alt+ArrowDown');
+  await select.evaluate(node => { window.originalAssigneeSelect = node; });
+  for (let cycle = 1; cycle <= 3; cycle++) {
+    items[0].subject = `Fresh subject ${cycle}`;
+    const response = page.waitForResponse(r => r.url().includes('/api/v1/tickets/active'));
+    await page.evaluate(() => window.pollTickets());
+    assert.equal((await response).status(), 200);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await select.evaluate(node => node === window.originalAssigneeSelect && node === document.activeElement), true);
+    assert.equal(await page.getByText(`Fresh subject ${cycle}`, { exact: true }).count(), 0);
+  }
+  if (finish === 'change') {
+    await select.selectOption('second_agent');
+    await page.waitForFunction(() => document.querySelector('.row-assignee-select[data-ticket-id="1"]') !== window.originalAssigneeSelect);
+    assert.deepEqual(writes[0], { path: '/api/v1/tickets/assign', body: { ticket_ids: ['1'], assignee_id: 'second_agent' } });
+    assert.equal(await select.inputValue(), 'second_agent');
+  } else {
+    await select.press('Escape');
+    await select.press('Tab');
+    await page.getByText('Fresh subject 3', { exact: true }).waitFor();
+    assert.equal(writes.length, 0);
+  }
+  await page.getByText('Fresh subject 3', { exact: true }).waitFor();
 });

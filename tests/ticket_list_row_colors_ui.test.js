@@ -81,7 +81,7 @@ test("ticket row color css applies one row-wide gradient from the left edge", ()
 test("ticket color preference is loaded, toggled, and persisted with a partial patch", () => {
   assert.match(template, /id="colorEnabledInput"[^>]*type="checkbox"/);
   assert.match(template, /id="colorToggleText"[^>]*>Цветные плашки<\/span>/);
-  assert.match(template, /list\.js\?v=20261118-scroll-reset-v1/);
+  assert.match(template, /list\.js\?v=20261120-assignee-polling-v1/);
   assert.match(template, /styles\.css\?v=20261118-ticket-table-centering-v1/);
 
   const stateSource = sourceBetween(listSource, "const state = {", "};\n\nconst endpointMap");
@@ -175,13 +175,13 @@ test("ticket task panel preference control and lifecycle are wired into list set
 
   const loadTicketsSource = sourceBetween(listSource, "async function loadTickets", "async function loadCounts");
   assert.match(loadTicketsSource, /Promise\.all\(\[[\s\S]*api\(`\$\{base\}\?\$\{queryParams\.toString\(\)\}`\),[\s\S]*fetchTaskPanelItems\(\{ silent: true \}\)/);
-  assert.ok(loadTicketsSource.indexOf("fetchTaskPanelItems({ silent: true })") < loadTicketsSource.indexOf("renderTable();"));
-  assert.ok(loadTicketsSource.indexOf("renderTaskPanel();") < loadTicketsSource.indexOf("renderTable();"));
+  assert.ok(loadTicketsSource.indexOf("fetchTaskPanelItems({ silent: true })") < loadTicketsSource.indexOf("renderTable({ background:"));
+  assert.ok(loadTicketsSource.indexOf("renderTaskPanel();") < loadTicketsSource.indexOf("renderTable({ background:"));
 });
 
 test("ticket list shell remount refreshes dom refs before binding listeners", () => {
-  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1", "\/static\/task_panel_layout\.js\?v=20261116-task-panel-v2", "\/static\/list\.js\?v=20261118-scroll-reset-v1"\] \}\]/);
-  assert.match(template, /list\.js\?v=20261118-scroll-reset-v1/);
+  assert.match(appShellSource, /\["\/tickets", \{ page: "tickets-list", scripts: \["\/static\/desk_dialogs\.js\?v=20261027-dialog-prompts-v4", "\/static\/ticket_column_auto_width\.js\?v=20261106-column-auto-width-v1", "\/static\/task_panel_layout\.js\?v=20261116-task-panel-v2", "\/static\/list\.js\?v=20261120-assignee-polling-v1"\] \}\]/);
+  assert.match(template, /list\.js\?v=20261120-assignee-polling-v1/);
 
   const collectSource = sourceBetween(listSource, "function collectElements()", "const REQUIRED_LIST_ELEMENT_KEYS");
   const context = vm.createContext({});
