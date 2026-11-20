@@ -1738,3 +1738,29 @@ def _notification_work_hours(monkeypatch):
 
     original = backlog._moscow_now
     monkeypatch.setattr(backlog, "_moscow_now", lambda now=None: original(now or datetime(2026, 11, 9, 9)))
+
+
+@pytest.mark.parametrize("workflow_type", ["ticket", "task"])
+def test_transfer_author_tag_uses_original_client_not_agents_or_transfer_actor(workflow_type):
+    session = _session()
+    company = _company(session)
+    client = _client(session, company.id)
+    old_agent = _user(session, company_id=company.id, full_name="Old Agent")
+    new_agent = _user(session, company_id=company.id, full_name="New Agent")
+    actor = _user(session, company_id=company.id, full_name="Transfer Admin", role="admin")
+    ticket = _ticket(session, company_id=company.id, client_id=client.id,
+                     assignee_id=new_agent.id, workflow_type=workflow_type)
+    _account(session, user_id=old_agent.id, chat_id="old")
+    _account(session, user_id=new_agent.id, chat_id="new")
+    _base(session, "transfer_to_agent", "To [Предыдущий агент]; author: [Автор заявки/задачи]; by [Администратор перевода]")
+    _base(session, "transfer_from_agent", "From [Куда передана заявка]; author: [Автор заявки/задачи]; by [Администратор перевода]")
+    event = notifications.build_assignment_notification_event(
+        old_assignee_id=old_agent.id, new_assignee_id=new_agent.id, actor_user_id=actor.id,
+    )
+
+    deliveries = notifications.resolve_assignment_telegram_deliveries(session, event=event, ticket=ticket)
+
+    assert [(item.user_id, item.text) for item in deliveries] == [
+        (new_agent.id, "To Old Agent; author: Clientov Ivan; by Transfer Admin"),
+        (old_agent.id, "From New Agent; author: Clientov Ivan; by Transfer Admin"),
+    ]
