@@ -442,6 +442,7 @@ async def reply_to_ticket(
         # Delivery is queued here; only its confirmed result can unfreeze the ticket.
         if user.role == "agent" and _is_onsite_phrase(text):
             ticket.onsite_triggered = True
+            ticket.auto_close_disabled = True
             actor_user = db.get(User, user.id)
             if actor_user is not None and actor_user.availability_status != "on_ticket":
                 set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow(), change_source="onsite_start")
@@ -572,6 +573,7 @@ async def reply_to_ticket(
             sync_work_interval_after_unfreeze(db, ticket, now=ticket.updated_at)
     if is_plain_ticket and not is_internal_comment and user.role == "agent" and _is_onsite_phrase(text):
         ticket.onsite_triggered = True
+        ticket.auto_close_disabled = True
         actor_user = db.get(User, user.id)
         if actor_user is not None and actor_user.availability_status != "on_ticket":
             set_user_availability_status(db, actor_user, "on_ticket", now=datetime.utcnow(), change_source="onsite_start")

@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import permutations
 from pathlib import Path
 from types import SimpleNamespace
@@ -3717,6 +3717,9 @@ def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history(tmp_pa
             created_at=old_started_at,
         ),
     ])
+    ticket.assignee_id = agent.id
+    ticket.auto_close_started_at = old_started_at
+    ticket.auto_close_due_at = old_started_at + timedelta(minutes=15)
     session.commit()
 
     request = _JsonRequest({"text": "иду к вам"})
@@ -3739,7 +3742,7 @@ def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history(tmp_pa
             schedule_attachment_delivery=lambda **kwargs: scheduled.append(kwargs),
             unfreeze_ticket_on_message=lambda *_args, **_kwargs: None,
             remove_client_close_button=lambda *_args, **_kwargs: None,
-            refresh_ticket_auto_close=lambda *_args, **_kwargs: None,
+            refresh_ticket_auto_close=refresh_ticket_auto_close_timer,
         )
         assert result == {"ok": True}
 
@@ -3756,6 +3759,41 @@ def test_plain_ticket_onsite_reply_records_agent_on_ticket_status_history(tmp_pa
     assert len(rows) == 2
     assert rows[1].change_source == "onsite_start"
     assert len(scheduled) == int(with_attachment)
+
+    session.refresh(ticket)
+    assert ticket.onsite_triggered is True
+    assert ticket.auto_close_disabled is True
+    assert ticket.auto_close_started_at is None
+    assert ticket.auto_close_due_at is None
+    card = get_ticket(ticket.id, db=session, user=SimpleNamespace(id=agent.id, role="agent"))
+    assert card.auto_close_disabled is True
+
+    sent_messages = []
+    assert asyncio.run(_send_quick_action_reply(
+        session, ticket, {"text": "Следующее сообщение"}, sent_messages=sent_messages,
+    )) == {"ok": True}
+    session.refresh(ticket)
+    assert len(sent_messages) == 1
+    assert ticket.auto_close_disabled is True
+    assert ticket.auto_close_started_at is None
+    assert ticket.auto_close_due_at is None
+
+    assert tickets_router.update_auto_close(
+        ticket.id,
+        tickets_router.TicketAutoClosePayload(auto_close_disabled=False),
+        db=session,
+        user=SimpleNamespace(id=agent.id, role="agent"),
+    ) == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.auto_close_disabled is False
+    assert ticket.auto_close_started_at is not None
+    assert ticket.auto_close_due_at == ticket.auto_close_started_at + timedelta(minutes=15)
+    assert asyncio.run(_send_quick_action_reply(
+        session, ticket, {"text": "Таймер снова включён"}, sent_messages=sent_messages,
+    )) == {"ok": True}
+    session.refresh(ticket)
+    assert ticket.auto_close_disabled is False
+    assert ticket.auto_close_due_at == ticket.auto_close_started_at + timedelta(minutes=15)
 
 
 @pytest.mark.parametrize("onsite", [True, False])

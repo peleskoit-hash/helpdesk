@@ -154,3 +154,22 @@ def test_cleanup_auto_close_tickets_keeps_no_contact_behavior(monkeypatch):
 
     messages = _ticket_messages(session, ticket.id)
     assert [message.body for message in messages] == ["Заявка автоматически закрыта из-за отсутствия активности"]
+
+
+@pytest.mark.parametrize("restart_from_now", [False, True])
+def test_refresh_auto_close_timer_uses_fifteen_minutes(monkeypatch, restart_from_now):
+    session = _session()
+    ticket, _ = _seed_due_ticket(session, with_contact=False)
+    sent_at = datetime(2026, 11, 20, 10, 0)
+    now = sent_at + timedelta(minutes=2)
+    session.add(TicketMessage(
+        id=str(uuid.uuid4()), ticket_id=ticket.id,
+        message_type=MessageType.AGENT.value, body="Ответ", created_at=sent_at,
+    ))
+    session.commit()
+    monkeypatch.setattr(auto_close, "_now", lambda: now)
+
+    auto_close.refresh_ticket_auto_close_timer(session, ticket, restart_from_now)
+
+    assert ticket.auto_close_started_at == (now if restart_from_now else sent_at)
+    assert ticket.auto_close_due_at == ticket.auto_close_started_at + timedelta(minutes=15)

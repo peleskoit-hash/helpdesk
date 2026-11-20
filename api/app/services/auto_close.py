@@ -12,7 +12,7 @@ from .automatic_messages import render_automatic_message_for_telegram
 from .statistics_lifecycle import sync_work_interval_after_close
 from .telegram_bot import send_message
 
-AUTO_CLOSE_MINUTES = 20
+AUTO_CLOSE_MINUTES = 15
 AUTO_CLOSE_CLIENT_TEXT = (
     "Ваша заявка закрыта в связи с отсутствием активности в ней, "
     "если Ваша проблема не была решена, пожалуйста, создайте новую нажав /start"
